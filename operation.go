@@ -186,10 +186,6 @@ func (p *Processor) cleanupNullValuesWithReconstruction(data any, compactArrays 
 	return internal.CleanupNullValues(data, compactArrays)
 }
 
-func (p *Processor) cleanupNullValuesRecursiveWithReconstruction(data any, compactArrays bool) any {
-	return internal.CleanupNullValues(data, compactArrays)
-}
-
 func (p *Processor) cleanupDeletedMarkers(data any) any {
 	switch v := data.(type) {
 	case []any:
@@ -360,16 +356,6 @@ func (p *Processor) deleteValueComplexPath(data any, path string) error {
 	copy(internalSegments, segments)
 
 	return p.deleteValueWithInternalSegments(data, internalSegments)
-}
-
-func (p *Processor) requiresComplexDeletion(segments []internal.PathSegment) bool {
-	for _, segment := range segments {
-		switch segment.Type {
-		case internal.ArraySliceSegment, internal.ExtractSegment:
-			return true
-		}
-	}
-	return false
 }
 
 func (p *Processor) deleteValueWithInternalSegments(data any, segments []internal.PathSegment) error {
@@ -790,24 +776,6 @@ func (p *Processor) processConsecutiveExtractionsForDeletion(data any, extractio
 	return nil
 }
 
-func (p *Processor) deleteDeepExtractedValues(data any, extractKey string, remainingSegments []PathSegment) error {
-	if arr, ok := data.([]any); ok {
-		for _, item := range arr {
-			if obj, ok := item.(map[string]any); ok {
-				if extractedValue, exists := obj[extractKey]; exists {
-					if len(remainingSegments) == 0 {
-						delete(obj, extractKey)
-					} else {
-						p.deleteValueComplexSegments(extractedValue, remainingSegments, 0)
-					}
-				}
-			}
-		}
-	}
-
-	return nil
-}
-
 func (p *Processor) handleExtraction(data any, segment PathSegment) (any, error) {
 	field := segment.Key
 	if field == "" {
@@ -893,60 +861,6 @@ func (p *Processor) handleStructAccess(data any, fieldName string) any {
 	}
 
 	return nil
-}
-
-func (p *Processor) handleDeepExtractionInNavigation(data any, segments []PathSegment) (any, error) {
-	// Group consecutive extraction segments
-	extractionGroups := p.detectConsecutiveExtractions(segments)
-
-	current := data
-	segmentIndex := 0
-
-	for _, group := range extractionGroups {
-		// Process consecutive extractions
-		result, err := p.processConsecutiveExtractions(current, group.Segments, segments[segmentIndex+len(group.Segments):])
-		if err != nil {
-			return nil, err
-		}
-		current = result
-		segmentIndex += len(group.Segments)
-	}
-
-	return current, nil
-}
-
-func (p *Processor) hasDeepExtractionPattern(segments []PathSegment) bool {
-	extractionCount := 0
-	for _, segment := range segments {
-		if segment.TypeString() == "extract" {
-			extractionCount++
-			if extractionCount > 1 {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-func (p *Processor) hasMixedExtractionOperations(segments []PathSegment) bool {
-	hasFlat := false
-	hasRegular := false
-
-	for _, segment := range segments {
-		if segment.TypeString() == "extract" {
-			if segment.IsFlatExtract() {
-				hasFlat = true
-			} else {
-				hasRegular = true
-			}
-
-			if hasFlat && hasRegular {
-				return true
-			}
-		}
-	}
-
-	return false
 }
 
 func (p *Processor) getValueWithDistributedOperation(data any, path string) (any, error) {
@@ -1074,15 +988,6 @@ func (p *Processor) applySingleArraySlice(array any, segment PathSegment) any {
 	return nil
 }
 
-func (p *Processor) findTargetArrayForDistributedOperation(item any) []any {
-	// This method would contain logic to find the target array within an item
-	// For now, return the item if it's an array
-	if arr, ok := item.([]any); ok {
-		return arr
-	}
-	return nil
-}
-
 func (p *Processor) handlePostExtractionArrayAccess(data any, segment PathSegment) any {
 	// Check if data is an array of arrays (result of extraction)
 	if arr, ok := data.([]any); ok {
@@ -1103,136 +1008,6 @@ func (p *Processor) handlePostExtractionArrayAccess(data any, segment PathSegmen
 
 	// For single array, apply operation directly
 	return p.applySingleArrayOperation(data, segment)
-}
-
-func (p *Processor) handlePostExtractionArraySlice(data any, segment PathSegment) any {
-	// Check if data is an array of arrays (result of extraction)
-	if arr, ok := data.([]any); ok {
-		results := make([]any, 0, len(arr))
-
-		for _, item := range arr {
-			if itemArr, ok := item.([]any); ok {
-				// Apply slice operation to each sub-array
-				result := p.applySingleArraySlice(itemArr, segment)
-				if result != nil {
-					results = append(results, result)
-				}
-			}
-		}
-
-		return results
-	}
-
-	// For single array, apply operation directly
-	return p.applySingleArraySlice(data, segment)
-}
-
-func (p *Processor) processConsecutiveExtractions(data any, extractionSegments []PathSegment, remainingSegments []PathSegment) (any, error) {
-	current := data
-
-	// Apply each extraction in sequence
-	for _, segment := range extractionSegments {
-		result, err := p.handleExtraction(current, segment)
-		if err != nil {
-			return nil, err
-		}
-		current = result
-	}
-
-	return current, nil
-}
-
-func (p *Processor) buildExtractionContext(data any, segments []PathSegment) (*ExtractionContext, error) {
-	// Find extraction segments and build context
-	var extractionSegments []PathSegment
-	var arrayFieldName string
-
-	for _, segment := range segments {
-		if segment.TypeString() == "extract" {
-			extractionSegments = append(extractionSegments, segment)
-			if arrayFieldName == "" {
-				arrayFieldName = segment.Key
-			}
-		}
-	}
-
-	if len(extractionSegments) == 0 {
-		return nil, fmt.Errorf("no extraction segments found")
-	}
-
-	// Collect source containers
-	containers, err := p.collectSourceContainers(data, extractionSegments)
-	if err != nil {
-		return nil, err
-	}
-
-	return &ExtractionContext{
-		OriginalContainers: containers,
-		ArrayFieldName:     arrayFieldName,
-		TargetIndices:      make([]int, len(containers)),
-		OperationType:      "get",
-	}, nil
-}
-
-func (p *Processor) collectSourceContainers(data any, extractionSegments []PathSegment) ([]any, error) {
-	var containers []any
-
-	// This is a simplified implementation
-	// The full implementation would recursively traverse the data structure
-	if arr, ok := data.([]any); ok {
-		containers = append(containers, arr...)
-	} else {
-		containers = append(containers, data)
-	}
-
-	return containers, nil
-}
-
-func (p *Processor) collectContainersForExtraction(data any, extractionSegments []PathSegment, containers *[]any) error {
-	return p.collectContainersRecursive(data, extractionSegments, 0, containers)
-}
-
-func (p *Processor) collectContainersRecursive(current any, segments []PathSegment, segmentIndex int, containers *[]any) error {
-	if segmentIndex >= len(segments) {
-		*containers = append(*containers, current)
-		return nil
-	}
-
-	segment := segments[segmentIndex]
-
-	switch segment.TypeString() {
-	case "property":
-		if obj, ok := current.(map[string]any); ok {
-			if value, exists := obj[segment.Key]; exists {
-				return p.collectContainersRecursive(value, segments, segmentIndex+1, containers)
-			}
-		}
-	case "array":
-		if arr, ok := current.([]any); ok {
-			for _, item := range arr {
-				if err := p.collectContainersRecursive(item, segments, segmentIndex+1, containers); err != nil {
-					return err
-				}
-			}
-		}
-	case "extract":
-		// For extraction, collect all items that would be extracted
-		if arr, ok := current.([]any); ok {
-			*containers = append(*containers, arr...)
-		}
-	}
-
-	return nil
-}
-
-func (p *Processor) flattenContainersRecursive(arr []any, containers *[]any) {
-	for _, item := range arr {
-		if nestedArr, ok := item.([]any); ok {
-			p.flattenContainersRecursive(nestedArr, containers)
-		} else {
-			*containers = append(*containers, item)
-		}
-	}
 }
 
 // setValueAtPath sets a value at the specified path
@@ -1396,10 +1171,6 @@ func (p *Processor) setValueWithSegments(data any, segments []PathSegment, value
 	return err
 }
 
-func (p *Processor) setValueDotNotation(data any, path string, value any) error {
-	return p.setValueDotNotationWithCreation(data, path, value, false)
-}
-
 func (p *Processor) setValueDotNotationWithCreation(data any, path string, value any, createPaths bool) error {
 	// Parse path into segments
 	segments := p.getPathSegments()
@@ -1541,55 +1312,6 @@ func (p *Processor) handleArraySliceExtension(parent any, segment PathSegment, a
 	// For slice operations, we can't easily replace the parent array
 	// This is a limitation of the current approach
 	return fmt.Errorf("slice array extension not fully supported yet")
-}
-
-func (p *Processor) replaceArrayInParent(data any, parentSegments []PathSegment, newArray []any) error {
-	if len(parentSegments) == 0 {
-		// The array is at the root level - we can't replace it
-		return fmt.Errorf("cannot replace root array")
-	}
-
-	// Navigate to the parent of the parent (grandparent)
-	current := data
-	for i := 0; i < len(parentSegments)-1; i++ {
-		next, err := p.navigateToSegment(current, parentSegments[i], true, parentSegments, i)
-		if err != nil {
-			return fmt.Errorf("failed to navigate to grandparent segment %d: %w", i, err)
-		}
-		current = next
-	}
-
-	// Get the parent segment (the one that contains the array)
-	parentSegment := parentSegments[len(parentSegments)-1]
-
-	// Replace the array in the parent
-	switch parentSegment.TypeString() {
-	case "property":
-		if obj, ok := current.(map[string]any); ok {
-			obj[parentSegment.Key] = newArray
-			return nil
-		}
-		if obj, ok := current.(map[any]any); ok {
-			obj[parentSegment.Key] = newArray
-			return nil
-		}
-		return fmt.Errorf("cannot set property %s on type %T", parentSegment.Key, current)
-	case "array":
-		if arr, ok := current.([]any); ok {
-			index := parentSegment.Index
-			if index < 0 {
-				index = len(arr) + index
-			}
-			if index >= 0 && index < len(arr) {
-				arr[index] = newArray
-				return nil
-			}
-			return fmt.Errorf("array index %d out of bounds for length %d", index, len(arr))
-		}
-		return fmt.Errorf("cannot set array index on type %T", current)
-	default:
-		return fmt.Errorf("unsupported parent segment type for array replacement: %s", parentSegment.TypeString())
-	}
 }
 
 func (p *Processor) setValueForArrayIndexWithExtension(current any, segment PathSegment, value any, rootData any, segments []PathSegment) error {
@@ -2221,122 +1943,6 @@ func (p *Processor) setValueJSONPointerWithArrayExtension(data any, segments []s
 	return p.setJSONPointerFinalValue(current, finalSegment, value)
 }
 
-func (p *Processor) createPathSegmentForJSONPointer(current any, segment string, allSegments []string, currentIndex int) (any, error) {
-	switch v := current.(type) {
-	case map[string]any:
-		if val, exists := v[segment]; exists {
-			return val, nil
-		}
-		// Create missing property
-		var newContainer any
-		if currentIndex+1 < len(allSegments) {
-			nextSegment := allSegments[currentIndex+1]
-			if p.isArrayIndex(nextSegment) {
-				newContainer = make([]any, 0)
-			} else {
-				newContainer = make(map[string]any)
-			}
-		} else {
-			newContainer = make(map[string]any)
-		}
-		v[segment] = newContainer
-		return newContainer, nil
-
-	case []any:
-		if index, err := strconv.Atoi(segment); err == nil {
-			if index >= 0 && index < len(v) {
-				return v[index], nil
-			}
-			if index >= len(v) {
-				// Need to extend array - create extended array and replace in parent
-				return p.handleJSONPointerArrayExtension(current, v, index, allSegments, currentIndex)
-			}
-		}
-		return nil, fmt.Errorf("invalid array index for JSON Pointer: %s", segment)
-
-	default:
-		return nil, fmt.Errorf("cannot navigate through %T with segment %s", current, segment)
-	}
-}
-
-func (p *Processor) setPropertyValue(current any, property string, value any) error {
-	switch v := current.(type) {
-	case map[string]any:
-		v[property] = value
-		return nil
-	case map[any]any:
-		v[property] = value
-		return nil
-	default:
-		return fmt.Errorf("cannot set property '%s' on type %T", property, current)
-	}
-}
-
-func (p *Processor) setPropertyValueWithCreation(current any, property string, value any) error {
-	switch v := current.(type) {
-	case map[string]any:
-		v[property] = value
-		return nil
-	case map[any]any:
-		v[property] = value
-		return nil
-	case []any:
-		// Try to parse property as array index
-		if index, err := strconv.Atoi(property); err == nil {
-			if index >= 0 && index < len(v) {
-				v[index] = value
-				return nil
-			}
-			if index == len(v) {
-				// Extend array
-				v = append(v, value)
-				current = v
-				return nil
-			}
-		}
-		return fmt.Errorf("invalid array index: %s", property)
-	default:
-		return fmt.Errorf("cannot set property '%s' on type %T", property, current)
-	}
-}
-
-func (p *Processor) handleJSONPointerArrayExtension(parent any, arr []any, targetIndex int, allSegments []string, currentIndex int) (any, error) {
-	// Create extended array
-	extendedArr := make([]any, targetIndex+1)
-	copy(extendedArr, arr)
-
-	// Determine what to put at the target index
-	var newContainer any
-	if currentIndex+1 < len(allSegments) {
-		nextSegment := allSegments[currentIndex+1]
-		if p.isArrayIndex(nextSegment) {
-			newContainer = make([]any, 0)
-		} else {
-			newContainer = make(map[string]any)
-		}
-	} else {
-		newContainer = nil // Will be set by the final value
-	}
-
-	extendedArr[targetIndex] = newContainer
-
-	// Replace the array in parent - this is tricky for JSON Pointer
-	// We need to find a way to update the parent reference
-	// For now, we'll modify the original array in place if possible
-	if cap(arr) >= len(extendedArr) {
-		// Can extend in place
-		for i := len(arr); i < len(extendedArr); i++ {
-			arr = append(arr, nil)
-		}
-		arr[targetIndex] = newContainer
-		return newContainer, nil
-	}
-
-	// Cannot extend in place - this is a limitation
-	// Return the new container but note that parent won't be updated
-	return newContainer, nil
-}
-
 func (p *Processor) createPathSegmentForJSONPointerWithExtension(current any, segment string, allSegments []string, currentIndex int) (any, error) {
 	switch v := current.(type) {
 	case map[string]any:
@@ -2646,23 +2252,6 @@ func (p *Processor) BatchDeleteOptimized(jsonStr string, paths []string) (string
 	}
 
 	return string(result), nil
-}
-
-// ============================================================================
-// OPTIMIZED MARSHALING WITH POOLING
-// ============================================================================
-
-// marshalWithPool marshals data using pooled buffers
-func marshalWithPool(data any) ([]byte, error) {
-	buf := GetResultBuffer()
-	defer PutResultBuffer(buf)
-
-	result, err := json.Marshal(data)
-	if err != nil {
-		return nil, err
-	}
-
-	return result, nil
 }
 
 // ============================================================================

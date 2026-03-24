@@ -782,7 +782,7 @@ func MergeJson(json1, json2 string) (string, error) {
 }
 
 // GetTypedWithProcessor retrieves a typed value from JSON using a specific processor
-func GetTypedWithProcessor[T any](processor *Processor, jsonStr, path string, opts ...*ProcessorOptions) (T, error) {
+func GetTypedWithProcessor[T any](processor *Processor, jsonStr, path string, opts ...*Config) (T, error) {
 	var zero T
 
 	value, err := processor.Get(jsonStr, path, opts...)
@@ -1117,120 +1117,6 @@ func FastToBool(value any) (bool, bool) {
 }
 
 // ============================================================================
-// PRE-SIZED MAP HELPERS
-// PERFORMANCE: Estimate map size from JSON content to reduce reallocations
-// ============================================================================
-
-// estimateMapSize estimates the number of keys in a JSON object from raw bytes
-// PERFORMANCE: Pre-sizing maps reduces reallocation overhead
-func estimateMapSize(jsonBytes []byte) int {
-	if len(jsonBytes) == 0 {
-		return 0
-	}
-
-	// Count colons as a rough estimate of key-value pairs
-	count := 0
-	depth := 0
-	inString := false
-	escape := false
-
-	for _, b := range jsonBytes {
-		if escape {
-			escape = false
-			continue
-		}
-
-		switch b {
-		case '\\':
-			if inString {
-				escape = true
-			}
-		case '"':
-			inString = !inString
-		case '{':
-			if !inString {
-				depth++
-			}
-		case '}':
-			if !inString {
-				depth--
-			}
-		case ':':
-			if !inString && depth == 1 {
-				count++
-			}
-		}
-	}
-
-	return count
-}
-
-// estimateArraySize estimates the number of elements in a JSON array from raw bytes
-// PERFORMANCE: Pre-sizing arrays reduces reallocation overhead
-func estimateArraySize(jsonBytes []byte) int {
-	if len(jsonBytes) == 0 {
-		return 0
-	}
-
-	// Count commas at depth 1 as a rough estimate
-	count := 1 // Start with 1 (arrays have at least 1 element if non-empty)
-	depth := 0
-	inString := false
-	escape := false
-
-	for _, b := range jsonBytes {
-		if escape {
-			escape = false
-			continue
-		}
-
-		switch b {
-		case '\\':
-			if inString {
-				escape = true
-			}
-		case '"':
-			inString = !inString
-		case '[':
-			if !inString {
-				depth++
-			}
-		case ']':
-			if !inString {
-				depth--
-			}
-		case ',':
-			if !inString && depth == 1 {
-				count++
-			}
-		}
-	}
-
-	if count < 0 {
-		return 0
-	}
-	return count
-}
-
-// newMapWithEstimatedSize creates a new map with capacity estimated from JSON bytes
-func newMapWithEstimatedSize(jsonBytes []byte) map[string]any {
-	size := estimateMapSize(jsonBytes)
-	if size < 8 {
-		size = 8
-	}
-	return make(map[string]any, size)
-}
-
-// newSliceWithEstimatedSize creates a new slice with capacity estimated from JSON bytes
-func newSliceWithEstimatedSize(jsonBytes []byte) []any {
-	size := estimateArraySize(jsonBytes)
-	if size < 8 {
-		size = 8
-	}
-	return make([]any, 0, size)
-}
-
-// ============================================================================
 // JSON KEY INTERNING
 // PERFORMANCE: Intern frequently used JSON keys to reduce memory allocations
 // ============================================================================
@@ -1242,64 +1128,6 @@ var globalKeyInternMap = &keyInternMap{
 type keyInternMap struct {
 	keys map[string]string
 	mu   sync.RWMutex
-}
-
-// internKey returns an interned copy of the key string
-// If the key has been seen before, returns the existing copy
-// Otherwise, stores and returns a copy of the key
-func internKey(key string) string {
-	// Fast path: check without lock first (safe for reads)
-	globalKeyInternMap.mu.RLock()
-	if interned, ok := globalKeyInternMap.keys[key]; ok {
-		globalKeyInternMap.mu.RUnlock()
-		return interned
-	}
-	globalKeyInternMap.mu.RUnlock()
-
-	// Slow path: add new key
-	globalKeyInternMap.mu.Lock()
-	defer globalKeyInternMap.mu.Unlock()
-
-	// Double check (another goroutine may have added it)
-	if interned, ok := globalKeyInternMap.keys[key]; ok {
-		return interned
-	}
-
-	// Limit cache size to prevent unbounded growth
-	if len(globalKeyInternMap.keys) >= 10000 {
-		// Clear half the cache
-		count := 0
-		for k := range globalKeyInternMap.keys {
-			delete(globalKeyInternMap.keys, k)
-			count++
-			if count >= 5000 {
-				break
-			}
-		}
-	}
-
-	// Store a copy to prevent external modification
-	globalKeyInternMap.keys[key] = key
-	return key
-}
-
-// internMapKeys interns all keys in a map
-// PERFORMANCE: Reduces memory usage when the same keys appear in multiple maps
-func internMapKeys(m map[string]any) {
-	for k, v := range m {
-		interned := internKey(k)
-		if interned != k {
-			delete(m, k)
-			m[interned] = v
-		}
-	}
-}
-
-// clearKeyInternCache clears the key intern cache
-func clearKeyInternCache() {
-	globalKeyInternMap.mu.Lock()
-	globalKeyInternMap.keys = make(map[string]string, 256)
-	globalKeyInternMap.mu.Unlock()
 }
 
 // KeyInternCacheSize returns the number of interned keys

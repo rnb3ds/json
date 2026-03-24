@@ -95,12 +95,12 @@ func main() {
 }
 
 func demonstratePrettyVsCompact(user interface{}) {
-	// Pretty formatting
-	prettyJSON, _ := json.EncodePretty(user)
+	// Pretty formatting - using new unified Config API
+	prettyJSON, _ := json.EncodeWithConfig(user, json.PrettyConfig())
 	fmt.Println("   Pretty JSON:")
 	fmt.Println(prettyJSON)
 
-	// Compact formatting
+	// Compact formatting (default)
 	compactJSON, _ := json.Encode(user)
 	fmt.Println("\n   Compact JSON:")
 	fmt.Println(compactJSON)
@@ -118,21 +118,19 @@ func demonstrateHTMLEscaping() {
 		Content: "Visit <a href='https://example.com'>here</a>",
 	}
 
-	// With HTML escaping (default, safe for web)
-	configWithEscape := json.DefaultEncodeConfig()
-	configWithEscape.EscapeHTML = true // default
-	configWithEscape.Pretty = false    // default
-
-	escapedJSON, _ := json.Encode(data, configWithEscape)
+	// With HTML escaping (safe for web)
+	webSafeConfig := json.DefaultConfig()
+	webSafeConfig.EscapeHTML = true
+	webSafeConfig.EscapeSlash = true
+	escapedJSON, _ := json.Encode(data, webSafeConfig)
 	fmt.Println("   With HTML escaping (default, safe for web):")
 	fmt.Println(escapedJSON)
 
-	// Without HTML escaping
-	configWithoutEscape := json.DefaultEncodeConfig()
-	configWithoutEscape.EscapeHTML = false
-	configWithoutEscape.Pretty = true
-
-	unescapedJSON, _ := json.Encode(data, configWithoutEscape)
+	// Without HTML escaping (for readability)
+	readableConfig := json.PrettyConfig()
+	readableConfig.EscapeHTML = false
+	readableConfig.DisableEscaping = true
+	unescapedJSON, _ := json.Encode(data, readableConfig)
 	fmt.Println("\n   Without HTML escaping (custom, readable):")
 	fmt.Println(unescapedJSON)
 }
@@ -148,7 +146,7 @@ func demonstrateKeySorting() {
 	data := Data{Zebra: 1, Alpha: 2, Charlie: 3, Beta: 4}
 
 	// Without sorting (default insertion order)
-	configUnsorted := json.DefaultEncodeConfig()
+	configUnsorted := json.DefaultConfig()
 	configUnsorted.Pretty = true
 	configUnsorted.SortKeys = false
 
@@ -157,7 +155,7 @@ func demonstrateKeySorting() {
 	fmt.Println(unsortedJSON)
 
 	// With sorting
-	configSorted := json.DefaultEncodeConfig()
+	configSorted := json.DefaultConfig()
 	configSorted.Pretty = true
 	configSorted.SortKeys = true
 
@@ -178,7 +176,7 @@ func demonstrateFloatPrecision() {
 	}
 
 	// Default precision
-	configDefault := json.DefaultEncodeConfig()
+	configDefault := json.DefaultConfig()
 	configDefault.Pretty = true
 	configDefault.FloatPrecision = -1 // Auto precision
 
@@ -187,7 +185,7 @@ func demonstrateFloatPrecision() {
 	fmt.Println(defaultJSON)
 
 	// Fixed precision: 2 decimal places (rounding)
-	configFixed2 := json.DefaultEncodeConfig()
+	configFixed2 := json.DefaultConfig()
 	configFixed2.Pretty = true
 	configFixed2.FloatPrecision = 2
 
@@ -196,7 +194,7 @@ func demonstrateFloatPrecision() {
 	fmt.Println(fixed2JSON)
 
 	// Fixed precision: 4 decimal places (rounding)
-	configFixed4 := json.DefaultEncodeConfig()
+	configFixed4 := json.DefaultConfig()
 	configFixed4.Pretty = true
 	configFixed4.FloatPrecision = 4
 
@@ -205,7 +203,7 @@ func demonstrateFloatPrecision() {
 	fmt.Println(fixed4JSON)
 
 	// Fixed precision: 4 decimal places (truncate)
-	configTruncate := json.DefaultEncodeConfig()
+	configTruncate := json.DefaultConfig()
 	configTruncate.Pretty = true
 	configTruncate.FloatPrecision = 4
 	configTruncate.FloatTruncate = true // Enable truncation
@@ -242,7 +240,7 @@ func demonstrateOmitEmpty() {
 		Database: "", // Empty, but no tag so will be included
 	}
 
-	config := json.DefaultEncodeConfig()
+	config := json.DefaultConfig()
 	config.Pretty = true
 
 	fullJSON, _ := json.Encode(fullConfig, config)
@@ -267,7 +265,7 @@ func demonstrateCustomEscaping() {
 	}
 
 	// Default escaping (newlines and tabs escaped)
-	configDefault := json.DefaultEncodeConfig()
+	configDefault := json.DefaultConfig()
 	configDefault.EscapeNewlines = true
 	configDefault.EscapeTabs = true
 	configDefault.Pretty = true
@@ -277,7 +275,7 @@ func demonstrateCustomEscaping() {
 	fmt.Println(defaultJSON)
 
 	// Without newline/tab escaping
-	configRaw := json.DefaultEncodeConfig()
+	configRaw := json.DefaultConfig()
 	configRaw.EscapeNewlines = false
 	configRaw.EscapeTabs = false
 	configRaw.Pretty = true
@@ -287,7 +285,7 @@ func demonstrateCustomEscaping() {
 	fmt.Println(rawJSON)
 
 	// With slash escaping
-	configSlash := json.DefaultEncodeConfig()
+	configSlash := json.DefaultConfig()
 	configSlash.EscapeSlash = true
 	configSlash.Pretty = true
 
@@ -314,7 +312,7 @@ func demonstrateUnicodeEscaping() {
 	}
 
 	// Without Unicode escaping (readable)
-	configReadable := json.DefaultEncodeConfig()
+	configReadable := json.DefaultConfig()
 	configReadable.EscapeUnicode = false
 	configReadable.Pretty = true
 
@@ -323,7 +321,7 @@ func demonstrateUnicodeEscaping() {
 	fmt.Println(readableJSON)
 
 	// With Unicode escaping (ASCII safe)
-	configEscaped := json.DefaultEncodeConfig()
+	configEscaped := json.DefaultConfig()
 	configEscaped.EscapeUnicode = true
 	configEscaped.Pretty = true
 
@@ -345,13 +343,15 @@ func demonstrateEncodeMethods() {
 	compact, _ := json.Encode(product)
 	fmt.Printf("   Encode (compact): %s\n", compact)
 
-	// EncodePretty
-	pretty, _ := json.EncodePretty(product)
-	fmt.Println("\n   EncodePretty:")
+	// EncodeWithConfig (pretty)
+	opts := json.DefaultConfig()
+	opts.Pretty = true
+	pretty, _ := json.EncodeWithConfig(product, opts)
+	fmt.Println("\n   EncodeWithConfig (pretty):")
 	fmt.Println(pretty)
 
 	// Encode with custom configuration
-	customCfg := json.DefaultEncodeConfig()
+	customCfg := json.DefaultConfig()
 	customCfg.Pretty = true
 	customCfg.Indent = "    "
 	custom, _ := json.Encode(product, customCfg)

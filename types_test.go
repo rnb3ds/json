@@ -232,18 +232,15 @@ func TestConfigConstantsComprehensive(t *testing.T) {
 		config := DefaultConfig()
 		helper.AssertNotNil(config)
 
-		highSec := HighSecurityConfig()
-		helper.AssertNotNil(highSec)
-
-		largeDat := LargeDataConfig()
-		helper.AssertNotNil(largeDat)
+		sec := SecurityConfig()
+		helper.AssertNotNil(sec)
 	})
 
 	t.Run("EncodeConfigPresets", func(t *testing.T) {
-		config := DefaultEncodeConfig()
+		config := DefaultConfig()
 		helper.AssertNotNil(config)
 
-		pretty := NewPrettyConfig()
+		pretty := PrettyConfig()
 		helper.AssertNotNil(pretty)
 		helper.AssertTrue(pretty.Pretty)
 
@@ -934,7 +931,7 @@ func TestDeletedMarker(t *testing.T) {
 
 // TestEncodeConfig_Clone tests EncodeConfig.Clone method
 func TestEncodeConfig_Clone(t *testing.T) {
-	original := &EncodeConfig{
+	original := &Config{
 		Pretty:        true,
 		Indent:        "  ",
 		EscapeHTML:    true,
@@ -966,7 +963,7 @@ func TestEncodeConfig_Clone(t *testing.T) {
 
 // TestEncodeConfig_Clone_Nil tests Clone with nil receiver
 func TestEncodeConfig_Clone_Nil(t *testing.T) {
-	var config *EncodeConfig
+	var config *Config
 	cloned := config.Clone()
 	if cloned == nil {
 		t.Error("Clone of nil should return default config, not nil")

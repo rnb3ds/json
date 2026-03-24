@@ -112,20 +112,20 @@ config := json.DefaultConfig()
 
 ### High Security Configuration
 
-For high-security environments, use the `HighSecurityConfig`:
+For high-security environments, use the `SecurityConfig`:
 
 ```go
-config := json.HighSecurityConfig()
+config := json.SecurityConfig()
 processor := json.New(config)
 defer processor.Close()
 
-// High security settings:
-// - MaxJSONSize: 5MB (more restrictive)
-// - MaxPathDepth: 20 (more restrictive than DefaultConfig's 50)
-// - MaxNestingDepthSecurity: 20 (very restrictive)
+// SecurityConfig settings:
+// - MaxJSONSize: 10MB (more restrictive)
+// - MaxPathDepth: 30 (more restrictive than DefaultConfig's 50)
+// - MaxNestingDepthSecurity: 30 (very restrictive)
 // - MaxSecurityValidationSize: 10MB
-// - MaxObjectKeys: 1,000 (fewer keys)
-// - MaxArrayElements: 1,000 (fewer elements)
+// - MaxObjectKeys: 5,000 (fewer keys)
+// - MaxArrayElements: 5,000 (fewer elements)
 // - StrictMode: true (strict validation)
 // - EnableValidation: true (forced validation)
 // - FullSecurityScan: true (disables sampling, full scan all JSON)

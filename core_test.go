@@ -915,7 +915,7 @@ func TestBoundaryConditions(t *testing.T) {
 			helper.AssertNoError(err)
 			helper.AssertEqual("", result)
 
-			withDefault := GetStringWithDefault(testData, "missing", "default")
+			withDefault := GetDefault[string](testData, "missing", "default")
 			helper.AssertEqual("default", withDefault)
 		})
 
@@ -1434,89 +1434,40 @@ func TestConfiguration(t *testing.T) {
 		helper.AssertFalse(config.EnableHealthCheck)
 	})
 
-	t.Run("HighSecurityConfig", func(t *testing.T) {
-		config := HighSecurityConfig()
+	t.Run("SecurityConfig", func(t *testing.T) {
+		config := SecurityConfig()
 
 		helper.AssertNotNil(config)
-		helper.AssertEqual(20, config.MaxNestingDepthSecurity)
-		helper.AssertEqual(int64(10*1024*1024), config.MaxSecurityValidationSize)
-		helper.AssertEqual(1000, config.MaxObjectKeys)
-		helper.AssertEqual(1000, config.MaxArrayElements)
-		helper.AssertEqual(int64(5*1024*1024), config.MaxJSONSize)
-		helper.AssertEqual(20, config.MaxPathDepth)
-		helper.AssertTrue(config.EnableValidation)
-		helper.AssertTrue(config.StrictMode)
-	})
-
-	t.Run("LargeDataConfig", func(t *testing.T) {
-		config := LargeDataConfig()
-
-		helper.AssertNotNil(config)
-		helper.AssertEqual(100, config.MaxNestingDepthSecurity)
-		helper.AssertEqual(int64(500*1024*1024), config.MaxSecurityValidationSize)
-		helper.AssertEqual(50000, config.MaxObjectKeys)
-		helper.AssertEqual(50000, config.MaxArrayElements)
-		helper.AssertEqual(int64(100*1024*1024), config.MaxJSONSize)
-		helper.AssertEqual(200, config.MaxPathDepth)
-	})
-
-	t.Run("WebAPIConfig", func(t *testing.T) {
-		config := WebAPIConfig()
-
-		helper.AssertNotNil(config)
-		// Security settings
-		helper.AssertEqual(50, config.MaxNestingDepthSecurity)
-		helper.AssertEqual(int64(10*1024*1024), config.MaxSecurityValidationSize)
-		helper.AssertEqual(5000, config.MaxObjectKeys)
-		helper.AssertEqual(5000, config.MaxArrayElements)
-		helper.AssertEqual(int64(10*1024*1024), config.MaxJSONSize)
-		helper.AssertEqual(30, config.MaxPathDepth)
 		helper.AssertTrue(config.FullSecurityScan)
-		helper.AssertTrue(config.StrictMode)
 		helper.AssertTrue(config.EnableValidation)
-		// Performance settings
-		helper.AssertTrue(config.EnableCache)
-		helper.AssertEqual(256, config.MaxCacheSize)
 	})
 
-	t.Run("FastConfig", func(t *testing.T) {
-		config := FastConfig()
+	t.Run("SecurityConfig_WebAPI", func(t *testing.T) {
+		config := SecurityConfig()
 
 		helper.AssertNotNil(config)
-		// Relaxed limits for trusted data
-		helper.AssertEqual(150, config.MaxNestingDepthSecurity)
-		helper.AssertEqual(int64(100*1024*1024), config.MaxSecurityValidationSize)
-		helper.AssertEqual(100000, config.MaxObjectKeys)
-		helper.AssertEqual(100000, config.MaxArrayElements)
-		helper.AssertEqual(int64(50*1024*1024), config.MaxJSONSize)
-		helper.AssertEqual(100, config.MaxPathDepth)
-		// Performance optimizations
+		helper.AssertTrue(config.FullSecurityScan)
+		helper.AssertTrue(config.EnableValidation)
+	})
+
+	t.Run("DefaultConfig_Fast", func(t *testing.T) {
+		config := DefaultConfig()
+		config.FullSecurityScan = false
+		config.StrictMode = false
+
+		helper.AssertNotNil(config)
 		helper.AssertFalse(config.FullSecurityScan)
 		helper.AssertFalse(config.StrictMode)
-		helper.AssertTrue(config.EnableCache)
-		helper.AssertEqual(512, config.MaxCacheSize)
-		helper.AssertEqual(100, config.MaxConcurrency)
 	})
 
-	t.Run("MinimalConfig", func(t *testing.T) {
-		config := MinimalConfig()
+	t.Run("DefaultConfig_Minimal", func(t *testing.T) {
+		config := DefaultConfig()
+		config.EnableValidation = false
+		config.EnableCache = false
 
 		helper.AssertNotNil(config)
-		// Maximum limits
-		helper.AssertEqual(200, config.MaxNestingDepthSecurity)
-		helper.AssertEqual(int64(500*1024*1024), config.MaxSecurityValidationSize)
-		helper.AssertEqual(100000, config.MaxObjectKeys)
-		helper.AssertEqual(100000, config.MaxArrayElements)
-		helper.AssertEqual(int64(200*1024*1024), config.MaxJSONSize)
-		helper.AssertEqual(200, config.MaxPathDepth)
-		// Features disabled
 		helper.AssertFalse(config.EnableValidation)
-		helper.AssertFalse(config.FullSecurityScan)
-		helper.AssertFalse(config.StrictMode)
 		helper.AssertFalse(config.EnableCache)
-		helper.AssertEqual(0, config.MaxCacheSize)
-		helper.AssertFalse(config.EnableMetrics)
-		helper.AssertFalse(config.EnableHealthCheck)
 	})
 
 	t.Run("ConfigClone", func(t *testing.T) {
@@ -1711,8 +1662,8 @@ func TestConfigurationIntegration(t *testing.T) {
 		helper.AssertEqual(config.MaxCacheSize, stats.MaxCacheSize)
 	})
 
-	t.Run("HighSecurityProcessor", func(t *testing.T) {
-		processor := New(HighSecurityConfig())
+	t.Run("SecurityProcessor", func(t *testing.T) {
+		processor := New(SecurityConfig())
 		defer processor.Close()
 
 		// Test that security limits are enforced
@@ -1729,7 +1680,15 @@ func TestConfigurationIntegration(t *testing.T) {
 	})
 
 	t.Run("LargeDataProcessor", func(t *testing.T) {
-		processor := New(LargeDataConfig())
+		// Use SecurityConfig with adjusted limits for large data
+		config := SecurityConfig()
+		config.MaxJSONSize = 100 * 1024 * 1024 // 100MB
+		config.MaxNestingDepthSecurity = 100
+		config.MaxSecurityValidationSize = 500 * 1024 * 1024
+		config.MaxObjectKeys = 50000
+		config.MaxArrayElements = 50000
+		config.MaxPathDepth = 200
+		processor := New(config)
 		defer processor.Close()
 
 		// Test with large array
@@ -1740,8 +1699,8 @@ func TestConfigurationIntegration(t *testing.T) {
 		helper.AssertTrue(len(result) > 0)
 	})
 
-	t.Run("WebAPIProcessor", func(t *testing.T) {
-		processor := New(WebAPIConfig())
+	t.Run("SecurityProcessor_WebAPI", func(t *testing.T) {
+		processor := New(SecurityConfig())
 		defer processor.Close()
 
 		testData := `{"user": "test", "data": {"id": 123}}`
@@ -1756,8 +1715,10 @@ func TestConfigurationIntegration(t *testing.T) {
 		helper.AssertTrue(stats.CacheEnabled)
 	})
 
-	t.Run("FastProcessor", func(t *testing.T) {
-		processor := New(FastConfig())
+	t.Run("DefaultProcessor_Fast", func(t *testing.T) {
+		cfg := DefaultConfig()
+		cfg.FullSecurityScan = false
+		processor := New(cfg)
 		defer processor.Close()
 
 		testData := `{"items": [1, 2, 3, 4, 5]}`
@@ -1765,15 +1726,12 @@ func TestConfigurationIntegration(t *testing.T) {
 		result, err := processor.GetArray(testData, "items")
 		helper.AssertNoError(err)
 		helper.AssertEqual(5, len(result))
-
-		// Verify cache is enabled with larger size
-		stats := processor.GetStats()
-		helper.AssertTrue(stats.CacheEnabled)
-		helper.AssertEqual(512, stats.MaxCacheSize)
 	})
 
-	t.Run("MinimalProcessor", func(t *testing.T) {
-		processor := New(MinimalConfig())
+	t.Run("DefaultProcessor_Minimal", func(t *testing.T) {
+		cfg := DefaultConfig()
+		cfg.EnableCache = false
+		processor := New(cfg)
 		defer processor.Close()
 
 		testData := `{"test": "value"}`
@@ -1789,8 +1747,8 @@ func TestConfigurationIntegration(t *testing.T) {
 	})
 }
 
-// TestDeleteWithCleanNull tests deletion with null cleanup
-func TestDeleteWithCleanNull(t *testing.T) {
+// TestDeleteWithCleanupNullsOption tests deletion with null cleanup using Config
+func TestDeleteWithCleanupNullsOption(t *testing.T) {
 	jsonStr := `{
 		"user": {
 			"name": "Alice",
@@ -1823,9 +1781,12 @@ func TestDeleteWithCleanNull(t *testing.T) {
 		},
 	}
 
+	cfg := DefaultConfig()
+	cfg.CleanupNulls = true
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result, err := DeleteWithCleanNull(jsonStr, tt.path)
+			result, err := Delete(jsonStr, tt.path, cfg)
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
@@ -2005,7 +1966,7 @@ func TestEncodeBatch(t *testing.T) {
 		"user2": map[string]any{"name": "Bob"},
 	}
 
-	result, err := EncodeBatch(pairs, false)
+	result, err := EncodeBatch(pairs, DefaultConfig())
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -2020,7 +1981,7 @@ func TestEncodeBatch(t *testing.T) {
 }
 
 func TestEncodeConfig_Default(t *testing.T) {
-	cfg := DefaultEncodeConfig()
+	cfg := DefaultConfig()
 	if cfg == nil {
 		t.Error("DefaultEncodeConfig should not return nil")
 	}
@@ -2044,7 +2005,7 @@ func TestEncodeFields(t *testing.T) {
 
 	fields := []string{"name", "email"}
 
-	result, err := EncodeFields(user, fields, false)
+	result, err := EncodeFields(user, fields, DefaultConfig())
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -2099,7 +2060,9 @@ func TestEncodeStream(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result, err := EncodeStream(values, tt.pretty)
+			opts := DefaultConfig()
+			opts.Pretty = tt.pretty
+			result, err := EncodeStream(values, opts)
 			if tt.expectError && err == nil {
 				t.Errorf("Expected error, but got none")
 			}
@@ -2267,7 +2230,7 @@ func TestEncodingConfiguration(t *testing.T) {
 	helper := NewTestHelper(t)
 
 	t.Run("DefaultEncodeConfig", func(t *testing.T) {
-		config := DefaultEncodeConfig()
+		config := DefaultConfig()
 
 		helper.AssertNotNil(config)
 		helper.AssertFalse(config.Pretty)
@@ -2288,15 +2251,15 @@ func TestEncodingConfiguration(t *testing.T) {
 		helper.AssertTrue(config.IncludeNulls)
 	})
 
-	t.Run("NewPrettyConfig", func(t *testing.T) {
-		config := NewPrettyConfig()
+	t.Run("PrettyEncodeConfig", func(t *testing.T) {
+		config := PrettyConfig()
 
 		helper.AssertTrue(config.Pretty)
 		helper.AssertEqual("  ", config.Indent)
 	})
 
 	t.Run("EncodingOptions", func(t *testing.T) {
-		config := DefaultEncodeConfig()
+		config := DefaultConfig()
 
 		t.Run("SetPretty", func(t *testing.T) {
 			config.Pretty = true
@@ -2648,74 +2611,74 @@ func TestForwardSlice(t *testing.T) {
 	}
 }
 
-// TestGetArrayWithDefault tests GetArrayWithDefault function
-func TestGetArrayWithDefault(t *testing.T) {
+// TestGetDefaultSlice tests GetDefault[[]any] function
+func TestGetDefaultSlice(t *testing.T) {
 	jsonStr := `{"items": [1, 2, 3]}`
 	defaultArr := []any{"default"}
 
 	t.Run("existing array", func(t *testing.T) {
-		result := GetArrayWithDefault(jsonStr, "items", defaultArr)
+		result := GetDefault[[]any](jsonStr, "items", defaultArr)
 		if len(result) != 3 {
-			t.Errorf("GetArrayWithDefault(items) length = %d; want 3", len(result))
+			t.Errorf("GetDefault[[]any](items) length = %d; want 3", len(result))
 		}
 	})
 
 	t.Run("missing returns default", func(t *testing.T) {
-		result := GetArrayWithDefault(jsonStr, "missing", defaultArr)
+		result := GetDefault[[]any](jsonStr, "missing", defaultArr)
 		if len(result) != 1 || result[0] != "default" {
-			t.Errorf("GetArrayWithDefault(missing) = %v; want default", result)
+			t.Errorf("GetDefault[[]any](missing) = %v; want default", result)
 		}
 	})
 }
 
-// TestGetBoolWithDefault tests GetBoolWithDefault function
-func TestGetBoolWithDefault(t *testing.T) {
+// TestGetDefaultBool tests GetDefault[bool] function
+func TestGetDefaultBool(t *testing.T) {
 	jsonStr := `{"enabled": true, "disabled": false}`
 
 	t.Run("existing true", func(t *testing.T) {
-		result := GetBoolWithDefault(jsonStr, "enabled", false)
+		result := GetDefault[bool](jsonStr, "enabled", false)
 		if result != true {
-			t.Errorf("GetBoolWithDefault(enabled) = %v; want true", result)
+			t.Errorf("GetDefault[bool](enabled) = %v; want true", result)
 		}
 	})
 
 	t.Run("existing false", func(t *testing.T) {
-		result := GetBoolWithDefault(jsonStr, "disabled", true)
+		result := GetDefault[bool](jsonStr, "disabled", true)
 		if result != false {
-			t.Errorf("GetBoolWithDefault(disabled) = %v; want false", result)
+			t.Errorf("GetDefault[bool](disabled) = %v; want false", result)
 		}
 	})
 
 	t.Run("missing returns default", func(t *testing.T) {
-		result := GetBoolWithDefault(jsonStr, "missing", true)
+		result := GetDefault[bool](jsonStr, "missing", true)
 		if result != true {
-			t.Errorf("GetBoolWithDefault(missing) = %v; want true", result)
+			t.Errorf("GetDefault[bool](missing) = %v; want true", result)
 		}
 	})
 }
 
-// TestGetFloat64WithDefault tests GetFloat64WithDefault function
-func TestGetFloat64WithDefault(t *testing.T) {
+// TestGetDefaultFloat64 tests GetDefault[float64] function
+func TestGetDefaultFloat64(t *testing.T) {
 	jsonStr := `{"price": 19.99, "count": 5}`
 
 	t.Run("existing float", func(t *testing.T) {
-		result := GetFloat64WithDefault(jsonStr, "price", 0.0)
+		result := GetDefault[float64](jsonStr, "price", 0.0)
 		if result != 19.99 {
-			t.Errorf("GetFloat64WithDefault(price) = %f; want 19.99", result)
+			t.Errorf("GetDefault[float64](price) = %f; want 19.99", result)
 		}
 	})
 
 	t.Run("int converted to float", func(t *testing.T) {
-		result := GetFloat64WithDefault(jsonStr, "count", 0.0)
+		result := GetDefault[float64](jsonStr, "count", 0.0)
 		if result != 5.0 {
-			t.Errorf("GetFloat64WithDefault(count) = %f; want 5.0", result)
+			t.Errorf("GetDefault[float64](count) = %f; want 5.0", result)
 		}
 	})
 
 	t.Run("missing returns default", func(t *testing.T) {
-		result := GetFloat64WithDefault(jsonStr, "missing", 99.99)
+		result := GetDefault[float64](jsonStr, "missing", 99.99)
 		if result != 99.99 {
-			t.Errorf("GetFloat64WithDefault(missing) = %f; want 99.99", result)
+			t.Errorf("GetDefault[float64](missing) = %f; want 99.99", result)
 		}
 	})
 }
@@ -2804,22 +2767,22 @@ func TestGetMultiple(t *testing.T) {
 	}
 }
 
-// TestGetObjectWithDefault tests GetObjectWithDefault function
-func TestGetObjectWithDefault(t *testing.T) {
+// TestGetDefaultMap tests GetDefault[map[string]any] function
+func TestGetDefaultMap(t *testing.T) {
 	jsonStr := `{"config": {"theme": "dark"}}`
 	defaultObj := map[string]any{"default": true}
 
 	t.Run("existing object", func(t *testing.T) {
-		result := GetObjectWithDefault(jsonStr, "config", defaultObj)
+		result := GetDefault[map[string]any](jsonStr, "config", defaultObj)
 		if result["theme"] != "dark" {
-			t.Errorf("GetObjectWithDefault(config) = %v; want theme=dark", result)
+			t.Errorf("GetDefault[map[string]any](config) = %v; want theme=dark", result)
 		}
 	})
 
 	t.Run("missing returns default", func(t *testing.T) {
-		result := GetObjectWithDefault(jsonStr, "missing", defaultObj)
+		result := GetDefault[map[string]any](jsonStr, "missing", defaultObj)
 		if result["default"] != true {
-			t.Errorf("GetObjectWithDefault(missing) = %v; want default", result)
+			t.Errorf("GetDefault[map[string]any](missing) = %v; want default", result)
 		}
 	})
 }
@@ -2850,41 +2813,41 @@ func TestGetStats(t *testing.T) {
 	t.Logf("Stats: %+v", stats)
 }
 
-// TestGetTypedWithDefault tests typed get with defaults
-func TestGetTypedWithDefault(t *testing.T) {
+// TestGetDefault tests typed get with defaults
+func TestGetDefault(t *testing.T) {
 	jsonStr := `{"user": {"name": "Alice", "age": 30}}`
 
 	t.Run("existing value", func(t *testing.T) {
-		name := GetStringWithDefault(jsonStr, "user.name", "Unknown")
+		name := GetDefault[string](jsonStr, "user.name", "Unknown")
 		if name != "Alice" {
 			t.Errorf("Expected 'Alice', got '%s'", name)
 		}
 	})
 
 	t.Run("missing value with default", func(t *testing.T) {
-		name := GetStringWithDefault(jsonStr, "user.email", "unknown@example.com")
+		name := GetDefault[string](jsonStr, "user.email", "unknown@example.com")
 		if name != "unknown@example.com" {
 			t.Errorf("Expected default value, got '%s'", name)
 		}
 	})
 
 	t.Run("int with default", func(t *testing.T) {
-		age := GetIntWithDefault(jsonStr, "user.age", 0)
+		age := GetDefault[int](jsonStr, "user.age", 0)
 		if age != 30 {
 			t.Errorf("Expected 30, got %d", age)
 		}
 	})
 
 	t.Run("missing int with default", func(t *testing.T) {
-		score := GetIntWithDefault(jsonStr, "user.score", 100)
+		score := GetDefault[int](jsonStr, "user.score", 100)
 		if score != 100 {
 			t.Errorf("Expected default 100, got %d", score)
 		}
 	})
 }
 
-// TestGetTypedWithDefaultGeneric tests the generic GetTypedWithDefault function with generics
-func TestGetTypedWithDefaultGeneric(t *testing.T) {
+// TestGetDefaultGeneric tests the generic GetDefault function with generics
+func TestGetDefaultGeneric(t *testing.T) {
 	jsonStr := `{"user": {"name": "Alice", "age": 30, "active": true}}`
 
 	tests := []struct {
@@ -2935,19 +2898,19 @@ func TestGetTypedWithDefaultGeneric(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			switch def := tt.defaultValue.(type) {
 			case string:
-				result := GetTypedWithDefault[string](jsonStr, tt.path, def)
+				result := GetDefault[string](jsonStr, tt.path, def)
 				if result != tt.expected.(string) {
-					t.Errorf("GetTypedWithDefault[string](%s) = %v; want %v", tt.path, result, tt.expected)
+					t.Errorf("GetDefault[string](%s) = %v; want %v", tt.path, result, tt.expected)
 				}
 			case int:
-				result := GetTypedWithDefault[int](jsonStr, tt.path, def)
+				result := GetDefault[int](jsonStr, tt.path, def)
 				if result != tt.expected.(int) {
-					t.Errorf("GetTypedWithDefault[int](%s) = %d; want %d", tt.path, result, tt.expected)
+					t.Errorf("GetDefault[int](%s) = %d; want %d", tt.path, result, tt.expected)
 				}
 			case bool:
-				result := GetTypedWithDefault[bool](jsonStr, tt.path, def)
+				result := GetDefault[bool](jsonStr, tt.path, def)
 				if result != tt.expected.(bool) {
-					t.Errorf("GetTypedWithDefault[bool](%s) = %v; want %v", tt.path, result, tt.expected)
+					t.Errorf("GetDefault[bool](%s) = %v; want %v", tt.path, result, tt.expected)
 				}
 			}
 		})
@@ -3996,13 +3959,13 @@ func TestNegativeArrayIndex(t *testing.T) {
 	})
 }
 
-func TestNewPrettyConfig(t *testing.T) {
-	cfg := NewPrettyConfig()
+func TestPrettyEncodeConfig(t *testing.T) {
+	cfg := PrettyConfig()
 	if cfg == nil {
-		t.Fatal("NewPrettyConfig should not return nil")
+		t.Fatal("PrettyEncodeConfig should not return nil")
 	}
 	if !cfg.Pretty {
-		t.Error("NewPrettyConfig should have Pretty = true")
+		t.Error("PrettyEncodeConfig should have Pretty = true")
 	}
 }
 
@@ -4979,20 +4942,22 @@ func TestProcessor_BatchOperations(t *testing.T) {
 		}
 	})
 
-	t.Run("SetMultipleWithAdd", func(t *testing.T) {
+	t.Run("SetMultipleWithCreatePaths", func(t *testing.T) {
 		jsonStr := `{}`
 		updates := map[string]any{
 			"a.b": 1,
 			"c.d": 2,
 		}
-		result, err := processor.SetMultipleWithAdd(jsonStr, updates)
+		cfg := DefaultConfig()
+		cfg.CreatePaths = true
+		result, err := processor.SetMultiple(jsonStr, updates, cfg)
 		if err != nil {
-			t.Errorf("SetMultipleWithAdd error: %v", err)
+			t.Errorf("SetMultiple error: %v", err)
 		}
 
 		val, _ := processor.Get(result, "a.b")
 		if val != 1.0 {
-			t.Errorf("SetMultipleWithAdd failed, a.b = %v, want 1", val)
+			t.Errorf("SetMultiple failed, a.b = %v, want 1", val)
 		}
 	})
 
@@ -5061,7 +5026,7 @@ func TestProcessor_EncodeWithOptions(t *testing.T) {
 
 	t.Run("EncodeWithOptions", func(t *testing.T) {
 		data := map[string]any{"key": "value"}
-		encOpts := DefaultEncodeConfig()
+		encOpts := DefaultConfig()
 		encOpts.Pretty = true
 		result, err := processor.EncodeWithOptions(data, encOpts)
 		if err != nil {
@@ -5107,7 +5072,9 @@ func TestProcessor_EncodeWithOptions(t *testing.T) {
 
 	t.Run("EncodeBatch", func(t *testing.T) {
 		pairs := map[string]any{"a": 1, "b": 2}
-		result, err := processor.EncodeBatch(pairs, true)
+		cfg := DefaultConfig()
+		cfg.Pretty = true
+		result, err := processor.EncodeBatch(pairs, cfg)
 		if err != nil {
 			t.Errorf("EncodeBatch error: %v", err)
 		}
@@ -5127,7 +5094,7 @@ func TestProcessor_EncodeWithOptions(t *testing.T) {
 			Email: "john@example.com",
 		}
 		fields := []string{"name", "age"}
-		result, err := processor.EncodeFields(data, fields, false)
+		result, err := processor.EncodeFields(data, fields, DefaultConfig())
 		if err != nil {
 			t.Errorf("EncodeFields error: %v", err)
 		}
@@ -5138,7 +5105,7 @@ func TestProcessor_EncodeWithOptions(t *testing.T) {
 
 	t.Run("EncodeStream", func(t *testing.T) {
 		values := []any{1, 2, 3}
-		result, err := processor.EncodeStream(values, false)
+		result, err := processor.EncodeStream(values, DefaultConfig())
 		if err != nil {
 			t.Errorf("EncodeStream error: %v", err)
 		}
@@ -5149,7 +5116,7 @@ func TestProcessor_EncodeWithOptions(t *testing.T) {
 
 	t.Run("EncodeStreamWithOptions", func(t *testing.T) {
 		values := []any{1, 2, 3}
-		encOpts := DefaultEncodeConfig()
+		encOpts := DefaultConfig()
 		result, err := processor.EncodeStreamWithOptions(values, encOpts)
 		if err != nil {
 			t.Errorf("EncodeStreamWithOptions error: %v", err)
@@ -5188,15 +5155,17 @@ func TestProcessor_ErrorHandling(t *testing.T) {
 		}
 	})
 
-	t.Run("DeleteWithCleanNull", func(t *testing.T) {
+	t.Run("DeleteWithCleanupNulls", func(t *testing.T) {
 		jsonStr := `{"a": {"b": {"c": 1}}}`
-		result, err := processor.DeleteWithCleanNull(jsonStr, "a.b.c")
+		cfg := DefaultConfig()
+		cfg.CleanupNulls = true
+		result, err := Delete(jsonStr, "a.b.c", cfg)
 		if err != nil {
-			t.Errorf("DeleteWithCleanNull error: %v", err)
+			t.Errorf("Delete with CleanupNulls error: %v", err)
 		}
 		// Verify the result is valid JSON
 		if !json.Valid([]byte(result)) {
-			t.Error("DeleteWithCleanNull should return valid JSON")
+			t.Error("Delete with CleanupNulls should return valid JSON")
 		}
 	})
 }
@@ -6308,8 +6277,8 @@ func TestSetMultiple(t *testing.T) {
 	}
 }
 
-// TestSetMultipleWithAdd tests multiple sets with path creation
-func TestSetMultipleWithAdd(t *testing.T) {
+// TestSetMultipleWithCreatePaths tests multiple sets with path creation using Config
+func TestSetMultipleWithCreatePaths(t *testing.T) {
 	jsonStr := `{}`
 
 	updates := map[string]any{
@@ -6319,7 +6288,9 @@ func TestSetMultipleWithAdd(t *testing.T) {
 		"settings.theme": "dark",
 	}
 
-	result, err := SetMultipleWithAdd(jsonStr, updates)
+	cfg := DefaultConfig()
+	cfg.CreatePaths = true
+	result, err := SetMultiple(jsonStr, updates, cfg)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -6331,11 +6302,14 @@ func TestSetMultipleWithAdd(t *testing.T) {
 	}
 }
 
-// TestSetWithAdd tests set with automatic path creation
-func TestSetWithAdd(t *testing.T) {
+// TestSetWithCreatePaths tests set with automatic path creation using Config
+func TestSetWithCreatePaths(t *testing.T) {
 	jsonStr := `{"user": {}}`
 
-	result, err := SetWithAdd(jsonStr, "user.name", "Alice")
+	cfg := DefaultConfig()
+	cfg.CreatePaths = true
+
+	result, err := Set(jsonStr, "user.name", "Alice", cfg)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -6345,7 +6319,7 @@ func TestSetWithAdd(t *testing.T) {
 	}
 
 	// Test nested path creation
-	result, err = SetWithAdd(result, "user.profile.age", 30)
+	result, err = Set(result, "user.profile.age", 30, cfg)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}

@@ -13,42 +13,32 @@ import (
 	"github.com/cybergodev/json/internal"
 )
 
-// Config holds configuration for the JSON processor
+// Config holds all configuration for the JSON processor.
+// Start with DefaultConfig() and modify as needed.
+//
+// Example:
+//
+//	cfg := json.DefaultConfig()
+//	cfg.CreatePaths = true
+//	cfg.Pretty = true
+//	result, err := json.Set(data, "path", value, cfg)
 type Config struct {
-	// Cache settings
+	// ===== Cache Settings =====
 	MaxCacheSize int           `json:"max_cache_size"`
 	CacheTTL     time.Duration `json:"cache_ttl"`
 	EnableCache  bool          `json:"enable_cache"`
+	CacheResults bool          `json:"cache_results"` // Per-operation caching
 
-	// Size limits
+	// ===== Size Limits =====
 	MaxJSONSize  int64 `json:"max_json_size"`
 	MaxPathDepth int   `json:"max_path_depth"`
 	MaxBatchSize int   `json:"max_batch_size"`
 
-	// Security limits
+	// ===== Security Limits =====
 	MaxNestingDepthSecurity   int   `json:"max_nesting_depth"`
 	MaxSecurityValidationSize int64 `json:"max_security_validation_size"`
 	MaxObjectKeys             int   `json:"max_object_keys"`
 	MaxArrayElements          int   `json:"max_array_elements"`
-
-	// Concurrency
-	MaxConcurrency    int `json:"max_concurrency"`
-	ParallelThreshold int `json:"parallel_threshold"`
-
-	// Processing
-	EnableValidation bool `json:"enable_validation"`
-	StrictMode       bool `json:"strict_mode"`
-	CreatePaths      bool `json:"create_paths"`
-	CleanupNulls     bool `json:"cleanup_nulls"`
-	CompactArrays    bool `json:"compact_arrays"`
-
-	// Additional options
-	EnableMetrics     bool `json:"enable_metrics"`
-	EnableHealthCheck bool `json:"enable_health_check"`
-	AllowComments     bool `json:"allow_comments"`
-	PreserveNumbers   bool `json:"preserve_numbers"`
-	ValidateInput     bool `json:"validate_input"`
-	ValidateFilePath  bool `json:"validate_file_path"`
 	// FullSecurityScan enables full (non-sampling) security validation for all JSON input.
 	//
 	// When false (default): Large JSON (>4KB) uses optimized sampling with:
@@ -69,6 +59,51 @@ type Config struct {
 	// PERFORMANCE NOTE: Full scanning adds ~10-30% overhead for JSON >100KB.
 	// For trusted internal services with large JSON payloads, sampling mode is acceptable.
 	FullSecurityScan bool `json:"full_security_scan"`
+
+	// ===== Concurrency =====
+	MaxConcurrency    int `json:"max_concurrency"`
+	ParallelThreshold int `json:"parallel_threshold"`
+
+	// ===== Processing Options =====
+	EnableValidation bool `json:"enable_validation"`
+	StrictMode       bool `json:"strict_mode"`
+	CreatePaths      bool `json:"create_paths"`
+	CleanupNulls     bool `json:"cleanup_nulls"`
+	CompactArrays    bool `json:"compact_arrays"`
+	ContinueOnError  bool `json:"continue_on_error"` // Continue on batch errors
+
+	// ===== Input/Output Options =====
+	AllowComments    bool `json:"allow_comments"`
+	PreserveNumbers  bool `json:"preserve_numbers"`
+	ValidateInput    bool `json:"validate_input"`
+	ValidateFilePath bool `json:"validate_file_path"`
+	SkipValidation   bool `json:"skip_validation"` // Skip validation for trusted input
+
+	// ===== Encoding Options =====
+	Pretty          bool            `json:"pretty"`
+	Indent          string          `json:"indent"`
+	Prefix          string          `json:"prefix"`
+	EscapeHTML      bool            `json:"escape_html"`
+	SortKeys        bool            `json:"sort_keys"`
+	ValidateUTF8    bool            `json:"validate_utf8"`
+	MaxDepth        int             `json:"max_depth"`
+	DisallowUnknown bool            `json:"disallow_unknown"`
+	FloatPrecision  int             `json:"float_precision"`
+	FloatTruncate   bool            `json:"float_truncate"`
+	DisableEscaping bool            `json:"disable_escaping"`
+	EscapeUnicode   bool            `json:"escape_unicode"`
+	EscapeSlash     bool            `json:"escape_slash"`
+	EscapeNewlines  bool            `json:"escape_newlines"`
+	EscapeTabs      bool            `json:"escape_tabs"`
+	IncludeNulls    bool            `json:"include_nulls"`
+	CustomEscapes   map[rune]string `json:"custom_escapes,omitempty"`
+
+	// ===== Observability =====
+	EnableMetrics     bool `json:"enable_metrics"`
+	EnableHealthCheck bool `json:"enable_health_check"`
+
+	// ===== Context =====
+	Context context.Context `json:"-"` // Operation context
 }
 
 // GetSecurityLimits returns a summary of current security limits
@@ -81,84 +116,6 @@ func (c *Config) GetSecurityLimits() map[string]any {
 		"max_json_size":                c.MaxJSONSize,
 		"max_path_depth":               c.MaxPathDepth,
 	}
-}
-
-// ProcessorOptions provides per-operation configuration
-type ProcessorOptions struct {
-	Context         context.Context `json:"-"`
-	CacheResults    bool            `json:"cache_results"`
-	StrictMode      bool            `json:"strict_mode"`
-	MaxDepth        int             `json:"max_depth"`
-	AllowComments   bool            `json:"allow_comments"`
-	PreserveNumbers bool            `json:"preserve_numbers"`
-	CreatePaths     bool            `json:"create_paths"`
-	CleanupNulls    bool            `json:"cleanup_nulls"`
-	CompactArrays   bool            `json:"compact_arrays"`
-	ContinueOnError bool            `json:"continue_on_error"`
-	// OPTIMIZED: SkipValidation allows skipping security validation for trusted input
-	// WARNING: Only use this option when you are certain the input is safe
-	// Use with caution - skipping validation may expose security vulnerabilities
-	SkipValidation bool `json:"skip_validation"`
-}
-
-// Clone creates a deep copy of ProcessorOptions
-func (opts *ProcessorOptions) Clone() *ProcessorOptions {
-	if opts == nil {
-		return nil
-	}
-	return &ProcessorOptions{
-		Context:         opts.Context,
-		CacheResults:    opts.CacheResults,
-		StrictMode:      opts.StrictMode,
-		MaxDepth:        opts.MaxDepth,
-		AllowComments:   opts.AllowComments,
-		PreserveNumbers: opts.PreserveNumbers,
-		CreatePaths:     opts.CreatePaths,
-		CleanupNulls:    opts.CleanupNulls,
-		CompactArrays:   opts.CompactArrays,
-		ContinueOnError: opts.ContinueOnError,
-		SkipValidation:  opts.SkipValidation,
-	}
-}
-
-// defaultOptions is a singleton containing default processor options.
-// This eliminates allocations when callers only need to read defaults.
-// DO NOT MODIFY this singleton - use DefaultOptionsClone() if modification is needed.
-var defaultOptions = &ProcessorOptions{
-	CacheResults:    true,
-	StrictMode:      false,
-	MaxDepth:        50,
-	AllowComments:   false,
-	PreserveNumbers: false, // Disable number preservation for encoding/json compatibility
-	CreatePaths:     false, // Conservative default - don't auto-create paths
-	CleanupNulls:    false, // Conservative default - don't auto-cleanup nulls
-	CompactArrays:   false, // Conservative default - don't auto-compact arrays
-	ContinueOnError: false, // Conservative default - fail fast on errors
-}
-
-// DefaultOptions returns default processor options as a singleton.
-// IMPORTANT: Returns an immutable pointer - callers MUST NOT modify the returned value.
-// Modifying the returned value will affect all users of DefaultOptions().
-// Use DefaultOptionsClone() if you need a modifiable copy.
-//
-// Example:
-//
-//	// Read-only access (safe):
-//	opts := json.DefaultOptions()
-//	if opts.MaxDepth > 10 { ... }
-//
-//	// Modification (use clone):
-//	opts := json.DefaultOptionsClone()
-//	opts.MaxDepth = 100
-func DefaultOptions() *ProcessorOptions {
-	return defaultOptions
-}
-
-// DefaultOptionsClone returns a modifiable copy of the default processor options.
-// Use this when you need to customize the options before passing to operations.
-func DefaultOptionsClone() *ProcessorOptions {
-	clone := *defaultOptions
-	return &clone
 }
 
 // ParsedJSON represents a pre-parsed JSON document that can be reused for multiple operations.
@@ -286,118 +243,6 @@ type BatchResult struct {
 	ID     string `json:"id"`
 	Result any    `json:"result"`
 	Error  error  `json:"error"`
-}
-
-// EncodeConfig provides advanced encoding configuration (for complex use cases)
-type EncodeConfig struct {
-	Pretty          bool   `json:"pretty"`
-	Indent          string `json:"indent"`
-	Prefix          string `json:"prefix"`
-	EscapeHTML      bool   `json:"escape_html"`
-	SortKeys        bool   `json:"sort_keys"`
-	ValidateUTF8    bool   `json:"validate_utf8"`
-	MaxDepth        int    `json:"max_depth"`
-	DisallowUnknown bool   `json:"disallow_unknown"`
-
-	// Number formatting
-	PreserveNumbers bool `json:"preserve_numbers"`
-	FloatPrecision  int  `json:"float_precision"`
-	FloatTruncate   bool `json:"float_truncate"` // Truncate instead of round when FloatPrecision >= 0
-
-	// Character escaping
-	DisableEscaping bool `json:"disable_escaping"`
-	EscapeUnicode   bool `json:"escape_unicode"`
-	EscapeSlash     bool `json:"escape_slash"`
-	EscapeNewlines  bool `json:"escape_newlines"`
-	EscapeTabs      bool `json:"escape_tabs"`
-
-	// Null handling
-	IncludeNulls  bool            `json:"include_nulls"`
-	CustomEscapes map[rune]string `json:"custom_escapes,omitempty"`
-}
-
-// Clone creates a deep copy of the EncodeConfig
-func (c *EncodeConfig) Clone() *EncodeConfig {
-	if c == nil {
-		return DefaultEncodeConfig()
-	}
-
-	clone := *c
-
-	if c.CustomEscapes != nil {
-		clone.CustomEscapes = make(map[rune]string, len(c.CustomEscapes))
-		for k, v := range c.CustomEscapes {
-			clone.CustomEscapes[k] = v
-		}
-	}
-
-	return &clone
-}
-
-// NewReadableConfig creates a configuration for human-readable JSON with minimal escaping
-func NewReadableConfig() *EncodeConfig {
-	return &EncodeConfig{
-		Pretty:          false,
-		Indent:          "  ",
-		Prefix:          "",
-		EscapeHTML:      false,
-		SortKeys:        false,
-		ValidateUTF8:    true,
-		MaxDepth:        100,
-		DisallowUnknown: false,
-		DisableEscaping: true,
-		EscapeUnicode:   false,
-		EscapeSlash:     false,
-		EscapeNewlines:  true,
-		EscapeTabs:      true,
-		IncludeNulls:    true, // Include null values by default
-		CustomEscapes:   nil,
-		PreserveNumbers: false, // Disable number preservation for encoding/json compatibility
-	}
-}
-
-// NewWebSafeConfig creates a configuration for web-safe JSON
-func NewWebSafeConfig() *EncodeConfig {
-	return &EncodeConfig{
-		Pretty:          false,
-		Indent:          "  ",
-		Prefix:          "",
-		EscapeHTML:      true,
-		SortKeys:        false,
-		ValidateUTF8:    true,
-		MaxDepth:        100,
-		DisallowUnknown: false,
-		DisableEscaping: false,
-		EscapeUnicode:   false,
-		EscapeSlash:     true,
-		EscapeNewlines:  true,
-		EscapeTabs:      true,
-		IncludeNulls:    true, // Include null values by default
-		CustomEscapes:   nil,
-	}
-}
-
-// NewCleanConfig creates a configuration that omits null and empty values
-func NewCleanConfig() *EncodeConfig {
-	return &EncodeConfig{
-		Pretty:          true,
-		Indent:          "  ",
-		Prefix:          "",
-		EscapeHTML:      true,
-		SortKeys:        true,
-		ValidateUTF8:    true,
-		MaxDepth:        100,
-		DisallowUnknown: false,
-		PreserveNumbers: false,
-		FloatPrecision:  -1,
-		DisableEscaping: false,
-		EscapeUnicode:   false,
-		EscapeSlash:     false,
-		EscapeNewlines:  true,
-		EscapeTabs:      true,
-		IncludeNulls:    false, // Exclude null values for clean output
-		CustomEscapes:   nil,
-	}
 }
 
 // Marshaler is the interface implemented by types that
@@ -554,7 +399,7 @@ type OperationContext struct {
 	Operation   Operation
 	Path        string
 	Value       any
-	Options     *ProcessorOptions
+	Options     *Config
 	StartTime   time.Time
 	CreatePaths bool
 }
@@ -581,7 +426,7 @@ func IsDeletedMarker(v any) bool {
 }
 
 // ValidateOptions validates processor options with enhanced checks
-func ValidateOptions(options *ProcessorOptions) error {
+func ValidateOptions(options *Config) error {
 	if options == nil {
 		return &JsonsError{
 			Op:      "validate_options",

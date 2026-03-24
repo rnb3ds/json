@@ -14,16 +14,15 @@ import (
 // to handle missing or null values gracefully.
 //
 // Topics covered:
+// - GetDefault[T] - recommended generic method
 // - GetWithDefault for any type
-// - GetTypedWithDefault for type-safe defaults
-// - Type-specific WithDefault methods
 // - Practical use cases
 //
 // Run: go run examples/11_with_defaults.go
 
 func main() {
-	fmt.Println("🎯 JSON Library - With Defaults")
-	fmt.Println("===============================\n ")
+	fmt.Println("JSON Library - With Defaults")
+	fmt.Println("============================\n ")
 
 	// Sample data with some missing/optional fields
 	partialData := `{
@@ -49,27 +48,50 @@ func main() {
 		}
 	}`
 
-	// 1. GETWITHDEFAULT
-	fmt.Println("1️⃣  GetWithDefault (any type)")
-	fmt.Println("─────────────────────────────")
+	// 1. GETDEFAULT[T] - RECOMMENDED
+	fmt.Println("1. GetDefault[T] (Recommended)")
+	fmt.Println("-----------------------------")
+	demonstrateGetDefault(partialData, completeData)
+
+	// 2. GETWITHDEFAULT
+	fmt.Println("\n2. GetWithDefault (any type)")
+	fmt.Println("----------------------------")
 	demonstrateGetWithDefault(partialData, completeData)
 
-	// 2. GETTYPEDWITHDEFAULT
-	fmt.Println("\n2️⃣  GetTypedWithDefault (type-safe)")
-	fmt.Println("──────────────────────────────────")
-	demonstrateGetTypedWithDefault(partialData, completeData)
-
-	// 3. TYPE-SPECIFIC WITHDEFAULT
-	fmt.Println("\n3️⃣  Type-Specific WithDefault Methods")
-	fmt.Println("────────────────────────────────────")
-	demonstrateTypeSpecificDefaults(partialData, completeData)
-
-	// 4. PRACTICAL USE CASES
-	fmt.Println("\n4️⃣  Practical Use Cases")
-	fmt.Println("──────────────────────")
+	// 3. PRACTICAL USE CASES
+	fmt.Println("\n3. Practical Use Cases")
+	fmt.Println("-----------------------")
 	demonstratePracticalCases()
 
-	fmt.Println("\n✅ With defaults examples complete!")
+	fmt.Println("\nWith defaults examples complete!")
+}
+
+func demonstrateGetDefault(partialData, completeData string) {
+	// String with default - RECOMMENDED approach
+	email := json.GetDefault(partialData, "user.email", "no-email@example.com")
+	fmt.Printf("   user.email: %s\n", email)
+
+	missingPhone := json.GetDefault(partialData, "user.phone", "N/A")
+	fmt.Printf("   user.phone (missing): %s\n", missingPhone)
+
+	// Int with default
+	age := json.GetDefault(partialData, "user.age", 0)
+	fmt.Printf("   user.age (missing): %d\n", age)
+
+	completeAge := json.GetDefault(completeData, "user.age", 0)
+	fmt.Printf("   user.age (from complete): %d\n", completeAge)
+
+	// Bool with default
+	notifications := json.GetDefault(partialData, "settings.notifications", false)
+	fmt.Printf("   settings.notifications (missing): %t\n", notifications)
+
+	// Float with default
+	score := json.GetDefault(partialData, "user.score", 100.0)
+	fmt.Printf("   user.score (missing): %.1f\n", score)
+
+	// Array with default
+	tags := json.GetDefault[[]any](partialData, "user.tags", []any{})
+	fmt.Printf("   user.tags (missing): %v (length: %d)\n", tags, len(tags))
 }
 
 func demonstrateGetWithDefault(partialData, completeData string) {
@@ -100,72 +122,6 @@ func demonstrateGetWithDefault(partialData, completeData string) {
 	fmt.Printf("   Field '%s': %v (actual value, default ignored)\n", missingPath, completeAge)
 }
 
-func demonstrateGetTypedWithDefault(partialData, completeData string) {
-	// String with default
-	email := json.GetTypedWithDefault(partialData, "user.email", "no-email@example.com")
-	fmt.Printf("   user.email: %s\n", email)
-
-	missingEmail := json.GetTypedWithDefault(partialData, "user.phone", "N/A")
-	fmt.Printf("   user.phone (missing): %s\n", missingEmail)
-
-	// Int with default
-	age := json.GetTypedWithDefault(partialData, "user.age", 0)
-	fmt.Printf("   user.age (missing): %d\n", age)
-
-	completeAge := json.GetTypedWithDefault(completeData, "user.age", 0)
-	fmt.Printf("   user.age (from complete): %d\n", completeAge)
-
-	// Bool with default
-	notifications := json.GetTypedWithDefault(partialData, "settings.notifications", false)
-	fmt.Printf("   settings.notifications (missing): %t\n", notifications)
-
-	completeNotif := json.GetTypedWithDefault(completeData, "settings.notifications", false)
-	fmt.Printf("   settings.notifications (from complete): %t\n", completeNotif)
-
-	// Float with default
-	score := json.GetTypedWithDefault(partialData, "user.score", 100.0)
-	fmt.Printf("   user.score (missing): %.1f\n", score)
-
-	// Array with default
-	tags := json.GetTypedWithDefault[[]interface{}](partialData, "user.tags", []interface{}{})
-	fmt.Printf("   user.tags (missing): %v (length: %d)\n", tags, len(tags))
-}
-
-func demonstrateTypeSpecificDefaults(partialData, completeData string) {
-	// String with default
-	name := json.GetStringWithDefault(partialData, "user.name", "Anonymous")
-	fmt.Printf("   GetStringWithDefault - name: %s\n", name)
-
-	missingPhone := json.GetStringWithDefault(partialData, "user.phone", "N/A")
-	fmt.Printf("   GetStringWithDefault - phone: %s\n", missingPhone)
-
-	// Int with default
-	age := json.GetIntWithDefault(partialData, "user.age", 18)
-	fmt.Printf("   GetIntWithDefault - age: %d\n", age)
-
-	completeAge := json.GetIntWithDefault(completeData, "user.age", 18)
-	fmt.Printf("   GetIntWithDefault - age (complete): %d\n", completeAge)
-
-	// Float64 with default
-	price := json.GetFloat64WithDefault(partialData, "product.price", 0.0)
-	fmt.Printf("   GetFloat64WithDefault - price: %.2f\n", price)
-
-	// Bool with default
-	active := json.GetBoolWithDefault(partialData, "user.active", true)
-	fmt.Printf("   GetBoolWithDefault - active: %t\n", active)
-
-	// Array with default
-	tags := json.GetArrayWithDefault(partialData, "user.tags", []interface{}{})
-	fmt.Printf("   GetArrayWithDefault - tags: %v\n", tags)
-
-	// Object with default
-	settings := json.GetObjectWithDefault(partialData, "settings", map[string]interface{}{})
-	fmt.Printf("   GetObjectWithDefault - settings: %v\n", settings)
-
-	missingSettings := json.GetObjectWithDefault(partialData, "preferences", map[string]interface{}{})
-	fmt.Printf("   GetObjectWithDefault - preferences (missing): %v\n", missingSettings)
-}
-
 func demonstratePracticalCases() {
 	// Use case 1: Configuration with sensible defaults
 	configJSON := `{
@@ -185,14 +141,14 @@ func demonstratePracticalCases() {
 		WriteTimeout int
 	}
 
-	// Extract with defaults
+	// Extract with defaults using GetDefault[T] (recommended)
 	config := Config{
-		Host:         json.GetStringWithDefault(configJSON, "server.host", "0.0.0.0"),
-		Port:         json.GetIntWithDefault(configJSON, "server.port", 8080),
-		Debug:        json.GetBoolWithDefault(configJSON, "debug", false),
-		MaxConn:      json.GetIntWithDefault(configJSON, "max_connections", 100),
-		ReadTimeout:  json.GetIntWithDefault(configJSON, "read_timeout", 30),
-		WriteTimeout: json.GetIntWithDefault(configJSON, "write_timeout", 30),
+		Host:         json.GetDefault(configJSON, "server.host", "0.0.0.0"),
+		Port:         json.GetDefault(configJSON, "server.port", 8080),
+		Debug:        json.GetDefault(configJSON, "debug", false),
+		MaxConn:      json.GetDefault(configJSON, "max_connections", 100),
+		ReadTimeout:  json.GetDefault(configJSON, "read_timeout", 30),
+		WriteTimeout: json.GetDefault(configJSON, "write_timeout", 30),
 	}
 
 	fmt.Printf("   Config: %+v\n", config)
@@ -208,12 +164,12 @@ func demonstratePracticalCases() {
 		}
 	}`
 
-	// Extract with defaults for optional fields
-	status := json.GetStringWithDefault(apiResponse, "status", "unknown")
-	productID := json.GetIntWithDefault(apiResponse, "data.id", 0)
-	name := json.GetStringWithDefault(apiResponse, "data.name", "Unnamed Product")
-	description := json.GetStringWithDefault(apiResponse, "data.description", "No description available")
-	price := json.GetFloat64WithDefault(apiResponse, "data.price", 0.0)
+	// Extract with defaults for optional fields using GetDefault[T]
+	status := json.GetDefault(apiResponse, "status", "unknown")
+	productID := json.GetDefault(apiResponse, "data.id", 0)
+	name := json.GetDefault(apiResponse, "data.name", "Unnamed Product")
+	description := json.GetDefault(apiResponse, "data.description", "No description available")
+	price := json.GetDefault(apiResponse, "data.price", 0.0)
 
 	fmt.Printf("   Status: %s\n", status)
 	fmt.Printf("   Product: %s (ID: %d)\n", name, productID)
@@ -228,11 +184,11 @@ func demonstratePracticalCases() {
 	}`
 
 	features := map[string]bool{
-		"new_ui":        json.GetBoolWithDefault(featuresJSON, "new_ui", false),
-		"beta_features": json.GetBoolWithDefault(featuresJSON, "beta_features", false),
-		"experimental":  json.GetBoolWithDefault(featuresJSON, "experimental", false),
-		"analytics":     json.GetBoolWithDefault(featuresJSON, "analytics", true),
-		"notifications": json.GetBoolWithDefault(featuresJSON, "notifications", true),
+		"new_ui":        json.GetDefault(featuresJSON, "new_ui", false),
+		"beta_features": json.GetDefault(featuresJSON, "beta_features", false),
+		"experimental":  json.GetDefault(featuresJSON, "experimental", false),
+		"analytics":     json.GetDefault(featuresJSON, "analytics", true),
+		"notifications": json.GetDefault(featuresJSON, "notifications", true),
 	}
 
 	fmt.Println("   Feature flags:")

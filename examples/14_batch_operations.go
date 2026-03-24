@@ -222,7 +222,10 @@ func demonstrateEncodeFunctions() {
 		{"id": 3, "name": "Charlie"},
 	}
 
-	streamJSON, err := json.EncodeStream(users, true)
+	opts := json.DefaultConfig()
+	opts.Pretty = true
+
+	streamJSON, err := json.EncodeStream(users, opts)
 	if err != nil {
 		fmt.Printf("   EncodeStream error: %v\n", err)
 	} else {
@@ -237,7 +240,7 @@ func demonstrateEncodeFunctions() {
 		"count": 2,
 	}
 
-	batchJSON, err := json.EncodeBatch(pairs, true)
+	batchJSON, err := json.EncodeBatch(pairs, opts)
 	if err != nil {
 		fmt.Printf("   EncodeBatch error: %v\n", err)
 	} else {
@@ -264,7 +267,7 @@ func demonstrateEncodeFunctions() {
 
 	// Only encode safe fields
 	fieldsToEncode := []string{"id", "name", "email", "role"}
-	fieldsJSON, err := json.EncodeFields(user, fieldsToEncode, true)
+	fieldsJSON, err := json.EncodeFields(user, fieldsToEncode, opts)
 	if err != nil {
 		fmt.Printf("   EncodeFields error: %v\n", err)
 	} else {

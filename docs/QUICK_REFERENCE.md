@@ -52,14 +52,13 @@ obj, err := json.GetObject(data, "user.profile")
 ### Retrieval with Default Values
 
 ```go
-// String (default: "Anonymous")
-name := json.GetStringWithDefault(data, "user.name", "Anonymous")
-
-// Integer (default: 0)
-age := json.GetIntWithDefault(data, "user.age", 0)
-
-// Boolean (default: false)
-active := json.GetBoolWithDefault(data, "user.active", false)
+// Recommended: Use GetDefault[T] for type-safe defaults
+name := json.GetDefault[string](data, "user.name", "Anonymous")
+age := json.GetDefault[int](data, "user.age", 0)
+active := json.GetDefault[bool](data, "user.active", false)
+price := json.GetDefault[float64](data, "product.price", 0.0)
+tags := json.GetDefault[[]any](data, "user.tags", []any{})
+settings := json.GetDefault[map[string]any](data, "settings", map[string]any{})
 ```
 
 ### Type-Safe Retrieval (Generics)
@@ -96,8 +95,10 @@ age := results["user.age"]
 // Set single value
 result, err := json.Set(data, "user.name", "Alice")
 
-// Auto-create paths
-result, err := json.SetWithAdd(data, "user.profile.city", "NYC")
+// Auto-create paths using Config
+cfg := json.DefaultConfig()
+cfg.CreatePaths = true
+result, err := json.Set(data, "user.profile.city", "NYC", cfg)
 ```
 
 ### Batch Setting
@@ -111,7 +112,9 @@ updates := map[string]any{
 result, err := json.SetMultiple(data, updates)
 
 // Batch setting with auto-create paths
-result, err := json.SetMultipleWithAdd(data, updates)
+cfg := json.DefaultConfig()
+cfg.CreatePaths = true
+result, err := json.SetMultiple(data, updates, cfg)
 ```
 
 ---
@@ -123,7 +126,9 @@ result, err := json.SetMultipleWithAdd(data, updates)
 result, err := json.Delete(data, "user.temp")
 
 // Delete and cleanup null values
-result, err := json.DeleteWithCleanNull(data, "user.temp")
+cfg := json.DefaultConfig()
+cfg.CleanupNulls = true
+result, err := json.Delete(data, "user.temp", cfg)
 ```
 
 ---
@@ -152,20 +157,29 @@ json.ForeachWithPath(data, "users", func(key any, user *json.IterableValue) {
 ### Iterate and Modify
 
 ```go
-modifiedJson, err := json.ForeachReturn(data, func(key any, item *json.IterableValue) {
-    // Modify data
+// Note: ForeachReturn is read-only - use json.Set for modifications
+// Collect paths that need modification during iteration
+var pathsToUpdate []string
+json.ForeachWithPath(data, "users", func(key any, item *json.IterableValue) {
     if item.GetString("status") == "inactive" {
-        item.Set("status", "active")
+        pathsToUpdate = append(pathsToUpdate, fmt.Sprintf("users[%d].status", key))
     }
 })
+
+// Apply modifications using json.Set
+result := data
+cfg := json.DefaultConfig()
+for _, path := range pathsToUpdate {
+    result, _ = json.Set(result, path, "active", cfg)
+}
 ```
 
 ### Nested Iteration (Read-only)
 
 ```go
 // Recursively iterate through all nested levels
-json.ForeachNested(data, func(key any, item *json.IterableValue, path string) {
-    fmt.Printf("Path: %s, Value: %v\n", path, item.GetAny(""))
+json.ForeachNested(data, func(key any, item *json.IterableValue) {
+    fmt.Printf("Key: %v, Value: %v\n", key, item.Get(""))
 })
 ```
 
@@ -281,17 +295,21 @@ data, err := processor.LoadFromReader(file)
 
 ```go
 // Save to file (pretty format)
-err := json.SaveToFile("output.json", data, true)
+cfg := json.DefaultConfig()
+cfg.Pretty = true
+err := json.SaveToFile("output.json", data, cfg)
 
 // Save to file (compact format)
-err := json.SaveToFile("output.json", data, false)
+err := json.SaveToFile("output.json", data, json.DefaultConfig())
 
 // Save to Writer (requires processor)
 processor := json.New()
 defer processor.Close()
 
 var buffer bytes.Buffer
-err = processor.SaveToWriter(&buffer, data, true)
+cfg := json.DefaultConfig()
+cfg.Pretty = true
+err = processor.SaveToWriter(&buffer, data, cfg)
 ```
 
 ---
@@ -305,31 +323,60 @@ err = processor.SaveToWriter(&buffer, data, true)
 processor := json.New()
 defer processor.Close()
 
-// Use custom configuration
-config := &json.Config{
-    EnableCache:               true,
-    MaxCacheSize:              128,                 // Default cache entry count
-    CacheTTL:                  5 * time.Minute,     // Default cache TTL
-    MaxJSONSize:               100 * 1024 * 1024,   // 100MB (default)
-    MaxPathDepth:              50,                  // Default path depth
-    MaxConcurrency:            50,                  // Default max concurrency
-    ParallelThreshold:         10,                  // Default parallel threshold
-    MaxBatchSize:              2000,                // Default batch size
-    MaxNestingDepthSecurity:   200,                 // Default nesting depth
-    MaxSecurityValidationSize: 10 * 1024 * 1024,    // 10MB validation size
-    MaxObjectKeys:             100000,              // Default max object keys
-    MaxArrayElements:          100000,              // Default max array elements
-    EnableValidation:          true,
-    ValidateInput:             true,
-    ValidateFilePath:          true,
-}
+// Use predefined configurations
+processor := json.New(json.DefaultConfig())    // Same as json.New()
+processor := json.New(json.SecurityConfig())   // For untrusted input
+processor := json.New(json.PrettyConfig())     // For pretty output
+```
+
+### Custom Configuration
+
+```go
+// Start with defaults and modify as needed
+config := json.DefaultConfig()
+config.EnableCache = true
+config.MaxCacheSize = 128
+config.CacheTTL = 5 * time.Minute
+config.MaxJSONSize = 100 * 1024 * 1024   // 100MB
+config.MaxPathDepth = 50
+config.CreatePaths = true  // For Set operations
+config.CleanupNulls = true // For Delete operations
 processor := json.New(config)
 defer processor.Close()
 
-// Use predefined configurations
-processor := json.New(json.HighSecurityConfig())  // For untrusted input
-processor := json.New(json.LargeDataConfig())     // For large JSON files
-processor := json.New(json.DefaultConfig())       // Same as json.New()
+// Security configuration for untrusted input
+secureCfg := json.SecurityConfig()  // Pre-configured for security
+result, err := json.Parse(untrustedInput, secureCfg)
+
+// For operation-specific settings (without creating processor)
+cfg := json.DefaultConfig()
+cfg.CreatePaths = true
+result, err := json.Set(data, "new.nested.path", "value", cfg)
+```
+
+### Common Configuration Patterns
+
+```go
+// Pattern 1: Auto-create paths for Set operations
+cfg := json.DefaultConfig()
+cfg.CreatePaths = true
+result, err := json.Set(data, "new.path", value, cfg)
+
+// Pattern 2: Cleanup nulls after Delete
+cfg := json.DefaultConfig()
+cfg.CleanupNulls = true
+result, err := json.Delete(data, "path", cfg)
+
+// Pattern 3: Pretty output for encoding
+cfg := json.DefaultConfig()
+cfg.Pretty = true
+cfg.Indent = "  "
+result, err := json.Encode(data, cfg)
+
+// Pattern 4: Compact output (no nulls)
+cfg := json.DefaultConfig()
+cfg.IncludeNulls = false
+result, err := json.Encode(data, cfg)
 ```
 
 ### Performance Monitoring
@@ -404,8 +451,9 @@ if err != nil {
     return err
 }
 
-// 2. Use default values
-name := json.GetStringWithDefault(data, "user.name", "Anonymous")
+// 2. Use default values (recommended: GetDefault[T])
+name := json.GetDefault[string](data, "user.name", "Anonymous")
+age := json.GetDefault[int](data, "user.age", 0)
 
 // 3. Type checking
 if errors.Is(err, json.ErrTypeMismatch) {

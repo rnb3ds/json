@@ -53,7 +53,7 @@ func NewUnifiedResourceManager() *UnifiedResourceManager {
 		},
 		optionsPool: &sync.Pool{
 			New: func() any {
-				opts := DefaultOptionsClone() // Use clone for pool objects
+				opts := DefaultConfig()
 				return opts
 			},
 		},
@@ -171,19 +171,19 @@ func (urm *UnifiedResourceManager) PutBuffer(buf []byte) {
 	atomic.AddInt64(&urm.allocatedBuffers, -1)
 }
 
-// GetOptions gets a ProcessorOptions from the pool
-func (urm *UnifiedResourceManager) GetOptions() *ProcessorOptions {
+// GetOptions gets a Config from the pool
+func (urm *UnifiedResourceManager) GetOptions() *Config {
 	obj := urm.optionsPool.Get()
-	opts, ok := obj.(*ProcessorOptions)
+	opts, ok := obj.(*Config)
 	if !ok {
 		// Pool corruption detected: type assertion failed
 		// Log this rare event for debugging purposes
 		slog.Debug("pool corruption detected: options type assertion failed", "type", fmt.Sprintf("%T", obj))
 		// Fallback: create new options if type assertion fails
-		opts = DefaultOptionsClone()
+		opts = DefaultConfig()
 	}
 	// Reset to default values
-	*opts = ProcessorOptions{
+	*opts = Config{
 		CacheResults:    true,
 		StrictMode:      false,
 		MaxDepth:        50,
@@ -198,8 +198,8 @@ func (urm *UnifiedResourceManager) GetOptions() *ProcessorOptions {
 	return opts
 }
 
-// PutOptions returns a ProcessorOptions to the pool
-func (urm *UnifiedResourceManager) PutOptions(opts *ProcessorOptions) {
+// PutOptions returns a Config to the pool
+func (urm *UnifiedResourceManager) PutOptions(opts *Config) {
 	if opts != nil {
 		defer atomic.AddInt64(&urm.allocatedOptions, -1)
 		// Clear context to prevent memory leaks

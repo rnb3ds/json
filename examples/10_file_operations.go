@@ -78,7 +78,9 @@ func demonstrateSaveToFile(tempDir string) {
 
 	// Save with pretty formatting
 	prettyPath := filepath.Join(tempDir, "config_pretty.json")
-	err := json.SaveToFile(prettyPath, config, true)
+	opts := json.DefaultConfig()
+	opts.Pretty = true
+	err := json.SaveToFile(prettyPath, config, opts)
 	if err != nil {
 		fmt.Printf("   Error saving pretty JSON: %v\n", err)
 		return
@@ -87,7 +89,7 @@ func demonstrateSaveToFile(tempDir string) {
 
 	// Save with compact formatting
 	compactPath := filepath.Join(tempDir, "config_compact.json")
-	err = json.SaveToFile(compactPath, config, false)
+	err = json.SaveToFile(compactPath, config, json.DefaultConfig())
 	if err != nil {
 		fmt.Printf("   Error saving compact JSON: %v\n", err)
 		return
@@ -149,7 +151,9 @@ func demonstrateMarshalToFile(tempDir string) {
 
 	// Marshal to file with pretty formatting
 	filePath := filepath.Join(tempDir, "user_marshal.json")
-	err := json.MarshalToFile(filePath, user, true)
+	opts := json.DefaultConfig()
+	opts.Pretty = true
+	err := json.MarshalToFile(filePath, user, opts)
 	if err != nil {
 		fmt.Printf("   Error marshaling to file: %v\n", err)
 		return
@@ -232,11 +236,15 @@ func demonstrateReadModifyWrite(tempDir string) {
 	updated, _ = json.Set(updated, "server.port", 9090)
 	updated, _ = json.Set(updated, "debug", true)
 
-	// Add new field
-	updated, _ = json.SetWithAdd(updated, "server.ssl", true)
+	// Add new field with automatic path creation using fluent config
+	cfg := json.DefaultConfig()
+	cfg.CreatePaths = true
+	updated, _ = json.Set(updated, "server.ssl", true, cfg)
 
 	// Save back
-	err = json.SaveToFile(configPath, updated, true)
+	opts := json.DefaultConfig()
+	opts.Pretty = true
+	err = json.SaveToFile(configPath, updated, opts)
 	if err != nil {
 		fmt.Printf("   Error saving: %v\n", err)
 		return

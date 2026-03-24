@@ -57,7 +57,7 @@ func (p *Processor) isPrimitiveType(data any) bool {
 }
 
 // Parse parses a JSON string into the provided target with improved error handling
-func (p *Processor) Parse(jsonStr string, target any, opts ...*ProcessorOptions) error {
+func (p *Processor) Parse(jsonStr string, target any, opts ...*Config) error {
 	if err := p.checkClosed(); err != nil {
 		return err
 	}
@@ -99,7 +99,7 @@ func (p *Processor) Parse(jsonStr string, target any, opts ...*ProcessorOptions)
 		}
 
 		// For other types, use custom encoder/decoder to preserve numbers
-		config := NewPrettyConfig()
+		config := PrettyConfig()
 		config.PreserveNumbers = true
 
 		encoder := NewCustomEncoder(config)
@@ -137,7 +137,7 @@ func (p *Processor) Parse(jsonStr string, target any, opts ...*ProcessorOptions)
 }
 
 // Valid validates JSON format without parsing the entire structure
-func (p *Processor) Valid(jsonStr string, opts ...*ProcessorOptions) (bool, error) {
+func (p *Processor) Valid(jsonStr string, opts ...*Config) (bool, error) {
 	if err := p.checkClosed(); err != nil {
 		return false, err
 	}
@@ -208,11 +208,6 @@ func (p *Processor) splitPath(path string, segments []PathSegment) []PathSegment
 	return internal.SplitPathIntoSegments(processedPath, segments)
 }
 
-// needsPathPreprocessing checks if path needs preprocessing (exported for testing)
-func (p *Processor) needsPathPreprocessing(path string) bool {
-	return internal.NeedsPathPreprocessing(path)
-}
-
 // preprocessPath preprocesses a path string (exported for testing)
 func (p *Processor) preprocessPath(path string, sb *strings.Builder) string {
 	return internal.PreprocessPath(path, sb)
@@ -267,7 +262,7 @@ func (p *Processor) parseExtractionSegment(part string, segments []PathSegment) 
 }
 
 // FormatPretty formats JSON string with indentation
-func (p *Processor) FormatPretty(jsonStr string, opts ...*ProcessorOptions) (string, error) {
+func (p *Processor) FormatPretty(jsonStr string, opts ...*Config) (string, error) {
 	if err := p.checkClosed(); err != nil {
 		return "", err
 	}
@@ -299,7 +294,7 @@ func (p *Processor) FormatPretty(jsonStr string, opts ...*ProcessorOptions) (str
 	}
 
 	// Use custom encoder with pretty formatting to preserve number types
-	config := NewPrettyConfig()
+	config := PrettyConfig()
 	config.PreserveNumbers = options.PreserveNumbers
 
 	encoder := NewCustomEncoder(config)
@@ -321,7 +316,7 @@ func (p *Processor) FormatPretty(jsonStr string, opts ...*ProcessorOptions) (str
 }
 
 // Compact removes whitespace from JSON string
-func (p *Processor) Compact(jsonStr string, opts ...*ProcessorOptions) (string, error) {
+func (p *Processor) Compact(jsonStr string, opts ...*Config) (string, error) {
 	if err := p.checkClosed(); err != nil {
 		return "", err
 	}
@@ -353,7 +348,7 @@ func (p *Processor) Compact(jsonStr string, opts ...*ProcessorOptions) (string, 
 	}
 
 	// Use custom encoder with compact formatting to preserve number types
-	config := DefaultEncodeConfig()
+	config := DefaultConfig()
 	config.PreserveNumbers = options.PreserveNumbers
 
 	encoder := NewCustomEncoder(config)
@@ -375,13 +370,13 @@ func (p *Processor) Compact(jsonStr string, opts ...*ProcessorOptions) (string, 
 }
 
 // FormatCompact removes whitespace from JSON string (alias for Compact)
-func (p *Processor) FormatCompact(jsonStr string, opts ...*ProcessorOptions) (string, error) {
+func (p *Processor) FormatCompact(jsonStr string, opts ...*Config) (string, error) {
 	return p.Compact(jsonStr, opts...)
 }
 
 // CompactBuffer appends to dst the JSON-encoded src with insignificant space characters elided.
-// Compatible with encoding/json.Compact with optional ProcessorOptions support.
-func (p *Processor) CompactBuffer(dst *bytes.Buffer, src []byte, opts ...*ProcessorOptions) error {
+// Compatible with encoding/json.Compact with optional Config support.
+func (p *Processor) CompactBuffer(dst *bytes.Buffer, src []byte, opts ...*Config) error {
 	compacted, err := p.Compact(string(src), opts...)
 	if err != nil {
 		return err
@@ -391,8 +386,8 @@ func (p *Processor) CompactBuffer(dst *bytes.Buffer, src []byte, opts ...*Proces
 }
 
 // IndentBuffer appends to dst an indented form of the JSON-encoded src.
-// Compatible with encoding/json.Indent with optional ProcessorOptions support.
-func (p *Processor) IndentBuffer(dst *bytes.Buffer, src []byte, prefix, indent string, opts ...*ProcessorOptions) error {
+// Compatible with encoding/json.Indent with optional Config support.
+func (p *Processor) IndentBuffer(dst *bytes.Buffer, src []byte, prefix, indent string, opts ...*Config) error {
 	var data any
 	if err := p.Unmarshal(src, &data, opts...); err != nil {
 		return err
@@ -407,15 +402,15 @@ func (p *Processor) IndentBuffer(dst *bytes.Buffer, src []byte, prefix, indent s
 
 // HTMLEscapeBuffer appends to dst the JSON-encoded src with HTML-safe escaping.
 // Replaces &, <, and > with \u0026, \u003c, and \u003e for safe HTML embedding.
-// Compatible with encoding/json.HTMLEscape with optional ProcessorOptions support.
-func (p *Processor) HTMLEscapeBuffer(dst *bytes.Buffer, src []byte, opts ...*ProcessorOptions) {
+// Compatible with encoding/json.HTMLEscape with optional Config support.
+func (p *Processor) HTMLEscapeBuffer(dst *bytes.Buffer, src []byte, opts ...*Config) {
 	var data any
 	if err := p.Unmarshal(src, &data, opts...); err != nil {
 		dst.Write(src)
 		return
 	}
 
-	config := DefaultEncodeConfig()
+	config := DefaultConfig()
 	config.EscapeHTML = true
 	escaped, err := p.EncodeWithConfig(data, config, opts...)
 	if err != nil {
@@ -788,21 +783,6 @@ func (d *NumberPreservingDecoder) convertJSONNumber(num json.Number) any {
 
 	// Fallback: return as string
 	return numStr
-}
-
-// containsAnyByte checks if string contains any of the specified bytes (faster than strings.ContainsAny)
-func containsAnyByte(s, chars string) bool {
-	return internal.ContainsAnyByte(s, chars)
-}
-
-// checkFloatPrecision quickly checks if float64 preserves the original string representation
-func (d *NumberPreservingDecoder) checkFloatPrecision(f float64, original string) bool {
-	// Use buffer from pool for efficient string formatting
-	buf := d.bufferPool.Get().([]byte)
-	defer d.bufferPool.Put(buf[:0])
-
-	formatted := strconv.AppendFloat(buf, f, 'f', -1, 64)
-	return string(formatted) == original
 }
 
 // preservingUnmarshal unmarshals JSON with number preservation

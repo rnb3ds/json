@@ -1,7 +1,7 @@
 package json
 
 import (
-	"sync"
+	"errors"
 	"time"
 
 	"github.com/cybergodev/json/internal"
@@ -126,29 +126,68 @@ const (
 // PERFORMANCE NOTE: For read-only access in hot paths, cache the result.
 func DefaultConfig() *Config {
 	return &Config{
-		MaxCacheSize:              DefaultCacheSize,
-		CacheTTL:                  DefaultCacheTTL,
-		EnableCache:               true,
-		MaxJSONSize:               DefaultMaxJSONSize,
-		MaxPathDepth:              DefaultMaxPathDepth,
-		MaxBatchSize:              DefaultMaxBatchSize,
+		// Cache Settings
+		MaxCacheSize: DefaultCacheSize,
+		CacheTTL:     DefaultCacheTTL,
+		EnableCache:  true,
+		CacheResults: true,
+
+		// Size Limits
+		MaxJSONSize:  DefaultMaxJSONSize,
+		MaxPathDepth: DefaultMaxPathDepth,
+		MaxBatchSize: DefaultMaxBatchSize,
+
+		// Security Limits
 		MaxNestingDepthSecurity:   DefaultMaxNestingDepth,
 		MaxSecurityValidationSize: DefaultMaxSecuritySize,
 		MaxObjectKeys:             DefaultMaxObjectKeys,
 		MaxArrayElements:          DefaultMaxArrayElements,
-		MaxConcurrency:            DefaultMaxConcurrency,
-		ParallelThreshold:         DefaultParallelThreshold,
-		EnableValidation:          true,
-		StrictMode:                false,
-		CreatePaths:               false,
-		CleanupNulls:              false,
-		CompactArrays:             false,
-		EnableMetrics:             false,
-		EnableHealthCheck:         false,
-		AllowComments:             false,
-		PreserveNumbers:           false,
-		ValidateInput:             true,
-		ValidateFilePath:          true,
+		FullSecurityScan:          false,
+
+		// Concurrency
+		MaxConcurrency:    DefaultMaxConcurrency,
+		ParallelThreshold: DefaultParallelThreshold,
+
+		// Processing Options
+		EnableValidation: true,
+		StrictMode:       false,
+		CreatePaths:      false,
+		CleanupNulls:     false,
+		CompactArrays:    false,
+		ContinueOnError:  false,
+
+		// Input/Output Options
+		AllowComments:    false,
+		PreserveNumbers:  false,
+		ValidateInput:    true,
+		ValidateFilePath: true,
+		SkipValidation:   false,
+
+		// Encoding Options
+		Pretty:          false,
+		Indent:          "  ",
+		Prefix:          "",
+		EscapeHTML:      true,
+		SortKeys:        false,
+		ValidateUTF8:    true,
+		MaxDepth:        100,
+		DisallowUnknown: false,
+		FloatPrecision:  -1,
+		FloatTruncate:   false,
+		DisableEscaping: false,
+		EscapeUnicode:   false,
+		EscapeSlash:     false,
+		EscapeNewlines:  true,
+		EscapeTabs:      true,
+		IncludeNulls:    true,
+		CustomEscapes:   nil,
+
+		// Observability
+		EnableMetrics:     false,
+		EnableHealthCheck: false,
+
+		// Context
+		Context: nil,
 	}
 }
 
@@ -185,246 +224,32 @@ func ValidateConfig(config *Config) error {
 	return nil
 }
 
-// HighSecurityConfig returns a configuration with enhanced security settings
-// for processing untrusted input from external sources.
-//
-// SECURITY: This configuration enables FullSecurityScan by default, which
-// disables sampling-based validation and performs complete security scanning
-// on all JSON input. Use this for public APIs, authentication endpoints,
-// financial data processing, or any scenario with untrusted input.
-func HighSecurityConfig() *Config {
-	config := DefaultConfig()
-	config.MaxNestingDepthSecurity = 20
-	config.MaxSecurityValidationSize = 10 * 1024 * 1024
-	config.MaxObjectKeys = 1000
-	config.MaxArrayElements = 1000
-	config.MaxJSONSize = 5 * 1024 * 1024
-	config.MaxPathDepth = 20
-	config.EnableValidation = true
-	config.StrictMode = true
-	config.FullSecurityScan = true // SECURITY: Enable full scan for maximum protection
-	return config
-}
-
-// LargeDataConfig returns a configuration optimized for large JSON datasets
-func LargeDataConfig() *Config {
-	config := DefaultConfig()
-	config.MaxNestingDepthSecurity = 100
-	config.MaxSecurityValidationSize = 500 * 1024 * 1024
-	config.MaxObjectKeys = 50000
-	config.MaxArrayElements = 50000
-	config.MaxJSONSize = 100 * 1024 * 1024
-	config.MaxPathDepth = 200
-	return config
-}
-
-// WebAPIConfig returns a configuration optimized for web API handlers.
-// This configuration provides a balance between security and performance
-// for public-facing APIs that receive JSON input from external clients.
-//
-// Key characteristics:
-//   - Full security scan enabled for all input
-//   - Moderate limits suitable for typical API payloads
-//   - Strict mode enabled for predictable parsing
-//   - Caching enabled for repeated operations
-//
-// Use this for: REST APIs, GraphQL endpoints, webhooks, public APIs.
-func WebAPIConfig() *Config {
-	config := DefaultConfig()
-	// Security settings - moderate but comprehensive
-	config.MaxNestingDepthSecurity = 50
-	config.MaxSecurityValidationSize = 10 * 1024 * 1024 // 10MB
-	config.MaxObjectKeys = 5000
-	config.MaxArrayElements = 5000
-	config.MaxJSONSize = 10 * 1024 * 1024 // 10MB max payload
-	config.MaxPathDepth = 30
-	config.FullSecurityScan = true
-	config.StrictMode = true
-	config.EnableValidation = true
-	// Performance settings
-	config.EnableCache = true
-	config.MaxCacheSize = 256
-	config.CacheTTL = 3 * time.Minute
-	return config
-}
-
-// FastConfig returns a configuration optimized for trusted internal services.
-// This configuration maximizes performance by reducing security overhead
-// and should ONLY be used when you trust the source of JSON data.
-//
-// Key characteristics:
-//   - Sampling-based security validation (faster but less thorough)
-//   - Larger limits for trusted internal data
-//   - Caching enabled with larger cache
-//   - Non-strict mode for flexible parsing
-//
-// SECURITY WARNING: Do NOT use this configuration for:
-//   - Public APIs
-//   - User-submitted data
-//   - External webhooks
-//   - Any untrusted input
-//
-// Use this for: Internal microservices, config files, trusted data pipelines.
-func FastConfig() *Config {
-	config := DefaultConfig()
-	// Relaxed limits for trusted internal data
-	config.MaxNestingDepthSecurity = 150
-	config.MaxSecurityValidationSize = 100 * 1024 * 1024 // 100MB
-	config.MaxObjectKeys = 100000
-	config.MaxArrayElements = 100000
-	config.MaxJSONSize = 50 * 1024 * 1024 // 50MB
-	config.MaxPathDepth = 100
-	// Performance optimizations
-	config.FullSecurityScan = false // Use sampling-based validation
-	config.StrictMode = false
-	config.EnableCache = true
-	config.MaxCacheSize = 512
-	config.CacheTTL = 10 * time.Minute
-	config.MaxConcurrency = 100
-	return config
-}
-
-// MinimalConfig returns a configuration with minimal overhead for maximum performance.
-// This configuration disables most safety features and should only be used in
-// controlled environments where you have complete control over the JSON data.
-//
-// Key characteristics:
-//   - Security validation disabled
-//   - Caching disabled
-//   - Maximum limits
-//   - No strict mode
-//
-// SECURITY WARNING: This configuration provides NO protection against:
-//   - Malformed JSON attacks
-//   - Deeply nested payload attacks
-//   - Memory exhaustion attacks
-//   - Prototype pollution attempts
-//
-// Use this for: Benchmarking, testing, trusted in-memory processing.
-func MinimalConfig() *Config {
-	config := DefaultConfig()
-	// Maximum limits
-	config.MaxNestingDepthSecurity = 200
-	config.MaxSecurityValidationSize = 500 * 1024 * 1024 // 500MB
-	config.MaxObjectKeys = 100000
-	config.MaxArrayElements = 100000
-	config.MaxJSONSize = 200 * 1024 * 1024 // 200MB
-	config.MaxPathDepth = 200
-	// Disable overhead features
-	config.EnableValidation = false
-	config.FullSecurityScan = false
-	config.StrictMode = false
-	config.EnableCache = false
-	config.MaxCacheSize = 0
-	config.EnableMetrics = false
-	config.EnableHealthCheck = false
-	return config
-}
-
-// defaultEncodeConfigPool caches encode config objects to reduce allocations
-// PERFORMANCE: Avoids repeated struct allocations for hot encoding paths
-var defaultEncodeConfigPool = &sync.Pool{
-	New: func() any {
-		return &EncodeConfig{
-			Pretty:          false,
-			Indent:          "  ",
-			Prefix:          "",
-			EscapeHTML:      true,
-			SortKeys:        false,
-			ValidateUTF8:    true,
-			MaxDepth:        100,
-			DisallowUnknown: false,
-			PreserveNumbers: false,
-			FloatPrecision:  -1,
-			FloatTruncate:   false,
-			DisableEscaping: false,
-			EscapeUnicode:   false,
-			EscapeSlash:     false,
-			EscapeNewlines:  true,
-			EscapeTabs:      true,
-			IncludeNulls:    true,
-			CustomEscapes:   nil,
-		}
-	},
-}
-
-// DefaultEncodeConfig returns default encoding configuration.
-// PERFORMANCE: Uses sync.Pool to reduce allocations in hot paths.
-//
-// IMPORTANT: The returned config is from a sync.Pool. Callers MUST either:
-// 1. Not modify the returned config (read-only usage), OR
-// 2. Call PutEncodeConfig(cfg) after use to return it to the pool, OR
-// 3. Use NewEncodeConfig() for a fresh non-pooled copy if modifications are needed
-//
-// Example correct usage:
-//
-//	// Read-only (no pooling needed)
-//	cfg := json.DefaultEncodeConfig()
-//	encoder := json.NewCustomEncoder(cfg)
-//
-//	// With modification (must return to pool)
-//	cfg := json.DefaultEncodeConfig()
-//	cfg.Pretty = true
-//	defer json.PutEncodeConfig(cfg)
-//	result, err := json.EncodeWithConfig(data, cfg)
-func DefaultEncodeConfig() *EncodeConfig {
-	cfg := defaultEncodeConfigPool.Get().(*EncodeConfig)
-	// Reset to defaults in case caller modified it
-	*cfg = EncodeConfig{
-		Pretty:          false,
-		Indent:          "  ",
-		Prefix:          "",
-		EscapeHTML:      true,
-		SortKeys:        false,
-		ValidateUTF8:    true,
-		MaxDepth:        100,
-		DisallowUnknown: false,
-		PreserveNumbers: false,
-		FloatPrecision:  -1,
-		FloatTruncate:   false,
-		DisableEscaping: false,
-		EscapeUnicode:   false,
-		EscapeSlash:     false,
-		EscapeNewlines:  true,
-		EscapeTabs:      true,
-		IncludeNulls:    true,
-		CustomEscapes:   nil,
-	}
-	return cfg
-}
-
-// PutEncodeConfig returns an EncodeConfig to the pool
-// PERFORMANCE: Call this after using DefaultEncodeConfig to reduce GC pressure
-func PutEncodeConfig(cfg *EncodeConfig) {
-	if cfg != nil {
-		cfg.CustomEscapes = nil // Clear potential reference
-		defaultEncodeConfigPool.Put(cfg)
-	}
-}
-
-// NewPrettyConfig returns configuration for pretty-printed JSON
-func NewPrettyConfig() *EncodeConfig {
-	cfg := DefaultEncodeConfig()
-	cfg.Pretty = true
-	cfg.Indent = "  "
-	return cfg
-}
-
 // Clone creates a copy of the configuration.
-// Note: Config currently contains only value types (int, bool, time.Duration),
-// so a shallow copy is sufficient. If reference types (slices, maps, pointers)
-// are added in the future, this method must be updated to perform deep copying.
+// Performs a deep copy of reference types (maps, slices).
 func (c *Config) Clone() *Config {
 	if c == nil {
 		return DefaultConfig()
 	}
 
 	clone := *c
+
+	// Deep copy CustomEscapes map
+	if c.CustomEscapes != nil {
+		clone.CustomEscapes = make(map[rune]string, len(c.CustomEscapes))
+		for k, v := range c.CustomEscapes {
+			clone.CustomEscapes[k] = v
+		}
+	}
+
 	return &clone
 }
 
 // Validate validates the configuration and applies corrections
 func (c *Config) Validate() error {
+	if c == nil {
+		return errors.New("config cannot be nil")
+	}
+
 	// Clamp int64 values
 	clampInt64 := func(value *int64, min, max int64) {
 		if *value <= 0 {
@@ -460,6 +285,14 @@ func (c *Config) Validate() error {
 		c.CacheTTL = DefaultCacheTTL
 	}
 
+	// Validate new encoding fields
+	if c.MaxDepth < 0 || c.MaxDepth > 1000 {
+		c.MaxDepth = 100
+	}
+	if c.FloatPrecision < -1 || c.FloatPrecision > 15 {
+		c.FloatPrecision = -1
+	}
+
 	return nil
 }
 
@@ -481,3 +314,77 @@ func (c *Config) ShouldCompactArrays() bool    { return c.CompactArrays }
 func (c *Config) ShouldValidateInput() bool    { return c.ValidateInput }
 func (c *Config) GetMaxNestingDepth() int      { return c.MaxNestingDepthSecurity }
 func (c *Config) ShouldValidateFilePath() bool { return c.ValidateFilePath }
+
+// Additional accessor methods for new Config fields
+func (c *Config) ShouldCacheResults() bool     { return c.CacheResults }
+func (c *Config) ShouldContinueOnError() bool  { return c.ContinueOnError }
+func (c *Config) ShouldSkipValidation() bool   { return c.SkipValidation }
+func (c *Config) GetEncodingMaxDepth() int     { return c.MaxDepth }
+func (c *Config) ShouldEscapeHTML() bool       { return c.EscapeHTML }
+func (c *Config) ShouldPrettyPrint() bool      { return c.Pretty }
+func (c *Config) GetIndent() string            { return c.Indent }
+func (c *Config) GetPrefix() string            { return c.Prefix }
+func (c *Config) ShouldSortKeys() bool         { return c.SortKeys }
+func (c *Config) ShouldValidateUTF8() bool     { return c.ValidateUTF8 }
+func (c *Config) ShouldIncludeNulls() bool     { return c.IncludeNulls }
+func (c *Config) GetFloatPrecision() int       { return c.FloatPrecision }
+func (c *Config) ShouldFullSecurityScan() bool { return c.FullSecurityScan }
+
+// =============================================================================
+// API Unification - Config presets for common scenarios
+// =============================================================================
+
+// SecurityConfig returns a configuration with enhanced security settings
+// for processing untrusted input from external sources.
+//
+// This is the recommended configuration for:
+//   - Public APIs and web services
+//   - User-submitted data
+//   - External webhooks
+//   - Authentication endpoints
+//   - Financial data processing
+//
+// Key characteristics:
+//   - Full security scan enabled for all input
+//   - Strict mode enabled for predictable parsing
+//   - Conservative limits for untrusted payloads
+//   - Caching enabled for repeated operations
+//
+// This function unifies HighSecurityConfig and WebAPIConfig into a single entry point.
+func SecurityConfig() *Config {
+	config := DefaultConfig()
+	// Security settings - conservative limits for untrusted input
+	config.MaxNestingDepthSecurity = 30
+	config.MaxSecurityValidationSize = 10 * 1024 * 1024 // 10MB
+	config.MaxObjectKeys = 5000
+	config.MaxArrayElements = 5000
+	config.MaxJSONSize = 10 * 1024 * 1024 // 10MB max payload
+	config.MaxPathDepth = 30
+	// Security features enabled
+	config.FullSecurityScan = true
+	config.StrictMode = true
+	config.EnableValidation = true
+	// Performance settings
+	config.EnableCache = true
+	config.MaxCacheSize = 256
+	config.CacheTTL = 3 * time.Minute
+	return config
+}
+
+// =============================================================================
+// Unified Config Presets - Use these for common scenarios
+// =============================================================================
+
+// PrettyConfig returns a Config for pretty-printed JSON output.
+// This is the unified version that returns Config instead of EncodeConfig.
+//
+// Example:
+//
+//	result, err := json.Encode(data, json.PrettyConfig())
+func PrettyConfig() *Config {
+	cfg := DefaultConfig()
+	cfg.Pretty = true
+	cfg.Indent = "  "
+	return cfg
+}
+

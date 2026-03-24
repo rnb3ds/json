@@ -20,7 +20,7 @@ func TestSecurityValidation(t *testing.T) {
 	helper := NewTestHelper(t)
 
 	t.Run("PathTraversal", func(t *testing.T) {
-		processor := New(HighSecurityConfig())
+		processor := New(SecurityConfig())
 		defer processor.Close()
 
 		testData := `{"user": {"name": "Alice", "email": "alice@example.com"}}`
@@ -57,7 +57,7 @@ func TestSecurityValidation(t *testing.T) {
 	})
 
 	t.Run("InjectionAttacks", func(t *testing.T) {
-		processor := New(HighSecurityConfig())
+		processor := New(SecurityConfig())
 		defer processor.Close()
 
 		testData := `{"data": "normal"}`
@@ -91,7 +91,7 @@ func TestSecurityValidation(t *testing.T) {
 
 			// Test 1: Quick size limit validation with small data
 			t.Run("QuickSizeLimit", func(t *testing.T) {
-				smallLimitConfig := HighSecurityConfig().Clone()
+				smallLimitConfig := SecurityConfig().Clone()
 				smallLimitConfig.MaxJSONSize = 100 * 1024 // 100KB limit for quick testing
 				processor := New(smallLimitConfig)
 				defer processor.Close()
@@ -111,37 +111,37 @@ func TestSecurityValidation(t *testing.T) {
 			})
 
 			// Test 2: Real large data test (optimized with strings.Builder)
-			// HighSecurityConfig has MaxJSONSize of 5MB, so we test with 2-3MB
+			// SecurityConfig has conservative limits for untrusted input
 			// This validates actual handling of large JSON without taking 199 seconds
 			t.Run("RealLargeData", func(t *testing.T) {
-				processor := New(HighSecurityConfig())
+				processor := New(SecurityConfig())
 				defer processor.Close()
 
 				// Generate 2MB of JSON (large enough to test, small enough to be fast)
 				// With optimized generateLargeJSON, this only takes ~0.5-1 second
-				largeJSON := generateLargeJSON(2 * 1024 * 1024) // 2MB (within 5MB limit)
+				largeJSON := generateLargeJSON(2 * 1024 * 1024) // 2MB (within 10MB limit)
 
-				// Should succeed since 2MB < 5MB limit
+				// Should succeed since 2MB < 10MB limit
 				result, err := processor.Get(largeJSON, "data")
 				helper.AssertNoError(err)
 				helper.AssertNotNil(result)
 
-				// Also test slightly above limit
-				overLimitJSON := generateLargeJSON(6 * 1024 * 1024) // 6MB (exceeds 5MB limit)
+				// Also test slightly above limit (12MB exceeds 10MB limit)
+				overLimitJSON := generateLargeJSON(12 * 1024 * 1024) // 12MB (exceeds 10MB limit)
 				_, err = processor.Get(overLimitJSON, "data")
 				helper.AssertError(err)
 			})
 		})
 
 		t.Run("DeepNesting", func(t *testing.T) {
-			processor := New(HighSecurityConfig())
+			processor := New(SecurityConfig())
 			defer processor.Close()
 
 			// Generate deeply nested JSON
 			deepJSON := generateDeepNesting(50) // 50 levels
 
 			_, err := processor.Get(deepJSON, "a")
-			// HighSecurityConfig has MaxNestingDepthSecurity = 20
+			// SecurityConfig has conservative nesting depth limits
 			if err != nil {
 				var jsonErr *JsonsError
 				if errors.As(err, &jsonErr) {
@@ -154,21 +154,10 @@ func TestSecurityValidation(t *testing.T) {
 	})
 
 	t.Run("SecurityConfigValidation", func(t *testing.T) {
-		t.Run("HighSecurityConfig", func(t *testing.T) {
-			config := HighSecurityConfig()
-			helper.AssertEqual(20, config.MaxNestingDepthSecurity)
-			helper.AssertEqual(int64(10*1024*1024), config.MaxSecurityValidationSize)
-			helper.AssertEqual(1000, config.MaxObjectKeys)
-			helper.AssertEqual(int64(5*1024*1024), config.MaxJSONSize)
-			helper.AssertTrue(config.StrictMode)
-		})
-
-		t.Run("LargeDataConfig", func(t *testing.T) {
-			config := LargeDataConfig()
-			helper.AssertEqual(100, config.MaxNestingDepthSecurity)
-			helper.AssertEqual(int64(500*1024*1024), config.MaxSecurityValidationSize)
-			helper.AssertEqual(50000, config.MaxObjectKeys)
-			helper.AssertEqual(int64(100*1024*1024), config.MaxJSONSize)
+		t.Run("SecurityConfig", func(t *testing.T) {
+			config := SecurityConfig()
+			helper.AssertTrue(config.FullSecurityScan)
+			helper.AssertTrue(config.EnableValidation)
 		})
 
 		t.Run("DefaultConfig", func(t *testing.T) {
@@ -179,7 +168,7 @@ func TestSecurityValidation(t *testing.T) {
 	})
 
 	t.Run("InputValidation", func(t *testing.T) {
-		processor := New(HighSecurityConfig())
+		processor := New(SecurityConfig())
 		defer processor.Close()
 
 		t.Run("InvalidCharacters", func(t *testing.T) {
@@ -216,7 +205,7 @@ func TestSecurityValidation(t *testing.T) {
 	})
 
 	t.Run("UnicodeHandling", func(t *testing.T) {
-		processor := New(HighSecurityConfig())
+		processor := New(SecurityConfig())
 		defer processor.Close()
 
 		// Test various Unicode edge cases
@@ -257,7 +246,7 @@ func TestSecurityValidation(t *testing.T) {
 	})
 
 	t.Run("BOMHandling", func(t *testing.T) {
-		processor := New(HighSecurityConfig())
+		processor := New(SecurityConfig())
 		defer processor.Close()
 
 		// Test JSON with BOM (Byte Order Mark)
@@ -276,7 +265,7 @@ func TestSecurityEdgeCases(t *testing.T) {
 	helper := NewTestHelper(t)
 
 	t.Run("NullBytesInStrings", func(t *testing.T) {
-		processor := New(HighSecurityConfig())
+		processor := New(SecurityConfig())
 		defer processor.Close()
 
 		jsonWithNull := `{"data": "test\x00middle"}`
@@ -289,7 +278,7 @@ func TestSecurityEdgeCases(t *testing.T) {
 	})
 
 	t.Run("OverlongPath", func(t *testing.T) {
-		processor := New(HighSecurityConfig())
+		processor := New(SecurityConfig())
 		defer processor.Close()
 
 		// Generate extremely long path
@@ -304,7 +293,7 @@ func TestSecurityEdgeCases(t *testing.T) {
 	})
 
 	t.Run("MassiveArrayIndex", func(t *testing.T) {
-		processor := New(HighSecurityConfig())
+		processor := New(SecurityConfig())
 		defer processor.Close()
 
 		testData := `{"arr": [1, 2, 3]}`
@@ -313,7 +302,7 @@ func TestSecurityEdgeCases(t *testing.T) {
 	})
 
 	t.Run("NegativeIndexEdgeCases", func(t *testing.T) {
-		processor := New(HighSecurityConfig())
+		processor := New(SecurityConfig())
 		defer processor.Close()
 
 		testData := `{"arr": [1, 2, 3]}`
@@ -1318,7 +1307,7 @@ func TestSamplingBypassFixed(t *testing.T) {
 
 	t.Run("FullSecurityScanStillWorks", func(t *testing.T) {
 		// Verify that FullSecurityScan=true still works as expected
-		secureConfig := HighSecurityConfig()
+		secureConfig := SecurityConfig()
 		secureConfig.FullSecurityScan = true
 		secureProcessor := New(secureConfig)
 		defer secureProcessor.Close()

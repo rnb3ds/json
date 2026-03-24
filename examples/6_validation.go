@@ -198,8 +198,8 @@ func demonstrateSchemaValidation() {
 }
 
 func demonstrateSecurityValidation() {
-	// Create a high-security processor
-	processor := json.New(json.HighSecurityConfig())
+	// Create a security processor
+	processor := json.New(json.SecurityConfig())
 	defer processor.Close()
 
 	testCases := []struct {
@@ -224,7 +224,7 @@ func demonstrateSecurityValidation() {
 		},
 	}
 
-	fmt.Println("   Security validation with HighSecurityConfig:")
+	fmt.Println("   Security validation with SecurityConfig:")
 	for _, tc := range testCases {
 		valid := json.IsValidJSON(tc.data)
 		status := "✓"

@@ -181,8 +181,10 @@ func demonstrateDeepModifications(data string) {
 	allMembers, _ := json.Get(updated2, "departments[0].teams[0].members{name}")
 	fmt.Printf("   Backend members after addition: %v\n", allMembers)
 
-	// Add nested path that doesn't exist
-	updated3, _ := json.SetWithAdd(data, "departments[0].budget.allocated", 1000000)
+	// Add nested path that doesn't exist using fluent config
+	cfg := json.DefaultConfig()
+	cfg.CreatePaths = true
+	updated3, _ := json.Set(data, "departments[0].budget.allocated", 1000000, cfg)
 	budget, _ := json.Get(updated3, "departments[0].budget")
 	fmt.Printf("   New budget path: %v\n", budget)
 }
@@ -224,13 +226,15 @@ func demonstrateBatchOperations(data string) {
 		fmt.Printf("   - %s: %v\n", path, value)
 	}
 
-	// SetMultipleWithAdd for paths that may not exist
+	// SetMultiple with path creation for paths that may not exist
 	newUpdates := map[string]any{
 		"statistics.total_departments": 2,
 		"statistics.total_teams":       3,
 		"statistics.last_updated":      "2024-06-15",
 	}
-	updated2, _ := json.SetMultipleWithAdd(data, newUpdates)
+	cfg := json.DefaultConfig()
+	cfg.CreatePaths = true
+	updated2, _ := json.SetMultiple(data, newUpdates, cfg)
 
 	stats, _ := json.Get(updated2, "statistics")
 	fmt.Printf("\n   New statistics section: %v\n", stats)

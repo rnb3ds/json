@@ -22,7 +22,7 @@ import (
 var globalRand = rand.New(rand.NewSource(time.Now().UnixNano()))
 
 // LoadFromFile loads JSON data from a file and returns the raw JSON string.
-func (p *Processor) LoadFromFile(filePath string, opts ...*ProcessorOptions) (string, error) {
+func (p *Processor) LoadFromFile(filePath string, opts ...*Config) (string, error) {
 	if err := p.checkClosed(); err != nil {
 		return "", err
 	}
@@ -46,7 +46,7 @@ func (p *Processor) LoadFromFile(filePath string, opts ...*ProcessorOptions) (st
 }
 
 // LoadFromFileAsData loads JSON data from a file and returns the parsed data structure.
-func (p *Processor) LoadFromFileAsData(filePath string, opts ...*ProcessorOptions) (any, error) {
+func (p *Processor) LoadFromFileAsData(filePath string, opts ...*Config) (any, error) {
 	if err := p.checkClosed(); err != nil {
 		return nil, err
 	}
@@ -73,7 +73,7 @@ func (p *Processor) LoadFromFileAsData(filePath string, opts ...*ProcessorOption
 }
 
 // LoadFromReader loads JSON data from an io.Reader and returns the raw JSON string.
-func (p *Processor) LoadFromReader(reader io.Reader, opts ...*ProcessorOptions) (string, error) {
+func (p *Processor) LoadFromReader(reader io.Reader, opts ...*Config) (string, error) {
 	if err := p.checkClosed(); err != nil {
 		return "", err
 	}
@@ -104,7 +104,7 @@ func (p *Processor) LoadFromReader(reader io.Reader, opts ...*ProcessorOptions) 
 }
 
 // LoadFromReaderAsData loads JSON data from an io.Reader and returns the parsed data structure.
-func (p *Processor) LoadFromReaderAsData(reader io.Reader, opts ...*ProcessorOptions) (any, error) {
+func (p *Processor) LoadFromReaderAsData(reader io.Reader, opts ...*Config) (any, error) {
 	if err := p.checkClosed(); err != nil {
 		return nil, err
 	}
@@ -185,8 +185,13 @@ func (p *Processor) createDirectoryIfNotExists(filePath string) error {
 	return nil
 }
 
-// SaveToFile saves data to a JSON file with automatic directory creation
-func (p *Processor) SaveToFile(filePath string, data any, pretty ...bool) error {
+// SaveToFile saves data to a JSON file using Config.
+// This is the unified API that accepts variadic Config.
+//
+// Example:
+//
+//	err := processor.SaveToFile("data.json", data, json.PrettyConfig())
+func (p *Processor) SaveToFile(filePath string, data any, cfg ...*Config) error {
 	if err := p.checkClosed(); err != nil {
 		return err
 	}
@@ -211,15 +216,11 @@ func (p *Processor) SaveToFile(filePath string, data any, pretty ...bool) error 
 		return err
 	}
 
-	// Determine formatting preference
-	shouldFormat := false
-	if len(pretty) > 0 {
-		shouldFormat = pretty[0]
-	}
-
 	// Encode data to JSON
-	config := DefaultEncodeConfig()
-	config.Pretty = shouldFormat
+	config := DefaultConfig()
+	if len(cfg) > 0 && cfg[0] != nil {
+		config = cfg[0]
+	}
 	jsonStr, err := p.EncodeWithConfig(processedData, config)
 	if err != nil {
 		return err
@@ -238,8 +239,14 @@ func (p *Processor) SaveToFile(filePath string, data any, pretty ...bool) error 
 	return nil
 }
 
-// SaveToWriter saves data to an io.Writer
-func (p *Processor) SaveToWriter(writer io.Writer, data any, pretty bool, opts ...*ProcessorOptions) error {
+// SaveToWriter saves data to an io.Writer using Config.
+// This is the unified API that accepts variadic Config.
+//
+// Example:
+//
+//	var buf bytes.Buffer
+//	err := processor.SaveToWriter(&buf, data, json.PrettyConfig())
+func (p *Processor) SaveToWriter(writer io.Writer, data any, cfg ...*Config) error {
 	if err := p.checkClosed(); err != nil {
 		return err
 	}
@@ -251,9 +258,11 @@ func (p *Processor) SaveToWriter(writer io.Writer, data any, pretty bool, opts .
 	}
 
 	// Encode data to JSON
-	config := DefaultEncodeConfig()
-	config.Pretty = pretty
-	jsonStr, err := p.EncodeWithConfig(processedData, config, opts...)
+	config := DefaultConfig()
+	if len(cfg) > 0 && cfg[0] != nil {
+		config = cfg[0]
+	}
+	jsonStr, err := p.EncodeWithConfig(processedData, config)
 	if err != nil {
 		return err
 	}
@@ -271,8 +280,13 @@ func (p *Processor) SaveToWriter(writer io.Writer, data any, pretty bool, opts .
 	return nil
 }
 
-// MarshalToFile converts data to JSON and saves it to the specified file.
-func (p *Processor) MarshalToFile(path string, data any, pretty ...bool) error {
+// MarshalToFile converts data to JSON and saves it to the specified file using Config.
+// This is the unified API that accepts variadic Config.
+//
+// Example:
+//
+//	err := processor.MarshalToFile("data.json", data, json.PrettyConfig())
+func (p *Processor) MarshalToFile(path string, data any, cfg ...*Config) error {
 	if err := p.checkClosed(); err != nil {
 		return err
 	}
@@ -297,11 +311,15 @@ func (p *Processor) MarshalToFile(path string, data any, pretty ...bool) error {
 		return err
 	}
 
+	// Determine formatting preference
+	config := DefaultConfig()
+	if len(cfg) > 0 && cfg[0] != nil {
+		config = cfg[0]
+	}
+
 	// Marshal data to JSON bytes
 	var jsonBytes []byte
-
-	shouldFormat := len(pretty) > 0 && pretty[0]
-	if shouldFormat {
+	if config.Pretty {
 		jsonBytes, err = p.MarshalIndent(processedData, "", "  ")
 	} else {
 		jsonBytes, err = p.Marshal(processedData)
@@ -329,7 +347,7 @@ func (p *Processor) MarshalToFile(path string, data any, pretty ...bool) error {
 }
 
 // UnmarshalFromFile reads JSON data from the specified file and unmarshals it into the provided value.
-func (p *Processor) UnmarshalFromFile(path string, v any, opts ...*ProcessorOptions) error {
+func (p *Processor) UnmarshalFromFile(path string, v any, opts ...*Config) error {
 	if err := p.checkClosed(); err != nil {
 		return err
 	}

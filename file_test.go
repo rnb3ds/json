@@ -89,7 +89,9 @@ func TestSaveToFile(t *testing.T) {
 		filePath := filepath.Join(tempDir, "save_test.json")
 		testData := map[string]interface{}{"name": "test", "value": 123}
 
-		err := processor.SaveToFile(filePath, testData, false)
+		cfg := DefaultConfig()
+		cfg.Pretty = false
+		err := processor.SaveToFile(filePath, testData, cfg)
 		if err != nil {
 			t.Errorf("SaveToFile failed: %v", err)
 		}
@@ -114,7 +116,9 @@ func TestSaveToFile(t *testing.T) {
 		filePath := filepath.Join(tempDir, "pretty_test.json")
 		testData := map[string]interface{}{"name": "test", "nested": map[string]interface{}{"key": "value"}}
 
-		err := processor.SaveToFile(filePath, testData, true)
+		cfg := DefaultConfig()
+		cfg.Pretty = true
+		err := processor.SaveToFile(filePath, testData, cfg)
 		if err != nil {
 			t.Errorf("SaveToFile with pretty failed: %v", err)
 		}
@@ -134,7 +138,9 @@ func TestSaveToFile(t *testing.T) {
 		filePath := filepath.Join(tempDir, "subdir", "nested", "test.json")
 		testData := map[string]interface{}{"created": true}
 
-		err := processor.SaveToFile(filePath, testData, false)
+		cfg := DefaultConfig()
+		cfg.Pretty = false
+		err := processor.SaveToFile(filePath, testData, cfg)
 		if err != nil {
 			t.Errorf("SaveToFile with directory creation failed: %v", err)
 		}
@@ -149,7 +155,9 @@ func TestSaveToFile(t *testing.T) {
 		filePath := filepath.Join(tempDir, "string_test.json")
 		testData := `{"already":"json"}`
 
-		err := processor.SaveToFile(filePath, testData, false)
+		cfg := DefaultConfig()
+		cfg.Pretty = false
+		err := processor.SaveToFile(filePath, testData, cfg)
 		if err != nil {
 			t.Errorf("SaveToFile with string data failed: %v", err)
 		}
@@ -199,7 +207,9 @@ func TestSaveToWriter(t *testing.T) {
 		testData := map[string]interface{}{"writer": "test"}
 		var buf bytes.Buffer
 
-		err := processor.SaveToWriter(&buf, testData, false)
+		cfg := DefaultConfig()
+		cfg.Pretty = false
+		err := processor.SaveToWriter(&buf, testData, cfg)
 		if err != nil {
 			t.Errorf("SaveToWriter failed: %v", err)
 		}
@@ -213,7 +223,9 @@ func TestSaveToWriter(t *testing.T) {
 		testData := map[string]interface{}{"pretty": true}
 		var buf bytes.Buffer
 
-		err := processor.SaveToWriter(&buf, testData, true)
+		cfg := DefaultConfig()
+		cfg.Pretty = true
+		err := processor.SaveToWriter(&buf, testData, cfg)
 		if err != nil {
 			t.Errorf("SaveToWriter with pretty failed: %v", err)
 		}
@@ -240,7 +252,9 @@ func TestMarshalToFile(t *testing.T) {
 
 		testData := TestStruct{Name: "marshal_test", Value: 42}
 
-		err := processor.MarshalToFile(filePath, testData, false)
+		cfg := DefaultConfig()
+		cfg.Pretty = false
+		err := processor.MarshalToFile(filePath, testData, cfg)
 		if err != nil {
 			t.Errorf("MarshalToFile failed: %v", err)
 		}
@@ -262,7 +276,9 @@ func TestMarshalToFile(t *testing.T) {
 
 		testData := map[string]interface{}{"pretty": true}
 
-		err := processor.MarshalToFile(filePath, testData, true)
+		cfg := DefaultConfig()
+		cfg.Pretty = true
+		err := processor.MarshalToFile(filePath, testData, cfg)
 		if err != nil {
 			t.Errorf("MarshalToFile with pretty failed: %v", err)
 		}

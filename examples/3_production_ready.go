@@ -103,18 +103,20 @@ func demonstrateConfigurations(testData string) {
 	duration := time.Since(start)
 	fmt.Printf("   - 100 operations in: %v\n", duration)
 
-	// 3. High-security configuration
-	fmt.Println("\n   High-Security Configuration:")
-	secConfig := json.HighSecurityConfig()
+	// 3. Security configuration
+	fmt.Println("\n   Security Configuration:")
+	secConfig := json.SecurityConfig()
 	secProc := json.New(secConfig)
 	defer secProc.Close()
 
 	result2, _ := secProc.Get(testData, "users[0].email")
 	fmt.Printf("   - Secure result: %v\n", result2)
 
-	// 4. Large data configuration
+	// 4. Large data configuration (use SecurityConfig with adjusted limits)
 	fmt.Println("\n   Large Data Configuration:")
-	largeConfig := json.LargeDataConfig()
+	largeConfig := json.SecurityConfig()
+	largeConfig.MaxJSONSize = 100 * 1024 * 1024 // 100MB
+	largeConfig.MaxNestingDepthSecurity = 100
 	largeProc := json.New(largeConfig)
 	defer largeProc.Close()
 
@@ -253,13 +255,13 @@ func demonstrateResourceManagement(testData string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	opts := &json.ProcessorOptions{
-		Context:      ctx,
-		CacheResults: true,
-		StrictMode:   false,
-	}
+	// Using unified Config for operation
+	cfg := json.DefaultConfig()
+	cfg.Context = ctx
+	cfg.CacheResults = true
+	cfg.StrictMode = false
 
-	result, err := processor.Get(testData, "config.features", opts)
+	result, err := processor.Get(testData, "config.features", cfg)
 	if err != nil {
 		fmt.Printf("   ✗ Operation failed: %v\n", err)
 	} else {

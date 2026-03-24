@@ -118,14 +118,14 @@ func SafeTypeAssert[T any](value any) (T, bool) {
 type Iterator struct {
 	processor *Processor
 	data      any
-	options   *ProcessorOptions
+	options   *Config
 	position  int
 	keys      []string // Cached keys for map iteration
 	keysInit  bool     // Flag for lazy initialization
 }
 
 // NewIterator creates a new Iterator
-func NewIterator(processor *Processor, data any, opts *ProcessorOptions) *Iterator {
+func NewIterator(processor *Processor, data any, opts *Config) *Iterator {
 	return &Iterator{
 		processor: processor,
 		data:      data,
@@ -1571,19 +1571,6 @@ func (it *ParallelIterator) Filter(predicate func(int, any) bool) []any {
 	})
 
 	return result
-}
-
-// ============================================================================
-// ITERABLE VALUE POOL - Reduces allocations for IterableValue
-// PERFORMANCE: Pooling reduces GC pressure for frequent iterations
-// NOTE: iterableValuePool is declared earlier in the file (near line 159)
-// ============================================================================
-
-// newPooledIterableValue creates an IterableValue from the pool
-func newPooledIterableValue(data any) *IterableValue {
-	iv := iterableValuePool.Get().(*IterableValue)
-	iv.data = data
-	return iv
 }
 
 // Release returns the IterableValue to the pool
