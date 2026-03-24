@@ -732,16 +732,16 @@ func TestLazyParser(t *testing.T) {
 		}
 	})
 
-	t.Run("GetAll", func(t *testing.T) {
+	t.Run("GetObject", func(t *testing.T) {
 		data := []byte(`{"a":1,"b":2}`)
 		lp := NewLazyParser(data)
 
-		all, err := lp.GetAll()
+		all, err := lp.GetObject()
 		if err != nil {
-			t.Errorf("GetAll failed: %v", err)
+			t.Errorf("GetObject failed: %v", err)
 		}
 		if all["a"].(float64) != 1 || all["b"].(float64) != 2 {
-			t.Errorf("GetAll = %v, want {a:1, b:2}", all)
+			t.Errorf("GetObject = %v, want {a:1, b:2}", all)
 		}
 	})
 

@@ -25,7 +25,7 @@ type Processor struct {
 	metrics           *processorMetrics
 	resourceMonitor   *ResourceMonitor
 	logger            atomic.Value // *slog.Logger - thread-safe logger storage
-	securityValidator *SecurityValidator
+	securityValidator *securityValidator
 	// Cached RecursiveProcessor for reuse across operations (performance optimization)
 	recursiveProcessor *RecursiveProcessor
 	// Wait group for tracking active operations during Close()
@@ -78,7 +78,7 @@ func New(config ...*Config) *Processor {
 		config:          cfg,
 		cache:           internal.NewCacheManager(cfg),
 		resourceMonitor: NewResourceMonitor(),
-		securityValidator: NewSecurityValidator(
+		securityValidator: newSecurityValidator(
 			cfg.MaxJSONSize,
 			MaxPathLength,
 			cfg.MaxNestingDepthSecurity,
@@ -130,7 +130,7 @@ func (p *Processor) Close() error {
 		select {
 		case <-done:
 			// All operations completed normally
-		case <-time.After(5 * time.Second):
+		case <-time.After(CloseOperationTimeout):
 			// Timeout waiting for operations
 			// Log warning if logger is available (non-blocking)
 			if logger, ok := p.logger.Load().(*slog.Logger); ok && logger != nil {
@@ -158,7 +158,7 @@ func (p *Processor) Close() error {
 			select {
 			case <-drainDone:
 				// Drain completed
-			case <-time.After(1 * time.Second):
+			case <-time.After(SemaphoreDrainTimeout):
 				// Timeout on drain - continue with cleanup
 			}
 		}
@@ -434,7 +434,7 @@ func hashStringToUint64(s string) uint64 {
 
 	// PERFORMANCE: For large strings, sample instead of scanning entire string
 	// This provides a good enough hash for cache purposes while being much faster
-	if len(s) > 4096 {
+	if len(s) > LargeStringHashThreshold {
 		// Include length in hash
 		length := len(s)
 		h ^= uint64(length)
@@ -695,9 +695,9 @@ func putPathSegmentSlice(s *[]internal.PathSegment) {
 	pathSegmentPool.Put(s)
 }
 
-// createCacheKey creates a cache key with stack-allocated buffer for small keys
-// This avoids heap allocation for common case of small paths
-func createCacheKey(prefix, data string) string {
+// createSimpleCacheKey creates a simple "prefix:data" format cache key
+// Uses stack-allocated buffer for small keys to avoid heap allocation
+func createSimpleCacheKey(prefix, data string) string {
 	totalLen := len(prefix) + 1 + len(data) // prefix + ":" + data
 
 	// Use stack-allocated buffer for small keys (up to 256 bytes)
@@ -722,7 +722,7 @@ func (p *Processor) getCachedPathSegments(path string) ([]internal.PathSegment, 
 	// Use unified cache manager
 	if p.config.EnableCache {
 		// PERFORMANCE: Create cache key once for both lookup and storage
-		cacheKey := createCacheKey("path", path)
+		cacheKey := createSimpleCacheKey("path", path)
 		if cached, ok := p.cache.Get(cacheKey); ok {
 			if segments, ok := cached.([]internal.PathSegment); ok {
 				// PERFORMANCE: Return cached segments directly - they are immutable after creation
@@ -766,14 +766,14 @@ func (p *Processor) getCachedParsedJSON(jsonStr string) (any, error) {
 	// Large JSON: cache with hash-based key (up to LargeJSONCacheLimit)
 	canCache := p.config.EnableCache && jsonLen <= LargeJSONCacheLimit
 
+	// Compute cache key once if caching is enabled
+	var cacheKey string
 	if canCache {
-		// Use hash-based key for larger JSON to reduce memory usage
-		var cacheKey string
 		if jsonLen <= SmallJSONCacheLimit {
-			cacheKey = createCacheKey("json", jsonStr)
+			cacheKey = createSimpleCacheKey("json", jsonStr)
 		} else {
 			// For medium/large JSON, use hash-based key
-			cacheKey = createCacheKey("jsonh", formatUint64HexString(hashStringToUint64(jsonStr)))
+			cacheKey = createSimpleCacheKey("jsonh", formatUint64HexString(hashStringToUint64(jsonStr)))
 		}
 
 		if cached, ok := p.cache.Get(cacheKey); ok {
@@ -789,13 +789,7 @@ func (p *Processor) getCachedParsedJSON(jsonStr string) (any, error) {
 	}
 
 	// Cache parsed JSON based on size limits
-	if canCache && atomic.LoadInt32(&p.state) == 0 {
-		var cacheKey string
-		if jsonLen <= SmallJSONCacheLimit {
-			cacheKey = createCacheKey("json", jsonStr)
-		} else {
-			cacheKey = createCacheKey("jsonh", formatUint64HexString(hashStringToUint64(jsonStr)))
-		}
+	if canCache && cacheKey != "" && atomic.LoadInt32(&p.state) == 0 {
 		p.cache.Set(cacheKey, data)
 	}
 
@@ -1383,8 +1377,7 @@ func (p *Processor) Get(jsonStr, path string, opts ...*ProcessorOptions) (any, e
 		data = cachedData
 	} else {
 		// Parse JSON with error context
-		var parseErr error
-		parseErr = p.Parse(jsonStr, &data, opts...)
+		parseErr := p.Parse(jsonStr, &data, opts...)
 		if parseErr != nil {
 			p.incrementErrorCount()
 			recordMetrics(false)
@@ -1865,14 +1858,7 @@ func sanitizePath(path string) string {
 	// Remove potential sensitive patterns but keep structure
 	// Use case-insensitive matching for better security
 	lowerPath := strings.ToLower(path)
-	sensitivePatterns := []string{
-		"password", "passwd", "pwd",
-		"token", "bearer",
-		"key", "apikey", "api_key", "api-key",
-		"secret", "credential", "cred",
-		"auth", "authorization",
-		"session", "cookie",
-	}
+	// Use package-level sensitivePatterns from security.go for consistency
 	for _, pattern := range sensitivePatterns {
 		if strings.Contains(lowerPath, pattern) {
 			return "[REDACTED_PATH]"

@@ -11,12 +11,12 @@ import (
 	"github.com/cybergodev/json/internal"
 )
 
-// ArrayHelper provides centralized array operation utilities
-type ArrayHelper struct{}
+// arrayHelper provides centralized array operation utilities
+type arrayHelper struct{}
 
-// ParseArrayIndex parses an array index from a string
+// parseArrayIndex parses an array index from a string
 // Delegates to internal implementation for consistency
-func (ah *ArrayHelper) ParseArrayIndex(indexStr string) int {
+func (ah *arrayHelper) parseArrayIndex(indexStr string) int {
 	indexStr = strings.Trim(indexStr, "[] \t")
 	if indexStr == "" {
 		return InvalidArrayIndex
@@ -28,20 +28,20 @@ func (ah *ArrayHelper) ParseArrayIndex(indexStr string) int {
 	return InvalidArrayIndex
 }
 
-// NormalizeIndex converts negative indices to positive indices
+// normalizeIndex converts negative indices to positive indices
 // Delegates to internal implementation for consistency
-func (ah *ArrayHelper) NormalizeIndex(index, length int) int {
+func (ah *arrayHelper) normalizeIndex(index, length int) int {
 	return internal.NormalizeIndex(index, length)
 }
 
-// ValidateBounds checks if an index is within valid bounds [0, length)
+// validateBounds checks if an index is within valid bounds [0, length)
 // Note: This does NOT support negative indices (unlike IsValidIndex in internal)
-func (ah *ArrayHelper) ValidateBounds(index, length int) bool {
+func (ah *arrayHelper) validateBounds(index, length int) bool {
 	return index >= 0 && index < length
 }
 
-// ClampIndex clamps an index to valid bounds [0, length]
-func (ah *ArrayHelper) ClampIndex(index, length int) int {
+// clampIndex clamps an index to valid bounds [0, length]
+func (ah *arrayHelper) clampIndex(index, length int) int {
 	if index < 0 {
 		return 0
 	}
@@ -51,9 +51,9 @@ func (ah *ArrayHelper) ClampIndex(index, length int) int {
 	return index
 }
 
-// CompactArray removes nil values and deletion markers from an array
+// compactArray removes nil values and deletion markers from an array
 // Optimized: first pass counts removable elements, avoiding allocation if none found
-func (ah *ArrayHelper) CompactArray(arr []any) []any {
+func (ah *arrayHelper) compactArray(arr []any) []any {
 	if len(arr) == 0 {
 		return arr
 	}
@@ -81,8 +81,8 @@ func (ah *ArrayHelper) CompactArray(arr []any) []any {
 	return result
 }
 
-// ExtendArray extends an array to the specified length, filling with nil values
-func (ah *ArrayHelper) ExtendArray(arr []any, targetLength int) []any {
+// extendArray extends an array to the specified length, filling with nil values
+func (ah *arrayHelper) extendArray(arr []any, targetLength int) []any {
 	if len(arr) >= targetLength {
 		return arr
 	}
@@ -92,16 +92,16 @@ func (ah *ArrayHelper) ExtendArray(arr []any, targetLength int) []any {
 	return extended
 }
 
-// GetElement safely gets an element from an array with bounds checking
+// getElement safely gets an element from an array with bounds checking
 // Delegates to internal implementation for consistency
-func (ah *ArrayHelper) GetElement(arr []any, index int) (any, bool) {
+func (ah *arrayHelper) getElement(arr []any, index int) (any, bool) {
 	return internal.GetSafeArrayElement(arr, index)
 }
 
-// SetElement safely sets an element in an array with bounds checking
+// setElement safely sets an element in an array with bounds checking
 // Note: This does NOT support negative indices for bounds checking
-func (ah *ArrayHelper) SetElement(arr []any, index int, value any) bool {
-	normalizedIndex := ah.NormalizeIndex(index, len(arr))
+func (ah *arrayHelper) setElement(arr []any, index int, value any) bool {
+	normalizedIndex := ah.normalizeIndex(index, len(arr))
 	// Check bounds on normalized index
 	if normalizedIndex < 0 || normalizedIndex >= len(arr) {
 		return false
@@ -110,9 +110,9 @@ func (ah *ArrayHelper) SetElement(arr []any, index int, value any) bool {
 	return true
 }
 
-// PerformSlice performs array slicing with step support
+// performSlice performs array slicing with step support
 // Delegates to internal implementation for consistency
-func (ah *ArrayHelper) PerformSlice(arr []any, start, end, step int) []any {
+func (ah *arrayHelper) performSlice(arr []any, start, end, step int) []any {
 	if len(arr) == 0 || step == 0 {
 		return []any{}
 	}
@@ -123,17 +123,6 @@ func (ah *ArrayHelper) PerformSlice(arr []any, start, end, step int) []any {
 	stepPtr := &step
 
 	return internal.PerformArraySlice(arr, startPtr, endPtr, stepPtr)
-}
-
-// Global array helper instance
-var globalArrayHelper = &ArrayHelper{}
-
-// ParseArrayIndexGlobal is a package-level function for backward compatibility.
-//
-// Deprecated: Use ArrayHelper.ParseArrayIndex method instead for better testability.
-// This function will be removed in a future major version (v2.0.0).
-func ParseArrayIndexGlobal(indexStr string) int {
-	return globalArrayHelper.ParseArrayIndex(indexStr)
 }
 
 // ============================================================================
@@ -1132,9 +1121,9 @@ func FastToBool(value any) (bool, bool) {
 // PERFORMANCE: Estimate map size from JSON content to reduce reallocations
 // ============================================================================
 
-// EstimateMapSize estimates the number of keys in a JSON object from raw bytes
+// estimateMapSize estimates the number of keys in a JSON object from raw bytes
 // PERFORMANCE: Pre-sizing maps reduces reallocation overhead
-func EstimateMapSize(jsonBytes []byte) int {
+func estimateMapSize(jsonBytes []byte) int {
 	if len(jsonBytes) == 0 {
 		return 0
 	}
@@ -1176,9 +1165,9 @@ func EstimateMapSize(jsonBytes []byte) int {
 	return count
 }
 
-// EstimateArraySize estimates the number of elements in a JSON array from raw bytes
+// estimateArraySize estimates the number of elements in a JSON array from raw bytes
 // PERFORMANCE: Pre-sizing arrays reduces reallocation overhead
-func EstimateArraySize(jsonBytes []byte) int {
+func estimateArraySize(jsonBytes []byte) int {
 	if len(jsonBytes) == 0 {
 		return 0
 	}
@@ -1223,18 +1212,18 @@ func EstimateArraySize(jsonBytes []byte) int {
 	return count
 }
 
-// NewMapWithEstimatedSize creates a new map with capacity estimated from JSON bytes
-func NewMapWithEstimatedSize(jsonBytes []byte) map[string]any {
-	size := EstimateMapSize(jsonBytes)
+// newMapWithEstimatedSize creates a new map with capacity estimated from JSON bytes
+func newMapWithEstimatedSize(jsonBytes []byte) map[string]any {
+	size := estimateMapSize(jsonBytes)
 	if size < 8 {
 		size = 8
 	}
 	return make(map[string]any, size)
 }
 
-// NewSliceWithEstimatedSize creates a new slice with capacity estimated from JSON bytes
-func NewSliceWithEstimatedSize(jsonBytes []byte) []any {
-	size := EstimateArraySize(jsonBytes)
+// newSliceWithEstimatedSize creates a new slice with capacity estimated from JSON bytes
+func newSliceWithEstimatedSize(jsonBytes []byte) []any {
+	size := estimateArraySize(jsonBytes)
 	if size < 8 {
 		size = 8
 	}
@@ -1255,10 +1244,10 @@ type keyInternMap struct {
 	mu   sync.RWMutex
 }
 
-// InternKey returns an interned copy of the key string
+// internKey returns an interned copy of the key string
 // If the key has been seen before, returns the existing copy
 // Otherwise, stores and returns a copy of the key
-func InternKey(key string) string {
+func internKey(key string) string {
 	// Fast path: check without lock first (safe for reads)
 	globalKeyInternMap.mu.RLock()
 	if interned, ok := globalKeyInternMap.keys[key]; ok {
@@ -1294,11 +1283,11 @@ func InternKey(key string) string {
 	return key
 }
 
-// InternMapKeys interns all keys in a map
+// internMapKeys interns all keys in a map
 // PERFORMANCE: Reduces memory usage when the same keys appear in multiple maps
-func InternMapKeys(m map[string]any) {
+func internMapKeys(m map[string]any) {
 	for k, v := range m {
-		interned := InternKey(k)
+		interned := internKey(k)
 		if interned != k {
 			delete(m, k)
 			m[interned] = v
@@ -1306,8 +1295,8 @@ func InternMapKeys(m map[string]any) {
 	}
 }
 
-// ClearKeyInternCache clears the key intern cache
-func ClearKeyInternCache() {
+// clearKeyInternCache clears the key intern cache
+func clearKeyInternCache() {
 	globalKeyInternMap.mu.Lock()
 	globalKeyInternMap.keys = make(map[string]string, 256)
 	globalKeyInternMap.mu.Unlock()

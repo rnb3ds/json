@@ -795,9 +795,10 @@ func TestProcessorValidateSchema(t *testing.T) {
 	t.Run("array min items violation", func(t *testing.T) {
 		jsonStr := `[1]`
 		schema := &Schema{
-			Type: "array",
+			Type:     "array",
+			MinItems: 2,
 		}
-		schema.SetMinItems(2) // Use setter to set hasMinItems flag
+		schema.hasMinItems = true
 
 		errors, err := processor.ValidateSchema(jsonStr, schema)
 		if err != nil {
@@ -811,9 +812,10 @@ func TestProcessorValidateSchema(t *testing.T) {
 	t.Run("array max items violation", func(t *testing.T) {
 		jsonStr := `[1, 2, 3, 4, 5]`
 		schema := &Schema{
-			Type: "array",
+			Type:     "array",
+			MaxItems: 3,
 		}
-		schema.SetMaxItems(3) // Use setter to set hasMaxItems flag
+		schema.hasMaxItems = true
 
 		errors, err := processor.ValidateSchema(jsonStr, schema)
 		if err != nil {
@@ -1044,65 +1046,24 @@ func TestProcessorValidateSchema(t *testing.T) {
 	})
 }
 
-// TestSchemaMethods tests Schema setter methods
-func TestSchemaMethods(t *testing.T) {
-	schema := &Schema{}
-
-	t.Run("SetMinLength", func(t *testing.T) {
-		schema.SetMinLength(5)
-		if schema.MinLength != 5 {
-			t.Errorf("MinLength = %d, want 5", schema.MinLength)
-		}
-	})
-
-	t.Run("SetMaxLength", func(t *testing.T) {
-		schema.SetMaxLength(100)
-		if schema.MaxLength != 100 {
-			t.Errorf("MaxLength = %d, want 100", schema.MaxLength)
-		}
-	})
-
-	t.Run("SetMinimum", func(t *testing.T) {
-		schema.SetMinimum(0.0)
-		if schema.Minimum != 0.0 {
-			t.Errorf("Minimum = %v, want 0.0", schema.Minimum)
-		}
-	})
-
-	t.Run("SetMaximum", func(t *testing.T) {
-		schema.SetMaximum(100.0)
-		if schema.Maximum != 100.0 {
-			t.Errorf("Maximum = %v, want 100.0", schema.Maximum)
-		}
-	})
-
-	t.Run("SetMinItems", func(t *testing.T) {
-		schema.SetMinItems(1)
-		if schema.MinItems != 1 {
-			t.Errorf("MinItems = %d, want 1", schema.MinItems)
-		}
-	})
-
-	t.Run("SetMaxItems", func(t *testing.T) {
-		schema.SetMaxItems(10)
-		if schema.MaxItems != 10 {
-			t.Errorf("MaxItems = %d, want 10", schema.MaxItems)
-		}
-	})
-
-	t.Run("SetExclusiveMinimum", func(t *testing.T) {
-		schema.SetExclusiveMinimum(true)
-		if !schema.ExclusiveMinimum {
-			t.Error("ExclusiveMinimum should be true")
-		}
-	})
-
-	t.Run("SetExclusiveMaximum", func(t *testing.T) {
-		schema.SetExclusiveMaximum(true)
-		if !schema.ExclusiveMaximum {
-			t.Error("ExclusiveMaximum should be true")
-		}
-	})
+// TestSchemaHasMethods tests Schema Has* methods for constraint tracking
+func TestSchemaHasMethods(t *testing.T) {
+	schema := &Schema{
+		MinLength:        5,
+		MaxLength:        100,
+		Minimum:          0.0,
+		Maximum:          100.0,
+		MinItems:         1,
+		MaxItems:         10,
+		ExclusiveMinimum: true,
+		ExclusiveMaximum: true,
+	}
+	schema.hasMinLength = true
+	schema.hasMaxLength = true
+	schema.hasMinimum = true
+	schema.hasMaximum = true
+	schema.hasMinItems = true
+	schema.hasMaxItems = true
 
 	t.Run("HasMinLength", func(t *testing.T) {
 		if !schema.HasMinLength() {

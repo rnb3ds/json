@@ -173,8 +173,8 @@ type validationCacheEntry struct {
 	lastAccess int64 // Unix timestamp for LRU eviction
 }
 
-// SecurityValidator provides comprehensive security validation for JSON processing.
-type SecurityValidator struct {
+// securityValidator provides comprehensive security validation for JSON processing.
+type securityValidator struct {
 	maxJSONSize      int64
 	maxPathLength    int
 	maxNestingDepth  int
@@ -188,9 +188,9 @@ type SecurityValidator struct {
 	securityScanMutex sync.Mutex
 }
 
-// NewSecurityValidator creates a new security validator with the given limits.
-func NewSecurityValidator(maxJSONSize int64, maxPathLength, maxNestingDepth int, fullSecurityScan bool) *SecurityValidator {
-	return &SecurityValidator{
+// newSecurityValidator creates a new security validator with the given limits.
+func newSecurityValidator(maxJSONSize int64, maxPathLength, maxNestingDepth int, fullSecurityScan bool) *securityValidator {
+	return &securityValidator{
 		maxJSONSize:      maxJSONSize,
 		maxPathLength:    maxPathLength,
 		maxNestingDepth:  maxNestingDepth,
@@ -200,7 +200,7 @@ func NewSecurityValidator(maxJSONSize int64, maxPathLength, maxNestingDepth int,
 }
 
 // ValidateAll performs comprehensive validation of both JSON and path inputs.
-func (sv *SecurityValidator) ValidateAll(jsonStr, path string) error {
+func (sv *securityValidator) ValidateAll(jsonStr, path string) error {
 	if err := sv.ValidateJSONInput(jsonStr); err != nil {
 		return err
 	}
@@ -209,7 +209,7 @@ func (sv *SecurityValidator) ValidateAll(jsonStr, path string) error {
 
 // ValidateJSONInput performs comprehensive JSON input validation with enhanced security.
 // PERFORMANCE: Uses caching to avoid repeated validation of the same JSON string.
-func (sv *SecurityValidator) ValidateJSONInput(jsonStr string) error {
+func (sv *securityValidator) ValidateJSONInput(jsonStr string) error {
 	if int64(len(jsonStr)) > sv.maxJSONSize {
 		return newSizeLimitError("validate_json_input", int64(len(jsonStr)), sv.maxJSONSize)
 	}
@@ -267,7 +267,7 @@ const validationCacheHashThreshold = 4096
 // PERFORMANCE: Returns the key for reuse to avoid double hash computation
 // SECURITY FIX: Uses SHA-256 for larger strings to prevent collision attacks
 // OPTIMIZED: Uses manual buffer building to avoid fmt.Sprintf allocations
-func (sv *SecurityValidator) getValidationCacheKey(jsonStr string) string {
+func (sv *securityValidator) getValidationCacheKey(jsonStr string) string {
 	strLen := len(jsonStr)
 
 	// SECURITY FIX: Use SHA-256 for better collision resistance on larger strings
@@ -320,7 +320,7 @@ func (sv *SecurityValidator) getValidationCacheKey(jsonStr string) string {
 // PERFORMANCE: Returns the cache key for reuse in cacheValidation to avoid double hash computation
 // RACE-FIX: Access time is not updated in read lock to avoid data race.
 // The LRU eviction still works correctly with occasional access time updates during Set operations.
-func (sv *SecurityValidator) isValidationCached(jsonStr string) (string, bool) {
+func (sv *securityValidator) isValidationCached(jsonStr string) (string, bool) {
 	// Compute cache key once
 	cacheKey := sv.getValidationCacheKey(jsonStr)
 
@@ -337,7 +337,7 @@ func (sv *SecurityValidator) isValidationCached(jsonStr string) (string, bool) {
 // cacheValidationWithKey marks a JSON string as successfully validated using a pre-computed key
 // PERFORMANCE: Accepts pre-computed cache key to avoid double hash computation for large JSON
 // SECURITY FIX: Uses LRU-style eviction at 80% capacity to prevent memory spikes
-func (sv *SecurityValidator) cacheValidationWithKey(cacheKey string) {
+func (sv *securityValidator) cacheValidationWithKey(cacheKey string) {
 	sv.cacheMutex.Lock()
 	defer sv.cacheMutex.Unlock()
 
@@ -353,17 +353,9 @@ func (sv *SecurityValidator) cacheValidationWithKey(cacheKey string) {
 	}
 }
 
-// cacheValidation marks a JSON string as successfully validated
-// Deprecated: Use cacheValidationWithKey for better performance with large JSON.
-// This method will be removed in v3.0.0.
-func (sv *SecurityValidator) cacheValidation(jsonStr string) {
-	cacheKey := sv.getValidationCacheKey(jsonStr)
-	sv.cacheValidationWithKey(cacheKey)
-}
-
 // evictLRUEntries removes oldest 25% of entries using LRU strategy
 // SECURITY: Intelligent LRU eviction for validation cache
-func (sv *SecurityValidator) evictLRUEntries() {
+func (sv *securityValidator) evictLRUEntries() {
 	if len(sv.validationCache) == 0 {
 		return
 	}
@@ -396,7 +388,7 @@ func (sv *SecurityValidator) evictLRUEntries() {
 }
 
 // ValidatePathInput performs comprehensive path validation with enhanced security.
-func (sv *SecurityValidator) ValidatePathInput(path string) error {
+func (sv *securityValidator) ValidatePathInput(path string) error {
 	if len(path) > sv.maxPathLength {
 		return newPathError(path, fmt.Sprintf("path length %d exceeds maximum %d", len(path), sv.maxPathLength), ErrInvalidPath)
 	}
@@ -417,7 +409,7 @@ func (sv *SecurityValidator) ValidatePathInput(path string) error {
 	return sv.validatePathSyntax(path)
 }
 
-func (sv *SecurityValidator) validateJSONSecurity(jsonStr string) error {
+func (sv *securityValidator) validateJSONSecurity(jsonStr string) error {
 	// Fast path: check for null bytes first (most critical)
 	if strings.IndexByte(jsonStr, 0) != -1 {
 		return newSecurityError("validate_json_security", "null byte injection detected")
@@ -454,7 +446,7 @@ func (sv *SecurityValidator) validateJSONSecurity(jsonStr string) error {
 
 // validateJSONSecurityFull performs full security validation for small JSON strings
 // PERFORMANCE: Optimized to scan all patterns in a single pass
-func (sv *SecurityValidator) validateJSONSecurityFull(jsonStr string) error {
+func (sv *securityValidator) validateJSONSecurityFull(jsonStr string) error {
 	// SECURITY: Always scan critical patterns in full - these cannot be bypassed
 	// Critical patterns: __proto__, constructor[, prototype.
 	// PERFORMANCE: Use combined check instead of multiple Contains calls
@@ -539,7 +531,7 @@ func (sv *SecurityValidator) validateJSONSecurityFull(jsonStr string) error {
 //
 // SECURITY RECOMMENDATION: Use FullSecurityScan=true for maximum performance when
 // processing trusted internal data. The optimized mode now provides full coverage.
-func (sv *SecurityValidator) validateJSONSecurityOptimized(jsonStr string) error {
+func (sv *securityValidator) validateJSONSecurityOptimized(jsonStr string) error {
 	// If full security scan is enabled, use the simpler full scan approach
 	if sv.fullSecurityScan {
 		return sv.validateJSONSecurityFull(jsonStr)
@@ -642,7 +634,7 @@ func (sv *SecurityValidator) validateJSONSecurityOptimized(jsonStr string) error
 
 // scanWindowForPatterns scans a single window for all dangerous patterns
 // SECURITY FIX: Extracted to ensure consistent scanning logic
-func (sv *SecurityValidator) scanWindowForPatterns(window string) error {
+func (sv *securityValidator) scanWindowForPatterns(window string) error {
 	for _, dp := range dangerousPatterns {
 		if idx := fastIndexIgnoreCase(window, dp.pattern); idx != -1 {
 			if sv.isDangerousContextIgnoreCase(window, idx, len(dp.pattern)) {
@@ -657,7 +649,7 @@ func (sv *SecurityValidator) scanWindowForPatterns(window string) error {
 // characters commonly used in attack payloads
 // SECURITY FIX: Now samples from multiple regions of the JSON to detect attacks
 // hidden in the middle or end of the payload, not just the beginning
-func (sv *SecurityValidator) hasSuspiciousCharacterDensity(jsonStr string) bool {
+func (sv *securityValidator) hasSuspiciousCharacterDensity(jsonStr string) bool {
 	jsonLen := len(jsonStr)
 	if jsonLen == 0 {
 		return false
@@ -723,7 +715,7 @@ func (sv *SecurityValidator) hasSuspiciousCharacterDensity(jsonStr string) bool 
 // hasPatternFragments checks for partial dangerous patterns that might indicate
 // an attempt to hide malicious code
 // SECURITY FIX: Expanded fragment list for better detection coverage
-func (sv *SecurityValidator) hasPatternFragments(jsonStr string) bool {
+func (sv *securityValidator) hasPatternFragments(jsonStr string) bool {
 	// Check for partial patterns that might be completed elsewhere
 	// SECURITY FIX: Expanded list to catch more attack variants
 	fragments := []string{
@@ -759,7 +751,7 @@ func (sv *SecurityValidator) hasPatternFragments(jsonStr string) bool {
 // scanSuspiciousSections performs targeted scanning on sections containing
 // potential attack fragments
 // SECURITY FIX: Now uses the centralized scanWindowForPatterns for consistency
-func (sv *SecurityValidator) scanSuspiciousSections(jsonStr string) error {
+func (sv *securityValidator) scanSuspiciousSections(jsonStr string) error {
 	// SECURITY FIX: Use the same scanning function for consistency
 	// This scans the entire string for patterns, providing defense in depth
 	return sv.scanWindowForPatterns(jsonStr)
@@ -773,7 +765,7 @@ func fastIndexIgnoreCase(s, pattern string) int {
 
 // isDangerousContextIgnoreCase checks if a pattern match is in a dangerous context (case-insensitive)
 // SECURITY FIX: Improved to handle patterns that start/end with special characters
-func (sv *SecurityValidator) isDangerousContextIgnoreCase(s string, idx, patternLen int) bool {
+func (sv *securityValidator) isDangerousContextIgnoreCase(s string, idx, patternLen int) bool {
 	// Get the pattern being checked from the window
 	if idx+patternLen > len(s) {
 		return false
@@ -800,7 +792,7 @@ func (sv *SecurityValidator) isDangerousContextIgnoreCase(s string, idx, pattern
 	return before && after
 }
 
-func (sv *SecurityValidator) validatePathSecurity(path string) error {
+func (sv *securityValidator) validatePathSecurity(path string) error {
 	// Normalize the path using Unicode NFC to detect homograph attacks
 	// This ensures that visually similar characters are normalized
 	normalizedPath := norm.NFC.String(path)
@@ -887,7 +879,7 @@ func containsAnyIgnoreCase(s string, patterns ...string) bool {
 	return false
 }
 
-func (sv *SecurityValidator) validateJSONStructure(jsonStr string) error {
+func (sv *securityValidator) validateJSONStructure(jsonStr string) error {
 	// Fast path: trim whitespace without allocation
 	start := 0
 	end := len(jsonStr)
@@ -921,7 +913,7 @@ func isWhitespace(c byte) bool {
 	return c == ' ' || c == '\t' || c == '\n' || c == '\r'
 }
 
-func (sv *SecurityValidator) validateNestingDepth(jsonStr string) error {
+func (sv *securityValidator) validateNestingDepth(jsonStr string) error {
 	// PERFORMANCE: For small JSON (< 64KB), skip detailed nesting validation
 	// The standard library json.Unmarshal already handles this efficiently
 	// Only do detailed scan for large JSON where DoS attacks are more likely
@@ -1007,7 +999,7 @@ func (sv *SecurityValidator) validateNestingDepth(jsonStr string) error {
 	return nil
 }
 
-func (sv *SecurityValidator) validateBracketMatching(path string) error {
+func (sv *securityValidator) validateBracketMatching(path string) error {
 	brackets := 0
 	braces := 0
 	inString := false
@@ -1059,7 +1051,7 @@ func (sv *SecurityValidator) validateBracketMatching(path string) error {
 	return nil
 }
 
-func (sv *SecurityValidator) validatePathSyntax(path string) error {
+func (sv *securityValidator) validatePathSyntax(path string) error {
 	if strings.Contains(path, "...") {
 		return newPathError(path, "invalid consecutive dots", ErrInvalidPath)
 	}

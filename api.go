@@ -122,6 +122,7 @@ func GetMultiple(jsonStr string, paths []string, opts ...*ProcessorOptions) (map
 }
 
 // isZeroValue checks if a value is the zero value for its type
+// Supports all standard numeric types, bool, string, slices, maps, and json.Number
 func isZeroValue(v any) bool {
 	if v == nil {
 		return true
@@ -131,7 +132,25 @@ func isZeroValue(v any) bool {
 		return val == ""
 	case int:
 		return val == 0
+	case int8:
+		return val == 0
+	case int16:
+		return val == 0
+	case int32:
+		return val == 0
 	case int64:
+		return val == 0
+	case uint:
+		return val == 0
+	case uint8:
+		return val == 0
+	case uint16:
+		return val == 0
+	case uint32:
+		return val == 0
+	case uint64:
+		return val == 0
+	case float32:
 		return val == 0
 	case float64:
 		return val == 0
@@ -141,6 +160,10 @@ func isZeroValue(v any) bool {
 		return len(val) == 0
 	case map[string]any:
 		return len(val) == 0
+	case Number:
+		// json.Number type - check if it represents zero
+		n, err := val.Int64()
+		return err == nil && n == 0
 	default:
 		return false
 	}
@@ -207,7 +230,7 @@ func MarshalIndent(v any, prefix, indent string) ([]byte, error) {
 // Compact appends to dst the JSON-encoded src with insignificant space characters elided.
 // This function is 100% compatible with encoding/json.Compact.
 func Compact(dst *bytes.Buffer, src []byte) error {
-	compacted, err := FormatCompact(string(src))
+	compacted, err := CompactString(string(src))
 	if err != nil {
 		return err
 	}
@@ -261,7 +284,7 @@ func htmlEscape(s string) string {
 
 // CompactBuffer is an alias for Compact for buffer operations
 func CompactBuffer(dst *bytes.Buffer, src []byte, opts ...*ProcessorOptions) error {
-	compacted, err := FormatCompact(string(src), opts...)
+	compacted, err := CompactString(string(src), opts...)
 	if err != nil {
 		return err
 	}
@@ -320,13 +343,6 @@ func FormatPretty(jsonStr string, opts ...*ProcessorOptions) (string, error) {
 // This is the recommended function name for consistency with Processor.Compact.
 func CompactString(jsonStr string, opts ...*ProcessorOptions) (string, error) {
 	return getDefaultProcessor().Compact(jsonStr, opts...)
-}
-
-// FormatCompact removes whitespace from JSON string.
-//
-// Deprecated: Use CompactString for consistency with Processor.Compact.
-func FormatCompact(jsonStr string, opts ...*ProcessorOptions) (string, error) {
-	return CompactString(jsonStr, opts...)
 }
 
 // Print prints any Go value as JSON to stdout in compact format.

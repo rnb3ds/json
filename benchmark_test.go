@@ -230,7 +230,7 @@ func BenchmarkIterator_SmallArray(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		data, _ := processor.Get(jsonStr, ".")
 		if arr, ok := data.([]any); ok {
-			it := NewPooledSliceIterator(arr)
+			it := newPooledSliceIterator(arr)
 			for it.Next() {
 				_ = it.Value()
 			}
@@ -249,7 +249,7 @@ func BenchmarkIterator_LargeArray(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		data, _ := processor.Get(jsonStr, ".")
 		if arr, ok := data.([]any); ok {
-			it := NewPooledSliceIterator(arr)
+			it := newPooledSliceIterator(arr)
 			for it.Next() {
 				_ = it.Value()
 			}
@@ -268,7 +268,7 @@ func BenchmarkIterator_SmallObject(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		data, _ := processor.Get(jsonStr, ".")
 		if obj, ok := data.(map[string]any); ok {
-			it := NewPooledMapIterator(obj)
+			it := newPooledMapIterator(obj)
 			for it.Next() {
 				_, _ = it.Key(), it.Value()
 			}
@@ -287,7 +287,7 @@ func BenchmarkIterator_LargeObject(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		data, _ := processor.Get(jsonStr, ".")
 		if obj, ok := data.(map[string]any); ok {
-			it := NewPooledMapIterator(obj)
+			it := newPooledMapIterator(obj)
 			for it.Next() {
 				_, _ = it.Key(), it.Value()
 			}
@@ -888,7 +888,7 @@ func BenchmarkPooledSliceIterator(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		it := NewPooledSliceIterator(data)
+		it := newPooledSliceIterator(data)
 		for it.Next() {
 			_ = it.Value()
 		}
@@ -920,7 +920,7 @@ func BenchmarkPooledMapIterator(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		it := NewPooledMapIterator(data)
+		it := newPooledMapIterator(data)
 		for it.Next() {
 			_, _ = it.Key(), it.Value()
 		}

@@ -1112,14 +1112,11 @@ err := processor.ProcessReader(reader, func(lineNum int, obj map[string]any) err
 
 ---
 
-## 🤝 贡献
-
-欢迎贡献代码、报告问题和提出建议！
-
 ## 📄 许可证
 
-MIT 许可证 - 详见 [LICENSE](LICENSE) 文件。
+MIT License - 详见 [LICENSE](LICENSE) 文件。
 
 ---
 
-**用心为 Go 社区打造** ❤️ | 如果这个项目对您有帮助，请给它一个 ⭐️ Star！
+如果这个项目对你有帮助，请给一个 Star！ ⭐
+

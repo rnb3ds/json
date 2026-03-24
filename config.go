@@ -3,6 +3,8 @@ package json
 import (
 	"sync"
 	"time"
+
+	"github.com/cybergodev/json/internal"
 )
 
 // ConfigInterface defines the interface for configuration objects
@@ -40,7 +42,17 @@ const (
 	CacheCleanupKeepSize = 256
 
 	// Operation Limits - Secure defaults with reasonable headroom
-	// InvalidArrayIndex is a sentinel value indicating an invalid or out-of-bounds array index
+	// InvalidArrayIndex is a sentinel value indicating an invalid or out-of-bounds array index.
+	// This value is returned by array parsing functions when the index cannot be determined
+	// (e.g., invalid format, overflow, or empty string).
+	// IMPORTANT: Do not use this value as a valid array index. Always check if the returned
+	// value equals InvalidArrayIndex before using it.
+	// Example:
+	//
+	//	index := helper.ParseArrayIndex(str)
+	//	if index == json.InvalidArrayIndex {
+	//	    // Handle invalid index
+	//	}
 	InvalidArrayIndex        = -999999
 	DefaultMaxJSONSize       = 100 * 1024 * 1024 // 100MB
 	DefaultMaxSecuritySize   = 10 * 1024 * 1024
@@ -67,18 +79,19 @@ const (
 	DefaultOperationTimeout = 30 * time.Second
 	AcquireSlotRetryDelay   = 1 * time.Millisecond
 
+	// Processor lifecycle timeouts
+	CloseOperationTimeout    = 5 * time.Second // Timeout waiting for active operations during Close()
+	SemaphoreDrainTimeout    = 1 * time.Second // Timeout for draining concurrency semaphore
+	LargeStringHashThreshold = 4096            // Byte threshold for using sampling-based hash
+
 	// Path Validation - Secure but flexible
-	// Note: MaxPathLength (5000) is also defined in internal/constants.go for internal use
-	// Both definitions must be kept in sync
-	MaxPathLength    = 5000
+	// MaxPathLength is the maximum allowed path length for security.
+	// Re-exported from internal package for public API access.
+	MaxPathLength    = internal.MaxPathLength
 	MaxSegmentLength = 1024
 
 	// Cache TTL
 	DefaultCacheTTL = 5 * time.Minute
-
-	// JSON processing thresholds
-	SmallJSONThreshold  = 256  // Threshold for lightweight JSON normalization
-	MediumJSONThreshold = 1024 // Threshold for full JSON normalization
 
 	// Cache key constants - OPTIMIZED: Increased limits for better cache hit rate
 	CacheKeyHashLength   = 32      // Length for cache key hash
@@ -335,8 +348,25 @@ var defaultEncodeConfigPool = &sync.Pool{
 	},
 }
 
-// DefaultEncodeConfig returns default encoding configuration
-// PERFORMANCE: Uses sync.Pool to reduce allocations in hot paths
+// DefaultEncodeConfig returns default encoding configuration.
+// PERFORMANCE: Uses sync.Pool to reduce allocations in hot paths.
+//
+// IMPORTANT: The returned config is from a sync.Pool. Callers MUST either:
+// 1. Not modify the returned config (read-only usage), OR
+// 2. Call PutEncodeConfig(cfg) after use to return it to the pool, OR
+// 3. Use NewEncodeConfig() for a fresh non-pooled copy if modifications are needed
+//
+// Example correct usage:
+//
+//	// Read-only (no pooling needed)
+//	cfg := json.DefaultEncodeConfig()
+//	encoder := json.NewCustomEncoder(cfg)
+//
+//	// With modification (must return to pool)
+//	cfg := json.DefaultEncodeConfig()
+//	cfg.Pretty = true
+//	defer json.PutEncodeConfig(cfg)
+//	result, err := json.EncodeWithConfig(data, cfg)
 func DefaultEncodeConfig() *EncodeConfig {
 	cfg := defaultEncodeConfigPool.Get().(*EncodeConfig)
 	// Reset to defaults in case caller modified it

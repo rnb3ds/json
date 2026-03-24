@@ -27,8 +27,16 @@ var smallIntStrings = [100]string{
 	"90", "91", "92", "93", "94", "95", "96", "97", "98", "99",
 }
 
-// intToStringFast converts an integer to string using pre-computed values for small integers
-// PERFORMANCE: Avoids strconv.Itoa allocations for values 0-99
+// intToStringFast converts an integer to string using pre-computed values for small integers.
+// PERFORMANCE: Avoids strconv.Itoa allocations for values 0-99.
+//
+// Usage: This function is available for performance-critical code paths.
+// For most cases, strconv.Itoa is sufficient and more readable.
+//
+// Example:
+//
+//	// In hot paths where array indices are commonly 0-99
+//	key := intToStringFast(index)
 func intToStringFast(n int) string {
 	if n >= 0 && n < 100 {
 		return smallIntStrings[n]
@@ -36,27 +44,7 @@ func intToStringFast(n int) string {
 	return strconv.Itoa(n)
 }
 
-func (p *Processor) isArrayType(data any) bool {
-	return internal.IsArrayType(data)
-}
-
-func (p *Processor) isObjectType(data any) bool {
-	return internal.IsObjectType(data)
-}
-
-func (p *Processor) isMapType(data any) bool {
-	return internal.IsMapType(data)
-}
-
-func (p *Processor) isSliceType(data any) bool {
-	if data == nil {
-		return false
-	}
-
-	v := reflect.ValueOf(data)
-	return v.Kind() == reflect.Slice
-}
-
+// isPrimitiveType checks if data is a JSON primitive type
 func (p *Processor) isPrimitiveType(data any) bool {
 	switch data.(type) {
 	case string, int, int8, int16, int32, int64,
@@ -66,11 +54,6 @@ func (p *Processor) isPrimitiveType(data any) bool {
 	default:
 		return false
 	}
-}
-
-// isNilOrEmpty checks if a value is nil or empty
-func (p *Processor) isNilOrEmpty(data any) bool {
-	return internal.IsNilOrEmpty(data)
 }
 
 // Parse parses a JSON string into the provided target with improved error handling
@@ -132,7 +115,7 @@ func (p *Processor) Parse(jsonStr string, target any, opts ...*ProcessorOptions)
 		}
 
 		// Use number-preserving unmarshal for final conversion
-		if err := PreservingUnmarshal(stringToBytes(encodedJson), target, true); err != nil {
+		if err := preservingUnmarshal(stringToBytes(encodedJson), target, true); err != nil {
 			return &JsonsError{
 				Op:      "parse",
 				Message: fmt.Sprintf("invalid JSON for target type %T: %v", target, err),
@@ -141,7 +124,7 @@ func (p *Processor) Parse(jsonStr string, target any, opts ...*ProcessorOptions)
 		}
 	} else {
 		// Standard parsing without number preservation
-		if err := PreservingUnmarshal(stringToBytes(jsonStr), target, false); err != nil {
+		if err := preservingUnmarshal(stringToBytes(jsonStr), target, false); err != nil {
 			return &JsonsError{
 				Op:      "parse",
 				Message: fmt.Sprintf("invalid JSON for target type %T: %v", target, err),
@@ -213,32 +196,26 @@ func stringToBytes(s string) []byte {
 func (p *Processor) splitPath(path string, segments []PathSegment) []PathSegment {
 	segments = segments[:0]
 
-	if !p.needsPathPreprocessing(path) {
-		return p.splitPathIntoSegments(path, segments)
+	// Direct call to internal package - reduces method call overhead
+	if !internal.NeedsPathPreprocessing(path) {
+		return internal.SplitPathIntoSegments(path, segments)
 	}
 
 	sb := p.getStringBuilder()
 	defer p.putStringBuilder(sb)
 
-	processedPath := p.preprocessPath(path, sb)
-
-	return p.splitPathIntoSegments(processedPath, segments)
+	processedPath := internal.PreprocessPath(path, sb)
+	return internal.SplitPathIntoSegments(processedPath, segments)
 }
 
+// needsPathPreprocessing checks if path needs preprocessing (exported for testing)
 func (p *Processor) needsPathPreprocessing(path string) bool {
 	return internal.NeedsPathPreprocessing(path)
 }
 
+// preprocessPath preprocesses a path string (exported for testing)
 func (p *Processor) preprocessPath(path string, sb *strings.Builder) string {
 	return internal.PreprocessPath(path, sb)
-}
-
-func (p *Processor) splitPathIntoSegments(path string, segments []PathSegment) []PathSegment {
-	return internal.SplitPathIntoSegments(path, segments)
-}
-
-func (p *Processor) parsePathSegment(part string, segments []PathSegment) []PathSegment {
-	return internal.ParsePathSegment(part, segments)
 }
 
 func (p *Processor) parsePath(path string) ([]string, error) {
@@ -828,8 +805,8 @@ func (d *NumberPreservingDecoder) checkFloatPrecision(f float64, original string
 	return string(formatted) == original
 }
 
-// PreservingUnmarshal unmarshals JSON with number preservation
-func PreservingUnmarshal(data []byte, v any, preserveNumbers bool) error {
+// preservingUnmarshal unmarshals JSON with number preservation
+func preservingUnmarshal(data []byte, v any, preserveNumbers bool) error {
 	if !preserveNumbers {
 		return json.Unmarshal(data, v)
 	}
@@ -856,8 +833,8 @@ func PreservingUnmarshal(data []byte, v any, preserveNumbers bool) error {
 	return json.Unmarshal(convertedBytes, v)
 }
 
-// SmartNumberConversion provides intelligent number type conversion
-func SmartNumberConversion(value any) any {
+// smartNumberConversion provides intelligent number type conversion
+func smartNumberConversion(value any) any {
 	switch v := value.(type) {
 	case json.Number:
 		decoder := NewNumberPreservingDecoder(true)
@@ -874,8 +851,8 @@ func SmartNumberConversion(value any) any {
 	}
 }
 
-// IsLargeNumber checks if a string represents a number that's too large for standard numeric types
-func IsLargeNumber(numStr string) bool {
+// isLargeNumber checks if a string represents a number that's too large for standard numeric types
+func isLargeNumber(numStr string) bool {
 	// Remove leading/trailing whitespace
 	numStr = strings.TrimSpace(numStr)
 
@@ -901,14 +878,14 @@ func isValidNumberString(s string) bool {
 	return internal.IsValidNumberString(s)
 }
 
-// IsScientificNotation checks if a string represents a number in scientific notation
-func IsScientificNotation(s string) bool {
+// isScientificNotation checks if a string represents a number in scientific notation
+func isScientificNotation(s string) bool {
 	return strings.ContainsAny(s, "eE")
 }
 
-// ConvertFromScientific converts a scientific notation string to regular number format
-func ConvertFromScientific(s string) (string, error) {
-	if !IsScientificNotation(s) {
+// convertFromScientific converts a scientific notation string to regular number format
+func convertFromScientific(s string) (string, error) {
+	if !isScientificNotation(s) {
 		return s, nil
 	}
 

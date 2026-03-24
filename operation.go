@@ -60,7 +60,10 @@ func (p *Processor) handleArrayAccess(data any, segment PathSegment) PropertyAcc
 }
 
 func (p *Processor) parseArrayIndex(indexStr string) int {
-	return globalArrayHelper.ParseArrayIndex(indexStr)
+	if idx, ok := internal.ParseArrayIndex(indexStr); ok {
+		return idx
+	}
+	return -1
 }
 
 func (p *Processor) handleArraySlice(data any, segment PathSegment) PropertyAccessResult {
@@ -86,81 +89,9 @@ func (p *Processor) handleArraySlice(data any, segment PathSegment) PropertyAcce
 		step = &stepVal
 	}
 
-	result := p.performArraySlice(arr, start, end, step)
+	// Use unified implementation from internal package
+	result := internal.PerformArraySlice(arr, start, end, step)
 	return PropertyAccessResult{Value: result, Exists: true}
-}
-
-func (p *Processor) performArraySlice(arr []any, start, end, step *int) []any {
-	if len(arr) == 0 {
-		return []any{}
-	}
-
-	actualStart, actualEnd, actualStep := 0, len(arr), 1
-
-	if step != nil {
-		actualStep = *step
-		if actualStep == 0 {
-			return []any{}
-		}
-	}
-
-	if actualStep < 0 {
-		actualStart, actualEnd = len(arr)-1, -1
-	}
-
-	if start != nil {
-		actualStart = *start
-		if actualStart < 0 {
-			actualStart = len(arr) + actualStart
-		}
-	}
-
-	if end != nil {
-		actualEnd = *end
-		if actualEnd < 0 {
-			actualEnd = len(arr) + actualEnd
-		}
-	}
-
-	if actualStep > 0 {
-		return p.forwardSlice(arr, actualStart, actualEnd, actualStep)
-	}
-	return p.reverseSlice(arr, actualStart, actualEnd, actualStep)
-}
-
-func (p *Processor) forwardSlice(arr []any, start, end, step int) []any {
-	if start < 0 {
-		start = 0
-	}
-	if start >= len(arr) || end <= start {
-		return []any{}
-	}
-	if end > len(arr) {
-		end = len(arr)
-	}
-
-	result := make([]any, 0, (end-start+step-1)/step)
-	for i := start; i < end; i += step {
-		result = append(result, arr[i])
-	}
-	return result
-}
-
-func (p *Processor) reverseSlice(arr []any, start, end, step int) []any {
-	if start >= len(arr) {
-		start = len(arr) - 1
-	}
-	if start < 0 || end >= start {
-		return []any{}
-	}
-
-	// Pre-allocate capacity to avoid repeated reallocations
-	estimatedSize := (start - end - step - 1) / (-step)
-	result := make([]any, 0, estimatedSize)
-	for i := start; i > end; i += step { // step is negative
-		result = append(result, arr[i])
-	}
-	return result
 }
 
 func (p *Processor) parseSliceParameters(segmentValue string, arrayLength int) (start, end, step int, err error) {
@@ -169,40 +100,28 @@ func (p *Processor) parseSliceParameters(segmentValue string, arrayLength int) (
 		segmentValue = segmentValue[1 : len(segmentValue)-1]
 	}
 
-	// Split by colons
-	parts := strings.Split(segmentValue, ":")
-	if len(parts) < 2 || len(parts) > 3 {
-		return 0, 0, 0, fmt.Errorf("invalid slice syntax: %s", segmentValue)
+	// Delegate to internal package for parsing
+	s, e, st, parseErr := internal.ParseSliceComponents(segmentValue)
+	if parseErr != nil {
+		return 0, 0, 0, parseErr
 	}
 
-	// Parse start
-	if parts[0] == "" {
-		start = 0
-	} else {
-		if start, err = strconv.Atoi(parts[0]); err != nil {
-			return 0, 0, 0, fmt.Errorf("invalid start index: %s", parts[0])
-		}
+	// Apply defaults for nil pointers
+	start = 0
+	if s != nil {
+		start = *s
 	}
 
-	// Parse end
-	if parts[1] == "" {
-		end = arrayLength
-	} else {
-		if end, err = strconv.Atoi(parts[1]); err != nil {
-			return 0, 0, 0, fmt.Errorf("invalid end index: %s", parts[1])
-		}
+	end = arrayLength
+	if e != nil {
+		end = *e
 	}
 
-	// Parse step (optional)
 	step = 1
-	if len(parts) == 3 {
-		if parts[2] != "" {
-			if step, err = strconv.Atoi(parts[2]); err != nil {
-				return 0, 0, 0, fmt.Errorf("invalid step: %s", parts[2])
-			}
-			if step <= 0 {
-				return 0, 0, 0, fmt.Errorf("step must be positive: %d", step)
-			}
+	if st != nil {
+		step = *st
+		if step <= 0 {
+			return 0, 0, 0, fmt.Errorf("step must be positive: %d", step)
 		}
 	}
 
@@ -263,75 +182,12 @@ func (p *Processor) detectConsecutiveExtractions(segments []PathSegment) []Extra
 	return internal.DetectConsecutiveExtractions(segments)
 }
 
-func (p *Processor) cleanupArrayWithReconstruction(arr []any, compactArrays bool) []any {
-	if !compactArrays {
-		return arr
-	}
-
-	result := make([]any, 0, len(arr))
-	for _, item := range arr {
-		if item != nil {
-			// Recursively clean nested structures
-			if nestedArr, ok := item.([]any); ok {
-				item = p.cleanupArrayWithReconstruction(nestedArr, compactArrays)
-			} else if nestedMap, ok := item.(map[string]any); ok {
-				item = p.cleanupNullValuesRecursiveWithReconstruction(nestedMap, compactArrays)
-			}
-			result = append(result, item)
-		}
-	}
-
-	return result
-}
-
-func (p *Processor) isEmptyContainer(data any) bool {
-	switch v := data.(type) {
-	case map[string]any:
-		return len(v) == 0
-	case map[any]any:
-		return len(v) == 0
-	case []any:
-		return len(v) == 0
-	case string:
-		return v == ""
-	default:
-		return false
-	}
-}
-
 func (p *Processor) cleanupNullValuesWithReconstruction(data any, compactArrays bool) any {
-	return p.cleanupNullValuesRecursiveWithReconstruction(data, compactArrays)
+	return internal.CleanupNullValues(data, compactArrays)
 }
 
 func (p *Processor) cleanupNullValuesRecursiveWithReconstruction(data any, compactArrays bool) any {
-	switch v := data.(type) {
-	case map[string]any:
-		result := make(map[string]any)
-		for key, value := range v {
-			if value != nil {
-				cleanedValue := p.cleanupNullValuesRecursiveWithReconstruction(value, compactArrays)
-				if cleanedValue != nil && !p.isEmptyContainer(cleanedValue) {
-					result[key] = cleanedValue
-				}
-			}
-		}
-		return result
-
-	case []any:
-		if compactArrays {
-			return p.cleanupArrayWithReconstruction(v, compactArrays)
-		}
-		result := make([]any, len(v))
-		for i, item := range v {
-			if item != nil {
-				result[i] = p.cleanupNullValuesRecursiveWithReconstruction(item, compactArrays)
-			}
-		}
-		return result
-
-	default:
-		return data
-	}
+	return internal.CleanupNullValues(data, compactArrays)
 }
 
 func (p *Processor) cleanupDeletedMarkers(data any) any {
@@ -1324,9 +1180,7 @@ func (p *Processor) collectSourceContainers(data any, extractionSegments []PathS
 	// This is a simplified implementation
 	// The full implementation would recursively traverse the data structure
 	if arr, ok := data.([]any); ok {
-		for _, item := range arr {
-			containers = append(containers, item)
-		}
+		containers = append(containers, arr...)
 	} else {
 		containers = append(containers, data)
 	}
@@ -1364,9 +1218,7 @@ func (p *Processor) collectContainersRecursive(current any, segments []PathSegme
 	case "extract":
 		// For extraction, collect all items that would be extracted
 		if arr, ok := current.([]any); ok {
-			for _, item := range arr {
-				*containers = append(*containers, item)
-			}
+			*containers = append(*containers, arr...)
 		}
 	}
 
@@ -2321,9 +2173,6 @@ func (p *Processor) setValueForArrayExtractFlat(arr []any, extractKey string, va
 	return nil
 }
 
-// Helper function to check if string contains substring (used in this file)
-var stringsContains = strings.Contains
-
 func (p *Processor) setValueJSONPointer(data any, path string, value any) error {
 	return p.setValueJSONPointerWithCreation(data, path, value)
 }
@@ -2441,6 +2290,7 @@ func (p *Processor) setPropertyValueWithCreation(current any, property string, v
 			if index == len(v) {
 				// Extend array
 				v = append(v, value)
+				current = v
 				return nil
 			}
 		}

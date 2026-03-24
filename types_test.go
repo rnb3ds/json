@@ -2590,7 +2590,22 @@ func TestSafeConvertToUint64(t *testing.T) {
 
 // TestSchema tests the Schema type
 func TestSchema(t *testing.T) {
-	schema := &Schema{}
+	schema := &Schema{
+		MinLength:        5,
+		MaxLength:        100,
+		Minimum:          0,
+		Maximum:          1000,
+		MinItems:         1,
+		MaxItems:         10,
+		ExclusiveMinimum: true,
+		ExclusiveMaximum: true,
+	}
+	schema.hasMinLength = true
+	schema.hasMaxLength = true
+	schema.hasMinimum = true
+	schema.hasMaximum = true
+	schema.hasMinItems = true
+	schema.hasMaxItems = true
 
 	// Test DefaultSchema initialization
 	defaultSchema := DefaultSchema()
@@ -2598,73 +2613,51 @@ func TestSchema(t *testing.T) {
 		t.Errorf("DefaultSchema() should not return nil")
 	}
 
-	// Test SetMinLength
-	schema.SetMinLength(5)
+	// Test Has* methods
 	if !schema.HasMinLength() {
-		t.Errorf("HasMinLength() should return true after SetMinLength")
+		t.Errorf("HasMinLength() should return true")
 	}
-
-	// Test SetMaxLength
-	schema.SetMaxLength(100)
 	if !schema.HasMaxLength() {
-		t.Errorf("HasMaxLength() should return true after SetMaxLength")
+		t.Errorf("HasMaxLength() should return true")
 	}
-
-	// Test SetMinimum
-	schema.SetMinimum(0)
 	if !schema.HasMinimum() {
-		t.Errorf("HasMinimum() should return true after SetMinimum")
+		t.Errorf("HasMinimum() should return true")
 	}
-
-	// Test SetMaximum
-	schema.SetMaximum(1000)
 	if !schema.HasMaximum() {
-		t.Errorf("HasMaximum() should return true after SetMaximum")
+		t.Errorf("HasMaximum() should return true")
 	}
-
-	// Test SetMinItems
-	schema.SetMinItems(1)
 	if !schema.HasMinItems() {
-		t.Errorf("HasMinItems() should return true after SetMinItems")
+		t.Errorf("HasMinItems() should return true")
 	}
-
-	// Test SetMaxItems
-	schema.SetMaxItems(10)
 	if !schema.HasMaxItems() {
-		t.Errorf("HasMaxItems() should return true after SetMaxItems")
+		t.Errorf("HasMaxItems() should return true")
 	}
-
-	// Test SetExclusiveMinimum (should not affect other fields)
-	schema.SetExclusiveMinimum(true)
 	if !schema.ExclusiveMinimum {
 		t.Errorf("ExclusiveMinimum should be true")
 	}
-	if schema.MinLength != 5 {
-		t.Errorf("MinLength should still be 5 after SetExclusiveMinimum, got %d", schema.MinLength)
-	}
-
-	// Test SetExclusiveMaximum (should not affect other fields)
-	schema.SetExclusiveMaximum(true)
 	if !schema.ExclusiveMaximum {
 		t.Errorf("ExclusiveMaximum should be true")
-	}
-	if schema.MaxLength != 100 {
-		t.Errorf("MaxLength should still be 100 after SetExclusiveMaximum, got %d", schema.MaxLength)
 	}
 }
 
 // TestSchema_AllConstraints tests setting all constraints together
 func TestSchema_AllConstraints(t *testing.T) {
-	schema := &Schema{}
-
-	schema.SetMinLength(5)
-	schema.SetMaxLength(50)
-	schema.SetMinimum(0)
-	schema.SetMaximum(100)
-	schema.SetMinItems(1)
-	schema.SetMaxItems(10)
-	schema.SetExclusiveMinimum(false)
-	schema.SetExclusiveMaximum(false)
+	schema := &Schema{
+		MinLength:        5,
+		MaxLength:        50,
+		Minimum:          0,
+		Maximum:          100,
+		MinItems:         1,
+		MaxItems:         10,
+		ExclusiveMinimum: false,
+		ExclusiveMaximum: false,
+	}
+	schema.hasMinLength = true
+	schema.hasMaxLength = true
+	schema.hasMinimum = true
+	schema.hasMaximum = true
+	schema.hasMinItems = true
+	schema.hasMaxItems = true
 
 	if !schema.HasMinLength() || schema.MinLength != 5 {
 		t.Errorf("MinLength not set correctly")
@@ -2694,10 +2687,14 @@ func TestSchema_AllConstraints(t *testing.T) {
 
 // TestSchema_ArrayConstraints tests array constraint methods
 func TestSchema_ArrayConstraints(t *testing.T) {
-	schema := &Schema{}
+	schema := &Schema{
+		MinItems: 1,
+		MaxItems: 100,
+	}
+	schema.hasMinItems = true
+	schema.hasMaxItems = true
 
-	// Test SetMinItems and HasMinItems
-	schema.SetMinItems(1)
+	// Test HasMinItems
 	if !schema.HasMinItems() {
 		t.Errorf("HasMinItems() should return true")
 	}
@@ -2705,8 +2702,7 @@ func TestSchema_ArrayConstraints(t *testing.T) {
 		t.Errorf("MinItems = %d, want 1", schema.MinItems)
 	}
 
-	// Test SetMaxItems and HasMaxItems
-	schema.SetMaxItems(100)
+	// Test HasMaxItems
 	if !schema.HasMaxItems() {
 		t.Errorf("HasMaxItems() should return true")
 	}
@@ -2715,13 +2711,12 @@ func TestSchema_ArrayConstraints(t *testing.T) {
 	}
 
 	// Test zero values
-	schema2 := &Schema{}
-	schema2.SetMinItems(0)
+	schema2 := &Schema{MinItems: 0, MaxItems: 0}
+	schema2.hasMinItems = true
+	schema2.hasMaxItems = true
 	if !schema2.HasMinItems() {
 		t.Errorf("HasMinItems() should return true for 0")
 	}
-
-	schema2.SetMaxItems(0)
 	if !schema2.HasMaxItems() {
 		t.Errorf("HasMaxItems() should return true for 0")
 	}
@@ -2758,39 +2753,39 @@ func TestSchema_DefaultSchema(t *testing.T) {
 
 // TestSchema_ExclusiveConstraints tests exclusive constraint methods
 func TestSchema_ExclusiveConstraints(t *testing.T) {
-	schema := &Schema{}
-
-	// Test SetExclusiveMinimum
-	schema.SetExclusiveMinimum(true)
+	// Test ExclusiveMinimum
+	schema := &Schema{ExclusiveMinimum: true}
 	if !schema.ExclusiveMinimum {
 		t.Errorf("ExclusiveMinimum should be true")
 	}
 
-	schema.SetExclusiveMinimum(false)
+	schema.ExclusiveMinimum = false
 	if schema.ExclusiveMinimum {
 		t.Errorf("ExclusiveMinimum should be false")
 	}
 
-	// Test SetExclusiveMaximum
-	schema.SetExclusiveMaximum(true)
+	// Test ExclusiveMaximum
+	schema.ExclusiveMaximum = true
 	if !schema.ExclusiveMaximum {
 		t.Errorf("ExclusiveMaximum should be true")
 	}
 
-	schema.SetExclusiveMaximum(false)
+	schema.ExclusiveMaximum = false
 	if schema.ExclusiveMaximum {
 		t.Errorf("ExclusiveMaximum should be false")
 	}
 
 	// Test with other constraints set
-	schema.SetMinimum(10)
-	schema.SetExclusiveMinimum(true)
+	schema.Minimum = 10
+	schema.hasMinimum = true
+	schema.ExclusiveMinimum = true
 	if schema.Minimum != 10 {
 		t.Errorf("Minimum should still be 10")
 	}
 
-	schema.SetMaximum(100)
-	schema.SetExclusiveMaximum(true)
+	schema.Maximum = 100
+	schema.hasMaximum = true
+	schema.ExclusiveMaximum = true
 	if schema.Maximum != 100 {
 		t.Errorf("Maximum should still be 100")
 	}
@@ -2798,10 +2793,14 @@ func TestSchema_ExclusiveConstraints(t *testing.T) {
 
 // TestSchema_NumericConstraints tests numeric constraint methods
 func TestSchema_NumericConstraints(t *testing.T) {
-	schema := &Schema{}
+	schema := &Schema{
+		Minimum: -100,
+		Maximum: 1000,
+	}
+	schema.hasMinimum = true
+	schema.hasMaximum = true
 
-	// Test SetMinimum and HasMinimum
-	schema.SetMinimum(-100)
+	// Test HasMinimum
 	if !schema.HasMinimum() {
 		t.Errorf("HasMinimum() should return true")
 	}
@@ -2809,8 +2808,7 @@ func TestSchema_NumericConstraints(t *testing.T) {
 		t.Errorf("Minimum = %f, want -100", schema.Minimum)
 	}
 
-	// Test SetMaximum and HasMaximum
-	schema.SetMaximum(1000)
+	// Test HasMaximum
 	if !schema.HasMaximum() {
 		t.Errorf("HasMaximum() should return true")
 	}
@@ -2819,13 +2817,12 @@ func TestSchema_NumericConstraints(t *testing.T) {
 	}
 
 	// Test zero values
-	schema2 := &Schema{}
-	schema2.SetMinimum(0)
+	schema2 := &Schema{Minimum: 0, Maximum: 0}
+	schema2.hasMinimum = true
+	schema2.hasMaximum = true
 	if !schema2.HasMinimum() {
 		t.Errorf("HasMinimum() should return true for 0")
 	}
-
-	schema2.SetMaximum(0)
 	if !schema2.HasMaximum() {
 		t.Errorf("HasMaximum() should return true for 0")
 	}
@@ -2833,10 +2830,14 @@ func TestSchema_NumericConstraints(t *testing.T) {
 
 // TestSchema_StringConstraints tests string constraint methods
 func TestSchema_StringConstraints(t *testing.T) {
-	schema := &Schema{}
+	schema := &Schema{
+		MinLength: 10,
+		MaxLength: 100,
+	}
+	schema.hasMinLength = true
+	schema.hasMaxLength = true
 
-	// Test SetMinLength and HasMinLength
-	schema.SetMinLength(10)
+	// Test HasMinLength
 	if !schema.HasMinLength() {
 		t.Errorf("HasMinLength() should return true")
 	}
@@ -2844,8 +2845,7 @@ func TestSchema_StringConstraints(t *testing.T) {
 		t.Errorf("MinLength = %d, want 10", schema.MinLength)
 	}
 
-	// Test SetMaxLength and HasMaxLength
-	schema.SetMaxLength(100)
+	// Test HasMaxLength
 	if !schema.HasMaxLength() {
 		t.Errorf("HasMaxLength() should return true")
 	}
@@ -2853,9 +2853,9 @@ func TestSchema_StringConstraints(t *testing.T) {
 		t.Errorf("MaxLength = %d, want 100", schema.MaxLength)
 	}
 
-	// Test multiple sets
-	schema.SetMinLength(5)
-	schema.SetMaxLength(50)
+	// Test updating values
+	schema.MinLength = 5
+	schema.MaxLength = 50
 	if schema.MinLength != 5 || schema.MaxLength != 50 {
 		t.Errorf("MinLength/MaxLength not updated correctly")
 	}

@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/cybergodev/json/internal"
 )
 
 // ============================================================================
@@ -265,11 +267,8 @@ func TestIntToStringFast(t *testing.T) {
 	}
 }
 
-// TestProcessorIsMapType tests the isMapType method
-func TestProcessorIsMapType(t *testing.T) {
-	processor := New()
-	defer processor.Close()
-
+// TestIsMapType tests the internal IsMapType function
+func TestIsMapType(t *testing.T) {
 	tests := []struct {
 		input    interface{}
 		expected bool
@@ -283,19 +282,16 @@ func TestProcessorIsMapType(t *testing.T) {
 	}
 
 	for i, tt := range tests {
-		result := processor.isMapType(tt.input)
-		// Note: isMapType may not return true for all map types
+		result := internal.IsMapType(tt.input)
+		// Note: IsMapType may not return true for all map types
 		// Just verify it doesn't panic and returns consistent results
-		t.Logf("Test %d: isMapType(%T) = %v", i, tt.input, result)
+		t.Logf("Test %d: IsMapType(%T) = %v", i, tt.input, result)
 		_ = result
 	}
 }
 
-// TestProcessorIsSliceType tests the isSliceType method
-func TestProcessorIsSliceType(t *testing.T) {
-	processor := New()
-	defer processor.Close()
-
+// TestIsSliceType tests the internal IsSliceType function
+func TestIsSliceType(t *testing.T) {
 	tests := []struct {
 		input    interface{}
 		expected bool
@@ -310,9 +306,9 @@ func TestProcessorIsSliceType(t *testing.T) {
 	}
 
 	for i, tt := range tests {
-		result := processor.isSliceType(tt.input)
+		result := internal.IsSliceType(tt.input)
 		if result != tt.expected {
-			t.Errorf("Test %d: isSliceType(%T) = %v, want %v", i, tt.input, result, tt.expected)
+			t.Errorf("Test %d: IsSliceType(%T) = %v, want %v", i, tt.input, result, tt.expected)
 		}
 	}
 }
@@ -852,7 +848,7 @@ func TestRecursiveProcessor(t *testing.T) {
 
 // TestHelpers tests helper functions via ArrayHelper
 func TestHelpers(t *testing.T) {
-	ah := &ArrayHelper{}
+	ah := &arrayHelper{}
 
 	t.Run("ParseArrayIndex", func(t *testing.T) {
 		tests := []struct {
@@ -867,9 +863,9 @@ func TestHelpers(t *testing.T) {
 		}
 
 		for _, tt := range tests {
-			result := ah.ParseArrayIndex(tt.input)
+			result := ah.parseArrayIndex(tt.input)
 			if result != tt.expected {
-				t.Errorf("ParseArrayIndex(%q) = %d, want %d", tt.input, result, tt.expected)
+				t.Errorf("parseArrayIndex(%q) = %d, want %d", tt.input, result, tt.expected)
 			}
 		}
 	})
@@ -887,9 +883,9 @@ func TestHelpers(t *testing.T) {
 		}
 
 		for _, tt := range tests {
-			result := ah.NormalizeIndex(tt.index, tt.length)
+			result := ah.normalizeIndex(tt.index, tt.length)
 			if result != tt.expected {
-				t.Errorf("NormalizeIndex(%d, %d) = %d, want %d", tt.index, tt.length, result, tt.expected)
+				t.Errorf("normalizeIndex(%d, %d) = %d, want %d", tt.index, tt.length, result, tt.expected)
 			}
 		}
 	})
@@ -907,9 +903,9 @@ func TestHelpers(t *testing.T) {
 		}
 
 		for _, tt := range tests {
-			result := ah.ValidateBounds(tt.index, tt.length)
+			result := ah.validateBounds(tt.index, tt.length)
 			if result != tt.expected {
-				t.Errorf("ValidateBounds(%d, %d) = %v, want %v", tt.index, tt.length, result, tt.expected)
+				t.Errorf("validateBounds(%d, %d) = %v, want %v", tt.index, tt.length, result, tt.expected)
 			}
 		}
 	})
@@ -926,19 +922,19 @@ func TestHelpers(t *testing.T) {
 		}
 
 		for _, tt := range tests {
-			result := ah.ClampIndex(tt.index, tt.length)
+			result := ah.clampIndex(tt.index, tt.length)
 			if result != tt.expected {
-				t.Errorf("ClampIndex(%d, %d) = %d, want %d", tt.index, tt.length, result, tt.expected)
+				t.Errorf("clampIndex(%d, %d) = %d, want %d", tt.index, tt.length, result, tt.expected)
 			}
 		}
 	})
 
 	t.Run("CompactArray", func(t *testing.T) {
 		arr := []interface{}{1, nil, 2, DeletedMarker, 3, nil}
-		result := ah.CompactArray(arr)
+		result := ah.compactArray(arr)
 
 		if len(result) != 3 {
-			t.Errorf("CompactArray length = %d, want 3", len(result))
+			t.Errorf("compactArray length = %d, want 3", len(result))
 		}
 
 		for _, v := range result {
@@ -1108,7 +1104,7 @@ func TestBatchOperationsAdditional(t *testing.T) {
 // TYPE CONVERSION TESTS
 // ============================================================================
 
-// TestSmartNumberConversion tests SmartNumberConversion function
+// TestSmartNumberConversion tests smartNumberConversion function
 func TestSmartNumberConversion(t *testing.T) {
 	tests := []struct {
 		input interface{}
@@ -1124,14 +1120,14 @@ func TestSmartNumberConversion(t *testing.T) {
 	}
 
 	for i, tt := range tests {
-		result := SmartNumberConversion(tt.input)
+		result := smartNumberConversion(tt.input)
 		if !tt.check(result) {
-			t.Errorf("Test %d: SmartNumberConversion(%v) = %v, check failed", i, tt.input, result)
+			t.Errorf("Test %d: smartNumberConversion(%v) = %v, check failed", i, tt.input, result)
 		}
 	}
 }
 
-// TestIsLargeNumber tests IsLargeNumber function
+// TestIsLargeNumber tests isLargeNumber function
 func TestIsLargeNumber(t *testing.T) {
 	tests := []struct {
 		input    string
@@ -1145,14 +1141,14 @@ func TestIsLargeNumber(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		result := IsLargeNumber(tt.input)
+		result := isLargeNumber(tt.input)
 		if result != tt.expected {
-			t.Errorf("IsLargeNumber(%q) = %v, want %v", tt.input, result, tt.expected)
+			t.Errorf("isLargeNumber(%q) = %v, want %v", tt.input, result, tt.expected)
 		}
 	}
 }
 
-// TestIsScientificNotation tests IsScientificNotation function
+// TestIsScientificNotation tests isScientificNotation function
 func TestIsScientificNotation(t *testing.T) {
 	tests := []struct {
 		input    string
@@ -1166,14 +1162,14 @@ func TestIsScientificNotation(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		result := IsScientificNotation(tt.input)
+		result := isScientificNotation(tt.input)
 		if result != tt.expected {
-			t.Errorf("IsScientificNotation(%q) = %v, want %v", tt.input, result, tt.expected)
+			t.Errorf("isScientificNotation(%q) = %v, want %v", tt.input, result, tt.expected)
 		}
 	}
 }
 
-// TestConvertFromScientific tests ConvertFromScientific function
+// TestConvertFromScientific tests convertFromScientific function
 func TestConvertFromScientific(t *testing.T) {
 	tests := []struct {
 		input string
@@ -1185,12 +1181,12 @@ func TestConvertFromScientific(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		result, err := ConvertFromScientific(tt.input)
+		result, err := convertFromScientific(tt.input)
 		if err != nil {
-			t.Errorf("ConvertFromScientific(%q) error: %v", tt.input, err)
+			t.Errorf("convertFromScientific(%q) error: %v", tt.input, err)
 		}
 		if !tt.check(result) {
-			t.Errorf("ConvertFromScientific(%q) = %q, check failed", tt.input, result)
+			t.Errorf("convertFromScientific(%q) = %q, check failed", tt.input, result)
 		}
 	}
 }
@@ -1277,21 +1273,21 @@ func TestNumberPreservingDecoder(t *testing.T) {
 	})
 }
 
-// TestPreservingUnmarshal tests PreservingUnmarshal function
+// TestPreservingUnmarshal tests preservingUnmarshal function
 func TestPreservingUnmarshal(t *testing.T) {
 	t.Run("PreserveNumbersTrue", func(t *testing.T) {
 		var result map[string]interface{}
-		err := PreservingUnmarshal([]byte(`{"num":123}`), &result, true)
+		err := preservingUnmarshal([]byte(`{"num":123}`), &result, true)
 		if err != nil {
-			t.Errorf("PreservingUnmarshal failed: %v", err)
+			t.Errorf("preservingUnmarshal failed: %v", err)
 		}
 	})
 
 	t.Run("PreserveNumbersFalse", func(t *testing.T) {
 		var result map[string]interface{}
-		err := PreservingUnmarshal([]byte(`{"num":123}`), &result, false)
+		err := preservingUnmarshal([]byte(`{"num":123}`), &result, false)
 		if err != nil {
-			t.Errorf("PreservingUnmarshal failed: %v", err)
+			t.Errorf("preservingUnmarshal failed: %v", err)
 		}
 		if result["num"] == nil {
 			t.Error("num should not be nil")
@@ -1577,10 +1573,12 @@ func TestValidateNumberEdgeCases(t *testing.T) {
 
 	t.Run("NumberValidation", func(t *testing.T) {
 		schema := &Schema{
-			Type: "number",
+			Type:    "number",
+			Minimum: 0,
+			Maximum: 100,
 		}
-		schema.SetMinimum(0)
-		schema.SetMaximum(100)
+		schema.hasMinimum = true
+		schema.hasMaximum = true
 
 		tests := []struct {
 			jsonStr   string
@@ -1606,10 +1604,12 @@ func TestValidateNumberEdgeCases(t *testing.T) {
 
 	t.Run("IntegerValidation", func(t *testing.T) {
 		schema := &Schema{
-			Type: "number", // Use number since JSON decodes to float64
+			Type:    "number", // Use number since JSON decodes to float64
+			Minimum: 0,
+			Maximum: 100,
 		}
-		schema.SetMinimum(0)
-		schema.SetMaximum(100)
+		schema.hasMinimum = true
+		schema.hasMaximum = true
 
 		tests := []struct {
 			jsonStr   string
@@ -2093,10 +2093,12 @@ func TestValidateStringComprehensive(t *testing.T) {
 
 	t.Run("LengthValidation", func(t *testing.T) {
 		schema := &Schema{
-			Type: "string",
+			Type:      "string",
+			MinLength: 3,
+			MaxLength: 10,
 		}
-		schema.SetMinLength(3)
-		schema.SetMaxLength(10)
+		schema.hasMinLength = true
+		schema.hasMaxLength = true
 
 		tests := []struct {
 			jsonStr   string

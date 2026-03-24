@@ -13,21 +13,21 @@ import (
 	"github.com/cybergodev/json/internal"
 )
 
-// PathType represents the complexity level of a path
-type PathType int
+// pathType represents the complexity level of a path
+type pathType int
 
 const (
-	// PathTypeSimple indicates a single key with no dots or brackets
-	PathTypeSimple PathType = iota
-	// PathTypeComplex indicates a path containing dots or brackets
-	PathTypeComplex
+	// pathTypeSimple indicates a single key with no dots or brackets
+	pathTypeSimple pathType = iota
+	// pathTypeComplex indicates a path containing dots or brackets
+	pathTypeComplex
 )
 
 // pathTypeCacheShard represents a single shard of the path type cache
 // PERFORMANCE: Sharding reduces lock contention for concurrent access
 type pathTypeCacheShard struct {
 	mu      sync.RWMutex
-	entries map[string]PathType
+	entries map[string]pathType
 }
 
 // pathTypeCacheShards is a sharded cache for path type results
@@ -37,7 +37,7 @@ var pathTypeCacheShards [16]pathTypeCacheShard
 // init initializes the path type cache shards
 func init() {
 	for i := range pathTypeCacheShards {
-		pathTypeCacheShards[i].entries = make(map[string]PathType, 64)
+		pathTypeCacheShards[i].entries = make(map[string]pathType, 64)
 	}
 }
 
@@ -51,9 +51,9 @@ func getPathTypeShard(path string) *pathTypeCacheShard {
 	return &pathTypeCacheShards[h&15]
 }
 
-// GetPathType determines if a path is simple or complex
+// getPathType determines if a path is simple or complex
 // Simple paths are single keys with no dots or brackets
-func GetPathType(path string) PathType {
+func getPathType(path string) pathType {
 	// Check cache first (only for short paths to avoid memory bloat)
 	if len(path) <= 64 {
 		shard := getPathTypeShard(path)
@@ -64,11 +64,11 @@ func GetPathType(path string) PathType {
 		}
 		shard.mu.RUnlock()
 
-		var pt PathType
+		var pt pathType
 		if strings.ContainsAny(path, ".[]") {
-			pt = PathTypeComplex
+			pt = pathTypeComplex
 		} else {
-			pt = PathTypeSimple
+			pt = pathTypeSimple
 		}
 
 		// Cache short paths
@@ -79,11 +79,11 @@ func GetPathType(path string) PathType {
 		return pt
 	}
 
-	var pt PathType
+	var pt pathType
 	if strings.ContainsAny(path, ".[]") {
-		pt = PathTypeComplex
+		pt = pathTypeComplex
 	} else {
-		pt = PathTypeSimple
+		pt = pathTypeSimple
 	}
 
 	return pt
@@ -265,8 +265,8 @@ func (iv *IterableValue) Get(path string) any {
 // Supports path navigation with dot notation and array indices (e.g., "user.address.city" or "users[0].name")
 func (iv *IterableValue) GetString(key string) string {
 	// PERFORMANCE: Use cached path type check instead of strings.ContainsAny
-	switch GetPathType(key) {
-	case PathTypeComplex:
+	switch getPathType(key) {
+	case pathTypeComplex:
 		val := iv.Get(key)
 		if val == nil {
 			return ""
@@ -275,7 +275,7 @@ func (iv *IterableValue) GetString(key string) string {
 			return str
 		}
 		return ConvertToString(val)
-	case PathTypeSimple:
+	case pathTypeSimple:
 		obj, ok := iv.data.(map[string]any)
 		if !ok {
 			return ""
@@ -299,8 +299,8 @@ func (iv *IterableValue) GetString(key string) string {
 // Supports path navigation with dot notation and array indices (e.g., "user.age" or "users[0].id")
 func (iv *IterableValue) GetInt(key string) int {
 	// PERFORMANCE: Use cached path type check instead of strings.ContainsAny
-	switch GetPathType(key) {
-	case PathTypeComplex:
+	switch getPathType(key) {
+	case pathTypeComplex:
 		val := iv.Get(key)
 		if val == nil {
 			return 0
@@ -309,7 +309,7 @@ func (iv *IterableValue) GetInt(key string) int {
 			return result
 		}
 		return 0
-	case PathTypeSimple:
+	case pathTypeSimple:
 		obj, ok := iv.data.(map[string]any)
 		if !ok {
 			return 0
@@ -331,8 +331,8 @@ func (iv *IterableValue) GetInt(key string) int {
 // Supports path navigation with dot notation and array indices
 func (iv *IterableValue) GetFloat64(key string) float64 {
 	// PERFORMANCE: Use cached path type check instead of strings.ContainsAny
-	switch GetPathType(key) {
-	case PathTypeComplex:
+	switch getPathType(key) {
+	case pathTypeComplex:
 		val := iv.Get(key)
 		if val == nil {
 			return 0
@@ -341,7 +341,7 @@ func (iv *IterableValue) GetFloat64(key string) float64 {
 			return result
 		}
 		return 0
-	case PathTypeSimple:
+	case pathTypeSimple:
 		obj, ok := iv.data.(map[string]any)
 		if !ok {
 			return 0
@@ -363,8 +363,8 @@ func (iv *IterableValue) GetFloat64(key string) float64 {
 // Supports path navigation with dot notation and array indices
 func (iv *IterableValue) GetBool(key string) bool {
 	// PERFORMANCE: Use cached path type check instead of strings.ContainsAny
-	switch GetPathType(key) {
-	case PathTypeComplex:
+	switch getPathType(key) {
+	case pathTypeComplex:
 		val := iv.Get(key)
 		if val == nil {
 			return false
@@ -373,7 +373,7 @@ func (iv *IterableValue) GetBool(key string) bool {
 			return result
 		}
 		return false
-	case PathTypeSimple:
+	case pathTypeSimple:
 		obj, ok := iv.data.(map[string]any)
 		if !ok {
 			return false
@@ -395,8 +395,8 @@ func (iv *IterableValue) GetBool(key string) bool {
 // Supports path navigation with dot notation and array indices
 func (iv *IterableValue) GetArray(key string) []any {
 	// PERFORMANCE: Use cached path type check instead of strings.ContainsAny
-	switch GetPathType(key) {
-	case PathTypeComplex:
+	switch getPathType(key) {
+	case pathTypeComplex:
 		val := iv.Get(key)
 		if val == nil {
 			return nil
@@ -405,7 +405,7 @@ func (iv *IterableValue) GetArray(key string) []any {
 			return arr
 		}
 		return nil
-	case PathTypeSimple:
+	case pathTypeSimple:
 		obj, ok := iv.data.(map[string]any)
 		if !ok {
 			return nil
@@ -427,8 +427,8 @@ func (iv *IterableValue) GetArray(key string) []any {
 // Supports path navigation with dot notation and array indices
 func (iv *IterableValue) GetObject(key string) map[string]any {
 	// PERFORMANCE: Use cached path type check instead of strings.ContainsAny
-	switch GetPathType(key) {
-	case PathTypeComplex:
+	switch getPathType(key) {
+	case pathTypeComplex:
 		val := iv.Get(key)
 		if val == nil {
 			return nil
@@ -437,7 +437,7 @@ func (iv *IterableValue) GetObject(key string) map[string]any {
 			return result
 		}
 		return nil
-	case PathTypeSimple:
+	case pathTypeSimple:
 		obj, ok := iv.data.(map[string]any)
 		if !ok {
 			return nil
@@ -459,14 +459,14 @@ func (iv *IterableValue) GetObject(key string) map[string]any {
 // Supports path navigation with dot notation and array indices
 func (iv *IterableValue) GetWithDefault(key string, defaultValue any) any {
 	// PERFORMANCE: Use cached path type check instead of strings.ContainsAny
-	switch GetPathType(key) {
-	case PathTypeComplex:
+	switch getPathType(key) {
+	case pathTypeComplex:
 		val := iv.Get(key)
 		if val == nil {
 			return defaultValue
 		}
 		return val
-	case PathTypeSimple:
+	case pathTypeSimple:
 		obj, ok := iv.data.(map[string]any)
 		if !ok {
 			return defaultValue
@@ -486,8 +486,8 @@ func (iv *IterableValue) GetWithDefault(key string, defaultValue any) any {
 // Supports path navigation with dot notation and array indices
 func (iv *IterableValue) GetStringWithDefault(key string, defaultValue string) string {
 	// PERFORMANCE: Use cached path type check instead of strings.ContainsAny
-	switch GetPathType(key) {
-	case PathTypeComplex:
+	switch getPathType(key) {
+	case pathTypeComplex:
 		val := iv.Get(key)
 		if val == nil {
 			return defaultValue
@@ -496,7 +496,7 @@ func (iv *IterableValue) GetStringWithDefault(key string, defaultValue string) s
 			return str
 		}
 		return defaultValue
-	case PathTypeSimple:
+	case pathTypeSimple:
 		obj, ok := iv.data.(map[string]any)
 		if !ok {
 			return defaultValue
@@ -518,8 +518,8 @@ func (iv *IterableValue) GetStringWithDefault(key string, defaultValue string) s
 // Supports path navigation with dot notation and array indices
 func (iv *IterableValue) GetIntWithDefault(key string, defaultValue int) int {
 	// PERFORMANCE: Use cached path type check instead of strings.ContainsAny
-	switch GetPathType(key) {
-	case PathTypeComplex:
+	switch getPathType(key) {
+	case pathTypeComplex:
 		val := iv.Get(key)
 		if val == nil {
 			return defaultValue
@@ -528,7 +528,7 @@ func (iv *IterableValue) GetIntWithDefault(key string, defaultValue int) int {
 			return result
 		}
 		return defaultValue
-	case PathTypeSimple:
+	case pathTypeSimple:
 		obj, ok := iv.data.(map[string]any)
 		if !ok {
 			return defaultValue
@@ -550,8 +550,8 @@ func (iv *IterableValue) GetIntWithDefault(key string, defaultValue int) int {
 // Supports path navigation with dot notation and array indices
 func (iv *IterableValue) GetFloat64WithDefault(key string, defaultValue float64) float64 {
 	// PERFORMANCE: Use cached path type check instead of strings.ContainsAny
-	switch GetPathType(key) {
-	case PathTypeComplex:
+	switch getPathType(key) {
+	case pathTypeComplex:
 		val := iv.Get(key)
 		if val == nil {
 			return defaultValue
@@ -560,7 +560,7 @@ func (iv *IterableValue) GetFloat64WithDefault(key string, defaultValue float64)
 			return result
 		}
 		return defaultValue
-	case PathTypeSimple:
+	case pathTypeSimple:
 		obj, ok := iv.data.(map[string]any)
 		if !ok {
 			return defaultValue
@@ -582,8 +582,8 @@ func (iv *IterableValue) GetFloat64WithDefault(key string, defaultValue float64)
 // Supports path navigation with dot notation and array indices
 func (iv *IterableValue) GetBoolWithDefault(key string, defaultValue bool) bool {
 	// PERFORMANCE: Use cached path type check instead of strings.ContainsAny
-	switch GetPathType(key) {
-	case PathTypeComplex:
+	switch getPathType(key) {
+	case pathTypeComplex:
 		val := iv.Get(key)
 		if val == nil {
 			return defaultValue
@@ -592,7 +592,7 @@ func (iv *IterableValue) GetBoolWithDefault(key string, defaultValue bool) bool 
 			return result
 		}
 		return defaultValue
-	case PathTypeSimple:
+	case pathTypeSimple:
 		obj, ok := iv.data.(map[string]any)
 		if !ok {
 			return defaultValue
@@ -614,10 +614,10 @@ func (iv *IterableValue) GetBoolWithDefault(key string, defaultValue bool) bool 
 // Supports path navigation with dot notation and array indices
 func (iv *IterableValue) Exists(key string) bool {
 	// PERFORMANCE: Use cached path type check instead of strings.ContainsAny
-	switch GetPathType(key) {
-	case PathTypeComplex:
+	switch getPathType(key) {
+	case pathTypeComplex:
 		return iv.Get(key) != nil
-	case PathTypeSimple:
+	case pathTypeSimple:
 		obj, ok := iv.data.(map[string]any)
 		if !ok {
 			return false
@@ -638,11 +638,11 @@ func (iv *IterableValue) IsNullData() bool {
 // Supports path navigation with dot notation and array indices
 func (iv *IterableValue) IsNull(key string) bool {
 	// PERFORMANCE: Use cached path type check instead of strings.ContainsAny
-	switch GetPathType(key) {
-	case PathTypeComplex:
+	switch getPathType(key) {
+	case pathTypeComplex:
 		val := iv.Get(key)
 		return val == nil
-	case PathTypeSimple:
+	case pathTypeSimple:
 		obj, ok := iv.data.(map[string]any)
 		if !ok {
 			return true
@@ -680,8 +680,8 @@ func (iv *IterableValue) IsEmptyData() bool {
 // Supports path navigation with dot notation and array indices
 func (iv *IterableValue) IsEmpty(key string) bool {
 	// PERFORMANCE: Use cached path type check instead of strings.ContainsAny
-	switch GetPathType(key) {
-	case PathTypeComplex:
+	switch getPathType(key) {
+	case pathTypeComplex:
 		val := iv.Get(key)
 		if val == nil {
 			return true
@@ -696,7 +696,7 @@ func (iv *IterableValue) IsEmpty(key string) bool {
 		default:
 			return false
 		}
-	case PathTypeSimple:
+	case pathTypeSimple:
 		obj, ok := iv.data.(map[string]any)
 		if !ok {
 			return true
@@ -1149,8 +1149,8 @@ func (soi *StreamObjectIterator) Err() error {
 // POOLED SLICE ITERATOR - For in-memory iteration with reduced allocations
 // ============================================================================
 
-// PooledSliceIterator uses pooled slices for efficient array iteration
-type PooledSliceIterator struct {
+// pooledSliceIterator uses pooled slices for efficient array iteration
+type pooledSliceIterator struct {
 	data    []any
 	index   int
 	current any
@@ -1158,15 +1158,15 @@ type PooledSliceIterator struct {
 
 var sliceIteratorPool = sync.Pool{
 	New: func() any {
-		return &PooledSliceIterator{
+		return &pooledSliceIterator{
 			index: -1,
 		}
 	},
 }
 
-// NewPooledSliceIterator creates a pooled slice iterator
-func NewPooledSliceIterator(data []any) *PooledSliceIterator {
-	it := sliceIteratorPool.Get().(*PooledSliceIterator)
+// newPooledSliceIterator creates a pooled slice iterator
+func newPooledSliceIterator(data []any) *pooledSliceIterator {
+	it := sliceIteratorPool.Get().(*pooledSliceIterator)
 	it.data = data
 	it.index = -1
 	it.current = nil
@@ -1174,7 +1174,7 @@ func NewPooledSliceIterator(data []any) *PooledSliceIterator {
 }
 
 // Next advances to the next element
-func (it *PooledSliceIterator) Next() bool {
+func (it *pooledSliceIterator) Next() bool {
 	it.index++
 	if it.index >= len(it.data) {
 		return false
@@ -1184,17 +1184,17 @@ func (it *PooledSliceIterator) Next() bool {
 }
 
 // Value returns the current element
-func (it *PooledSliceIterator) Value() any {
+func (it *pooledSliceIterator) Value() any {
 	return it.current
 }
 
 // Index returns the current index
-func (it *PooledSliceIterator) Index() int {
+func (it *pooledSliceIterator) Index() int {
 	return it.index
 }
 
 // Release returns the iterator to the pool
-func (it *PooledSliceIterator) Release() {
+func (it *pooledSliceIterator) Release() {
 	it.data = nil
 	it.current = nil
 	it.index = -1
@@ -1205,8 +1205,8 @@ func (it *PooledSliceIterator) Release() {
 // POOLED MAP ITERATOR - For efficient object iteration
 // ============================================================================
 
-// PooledMapIterator uses pooled slices for efficient map iteration
-type PooledMapIterator struct {
+// pooledMapIterator uses pooled slices for efficient map iteration
+type pooledMapIterator struct {
 	data    map[string]any
 	keys    []string
 	index   int
@@ -1216,16 +1216,16 @@ type PooledMapIterator struct {
 
 var mapIteratorPool = sync.Pool{
 	New: func() any {
-		return &PooledMapIterator{
+		return &pooledMapIterator{
 			keys:  make([]string, 0, 16),
 			index: -1,
 		}
 	},
 }
 
-// NewPooledMapIterator creates a pooled map iterator
-func NewPooledMapIterator(m map[string]any) *PooledMapIterator {
-	it := mapIteratorPool.Get().(*PooledMapIterator)
+// newPooledMapIterator creates a pooled map iterator
+func newPooledMapIterator(m map[string]any) *pooledMapIterator {
+	it := mapIteratorPool.Get().(*pooledMapIterator)
 	it.data = m
 	it.index = -1
 	it.key = ""
@@ -1241,7 +1241,7 @@ func NewPooledMapIterator(m map[string]any) *PooledMapIterator {
 }
 
 // Next advances to the next key-value pair
-func (it *PooledMapIterator) Next() bool {
+func (it *pooledMapIterator) Next() bool {
 	it.index++
 	if it.index >= len(it.keys) {
 		return false
@@ -1252,17 +1252,17 @@ func (it *PooledMapIterator) Next() bool {
 }
 
 // Key returns the current key
-func (it *PooledMapIterator) Key() string {
+func (it *pooledMapIterator) Key() string {
 	return it.key
 }
 
 // Value returns the current value
-func (it *PooledMapIterator) Value() any {
+func (it *pooledMapIterator) Value() any {
 	return it.current
 }
 
 // Release returns the iterator to the pool
-func (it *PooledMapIterator) Release() {
+func (it *pooledMapIterator) Release() {
 	it.data = nil
 	it.key = ""
 	it.current = nil
@@ -1579,8 +1579,8 @@ func (it *ParallelIterator) Filter(predicate func(int, any) bool) []any {
 // NOTE: iterableValuePool is declared earlier in the file (near line 159)
 // ============================================================================
 
-// NewPooledIterableValue creates an IterableValue from the pool
-func NewPooledIterableValue(data any) *IterableValue {
+// newPooledIterableValue creates an IterableValue from the pool
+func newPooledIterableValue(data any) *IterableValue {
 	iv := iterableValuePool.Get().(*IterableValue)
 	iv.data = data
 	return iv

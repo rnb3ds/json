@@ -1572,9 +1572,9 @@ func TestPooledDecoder(t *testing.T) {
 	jsonData := `{"name":"test","value":42}`
 	reader := strings.NewReader(jsonData)
 
-	dec := GetPooledDecoder(reader)
+	dec := getPooledDecoder(reader)
 	if dec == nil {
-		t.Fatal("GetPooledDecoder returned nil")
+		t.Fatal("getPooledDecoder returned nil")
 	}
 
 	var result map[string]any
@@ -1588,8 +1588,8 @@ func TestPooledDecoder(t *testing.T) {
 	}
 
 	// Return to pool
-	PutPooledDecoder(dec)
-	PutPooledDecoder(nil) // Should not panic
+	putPooledDecoder(dec)
+	putPooledDecoder(nil) // Should not panic
 }
 
 // TestSafeTypeAssert tests SafeTypeAssert function

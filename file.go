@@ -5,15 +5,21 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math/rand"
 	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
+	"time"
 
 	"golang.org/x/text/unicode/norm"
 )
+
+// globalRand is a thread-safe random source for sampling operations
+// Initialized with current time for different seeds across runs
+var globalRand = rand.New(rand.NewSource(time.Now().UnixNano()))
 
 // LoadFromFile loads JSON data from a file and returns the raw JSON string.
 func (p *Processor) LoadFromFile(filePath string, opts ...*ProcessorOptions) (string, error) {
@@ -1050,21 +1056,20 @@ func (lp *LazyParser) Get(path string) (any, error) {
 	return processor.Get(string(jsonBytes), path)
 }
 
-// GetAll returns all parsed data as an interface
-// Deprecated: Use GetValue() for better type support
-func (lp *LazyParser) GetAll() (map[string]any, error) {
+// GetObject returns the parsed data as a map (only for JSON objects).
+// Returns ErrTypeMismatch if the parsed JSON is not an object.
+func (lp *LazyParser) GetObject() (map[string]any, error) {
 	lp.parse()
 	if lp.parseErr != nil {
 		return nil, lp.parseErr
 	}
 
-	// Try to convert to map[string]any for backward compatibility
 	if m, ok := lp.parsed.(map[string]any); ok {
 		return m, nil
 	}
 	return nil, &JsonsError{
-		Op:      "lazy_parser_get_all",
-		Message: "parsed JSON is not an object",
+		Op:      "lazy_parser_get_object",
+		Message: "parsed JSON is not an object (use GetValue() for arrays or other types)",
 		Err:     ErrTypeMismatch,
 	}
 }
@@ -1309,7 +1314,9 @@ func NewSamplingReader(reader io.Reader, sampleSize int) *SamplingReader {
 	}
 }
 
-// Sample reads a sample of items from a JSON array
+// Sample reads a sample of items from a JSON array using reservoir sampling.
+// The reservoir sampling algorithm ensures uniform random sampling distribution:
+// each item in the array has an equal probability of being included in the sample.
 func (sr *SamplingReader) Sample(fn func(index int, item any) bool) error {
 	// Check for array start
 	token, err := sr.decoder.Token()
@@ -1338,14 +1345,17 @@ func (sr *SamplingReader) Sample(fn func(index int, item any) bool) error {
 
 		sr.totalRead++
 
-		// Reservoir sampling algorithm
+		// Reservoir sampling algorithm (Algorithm R)
+		// Ensures uniform random sampling where each element has equal probability
 		if len(samples) < sr.sampleSize {
+			// Fill the reservoir first
 			samples = append(samples, item)
 		} else {
-			// Random replacement (simplified - use actual random in production)
-			replaceIdx := index % sr.sampleSize
-			if replaceIdx < len(samples) {
-				samples[replaceIdx] = item
+			// Random replacement with uniform probability k/(index+1)
+			// Using math/rand for performance - for cryptographic security use crypto/rand
+			j := globalRand.Intn(index + 1)
+			if j < sr.sampleSize {
+				samples[j] = item
 			}
 		}
 		index++

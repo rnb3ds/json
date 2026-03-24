@@ -2,12 +2,9 @@
 
 All notable changes to the cybergodev/json library will be documented in this file.
 
-[//]: # (The format is based on [Keep a Changelog]&#40;https://keepachangelog.com&#41;,)
-[//]: # (and this project adheres to [Semantic Versioning]&#40;https://semver.org&#41;)
-
 ---
 
-## v1.2.1 - Architecture & Quality Enhancement (2026-03-04)
+## v1.2.2 - Architecture & Quality Enhancement (2026-03-04)
 
 ### Added
 - **Configuration Presets**: `WebAPIConfig()`, `FastConfig()`, `MinimalConfig()` for common use cases

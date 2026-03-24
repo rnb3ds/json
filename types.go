@@ -192,12 +192,16 @@ type Stats struct {
 	ErrorCount       int64         `json:"error_count"`
 }
 
-// DetailedStats provides comprehensive processor statistics (internal debugging)
+// DetailedStats provides comprehensive processor statistics for internal debugging.
+// Note: Some internal fields are excluded from JSON serialization (json:"-") because:
+// - state: Represents internal processor lifecycle state (not meaningful externally)
+// - configSnapshot: Contains potentially sensitive configuration data
+// - resourcePoolStats: Internal implementation details subject to change
 type DetailedStats struct {
 	Stats             Stats             `json:"stats"`
-	state             int32             `json:"-"` // Processor state (0=active, 1=closing, 2=closed)
-	configSnapshot    Config            `json:"-"` // Internal: config snapshot
-	resourcePoolStats ResourcePoolStats `json:"-"` // Internal: resource pool stats
+	state             int32             `json:"-"` // Internal: Processor state (0=active, 1=closing, 2=closed)
+	configSnapshot    Config            `json:"-"` // Internal: config snapshot for debugging
+	resourcePoolStats ResourcePoolStats `json:"-"` // Internal: resource pool statistics
 }
 
 // ResourcePoolStats provides statistics about resource pools
@@ -567,7 +571,14 @@ type CacheKey struct {
 // for deletion. It is compared by pointer identity (using ==).
 // SECURITY: This is an unexported struct pointer to prevent external modification.
 // The zero-size struct{}{} is used because we only need unique pointer identity.
+// IMPORTANT: Do not reassign this variable. Use IsDeletedMarker() for comparisons.
 var DeletedMarker = &struct{}{} // deleted marker - empty struct for pointer identity
+
+// IsDeletedMarker checks if a value is the deleted marker sentinel.
+// This is the recommended way to check for deleted markers instead of direct comparison.
+func IsDeletedMarker(v any) bool {
+	return v == DeletedMarker
+}
 
 // ValidateOptions validates processor options with enhanced checks
 func ValidateOptions(options *ProcessorOptions) error {
@@ -1141,31 +1152,101 @@ func DefaultSchema() *Schema {
 	}
 }
 
-// SetMinLength sets the minimum length constraint
-func (s *Schema) SetMinLength(minLength int) *Schema {
-	s.MinLength = minLength
-	s.hasMinLength = true
-	return s
+// SchemaConfig provides configuration options for creating a Schema.
+// This follows the Config pattern as required by the design guidelines.
+// Use this instead of the deprecated Set* methods.
+type SchemaConfig struct {
+	Type                 string
+	Properties           map[string]*Schema
+	Items                *Schema
+	Required             []string
+	MinLength            *int
+	MaxLength            *int
+	Minimum              *float64
+	Maximum              *float64
+	Pattern              string
+	Format               string
+	AdditionalProperties *bool
+	MinItems             *int
+	MaxItems             *int
+	UniqueItems          bool
+	Enum                 []any
+	Const                any
+	MultipleOf           *float64
+	ExclusiveMinimum     *bool
+	ExclusiveMaximum     *bool
+	Title                string
+	Description          string
+	Default              any
+	Examples             []any
 }
 
-// SetMaxLength sets the maximum length constraint
-func (s *Schema) SetMaxLength(maxLength int) *Schema {
-	s.MaxLength = maxLength
-	s.hasMaxLength = true
-	return s
-}
+// NewSchemaWithConfig creates a new Schema with the provided configuration.
+// This is the recommended way to create configured Schema instances.
+func NewSchemaWithConfig(cfg SchemaConfig) *Schema {
+	s := &Schema{
+		Type:        cfg.Type,
+		Properties:  cfg.Properties,
+		Items:       cfg.Items,
+		Required:    cfg.Required,
+		Pattern:     cfg.Pattern,
+		Format:      cfg.Format,
+		UniqueItems: cfg.UniqueItems,
+		Enum:        cfg.Enum,
+		Const:       cfg.Const,
+		Title:       cfg.Title,
+		Description: cfg.Description,
+		Default:     cfg.Default,
+		Examples:    cfg.Examples,
+	}
 
-// SetMinimum sets the minimum value constraint
-func (s *Schema) SetMinimum(minimum float64) *Schema {
-	s.Minimum = minimum
-	s.hasMinimum = true
-	return s
-}
+	if cfg.Properties == nil {
+		s.Properties = make(map[string]*Schema)
+	}
+	if cfg.Required == nil {
+		s.Required = []string{}
+	}
 
-// SetMaximum sets the maximum value constraint
-func (s *Schema) SetMaximum(maximum float64) *Schema {
-	s.Maximum = maximum
-	s.hasMaximum = true
+	// Set optional fields with their has* flags
+	if cfg.MinLength != nil {
+		s.MinLength = *cfg.MinLength
+		s.hasMinLength = true
+	}
+	if cfg.MaxLength != nil {
+		s.MaxLength = *cfg.MaxLength
+		s.hasMaxLength = true
+	}
+	if cfg.Minimum != nil {
+		s.Minimum = *cfg.Minimum
+		s.hasMinimum = true
+	}
+	if cfg.Maximum != nil {
+		s.Maximum = *cfg.Maximum
+		s.hasMaximum = true
+	}
+	if cfg.AdditionalProperties != nil {
+		s.AdditionalProperties = *cfg.AdditionalProperties
+	} else {
+		s.AdditionalProperties = true
+	}
+	if cfg.MinItems != nil {
+		s.MinItems = *cfg.MinItems
+		s.hasMinItems = true
+	}
+	if cfg.MaxItems != nil {
+		s.MaxItems = *cfg.MaxItems
+		s.hasMaxItems = true
+	}
+	if cfg.MultipleOf != nil {
+		s.MultipleOf = *cfg.MultipleOf
+	}
+	if cfg.ExclusiveMinimum != nil {
+		s.ExclusiveMinimum = *cfg.ExclusiveMinimum
+	}
+	if cfg.ExclusiveMaximum != nil {
+		s.ExclusiveMaximum = *cfg.ExclusiveMaximum
+	}
+
 	return s
 }
 
@@ -1189,20 +1270,6 @@ func (s *Schema) HasMaximum() bool {
 	return s.hasMaximum
 }
 
-// SetMinItems sets the minimum items constraint for arrays
-func (s *Schema) SetMinItems(minItems int) *Schema {
-	s.MinItems = minItems
-	s.hasMinItems = true
-	return s
-}
-
-// SetMaxItems sets the maximum items constraint for arrays
-func (s *Schema) SetMaxItems(maxItems int) *Schema {
-	s.MaxItems = maxItems
-	s.hasMaxItems = true
-	return s
-}
-
 // HasMinItems returns true if MinItems constraint is explicitly set
 func (s *Schema) HasMinItems() bool {
 	return s.hasMinItems
@@ -1211,16 +1278,4 @@ func (s *Schema) HasMinItems() bool {
 // HasMaxItems returns true if MaxItems constraint is explicitly set
 func (s *Schema) HasMaxItems() bool {
 	return s.hasMaxItems
-}
-
-// SetExclusiveMinimum sets the exclusive minimum flag
-func (s *Schema) SetExclusiveMinimum(exclusive bool) *Schema {
-	s.ExclusiveMinimum = exclusive
-	return s
-}
-
-// SetExclusiveMaximum sets the exclusive maximum flag
-func (s *Schema) SetExclusiveMaximum(exclusive bool) *Schema {
-	s.ExclusiveMaximum = exclusive
-	return s
 }

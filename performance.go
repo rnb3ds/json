@@ -249,14 +249,14 @@ func (dec *Decoder) clear() {
 	dec.scanp = 0
 }
 
-// GetPooledDecoder gets a decoder from the global pool
+// getPooledDecoder gets a decoder from the global pool
 // PERFORMANCE: Use this for streaming scenarios to reduce allocations
-func GetPooledDecoder(r io.Reader) *Decoder {
+func getPooledDecoder(r io.Reader) *Decoder {
 	return globalDecoderPool.Get(r)
 }
 
-// PutPooledDecoder returns a decoder to the global pool
-func PutPooledDecoder(dec *Decoder) {
+// putPooledDecoder returns a decoder to the global pool
+func putPooledDecoder(dec *Decoder) {
 	globalDecoderPool.Put(dec)
 }
 

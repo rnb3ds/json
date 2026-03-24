@@ -39,7 +39,7 @@ func main() {
 	demonstrateMerge()
 
 	// 3. FORMATTING
-	fmt.Println("\n3. Formatting (FormatPretty/FormatCompact)")
+	fmt.Println("\n3. Formatting (FormatPretty/CompactString)")
 	fmt.Println("-------------------------------------------")
 	demonstrateFormatting()
 
@@ -187,13 +187,13 @@ func demonstrateFormatting() {
 	fmt.Println(pretty)
 
 	// Format as compact
-	compact, err := json.FormatCompact(pretty)
+	compact, err := json.CompactString(pretty)
 	if err != nil {
 		fmt.Printf("   Error: %v\n", err)
 		return
 	}
 
-	fmt.Println("\n   FormatCompact result:")
+	fmt.Println("\n   CompactString result:")
 	fmt.Println(compact)
 
 	fmt.Println("\n   Formatting is reversible!")

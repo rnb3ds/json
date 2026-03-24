@@ -277,3 +277,64 @@ func matchPatternIgnoreCase(s, pattern string) bool {
 func IsMatchPatternIgnoreCase(s, pattern string) bool {
 	return matchPatternIgnoreCase(s, pattern)
 }
+
+// CleanupNullValues recursively removes null values and empty containers from JSON data.
+// When compactArrays is true, null elements are also removed from arrays.
+func CleanupNullValues(data any, compactArrays bool) any {
+	switch v := data.(type) {
+	case map[string]any:
+		result := make(map[string]any)
+		for key, value := range v {
+			if value != nil {
+				cleanedValue := CleanupNullValues(value, compactArrays)
+				if cleanedValue != nil && !isEmptyContainer(cleanedValue) {
+					result[key] = cleanedValue
+				}
+			}
+		}
+		return result
+
+	case []any:
+		if compactArrays {
+			return cleanupArrayCompact(v, compactArrays)
+		}
+		result := make([]any, len(v))
+		for i, item := range v {
+			if item != nil {
+				result[i] = CleanupNullValues(item, compactArrays)
+			}
+		}
+		return result
+
+	default:
+		return data
+	}
+}
+
+// cleanupArrayCompact removes null elements from an array while recursively cleaning nested values
+func cleanupArrayCompact(arr []any, compactArrays bool) []any {
+	result := make([]any, 0, len(arr))
+	for _, item := range arr {
+		if item != nil {
+			cleanedItem := CleanupNullValues(item, compactArrays)
+			if cleanedItem != nil && !isEmptyContainer(cleanedItem) {
+				result = append(result, cleanedItem)
+			}
+		}
+	}
+	return result
+}
+
+// isEmptyContainer checks if a value is an empty map, array, or string
+func isEmptyContainer(data any) bool {
+	switch v := data.(type) {
+	case map[string]any:
+		return len(v) == 0
+	case []any:
+		return len(v) == 0
+	case string:
+		return v == ""
+	default:
+		return false
+	}
+}

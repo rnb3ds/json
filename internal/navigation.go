@@ -2,6 +2,7 @@ package internal
 
 import (
 	"fmt"
+	"reflect"
 	"strconv"
 	"strings"
 )
@@ -427,6 +428,21 @@ func IsMapType(data any) bool {
 		return true
 	default:
 		return false
+	}
+}
+
+// IsSliceType checks if data is a slice type using reflection
+// This handles any slice type, not just []any
+func IsSliceType(data any) bool {
+	if data == nil {
+		return false
+	}
+	switch data.(type) {
+	case []any:
+		return true
+	default:
+		// Use reflection for other slice types
+		return reflect.ValueOf(data).Kind() == reflect.Slice
 	}
 }
 

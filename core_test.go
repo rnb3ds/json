@@ -144,9 +144,9 @@ func generateArrayItems(count int) string {
 // Benchmark Tests
 // ============================================================================
 
-// BenchmarkArrayHelper_CompactArray benchmarks the CompactArray method
-func BenchmarkArrayHelper_CompactArray(b *testing.B) {
-	ah := &ArrayHelper{}
+// Benchmark_ArrayHelper_CompactArray benchmarks the compactArray method
+func Benchmark_ArrayHelper_CompactArray(b *testing.B) {
+	ah := &arrayHelper{}
 	arr := make([]any, 1000)
 	for i := 0; i < 1000; i++ {
 		if i%3 == 0 {
@@ -158,13 +158,13 @@ func BenchmarkArrayHelper_CompactArray(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		ah.CompactArray(arr)
+		ah.compactArray(arr)
 	}
 }
 
-// BenchmarkArrayHelper_PerformSlice benchmarks the PerformSlice method
-func BenchmarkArrayHelper_PerformSlice(b *testing.B) {
-	ah := &ArrayHelper{}
+// Benchmark_ArrayHelper_PerformSlice benchmarks the performSlice method
+func Benchmark_ArrayHelper_PerformSlice(b *testing.B) {
+	ah := &arrayHelper{}
 	arr := make([]any, 1000)
 	for i := 0; i < 1000; i++ {
 		arr[i] = i
@@ -172,7 +172,7 @@ func BenchmarkArrayHelper_PerformSlice(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		ah.PerformSlice(arr, 100, 900, 1)
+		ah.performSlice(arr, 100, 900, 1)
 	}
 }
 
@@ -339,7 +339,7 @@ func BenchmarkPerformArraySlice(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_ = processor.performArraySlice(arr, start, end, step)
+		_ = internal.PerformArraySlice(arr, start, end, step)
 	}
 }
 
@@ -368,9 +368,9 @@ func TestArrayExtensionNeededError(t *testing.T) {
 	}
 }
 
-// TestArrayHelper_ClampIndex tests the ClampIndex method
-func TestArrayHelper_ClampIndex(t *testing.T) {
-	ah := &ArrayHelper{}
+// TestarrayHelper_ClampIndex tests the clampIndex method
+func Test_ArrayHelper_ClampIndex(t *testing.T) {
+	ah := &arrayHelper{}
 
 	tests := []struct {
 		name     string
@@ -390,17 +390,17 @@ func TestArrayHelper_ClampIndex(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := ah.ClampIndex(tt.index, tt.length)
+			result := ah.clampIndex(tt.index, tt.length)
 			if result != tt.expected {
-				t.Errorf("ClampIndex(%d, %d) = %d, want %d", tt.index, tt.length, result, tt.expected)
+				t.Errorf("clampIndex(%d, %d) = %d, want %d", tt.index, tt.length, result, tt.expected)
 			}
 		})
 	}
 }
 
-// TestArrayHelper_CompactArray tests the CompactArray method
-func TestArrayHelper_CompactArray(t *testing.T) {
-	ah := &ArrayHelper{}
+// TestarrayHelper_CompactArray tests the compactArray method
+func Test_ArrayHelper_CompactArray(t *testing.T) {
+	ah := &arrayHelper{}
 
 	tests := []struct {
 		name     string
@@ -419,22 +419,22 @@ func TestArrayHelper_CompactArray(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := ah.CompactArray(tt.input)
+			result := ah.compactArray(tt.input)
 			if len(result) != tt.expected {
-				t.Errorf("CompactArray() returned length %d, want %d", len(result), tt.expected)
+				t.Errorf("compactArray() returned length %d, want %d", len(result), tt.expected)
 			}
 			for _, item := range result {
 				if item == nil || item == DeletedMarker {
-					t.Errorf("CompactArray() result contains nil or DeletedMarker")
+					t.Errorf("compactArray() result contains nil or DeletedMarker")
 				}
 			}
 		})
 	}
 }
 
-// TestArrayHelper_ExtendArray tests the ExtendArray method
-func TestArrayHelper_ExtendArray(t *testing.T) {
-	ah := &ArrayHelper{}
+// TestarrayHelper_ExtendArray tests the extendArray method
+func Test_ArrayHelper_ExtendArray(t *testing.T) {
+	ah := &arrayHelper{}
 
 	tests := []struct {
 		name           string
@@ -452,20 +452,20 @@ func TestArrayHelper_ExtendArray(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := ah.ExtendArray(tt.input, tt.targetLength)
+			result := ah.extendArray(tt.input, tt.targetLength)
 			if len(result) != tt.expectedLength {
-				t.Errorf("ExtendArray() returned length %d, want %d", len(result), tt.expectedLength)
+				t.Errorf("extendArray() returned length %d, want %d", len(result), tt.expectedLength)
 			}
 			if tt.expectExtend && len(result) <= len(tt.input) {
-				t.Errorf("ExtendArray() should have extended array")
+				t.Errorf("extendArray() should have extended array")
 			}
 		})
 	}
 }
 
-// TestArrayHelper_GetElement tests the GetElement method
-func TestArrayHelper_GetElement(t *testing.T) {
-	ah := &ArrayHelper{}
+// TestarrayHelper_GetElement tests the getElement method
+func Test_ArrayHelper_GetElement(t *testing.T) {
+	ah := &arrayHelper{}
 	arr := []any{"a", "b", "c", "d", "e"}
 
 	tests := []struct {
@@ -485,20 +485,20 @@ func TestArrayHelper_GetElement(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result, found := ah.GetElement(arr, tt.index)
+			result, found := ah.getElement(arr, tt.index)
 			if found != tt.expectFound {
-				t.Errorf("GetElement() found = %v, want %v", found, tt.expectFound)
+				t.Errorf("getElement() found = %v, want %v", found, tt.expectFound)
 			}
 			if found && result != tt.expected {
-				t.Errorf("GetElement() = %v, want %v", result, tt.expected)
+				t.Errorf("getElement() = %v, want %v", result, tt.expected)
 			}
 		})
 	}
 }
 
-// TestArrayHelper_NormalizeIndex tests the NormalizeIndex method
-func TestArrayHelper_NormalizeIndex(t *testing.T) {
-	ah := &ArrayHelper{}
+// TestarrayHelper_NormalizeIndex tests the normalizeIndex method
+func Test_ArrayHelper_NormalizeIndex(t *testing.T) {
+	ah := &arrayHelper{}
 
 	tests := []struct {
 		name     string
@@ -516,17 +516,17 @@ func TestArrayHelper_NormalizeIndex(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := ah.NormalizeIndex(tt.index, tt.length)
+			result := ah.normalizeIndex(tt.index, tt.length)
 			if result != tt.expected {
-				t.Errorf("NormalizeIndex(%d, %d) = %d, want %d", tt.index, tt.length, result, tt.expected)
+				t.Errorf("normalizeIndex(%d, %d) = %d, want %d", tt.index, tt.length, result, tt.expected)
 			}
 		})
 	}
 }
 
-// TestArrayHelper_ParseArrayIndex tests the ParseArrayIndex method
-func TestArrayHelper_ParseArrayIndex(t *testing.T) {
-	ah := &ArrayHelper{}
+// TestarrayHelper_ParseArrayIndex tests the parseArrayIndex method
+func Test_ArrayHelper_ParseArrayIndex(t *testing.T) {
+	ah := &arrayHelper{}
 
 	tests := []struct {
 		name     string
@@ -547,17 +547,17 @@ func TestArrayHelper_ParseArrayIndex(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := ah.ParseArrayIndex(tt.input)
+			result := ah.parseArrayIndex(tt.input)
 			if result != tt.expected {
-				t.Errorf("ParseArrayIndex(%q) = %d, want %d", tt.input, result, tt.expected)
+				t.Errorf("parseArrayIndex(%q) = %d, want %d", tt.input, result, tt.expected)
 			}
 		})
 	}
 }
 
-// TestArrayHelper_PerformSlice tests the PerformSlice method
-func TestArrayHelper_PerformSlice(t *testing.T) {
-	ah := &ArrayHelper{}
+// TestarrayHelper_PerformSlice tests the performSlice method
+func Test_ArrayHelper_PerformSlice(t *testing.T) {
+	ah := &arrayHelper{}
 	arr := []any{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}
 
 	tests := []struct {
@@ -582,28 +582,28 @@ func TestArrayHelper_PerformSlice(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := ah.PerformSlice(arr, tt.start, tt.end, tt.step)
+			result := ah.performSlice(arr, tt.start, tt.end, tt.step)
 			if !slicesEqual(result, tt.expected) {
-				t.Errorf("PerformSlice(%d, %d, %d) = %v, want %v", tt.start, tt.end, tt.step, result, tt.expected)
+				t.Errorf("performSlice(%d, %d, %d) = %v, want %v", tt.start, tt.end, tt.step, result, tt.expected)
 			}
 		})
 	}
 }
 
-// TestArrayHelper_PerformSlice_EmptyArray tests PerformSlice with empty array
-func TestArrayHelper_PerformSlice_EmptyArray(t *testing.T) {
-	ah := &ArrayHelper{}
+// TestarrayHelper_PerformSlice_EmptyArray tests performSlice with empty array
+func Test_ArrayHelper_PerformSlice_EmptyArray(t *testing.T) {
+	ah := &arrayHelper{}
 	emptyArr := []any{}
 
-	result := ah.PerformSlice(emptyArr, 0, 5, 1)
+	result := ah.performSlice(emptyArr, 0, 5, 1)
 	if len(result) != 0 {
-		t.Errorf("PerformSlice on empty array should return empty, got %v", result)
+		t.Errorf("performSlice on empty array should return empty, got %v", result)
 	}
 }
 
-// TestArrayHelper_SetElement tests the SetElement method
-func TestArrayHelper_SetElement(t *testing.T) {
-	ah := &ArrayHelper{}
+// TestarrayHelper_SetElement tests the setElement method
+func Test_ArrayHelper_SetElement(t *testing.T) {
+	ah := &arrayHelper{}
 
 	tests := []struct {
 		name        string
@@ -626,20 +626,20 @@ func TestArrayHelper_SetElement(t *testing.T) {
 			arrCopy := make([]any, len(tt.arr))
 			copy(arrCopy, tt.arr)
 
-			result := ah.SetElement(arrCopy, tt.index, tt.value)
+			result := ah.setElement(arrCopy, tt.index, tt.value)
 			if result != tt.expectOK {
-				t.Errorf("SetElement() = %v, want %v", result, tt.expectOK)
+				t.Errorf("setElement() = %v, want %v", result, tt.expectOK)
 			}
 			if tt.expectOK && arrCopy[tt.expectIndex] != tt.value {
-				t.Errorf("SetElement() did not set value at index %d", tt.expectIndex)
+				t.Errorf("setElement() did not set value at index %d", tt.expectIndex)
 			}
 		})
 	}
 }
 
-// TestArrayHelper_ValidateBounds tests the ValidateBounds method
-func TestArrayHelper_ValidateBounds(t *testing.T) {
-	ah := &ArrayHelper{}
+// TestarrayHelper_ValidateBounds tests the validateBounds method
+func Test_ArrayHelper_ValidateBounds(t *testing.T) {
+	ah := &arrayHelper{}
 
 	tests := []struct {
 		name     string
@@ -658,9 +658,9 @@ func TestArrayHelper_ValidateBounds(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := ah.ValidateBounds(tt.index, tt.length)
+			result := ah.validateBounds(tt.index, tt.length)
 			if result != tt.expected {
-				t.Errorf("ValidateBounds(%d, %d) = %v, want %v", tt.index, tt.length, result, tt.expected)
+				t.Errorf("validateBounds(%d, %d) = %v, want %v", tt.index, tt.length, result, tt.expected)
 			}
 		})
 	}
@@ -2542,8 +2542,8 @@ func TestFastSet(t *testing.T) {
 	})
 }
 
-// TestFormatCompact tests compact formatting
-func TestFormatCompact(t *testing.T) {
+// TestCompactString tests compact formatting
+func TestCompactString(t *testing.T) {
 	prettyJSON := `{
 		"user": {
 			"name": "Alice",
@@ -2551,7 +2551,7 @@ func TestFormatCompact(t *testing.T) {
 		}
 	}`
 
-	result, err := FormatCompact(prettyJSON)
+	result, err := CompactString(prettyJSON)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -2609,8 +2609,15 @@ func TestForwardSlice(t *testing.T) {
 			expected: []any{0.0, 2.0, 4.0},
 		},
 		{
-			name:     "start negative",
+			name:     "start negative (Python-style: -1 means last element)",
 			start:    -1,
+			end:      5,
+			step:     1,
+			expected: []any{4.0},
+		},
+		{
+			name:     "start negative from beginning",
+			start:    -5,
 			end:      4,
 			step:     1,
 			expected: []any{0.0, 1.0, 2.0, 3.0},
@@ -2633,7 +2640,7 @@ func TestForwardSlice(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := processor.forwardSlice(arr, tt.start, tt.end, tt.step)
+			result := internal.PerformArraySlice(arr, &tt.start, &tt.end, &tt.step)
 			if !slicesEqual(result, tt.expected) {
 				t.Errorf("forwardSlice(%d, %d, %d) = %v; want %v", tt.start, tt.end, tt.step, result, tt.expected)
 			}
@@ -3642,9 +3649,6 @@ func TestIndentBuffer(t *testing.T) {
 
 // TestIsArrayType tests array type detection
 func TestIsArrayType(t *testing.T) {
-	processor := New()
-	defer processor.Close()
-
 	tests := []struct {
 		name     string
 		data     any
@@ -3674,9 +3678,9 @@ func TestIsArrayType(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := processor.isArrayType(tt.data)
+			result := internal.IsArrayType(tt.data)
 			if result != tt.expected {
-				t.Errorf("isArrayType() = %v; want %v", result, tt.expected)
+				t.Errorf("IsArrayType() = %v; want %v", result, tt.expected)
 			}
 		})
 	}
@@ -3752,9 +3756,6 @@ func TestIsDigit(t *testing.T) {
 
 // TestIsObjectType tests object type detection
 func TestIsObjectType(t *testing.T) {
-	processor := New()
-	defer processor.Close()
-
 	tests := []struct {
 		name     string
 		data     any
@@ -3784,9 +3785,9 @@ func TestIsObjectType(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := processor.isObjectType(tt.data)
+			result := internal.IsObjectType(tt.data)
 			if result != tt.expected {
-				t.Errorf("isObjectType() = %v; want %v", result, tt.expected)
+				t.Errorf("IsObjectType() = %v; want %v", result, tt.expected)
 			}
 		})
 	}
@@ -4117,23 +4118,24 @@ func TestOperationTypes(t *testing.T) {
 	}
 }
 
-// TestParseArrayIndexGlobal tests the global ParseArrayIndexGlobal function
-func TestParseArrayIndexGlobal(t *testing.T) {
+// TestParseArrayIndex tests the internal ParseArrayIndex function
+func TestParseArrayIndex(t *testing.T) {
 	tests := []struct {
-		name     string
-		input    string
-		expected int
+		name        string
+		input       string
+		expectedIdx int
+		expectedOK  bool
 	}{
-		{"Valid index", "[5]", 5},
-		{"Invalid index", "abc", InvalidArrayIndex},
-		{"Empty string", "", InvalidArrayIndex},
+		{"Valid index", "5", 5, true},
+		{"Invalid index", "abc", 0, false},
+		{"Empty string", "", 0, false},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := ParseArrayIndexGlobal(tt.input)
-			if result != tt.expected {
-				t.Errorf("ParseArrayIndexGlobal(%q) = %d, want %d", tt.input, result, tt.expected)
+			result, ok := internal.ParseArrayIndex(tt.input)
+			if result != tt.expectedIdx || ok != tt.expectedOK {
+				t.Errorf("ParseArrayIndex(%q) = (%d, %v), want (%d, %v)", tt.input, result, ok, tt.expectedIdx, tt.expectedOK)
 			}
 		})
 	}
@@ -4808,7 +4810,7 @@ func TestPerformArraySlice(t *testing.T) {
 				input = arr
 			}
 
-			result := processor.performArraySlice(input, tt.start, tt.end, tt.step)
+			result := internal.PerformArraySlice(input, tt.start, tt.end, tt.step)
 			if !slicesEqual(result, tt.expected) {
 				t.Errorf("%s: performArraySlice() = %v; want %v", tt.description, result, tt.expected)
 			}
@@ -6170,9 +6172,16 @@ func TestReverseSlice(t *testing.T) {
 			expected: []any{4.0, 3.0, 2.0, 1.0},
 		},
 		{
-			name:     "reverse with step",
+			name:     "reverse with step (end=-1 normalizes to last index, so empty)",
 			start:    4,
 			end:      -1,
+			step:     -2,
+			expected: []any{},
+		},
+		{
+			name:     "reverse to before beginning (end=-6 normalizes to -1, before index 0)",
+			start:    4,
+			end:      -6,
 			step:     -2,
 			expected: []any{4.0, 2.0, 0.0},
 		},
@@ -6194,7 +6203,7 @@ func TestReverseSlice(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := processor.reverseSlice(arr, tt.start, tt.end, tt.step)
+			result := internal.PerformArraySlice(arr, &tt.start, &tt.end, &tt.step)
 			if !slicesEqual(result, tt.expected) {
 				t.Errorf("reverseSlice(%d, %d, %d) = %v; want %v", tt.start, tt.end, tt.step, result, tt.expected)
 			}

@@ -11,7 +11,6 @@ const (
 	MaxNestingDepth   = 200 // Maximum JSON nesting depth for security validation
 
 	// Path and cache limits
-	// Note: MaxPathLength is also defined in config.go for the public API
-	// Both should be kept in sync (value: 5000)
+	MaxPathLength     = 5000 // Maximum path length for security (single source of truth)
 	MaxCacheKeyLength = 1024 // Maximum cache key length to prevent memory issues
 )
