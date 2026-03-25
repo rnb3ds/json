@@ -22,7 +22,7 @@ import (
 // - Custom escape sequences
 // - Pretty vs compact formatting
 //
-// Run: go run examples/5_encoding_options.go
+// Run: go run -tags=example examples/5_encoding_options.go
 
 func main() {
 	fmt.Println("⚙️  JSON Library - Encoding Options")

@@ -168,8 +168,9 @@ func (urp *RecursiveProcessor) handleArrayIndexSegmentUnified(data any, segment 
 
 		if shouldUseDistributed {
 			// For distributed ops, apply the index to each element in the container
-			var results []any
-			var errs []error
+			// PERFORMANCE: Pre-allocate slices with capacity hints
+			results := make([]any, 0, len(container))
+			errs := make([]error, 0, 4)
 
 			for _, item := range container {
 				// Find the actual target array for distributed op
@@ -264,8 +265,9 @@ func (urp *RecursiveProcessor) handleArrayIndexSegmentUnified(data any, segment 
 
 	case map[string]any:
 		// Apply array index to each map value recursively
-		var results []any
-		var errs []error
+		// PERFORMANCE: Pre-allocate slices with capacity hints
+		results := make([]any, 0, len(container))
+		errs := make([]error, 0, 4)
 
 		for key, mapValue := range container {
 			result, err := urp.handleArrayIndexSegmentUnified(mapValue, segment, segments, segmentIndex, isLastSegment, op, value, createPaths)
@@ -368,8 +370,9 @@ func (urp *RecursiveProcessor) handlePropertySegmentUnified(data any, segment in
 
 	case []any:
 		// Apply property access to each array element recursively
-		var results []any
-		var errs []error
+		// PERFORMANCE: Pre-allocate slices with capacity hints
+		results := make([]any, 0, len(container))
+		errs := make([]error, 0, 4)
 
 		for i, item := range container {
 			result, err := urp.handlePropertySegmentUnified(item, segment, segments, segmentIndex, isLastSegment, op, value, createPaths)
@@ -411,8 +414,9 @@ func (urp *RecursiveProcessor) handleArraySliceSegmentUnified(data any, segment 
 
 		if shouldUseDistributed {
 			// Distributed slice op - apply slice to each array element
-			var results []any
-			var errs []error
+			// PERFORMANCE: Pre-allocate slices with capacity hints
+			results := make([]any, 0, len(container))
+			errs := make([]error, 0, 4)
 
 			for _, item := range container {
 				targetArray := urp.findTargetArrayForDistributedop(item)
@@ -561,8 +565,9 @@ func (urp *RecursiveProcessor) handleArraySliceSegmentUnified(data any, segment 
 		}
 
 		// Process remaining segments on each sliced element
-		var results []any
-		var errs []error
+		// PERFORMANCE: Pre-allocate slices with capacity hints
+		results := make([]any, 0, len(slicedContainer))
+		errs := make([]error, 0, 4)
 
 		for i, item := range slicedContainer {
 			result, err := urp.processRecursivelyAtSegmentsWithOptions(item, segments, segmentIndex+1, op, value, createPaths)
@@ -586,8 +591,9 @@ func (urp *RecursiveProcessor) handleArraySliceSegmentUnified(data any, segment 
 
 	case map[string]any:
 		// Apply array slice to each map value recursively
-		var results []any
-		var errs []error
+		// PERFORMANCE: Pre-allocate slices with capacity hints
+		results := make([]any, 0, len(container))
+		errs := make([]error, 0, 4)
 
 		for key, mapValue := range container {
 			result, err := urp.handleArraySliceSegmentUnified(mapValue, segment, segments, segmentIndex, isLastSegment, op, value, createPaths)
@@ -631,8 +637,9 @@ func (urp *RecursiveProcessor) handleExtractSegmentUnified(data any, segment int
 	switch container := data.(type) {
 	case []any:
 		// Extract from each array element
-		var results []any
-		var errs []error
+		// PERFORMANCE: Pre-allocate slices with capacity hints
+		results := make([]any, 0, len(container))
+		errs := make([]error, 0, 4)
 
 		for i, item := range container {
 			if itemMap, ok := item.(map[string]any); ok {
@@ -1017,8 +1024,9 @@ func (urp *RecursiveProcessor) handleWildcardSegmentUnified(data any, segment in
 		}
 
 		// Recursively process all array elements
-		var results []any
-		var errs []error
+		// PERFORMANCE: Pre-allocate slices with capacity hints
+		results := make([]any, 0, len(container))
+		errs := make([]error, 0, 4)
 
 		for i, item := range container {
 			result, err := urp.processRecursivelyAtSegmentsWithOptions(item, segments, segmentIndex+1, op, value, createPaths)
@@ -1045,7 +1053,8 @@ func (urp *RecursiveProcessor) handleWildcardSegmentUnified(data any, segment in
 		if isLastSegment {
 			switch op {
 			case opGet:
-				var results []any
+				// PERFORMANCE: Pre-allocate slice with capacity hint
+				results := make([]any, 0, len(container))
 				for _, val := range container {
 					results = append(results, val)
 				}
@@ -1066,8 +1075,9 @@ func (urp *RecursiveProcessor) handleWildcardSegmentUnified(data any, segment in
 		}
 
 		// Recursively process all map values
-		var results []any
-		var errs []error
+		// PERFORMANCE: Pre-allocate slices with capacity hints
+		results := make([]any, 0, len(container))
+		errs := make([]error, 0, 4)
 
 		for key, mapValue := range container {
 			result, err := urp.processRecursivelyAtSegmentsWithOptions(mapValue, segments, segmentIndex+1, op, value, createPaths)

@@ -167,13 +167,17 @@ func (p *Processor) Close() error {
 		}
 
 		// Drain the concurrency semaphore to release any waiting goroutines
-		// Use a separate goroutine with timeout to prevent indefinite blocking
+		// Use context cancellation for clean goroutine termination
 		if p.metrics != nil && p.metrics.concurrencySemaphore != nil {
+			drainCtx, drainCancel := context.WithTimeout(context.Background(), SemaphoreDrainTimeout)
 			drainDone := make(chan struct{})
 			go func() {
 				defer close(drainDone)
 				for {
 					select {
+					case <-drainCtx.Done():
+						// Context cancelled - exit cleanly
+						return
 					case <-p.metrics.concurrencySemaphore:
 						// Drained one slot
 					default:
@@ -186,9 +190,10 @@ func (p *Processor) Close() error {
 			select {
 			case <-drainDone:
 				// Drain completed
-			case <-time.After(SemaphoreDrainTimeout):
+			case <-drainCtx.Done():
 				// Timeout on drain - continue with cleanup
 			}
+			drainCancel() // Ensure context is cancelled to stop goroutine
 		}
 
 		// Safely clear cache with nil check

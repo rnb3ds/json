@@ -20,7 +20,7 @@ import (
 // - JSON format validation
 // - Custom validation rules
 //
-// Run: go run examples/6_validation.go
+// Run: go run -tags=example examples/6_validation.go
 
 func main() {
 	fmt.Println("✓ JSON Library - Validation")

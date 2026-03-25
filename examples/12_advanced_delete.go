@@ -20,7 +20,7 @@ import (
 // - Nested path deletion
 // - Cleanup options
 //
-// Run: go run examples/12_advanced_delete.go
+// Run: go run -tags=example examples/12_advanced_delete.go
 
 func main() {
 	fmt.Println("JSON Library - Advanced Delete Operations")

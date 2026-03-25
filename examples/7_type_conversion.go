@@ -20,7 +20,7 @@ import (
 // - JSON Number handling
 // - Custom type conversions
 //
-// Run: go run examples/7_type_conversion.go
+// Run: go run -tags=example examples/7_type_conversion.go
 
 func main() {
 	fmt.Println("🔄 JSON Library - Type Conversion")

@@ -87,8 +87,10 @@ func mergeObjects(baseMap, overrideMap map[string]any, mode MergeMode, depth int
 }
 
 // mergeObjectsUnion performs union merge - combines all keys from both objects
+// PERFORMANCE: Pre-allocates result map with capacity hint
 func mergeObjectsUnion(baseMap, overrideMap map[string]any, mode MergeMode, depth int, visited map[uintptr]bool) map[string]any {
-	result := make(map[string]any)
+	// PERFORMANCE: Pre-allocate with combined size hint
+	result := make(map[string]any, len(baseMap)+len(overrideMap))
 
 	// Copy all keys from base
 	for key, value := range baseMap {
@@ -110,8 +112,14 @@ func mergeObjectsUnion(baseMap, overrideMap map[string]any, mode MergeMode, dept
 }
 
 // mergeObjectsIntersection performs intersection merge - only keys present in both
+// PERFORMANCE: Pre-allocates result map with capacity hint
 func mergeObjectsIntersection(baseMap, overrideMap map[string]any, mode MergeMode, depth int, visited map[uintptr]bool) map[string]any {
-	result := make(map[string]any)
+	// PERFORMANCE: Pre-allocate with min size hint
+	minLen := len(baseMap)
+	if len(overrideMap) < minLen {
+		minLen = len(overrideMap)
+	}
+	result := make(map[string]any, minLen)
 
 	// Only include keys that exist in both
 	for key, baseValue := range baseMap {
@@ -129,8 +137,10 @@ func mergeObjectsIntersection(baseMap, overrideMap map[string]any, mode MergeMod
 }
 
 // mergeObjectsDifference performs difference merge - keys only in base (A - B)
+// PERFORMANCE: Pre-allocates result map with capacity hint
 func mergeObjectsDifference(baseMap, overrideMap map[string]any, mode MergeMode, depth int, visited map[uintptr]bool) map[string]any {
-	result := make(map[string]any)
+	// PERFORMANCE: Pre-allocate with base size hint
+	result := make(map[string]any, len(baseMap))
 
 	// Only include keys that exist in base but NOT in override
 	for key, baseValue := range baseMap {
@@ -203,9 +213,12 @@ func mergeArrays(baseArray, overrideArray []any, mode MergeMode, visited map[uin
 }
 
 // mergeArraysUnion performs union merge - combines all elements with deduplication
+// PERFORMANCE: Pre-allocates result and seen map with capacity hints
 func mergeArraysUnion(baseArray, overrideArray []any) []any {
+	// PERFORMANCE: Pre-allocate with combined size hint
 	result := make([]any, 0, len(baseArray)+len(overrideArray))
-	seen := make(map[string]bool)
+	// PERFORMANCE: Pre-allocate seen map
+	seen := make(map[string]bool, len(baseArray)+len(overrideArray))
 
 	// Add elements from base array
 	for _, item := range baseArray {
@@ -229,16 +242,21 @@ func mergeArraysUnion(baseArray, overrideArray []any) []any {
 }
 
 // mergeArraysIntersection performs intersection merge - only elements in both arrays
+// PERFORMANCE: Pre-allocates result and sets with capacity hints
 func mergeArraysIntersection(baseArray, overrideArray []any) []any {
-	// Build a set of override elements
-	overrideSet := make(map[string]bool)
+	// PERFORMANCE: Pre-allocate sets
+	overrideSet := make(map[string]bool, len(overrideArray))
 	for _, item := range overrideArray {
 		overrideSet[ArrayItemKey(item)] = true
 	}
 
-	// Collect elements that exist in both
-	result := make([]any, 0)
-	seen := make(map[string]bool)
+	// PERFORMANCE: Pre-allocate result with min size hint
+	minLen := len(baseArray)
+	if len(overrideArray) < minLen {
+		minLen = len(overrideArray)
+	}
+	result := make([]any, 0, minLen)
+	seen := make(map[string]bool, minLen)
 
 	for _, item := range baseArray {
 		key := ArrayItemKey(item)
@@ -252,16 +270,17 @@ func mergeArraysIntersection(baseArray, overrideArray []any) []any {
 }
 
 // mergeArraysDifference performs difference merge - elements only in base (A - B)
+// PERFORMANCE: Pre-allocates result and sets with capacity hints
 func mergeArraysDifference(baseArray, overrideArray []any) []any {
-	// Build a set of override elements
-	overrideSet := make(map[string]bool)
+	// PERFORMANCE: Pre-allocate sets
+	overrideSet := make(map[string]bool, len(overrideArray))
 	for _, item := range overrideArray {
 		overrideSet[ArrayItemKey(item)] = true
 	}
 
-	// Collect elements that are only in base
-	result := make([]any, 0)
-	seen := make(map[string]bool)
+	// PERFORMANCE: Pre-allocate result with base size hint
+	result := make([]any, 0, len(baseArray))
+	seen := make(map[string]bool, len(baseArray))
 
 	for _, item := range baseArray {
 		key := ArrayItemKey(item)
@@ -446,10 +465,12 @@ func IsMatchPatternIgnoreCase(s, pattern string) bool {
 
 // CleanupNullValues recursively removes null values and empty containers from JSON data.
 // When compactArrays is true, null elements are also removed from arrays.
+// PERFORMANCE: Pre-allocates result containers with capacity hints
 func CleanupNullValues(data any, compactArrays bool) any {
 	switch v := data.(type) {
 	case map[string]any:
-		result := make(map[string]any)
+		// PERFORMANCE: Pre-allocate with original size hint
+		result := make(map[string]any, len(v))
 		for key, value := range v {
 			if value != nil {
 				cleanedValue := CleanupNullValues(value, compactArrays)
@@ -464,6 +485,7 @@ func CleanupNullValues(data any, compactArrays bool) any {
 		if compactArrays {
 			return cleanupArrayCompact(v, compactArrays)
 		}
+		// PERFORMANCE: Pre-allocate with exact size
 		result := make([]any, len(v))
 		for i, item := range v {
 			if item != nil {
@@ -478,7 +500,9 @@ func CleanupNullValues(data any, compactArrays bool) any {
 }
 
 // cleanupArrayCompact removes null elements from an array while recursively cleaning nested values
+// PERFORMANCE: Pre-allocates result with array capacity hint
 func cleanupArrayCompact(arr []any, compactArrays bool) []any {
+	// PERFORMANCE: Pre-allocate with array size hint
 	result := make([]any, 0, len(arr))
 	for _, item := range arr {
 		if item != nil {
@@ -507,6 +531,7 @@ func isEmptyContainer(data any) bool {
 
 // ConvertNumbersToFloat recursively converts json.Number and Number types to float64
 // This is needed because standard json.Marshal encodes json.Number as strings
+// PERFORMANCE: Pre-allocates result containers with capacity hints
 func ConvertNumbersToFloat(data any) any {
 	switch v := data.(type) {
 	case json.Number:
@@ -516,12 +541,14 @@ func ConvertNumbersToFloat(data any) any {
 		}
 		return f
 	case map[string]any:
+		// PERFORMANCE: Pre-allocate with exact size
 		result := make(map[string]any, len(v))
 		for key, value := range v {
 			result[key] = ConvertNumbersToFloat(value)
 		}
 		return result
 	case []any:
+		// PERFORMANCE: Pre-allocate with exact size
 		result := make([]any, len(v))
 		for i, item := range v {
 			result[i] = ConvertNumbersToFloat(item)

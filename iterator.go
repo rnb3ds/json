@@ -2,6 +2,7 @@ package json
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -25,19 +26,25 @@ const (
 
 // pathTypeCacheShard represents a single shard of the path type cache
 // PERFORMANCE: Sharding reduces lock contention for concurrent access
+// SECURITY: Added size limit with LRU-style eviction to prevent unbounded growth
 type pathTypeCacheShard struct {
 	mu      sync.RWMutex
 	entries map[string]pathType
+	size    int
 }
 
 // pathTypeCacheShards is a sharded cache for path type results
 // Using 16 shards for good distribution with minimal overhead
 var pathTypeCacheShards [16]pathTypeCacheShard
 
+// maxEntriesPerShard limits the number of entries per shard to prevent memory exhaustion
+const maxEntriesPerShard = 256
+
 // init initializes the path type cache shards
 func init() {
 	for i := range pathTypeCacheShards {
 		pathTypeCacheShards[i].entries = make(map[string]pathType, 64)
+		pathTypeCacheShards[i].size = 0
 	}
 }
 
@@ -53,6 +60,7 @@ func getPathTypeShard(path string) *pathTypeCacheShard {
 
 // getPathType determines if a path is simple or complex
 // Simple paths are single keys with no dots or brackets
+// SECURITY: Added size limit with eviction to prevent unbounded memory growth
 func getPathType(path string) pathType {
 	// Check cache first (only for short paths to avoid memory bloat)
 	if len(path) <= 64 {
@@ -71,9 +79,24 @@ func getPathType(path string) pathType {
 			pt = pathTypeSimple
 		}
 
-		// Cache short paths
+		// Cache short paths with size limit
 		shard.mu.Lock()
+		// Evict entries if shard is full (simple random eviction)
+		if shard.size >= maxEntriesPerShard {
+			// Remove approximately half the entries
+			evictCount := maxEntriesPerShard / 2
+			count := 0
+			for k := range shard.entries {
+				if count >= evictCount {
+					break
+				}
+				delete(shard.entries, k)
+				count++
+			}
+			shard.size -= count
+		}
 		shard.entries[path] = pt
+		shard.size++
 		shard.mu.Unlock()
 
 		return pt
@@ -1428,11 +1451,28 @@ func NewParallelIterator(data []any, workers int) *ParallelIterator {
 // The function receives the index and value of each element
 // Returns the first error encountered, or nil if all operations succeed
 func (it *ParallelIterator) ForEach(fn func(int, any) error) error {
+	return it.ForEachWithContext(context.Background(), fn)
+}
+
+// ForEachWithContext processes each element in parallel with context support for cancellation
+// The function receives the index and value of each element
+// Returns the first error encountered, or ctx.Err() if context is cancelled
+// RESOURCE FIX: Added context support for graceful goroutine termination
+func (it *ParallelIterator) ForEachWithContext(ctx context.Context, fn func(int, any) error) error {
 	errCh := make(chan error, 1)
 	var wg sync.WaitGroup
 	var hasError int32
 
 	for i, item := range it.data {
+		// Check context cancellation
+		select {
+		case <-ctx.Done():
+			// Wait for already-started goroutines to finish
+			wg.Wait()
+			return ctx.Err()
+		default:
+		}
+
 		// Check if we already have an error
 		if atomic.LoadInt32(&hasError) == 1 {
 			break
@@ -1444,6 +1484,13 @@ func (it *ParallelIterator) ForEach(fn func(int, any) error) error {
 		go func(idx int, val any) {
 			defer wg.Done()
 			defer func() { <-it.sem }() // Release semaphore
+
+			// Check context and error state
+			select {
+			case <-ctx.Done():
+				return
+			default:
+			}
 
 			if atomic.LoadInt32(&hasError) == 1 {
 				return
@@ -1473,6 +1520,13 @@ func (it *ParallelIterator) ForEach(fn func(int, any) error) error {
 // ForEachBatch processes elements in batches in parallel
 // Each batch is processed by a single goroutine
 func (it *ParallelIterator) ForEachBatch(batchSize int, fn func(int, []any) error) error {
+	return it.ForEachBatchWithContext(context.Background(), batchSize, fn)
+}
+
+// ForEachBatchWithContext processes elements in batches with context support for cancellation
+// Each batch is processed by a single goroutine
+// RESOURCE FIX: Added context support for graceful goroutine termination
+func (it *ParallelIterator) ForEachBatchWithContext(ctx context.Context, batchSize int, fn func(int, []any) error) error {
 	if batchSize <= 0 {
 		batchSize = 100
 	}
@@ -1492,6 +1546,14 @@ func (it *ParallelIterator) ForEachBatch(batchSize int, fn func(int, []any) erro
 	var hasError int32
 
 	for batchIdx, batch := range batches {
+		// Check context cancellation
+		select {
+		case <-ctx.Done():
+			wg.Wait()
+			return ctx.Err()
+		default:
+		}
+
 		if atomic.LoadInt32(&hasError) == 1 {
 			break
 		}
@@ -1502,6 +1564,13 @@ func (it *ParallelIterator) ForEachBatch(batchSize int, fn func(int, []any) erro
 		go func(idx int, b []any) {
 			defer wg.Done()
 			defer func() { <-it.sem }()
+
+			// Check context and error state
+			select {
+			case <-ctx.Done():
+				return
+			default:
+			}
 
 			if atomic.LoadInt32(&hasError) == 1 {
 				return

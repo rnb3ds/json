@@ -24,7 +24,7 @@ import (
 // For file I/O operations, see: 10_file_operations.go
 // For iterator functions, see: 9_iterator_functions.go
 //
-// Run: go run examples/advanced_features.go
+// Run: go run -tags=example examples/2_advanced_features.go
 
 func main() {
 	fmt.Println("Advanced Features - JSON Library")

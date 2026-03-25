@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"math"
 	"reflect"
 	"strconv"
@@ -203,8 +204,18 @@ func (e *FastEncoder) EncodeValue(v any) error {
 	case []float64:
 		e.EncodeFloatSlice(val)
 	case json.Number:
+		// SECURITY: Validate json.Number content before appending
+		// json.Number should only contain valid JSON number characters
+		if !isValidJSONNumber(string(val)) {
+			return fmt.Errorf("invalid json.Number: %s", string(val))
+		}
 		e.buf = append(e.buf, val...)
 	case json.RawMessage:
+		// SECURITY: Validate RawMessage is valid JSON before appending
+		// This prevents malformed JSON from corrupting the output
+		if len(val) > 0 && !json.Valid(val) {
+			return fmt.Errorf("invalid json.RawMessage: not valid JSON")
+		}
 		e.buf = append(e.buf, val...)
 	default:
 		// Fallback to stdlib for complex types
@@ -286,12 +297,32 @@ func needsEscape(s string) bool {
 
 // escapeString escapes special characters for JSON
 // PERFORMANCE: Batch copies safe segments to reduce append calls
+// SECURITY: Validates UTF-8 encoding and replaces invalid sequences
 func (e *FastEncoder) escapeString(s string) {
 	start := 0
 	n := len(s)
 
 	for i := 0; i < n; {
 		c := s[i]
+
+		// SECURITY: Check for invalid UTF-8 sequences (high bytes)
+		if c >= 0x80 {
+			r, size := utf8.DecodeRuneInString(s[i:])
+			if r == utf8.RuneError && size == 1 {
+				// Invalid UTF-8 sequence - batch append safe portion then replace
+				if start < i {
+					e.buf = append(e.buf, s[start:i]...)
+				}
+				e.buf = append(e.buf, `\ufffd`...)
+				i++
+				start = i
+				continue
+			}
+			// Valid multi-byte UTF-8 - skip entire rune
+			i += size
+			continue
+		}
+
 		if c >= 0x20 && c != '"' && c != '\\' {
 			i++
 			continue
@@ -1044,6 +1075,80 @@ func FastMarshalToString(v any) (string, error) {
 	}
 
 	return string(e.buf), nil
+}
+
+// ============================================================================
+// SECURITY VALIDATION HELPERS
+// ============================================================================
+
+// isValidJSONNumber validates that a string is a valid JSON number
+// SECURITY: Prevents malformed numbers from corrupting JSON output
+// PERFORMANCE: Single-pass validation without allocations
+func isValidJSONNumber(s string) bool {
+	if len(s) == 0 {
+		return false
+	}
+
+	i := 0
+
+	// Optional leading minus
+	if s[i] == '-' {
+		i++
+		if i >= len(s) {
+			return false
+		}
+	}
+
+	// Integer part
+	if s[i] == '0' {
+		i++
+		// Leading zero must be followed by . or end
+		if i < len(s) && s[i] != '.' && s[i] != 'e' && s[i] != 'E' {
+			return false
+		}
+	} else if s[i] >= '1' && s[i] <= '9' {
+		i++
+		for i < len(s) && s[i] >= '0' && s[i] <= '9' {
+			i++
+		}
+	} else {
+		return false
+	}
+
+	// Optional fractional part
+	if i < len(s) && s[i] == '.' {
+		i++
+		if i >= len(s) || s[i] < '0' || s[i] > '9' {
+			return false // Must have at least one digit after .
+		}
+		for i < len(s) && s[i] >= '0' && s[i] <= '9' {
+			i++
+		}
+	}
+
+	// Optional exponent
+	if i < len(s) && (s[i] == 'e' || s[i] == 'E') {
+		i++
+		if i >= len(s) {
+			return false
+		}
+		// Optional sign
+		if s[i] == '+' || s[i] == '-' {
+			i++
+			if i >= len(s) {
+				return false
+			}
+		}
+		// Must have at least one digit
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+		for i < len(s) && s[i] >= '0' && s[i] <= '9' {
+			i++
+		}
+	}
+
+	return i == len(s)
 }
 
 // ============================================================================

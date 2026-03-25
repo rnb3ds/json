@@ -18,7 +18,7 @@ import (
 // - GetWithDefault for any type
 // - Practical use cases
 //
-// Run: go run examples/11_with_defaults.go
+// Run: go run -tags=example examples/11_with_defaults.go
 
 func main() {
 	fmt.Println("JSON Library - With Defaults")

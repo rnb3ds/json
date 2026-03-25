@@ -25,7 +25,7 @@ import (
 // For advanced features, see: 2_advanced_features.go
 // For production patterns, see: 3_production_ready.go
 //
-// Run: go run examples/basic_usage.go
+// Run: go run -tags=example examples/1_basic_usage.go
 
 func main() {
 	fmt.Println("Basic Usage - JSON Library")

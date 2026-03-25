@@ -20,7 +20,7 @@ import (
 // - IterableValue API methods
 // - IteratorControl for flow control
 //
-// Run: go run examples/9_iterator_functions.go
+// Run: go run -tags=example examples/9_iterator_functions.go
 
 func main() {
 	fmt.Println("🔁 JSON Library - Iterator Functions")

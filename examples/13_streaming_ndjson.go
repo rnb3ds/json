@@ -26,7 +26,7 @@ import (
 // - LazyJSON for deferred parsing
 // - LargeFileProcessor for memory-efficient file handling
 //
-// Run: go run examples/13_streaming_ndjson.go
+// Run: go run -tags=example examples/13_streaming_ndjson.go
 
 func main() {
 	fmt.Println("Streaming & NDJSON Processing - JSON Library")

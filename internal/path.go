@@ -257,6 +257,7 @@ func ParseComplexSegment(part string) ([]PathSegment, error) {
 
 // parseDotNotation parses dot notation paths like "user.name" or "users[0].name"
 // PERFORMANCE: Pre-calculates segment count to avoid slice growth allocations
+// SECURITY: Enforces maxPathDepth limit to prevent stack overflow attacks
 func parseDotNotation(path string) ([]PathSegment, error) {
 	// Pre-calculate segment count for better allocation
 	// Count dots outside brackets and add 1 for the initial segment
@@ -275,8 +276,13 @@ func parseDotNotation(path string) ([]PathSegment, error) {
 		}
 	}
 
-	// Estimate segment count (dots + 1, with extra for array indices)
+	// SECURITY: Early depth check - if estimated segments exceed limit, fail fast
+	// This is consistent with ValidatePath's depth check
 	estimatedSegments := dotCount + 1
+	if estimatedSegments > MaxPathParseDepth {
+		return nil, fmt.Errorf("path too deep: estimated %d segments (max %d)", estimatedSegments, MaxPathParseDepth)
+	}
+
 	segments := make([]PathSegment, 0, estimatedSegments)
 
 	// Smart split that respects extraction and array operation boundaries
@@ -287,12 +293,21 @@ func parseDotNotation(path string) ([]PathSegment, error) {
 			continue
 		}
 
+		// SECURITY: Check segment count during parsing to prevent exceeding depth limit
+		if len(segments) >= MaxPathParseDepth {
+			return nil, fmt.Errorf("path too deep: exceeds %d segments", MaxPathParseDepth)
+		}
+
 		// Check for complex mixed syntax like {field}[slice] or property[index]{extract}
 		if (strings.Contains(part, "[") && strings.Contains(part, "{")) ||
 			(strings.Contains(part, "{") && strings.Contains(part, "}")) {
 			propSegments, err := parseComplexSegment(part)
 			if err != nil {
 				return nil, fmt.Errorf("invalid complex segment '%s': %w", part, err)
+			}
+			// SECURITY: Check after adding multiple segments
+			if len(segments)+len(propSegments) > MaxPathParseDepth {
+				return nil, fmt.Errorf("path too deep: exceeds %d segments", MaxPathParseDepth)
 			}
 			segments = append(segments, propSegments...)
 		} else if strings.Contains(part, "[") {
@@ -301,12 +316,18 @@ func parseDotNotation(path string) ([]PathSegment, error) {
 			if err != nil {
 				return nil, fmt.Errorf("invalid array access in '%s': %w", part, err)
 			}
+			if len(segments)+len(propSegments) > MaxPathParseDepth {
+				return nil, fmt.Errorf("path too deep: exceeds %d segments", MaxPathParseDepth)
+			}
 			segments = append(segments, propSegments...)
 		} else if strings.Contains(part, "{") {
 			// Pure extraction syntax
 			propSegments, err := parseComplexSegment(part)
 			if err != nil {
 				return nil, fmt.Errorf("invalid extraction syntax in '%s': %w", part, err)
+			}
+			if len(segments)+len(propSegments) > MaxPathParseDepth {
+				return nil, fmt.Errorf("path too deep: exceeds %d segments", MaxPathParseDepth)
 			}
 			segments = append(segments, propSegments...)
 		} else {
@@ -739,7 +760,7 @@ func ValidatePath(path string) error {
 	const (
 		maxPathLength = 1000
 		maxPathDepth  = 100
-		maxArrayIndex = 10000
+		maxArrayIndex = 1000000 // SECURITY FIX: Increased from 10000 to 1M for large array support
 	)
 
 	pathLen := len(path)

@@ -21,7 +21,7 @@ import (
 // - Automatic directory creation
 // - Pretty vs compact file output
 //
-// Run: go run examples/10_file_operations.go
+// Run: go run -tags=example examples/10_file_operations.go
 
 func main() {
 	fmt.Println("📁 JSON Library - File Operations")

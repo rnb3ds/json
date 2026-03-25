@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"strconv"
 	"sync"
+	"unicode/utf8"
 )
 
 // MarshalJSON marshals a value to JSON string with optional pretty printing
@@ -329,6 +330,7 @@ func EncodeFast(v any, buf *bytes.Buffer) bool {
 
 // writeEscapedStringFast writes an escaped JSON string to the buffer
 // PERFORMANCE: Optimized escape handling without allocations
+// SECURITY: Validates UTF-8 encoding for non-ASCII characters (RFC 8259 compliance)
 func writeEscapedStringFast(buf *bytes.Buffer, s string) {
 	for i := 0; i < len(s); i++ {
 		c := s[i]
@@ -352,6 +354,18 @@ func writeEscapedStringFast(buf *bytes.Buffer, s string) {
 				buf.WriteString(`\u00`)
 				buf.WriteByte(hexChars[c>>4])
 				buf.WriteByte(hexChars[c&0x0F])
+			} else if c >= 0x80 {
+				// SECURITY: Validate UTF-8 for non-ASCII characters
+				// RFC 8259 requires JSON strings to be valid UTF-8
+				r, size := utf8.DecodeRuneInString(s[i:])
+				if r == utf8.RuneError && size == 1 {
+					// Invalid UTF-8 sequence - replace with replacement character
+					buf.WriteString(`\ufffd`)
+				} else {
+					// Valid UTF-8, write all bytes of the rune directly
+					buf.WriteString(s[i : i+size])
+					i += size - 1 // Skip remaining bytes of this rune
+				}
 			} else {
 				buf.WriteByte(c)
 			}
