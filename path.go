@@ -57,7 +57,7 @@ func (p *Processor) isPrimitiveType(data any) bool {
 }
 
 // Parse parses a JSON string into the provided target with improved error handling
-func (p *Processor) Parse(jsonStr string, target any, opts ...*Config) error {
+func (p *Processor) Parse(jsonStr string, target any, opts ...Config) error {
 	if err := p.checkClosed(); err != nil {
 		return err
 	}
@@ -81,8 +81,8 @@ func (p *Processor) Parse(jsonStr string, target any, opts ...*Config) error {
 
 	// Parse with number preservation to maintain original format
 	if options.PreserveNumbers {
-		// Use NumberPreservingDecoder to keep json.Number as-is
-		decoder := NewNumberPreservingDecoder(true)
+		// Use numberPreservingDecoder to keep json.Number as-is
+		decoder := newNumberPreservingDecoder(true)
 		data, err := decoder.DecodeToAny(jsonStr)
 		if err != nil {
 			return &JsonsError{
@@ -102,7 +102,7 @@ func (p *Processor) Parse(jsonStr string, target any, opts ...*Config) error {
 		config := PrettyConfig()
 		config.PreserveNumbers = true
 
-		encoder := NewCustomEncoder(config)
+		encoder := newCustomEncoder(config)
 		defer encoder.Close()
 
 		encodedJson, err := encoder.Encode(data)
@@ -137,7 +137,7 @@ func (p *Processor) Parse(jsonStr string, target any, opts ...*Config) error {
 }
 
 // Valid validates JSON format without parsing the entire structure
-func (p *Processor) Valid(jsonStr string, opts ...*Config) (bool, error) {
+func (p *Processor) Valid(jsonStr string, opts ...Config) (bool, error) {
 	if err := p.checkClosed(); err != nil {
 		return false, err
 	}
@@ -159,7 +159,7 @@ func (p *Processor) Valid(jsonStr string, opts ...*Config) (bool, error) {
 	}
 
 	// Valid JSON by attempting to parse
-	decoder := NewNumberPreservingDecoder(options.PreserveNumbers)
+	decoder := newNumberPreservingDecoder(options.PreserveNumbers)
 	_, err = decoder.DecodeToAny(jsonStr)
 
 	if err != nil {
@@ -262,7 +262,7 @@ func (p *Processor) parseExtractionSegment(part string, segments []PathSegment) 
 }
 
 // FormatPretty formats JSON string with indentation
-func (p *Processor) FormatPretty(jsonStr string, opts ...*Config) (string, error) {
+func (p *Processor) FormatPretty(jsonStr string, opts ...Config) (string, error) {
 	if err := p.checkClosed(); err != nil {
 		return "", err
 	}
@@ -283,7 +283,7 @@ func (p *Processor) FormatPretty(jsonStr string, opts ...*Config) (string, error
 	}
 
 	// Parse with number preservation to maintain original number types
-	decoder := NewNumberPreservingDecoder(options.PreserveNumbers)
+	decoder := newNumberPreservingDecoder(options.PreserveNumbers)
 	data, err := decoder.DecodeToAny(jsonStr)
 	if err != nil {
 		return "", &JsonsError{
@@ -297,7 +297,7 @@ func (p *Processor) FormatPretty(jsonStr string, opts ...*Config) (string, error
 	config := PrettyConfig()
 	config.PreserveNumbers = options.PreserveNumbers
 
-	encoder := NewCustomEncoder(config)
+	encoder := newCustomEncoder(config)
 	defer encoder.Close()
 
 	result, err := encoder.Encode(data)
@@ -316,7 +316,7 @@ func (p *Processor) FormatPretty(jsonStr string, opts ...*Config) (string, error
 }
 
 // Compact removes whitespace from JSON string
-func (p *Processor) Compact(jsonStr string, opts ...*Config) (string, error) {
+func (p *Processor) Compact(jsonStr string, opts ...Config) (string, error) {
 	if err := p.checkClosed(); err != nil {
 		return "", err
 	}
@@ -337,7 +337,7 @@ func (p *Processor) Compact(jsonStr string, opts ...*Config) (string, error) {
 	}
 
 	// Parse with number preservation to maintain original number types
-	decoder := NewNumberPreservingDecoder(options.PreserveNumbers)
+	decoder := newNumberPreservingDecoder(options.PreserveNumbers)
 	data, err := decoder.DecodeToAny(jsonStr)
 	if err != nil {
 		return "", &JsonsError{
@@ -351,7 +351,7 @@ func (p *Processor) Compact(jsonStr string, opts ...*Config) (string, error) {
 	config := DefaultConfig()
 	config.PreserveNumbers = options.PreserveNumbers
 
-	encoder := NewCustomEncoder(config)
+	encoder := newCustomEncoder(config)
 	defer encoder.Close()
 
 	result, err := encoder.Encode(data)
@@ -370,13 +370,13 @@ func (p *Processor) Compact(jsonStr string, opts ...*Config) (string, error) {
 }
 
 // FormatCompact removes whitespace from JSON string (alias for Compact)
-func (p *Processor) FormatCompact(jsonStr string, opts ...*Config) (string, error) {
+func (p *Processor) FormatCompact(jsonStr string, opts ...Config) (string, error) {
 	return p.Compact(jsonStr, opts...)
 }
 
 // CompactBuffer appends to dst the JSON-encoded src with insignificant space characters elided.
 // Compatible with encoding/json.Compact with optional Config support.
-func (p *Processor) CompactBuffer(dst *bytes.Buffer, src []byte, opts ...*Config) error {
+func (p *Processor) CompactBuffer(dst *bytes.Buffer, src []byte, opts ...Config) error {
 	compacted, err := p.Compact(string(src), opts...)
 	if err != nil {
 		return err
@@ -387,7 +387,7 @@ func (p *Processor) CompactBuffer(dst *bytes.Buffer, src []byte, opts ...*Config
 
 // IndentBuffer appends to dst an indented form of the JSON-encoded src.
 // Compatible with encoding/json.Indent with optional Config support.
-func (p *Processor) IndentBuffer(dst *bytes.Buffer, src []byte, prefix, indent string, opts ...*Config) error {
+func (p *Processor) IndentBuffer(dst *bytes.Buffer, src []byte, prefix, indent string, opts ...Config) error {
 	var data any
 	if err := p.Unmarshal(src, &data, opts...); err != nil {
 		return err
@@ -403,7 +403,7 @@ func (p *Processor) IndentBuffer(dst *bytes.Buffer, src []byte, prefix, indent s
 // HTMLEscapeBuffer appends to dst the JSON-encoded src with HTML-safe escaping.
 // Replaces &, <, and > with \u0026, \u003c, and \u003e for safe HTML embedding.
 // Compatible with encoding/json.HTMLEscape with optional Config support.
-func (p *Processor) HTMLEscapeBuffer(dst *bytes.Buffer, src []byte, opts ...*Config) {
+func (p *Processor) HTMLEscapeBuffer(dst *bytes.Buffer, src []byte, opts ...Config) {
 	var data any
 	if err := p.Unmarshal(src, &data, opts...); err != nil {
 		dst.Write(src)
@@ -449,24 +449,24 @@ func (p *Processor) navigateDotNotation(data any, path string) (any, error) {
 		switch segment.TypeString() {
 		case "property":
 			result := p.handlePropertyAccess(current, segment.Key)
-			if !result.Exists {
+			if !result.exists {
 				return nil, ErrPathNotFound
 			}
-			current = result.Value
+			current = result.value
 
 		case "array":
 			result := p.handleArrayAccess(current, segment)
-			if !result.Exists {
+			if !result.exists {
 				return nil, ErrPathNotFound
 			}
-			current = result.Value
+			current = result.value
 
 		case "slice":
 			result := p.handleArraySlice(current, segment)
-			if !result.Exists {
+			if !result.exists {
 				return nil, ErrPathNotFound
 			}
-			current = result.Value
+			current = result.value
 
 		case "extract":
 			extractResult, err := p.handleExtraction(current, segment)
@@ -481,13 +481,13 @@ func (p *Processor) navigateDotNotation(data any, path string) (any, error) {
 					if segment.IsFlatExtract() {
 						if nextSegment.TypeString() == "slice" {
 							result := p.handleArraySlice(current, nextSegment)
-							if result.Exists {
-								current = result.Value
+							if result.exists {
+								current = result.value
 							}
 						} else {
 							result := p.handleArrayAccess(current, nextSegment)
-							if result.Exists {
-								current = result.Value
+							if result.exists {
+								current = result.value
 							}
 						}
 					} else {
@@ -525,10 +525,10 @@ func (p *Processor) navigateJSONPointer(data any, path string) (any, error) {
 		}
 
 		result := p.handlePropertyAccess(current, segment)
-		if !result.Exists {
+		if !result.exists {
 			return nil, ErrPathNotFound
 		}
-		current = result.Value
+		current = result.value
 	}
 
 	return current, nil
@@ -539,53 +539,53 @@ func (p *Processor) unescapeJSONPointer(segment string) string {
 	return internal.UnescapeJSONPointer(segment)
 }
 
-func (p *Processor) handlePropertyAccess(data any, property string) PropertyAccessResult {
+func (p *Processor) handlePropertyAccess(data any, property string) propertyAccessResult {
 	switch v := data.(type) {
 	case map[string]any:
 		if val, exists := v[property]; exists {
-			return PropertyAccessResult{Value: val, Exists: true}
+			return propertyAccessResult{value: val, exists: true}
 		}
-		return PropertyAccessResult{Exists: false}
+		return propertyAccessResult{exists: false}
 
 	case map[any]any:
 		if val, exists := v[property]; exists {
-			return PropertyAccessResult{Value: val, Exists: true}
+			return propertyAccessResult{value: val, exists: true}
 		}
-		return PropertyAccessResult{Exists: false}
+		return propertyAccessResult{exists: false}
 
 	case []any:
 		if index := p.parseArrayIndex(property); index >= 0 && index < len(v) {
-			return PropertyAccessResult{Value: v[index], Exists: true}
+			return propertyAccessResult{value: v[index], exists: true}
 		}
-		return PropertyAccessResult{Exists: false}
+		return propertyAccessResult{exists: false}
 
 	default:
 		if structValue := p.handleStructAccess(data, property); structValue != nil {
-			return PropertyAccessResult{Value: structValue, Exists: true}
+			return propertyAccessResult{value: structValue, exists: true}
 		}
-		return PropertyAccessResult{Exists: false}
+		return propertyAccessResult{exists: false}
 	}
 }
 
 func (p *Processor) handlePropertyAccessValue(data any, property string) any {
 	result := p.handlePropertyAccess(data, property)
-	if result.Exists {
-		return result.Value
+	if result.exists {
+		return result.value
 	}
 	return nil
 }
 
-// NumberPreservingDecoder provides JSON decoding with optimized number format preservation
-type NumberPreservingDecoder struct {
+// numberPreservingDecoder provides JSON decoding with optimized number format preservation
+type numberPreservingDecoder struct {
 	preserveNumbers bool
 
 	// bufferPool is used for efficient string formatting operations
 	bufferPool *sync.Pool
 }
 
-// NewNumberPreservingDecoder creates a new decoder with performance and number preservation
-func NewNumberPreservingDecoder(preserveNumbers bool) *NumberPreservingDecoder {
-	return &NumberPreservingDecoder{
+// newNumberPreservingDecoder creates a new decoder with performance and number preservation
+func newNumberPreservingDecoder(preserveNumbers bool) *numberPreservingDecoder {
+	return &numberPreservingDecoder{
 		preserveNumbers: preserveNumbers,
 		bufferPool: &sync.Pool{
 			New: func() any {
@@ -596,7 +596,7 @@ func NewNumberPreservingDecoder(preserveNumbers bool) *NumberPreservingDecoder {
 }
 
 // DecodeToAny decodes JSON string to any type with performance and number preservation
-func (d *NumberPreservingDecoder) DecodeToAny(jsonStr string) (any, error) {
+func (d *numberPreservingDecoder) DecodeToAny(jsonStr string) (any, error) {
 	if !d.preserveNumbers {
 		// Fast path: use standard JSON decoding without number preservation
 		var result any
@@ -621,7 +621,7 @@ func (d *NumberPreservingDecoder) DecodeToAny(jsonStr string) (any, error) {
 }
 
 // convertStdJSONNumbers converts standard library json.Number to our Number type
-func (d *NumberPreservingDecoder) convertStdJSONNumbers(value any) any {
+func (d *numberPreservingDecoder) convertStdJSONNumbers(value any) any {
 	switch v := value.(type) {
 	case json.Number:
 		// Convert standard library json.Number to our Number type
@@ -644,7 +644,7 @@ func (d *NumberPreservingDecoder) convertStdJSONNumbers(value any) any {
 }
 
 // convertNumbers recursively converts json.Number
-func (d *NumberPreservingDecoder) convertNumbers(value any) any {
+func (d *numberPreservingDecoder) convertNumbers(value any) any {
 	switch v := value.(type) {
 	case json.Number:
 		return d.convertJSONNumber(v)
@@ -669,7 +669,7 @@ func (d *NumberPreservingDecoder) convertNumbers(value any) any {
 
 // convertJSONNumber converts json.Number with precision handling
 // PERFORMANCE: Optimized to minimize allocations and use manual parsing where possible
-func (d *NumberPreservingDecoder) convertJSONNumber(num json.Number) any {
+func (d *numberPreservingDecoder) convertJSONNumber(num json.Number) any {
 	numStr := string(num)
 	numLen := len(numStr)
 
@@ -802,7 +802,7 @@ func preservingUnmarshal(data []byte, v any, preserveNumbers bool) error {
 	}
 
 	// Convert numbers and then marshal/unmarshal to target type
-	converted := NewNumberPreservingDecoder(true).convertNumbers(temp)
+	converted := newNumberPreservingDecoder(true).convertNumbers(temp)
 
 	// Marshal the converted data and unmarshal to target
 	convertedBytes, err := json.Marshal(converted)
@@ -817,12 +817,12 @@ func preservingUnmarshal(data []byte, v any, preserveNumbers bool) error {
 func smartNumberConversion(value any) any {
 	switch v := value.(type) {
 	case json.Number:
-		decoder := NewNumberPreservingDecoder(true)
+		decoder := newNumberPreservingDecoder(true)
 		return decoder.convertJSONNumber(v)
 	case string:
 		// Try to parse string as number
 		if num := json.Number(v); num.String() == v {
-			decoder := NewNumberPreservingDecoder(true)
+			decoder := newNumberPreservingDecoder(true)
 			return decoder.convertJSONNumber(num)
 		}
 		return v

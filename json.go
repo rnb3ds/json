@@ -64,7 +64,12 @@ func getDefaultProcessor() *Processor {
 	}
 
 	// Create new processor
-	p := New()
+	p, err := New()
+	if err != nil {
+		// If there's an error creating the processor with default config,
+		// it's a programming error, so we panic
+		panic(fmt.Sprintf("failed to create default processor: %v", err))
+	}
 	defaultProcessor.Store(p)
 	return p
 }

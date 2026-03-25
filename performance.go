@@ -106,7 +106,18 @@ func (c *pathSegmentCache) Set(path string, segments []internal.PathSegment) {
 		if len(shard.lru) > 0 {
 			oldest := shard.lru[0]
 			delete(shard.entries, oldest)
-			shard.lru = shard.lru[1:]
+			// SECURITY FIX: Prevent unbounded LRU slice growth by shrinking when capacity >> length
+			// This prevents memory exhaustion attacks via many unique paths
+			lruLen := len(shard.lru) - 1
+			lruCap := cap(shard.lru)
+			// Shrink when capacity is more than 4x the length and length is small
+			if lruCap > lruLen*4 && lruLen < 64 {
+				newLRU := make([]string, lruLen, max(lruLen*2, 16))
+				copy(newLRU, shard.lru[1:])
+				shard.lru = newLRU
+			} else {
+				shard.lru = shard.lru[1:]
+			}
 			atomic.AddInt64(&c.evictions, 1)
 		}
 	}
@@ -433,14 +444,22 @@ func (bp *BulkProcessor) BulkGet(jsonStr string, paths []string) (map[string]any
 
 // isSimplePropertyAccess checks if path is a simple single-level property access
 // This is the fastest case that can bypass most parsing logic
+// SECURITY: Does not allow paths starting with digits to prevent ambiguity
 func isSimplePropertyAccess(path string) bool {
 	if len(path) == 0 || len(path) > 64 {
 		return false
 	}
 
-	for i := 0; i < len(path); i++ {
+	// SECURITY: First character must be a letter or underscore
+	// This prevents ambiguity with array indices and ensures valid identifier syntax
+	first := path[0]
+	if !((first >= 'a' && first <= 'z') || (first >= 'A' && first <= 'Z') || first == '_') {
+		return false
+	}
+
+	// Remaining characters can be alphanumeric or underscore
+	for i := 1; i < len(path); i++ {
 		c := path[i]
-		// Only allow alphanumeric and underscore
 		if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
 			(c >= '0' && c <= '9') || c == '_') {
 			return false
@@ -794,7 +813,7 @@ func (p *Processor) GetFromParsedData(data any, path string) (any, error) {
 	}
 
 	// Navigate directly using the recursive processor
-	return p.recursiveProcessor.ProcessRecursively(data, path, OpGet, nil)
+	return p.recursiveProcessor.ProcessRecursively(data, path, opGet, nil)
 }
 
 // Parse forces parsing and returns the parsed data

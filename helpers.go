@@ -61,7 +61,7 @@ func (ah *arrayHelper) compactArray(arr []any) []any {
 	// First pass: count elements to remove
 	removeCount := 0
 	for _, item := range arr {
-		if item == nil || item == DeletedMarker {
+		if item == nil || item == deletedMarker {
 			removeCount++
 		}
 	}
@@ -74,7 +74,7 @@ func (ah *arrayHelper) compactArray(arr []any) []any {
 	// Second pass: build result with exact capacity
 	result := make([]any, 0, len(arr)-removeCount)
 	for _, item := range arr {
-		if item != nil && item != DeletedMarker {
+		if item != nil && item != deletedMarker {
 			result = append(result, item)
 		}
 	}
@@ -550,7 +550,7 @@ func ConvertToString(value any) string {
 
 // IsValidJSON quickly checks if a string is valid JSON
 func IsValidJSON(jsonStr string) bool {
-	decoder := NewNumberPreservingDecoder(false)
+	decoder := newNumberPreservingDecoder(false)
 	_, err := decoder.DecodeToAny(jsonStr)
 	return err == nil
 }
@@ -720,7 +720,7 @@ func deepCopySliceWithDepth(s []any, depth int) ([]any, error) {
 
 // CompareJson compares two JSON strings for equality
 func CompareJson(json1, json2 string) (bool, error) {
-	decoder := NewNumberPreservingDecoder(true)
+	decoder := newNumberPreservingDecoder(true)
 
 	data1, err := decoder.DecodeToAny(json1)
 	if err != nil {
@@ -745,11 +745,32 @@ func CompareJson(json1, json2 string) (bool, error) {
 	return string(bytes1) == string(bytes2), nil
 }
 
-// MergeJson merges two JSON objects using deep merge strategy
-// For nested objects, it recursively merges keys (union merge)
-// For primitive values and arrays, the value from json2 takes precedence
-func MergeJson(json1, json2 string) (string, error) {
-	decoder := NewNumberPreservingDecoder(true)
+// MergeJson merges two JSON objects using deep merge strategy.
+// For nested objects, it recursively merges keys according to the specified mode.
+// For primitive values and arrays, the value from json2 takes precedence.
+//
+// Supported modes (optional, defaults to MergeUnion):
+//   - MergeUnion: combines all keys from both objects (default)
+//   - MergeIntersection: only keys present in both objects
+//   - MergeDifference: keys in json1 but not in json2
+//
+// Example:
+//
+//	// Union merge (default)
+//	result, err := json.MergeJson(a, b)
+//
+//	// Intersection merge
+//	result, err := json.MergeJson(a, b, json.MergeIntersection)
+//
+//	// Difference merge
+//	result, err := json.MergeJson(a, b, json.MergeDifference)
+func MergeJson(json1, json2 string, mode ...MergeMode) (string, error) {
+	m := MergeUnion
+	if len(mode) > 0 {
+		m = mode[0]
+	}
+
+	decoder := newNumberPreservingDecoder(true)
 
 	data1, err := decoder.DecodeToAny(json1)
 	if err != nil {
@@ -771,18 +792,67 @@ func MergeJson(json1, json2 string) (string, error) {
 		return "", fmt.Errorf("second JSON is not an object")
 	}
 
-	merged := internal.DeepMerge(obj1, obj2)
+	merged := internal.DeepMergeWithMode(obj1, obj2, internal.MergeMode(m))
 
-	result, err := json.Marshal(merged)
-	if err != nil {
-		return "", fmt.Errorf("failed to marshal merged result: %v", err)
+	// Convert library Number types to float64 for proper encoding
+	converted := convertLibraryNumbers(merged)
+
+	// Use library's Encode function to properly handle the result
+	return Encode(converted)
+}
+
+// convertLibraryNumbers recursively converts the library's Number type to float64
+// This is needed because the library's NumberPreservingDecoder returns Number (not json.Number)
+func convertLibraryNumbers(data any) any {
+	switch v := data.(type) {
+	case Number:
+		f, err := v.Float64()
+		if err != nil {
+			return v // Keep original if conversion fails
+		}
+		return f
+	case map[string]any:
+		result := make(map[string]any, len(v))
+		for key, value := range v {
+			result[key] = convertLibraryNumbers(value)
+		}
+		return result
+	case []any:
+		result := make([]any, len(v))
+		for i, item := range v {
+			result[i] = convertLibraryNumbers(item)
+		}
+		return result
+	default:
+		return data
+	}
+}
+
+// MergeJsonMany merges multiple JSON objects with specified merge mode
+// Returns error if less than 2 JSON strings are provided
+//
+// Example:
+//
+//	result, err := json.MergeJsonMany(json.MergeUnion, config1, config2, config3)
+func MergeJsonMany(mode MergeMode, jsons ...string) (string, error) {
+	if len(jsons) < 2 {
+		return "", fmt.Errorf("MergeJsonMany requires at least 2 JSON strings, got %d", len(jsons))
 	}
 
-	return string(result), nil
+	result := jsons[0]
+	for i := 1; i < len(jsons); i++ {
+		var err error
+		result, err = MergeJson(result, jsons[i], mode)
+		if err != nil {
+			return "", fmt.Errorf("merge failed at index %d: %w", i, err)
+		}
+	}
+
+	return result, nil
 }
 
 // GetTypedWithProcessor retrieves a typed value from JSON using a specific processor
-func GetTypedWithProcessor[T any](processor *Processor, jsonStr, path string, opts ...*Config) (T, error) {
+func GetTypedWithProcessor[T any](processor *Processor, jsonStr, path string, opts ...Config) (T, error) {
 	var zero T
 
 	value, err := processor.Get(jsonStr, path, opts...)
@@ -981,9 +1051,9 @@ const (
 // PERFORMANCE: Fast paths for common operations without allocations
 // ============================================================================
 
-// FastTypeSwitch converts a value to a specific type using optimized type switches
+// fastTypeSwitch converts a value to a specific type using optimized type switches
 // PERFORMANCE: Single type switch instead of multiple type assertions
-func FastTypeSwitch[T any](value any) (T, bool) {
+func fastTypeSwitch[T any](value any) (T, bool) {
 	var zero T
 
 	// Fast path using type switch
@@ -1017,9 +1087,9 @@ func FastTypeSwitch[T any](value any) (T, bool) {
 	return zero, false
 }
 
-// FastToString converts any value to string using optimized type switch
+// fastToString converts any value to string using optimized type switch
 // PERFORMANCE: Avoids reflection for common types
-func FastToString(value any) (string, bool) {
+func fastToString(value any) (string, bool) {
 	switch v := value.(type) {
 	case string:
 		return v, true
@@ -1043,9 +1113,9 @@ func FastToString(value any) (string, bool) {
 	}
 }
 
-// FastToInt converts any value to int using optimized type switch
+// fastToInt converts any value to int using optimized type switch
 // PERFORMANCE: Avoids reflection for common types
-func FastToInt(value any) (int, bool) {
+func fastToInt(value any) (int, bool) {
 	switch v := value.(type) {
 	case int:
 		return v, true
@@ -1070,9 +1140,9 @@ func FastToInt(value any) (int, bool) {
 	}
 }
 
-// FastToFloat64 converts any value to float64 using optimized type switch
+// fastToFloat64 converts any value to float64 using optimized type switch
 // PERFORMANCE: Avoids reflection for common types
-func FastToFloat64(value any) (float64, bool) {
+func fastToFloat64(value any) (float64, bool) {
 	switch v := value.(type) {
 	case float64:
 		return v, true
@@ -1097,9 +1167,9 @@ func FastToFloat64(value any) (float64, bool) {
 	}
 }
 
-// FastToBool converts any value to bool using optimized type switch
+// fastToBool converts any value to bool using optimized type switch
 // PERFORMANCE: Avoids reflection for common types
-func FastToBool(value any) (bool, bool) {
+func fastToBool(value any) (bool, bool) {
 	switch v := value.(type) {
 	case bool:
 		return v, true
@@ -1130,8 +1200,8 @@ type keyInternMap struct {
 	mu   sync.RWMutex
 }
 
-// KeyInternCacheSize returns the number of interned keys
-func KeyInternCacheSize() int {
+// keyInternCacheSize returns the number of interned keys
+func keyInternCacheSize() int {
 	globalKeyInternMap.mu.RLock()
 	n := len(globalKeyInternMap.keys)
 	globalKeyInternMap.mu.RUnlock()

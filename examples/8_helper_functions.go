@@ -139,14 +139,14 @@ func demonstrateMerge() {
 	fmt.Println("\n   Override config:")
 	fmt.Println(overrideConfig)
 
-	// Merge
+	// Union merge (default)
 	merged, err := json.MergeJson(baseConfig, overrideConfig)
 	if err != nil {
 		fmt.Printf("   Error merging: %v\n", err)
 		return
 	}
 
-	fmt.Println("\n   Merged result:")
+	fmt.Println("\n   Merged result (Union - default):")
 	fmt.Println(merged)
 
 	// Verify merge results
@@ -165,6 +165,19 @@ func demonstrateMerge() {
 
 	monitoring, _ := json.GetBool(merged, "monitoring")
 	fmt.Printf("   - monitoring: %t (from override)\n", monitoring)
+
+	// Demonstrate different merge modes
+	fmt.Println("\n   Merge Modes:")
+
+	// Intersection merge - only common keys
+	intersected, _ := json.MergeJson(baseConfig, overrideConfig, json.MergeIntersection)
+	fmt.Println("\n   Intersection (common keys only):")
+	fmt.Println(intersected)
+
+	// Difference merge - keys only in base
+	diff, _ := json.MergeJson(baseConfig, overrideConfig, json.MergeDifference)
+	fmt.Println("\n   Difference (keys only in base):")
+	fmt.Println(diff)
 }
 
 func demonstrateFormatting() {

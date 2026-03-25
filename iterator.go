@@ -116,21 +116,18 @@ func SafeTypeAssert[T any](value any) (T, bool) {
 
 // Iterator represents an iterator over JSON data
 type Iterator struct {
-	processor *Processor
-	data      any
-	options   *Config
-	position  int
-	keys      []string // Cached keys for map iteration
-	keysInit  bool     // Flag for lazy initialization
+	data     any
+	position int
+	keys     []string // Cached keys for map iteration
+	keysInit bool     // Flag for lazy initialization
 }
 
 // NewIterator creates a new Iterator
-func NewIterator(processor *Processor, data any, opts *Config) *Iterator {
+// Simplified API: processor parameter removed, uses default processor internally when needed
+func NewIterator(data any, opts ...Config) *Iterator {
 	return &Iterator{
-		processor: processor,
-		data:      data,
-		options:   opts,
-		position:  0,
+		data:     data,
+		position: 0,
 	}
 }
 
@@ -1231,8 +1228,16 @@ func newPooledMapIterator(m map[string]any) *pooledMapIterator {
 	it.key = ""
 	it.current = nil
 
-	// Pre-populate keys
-	it.keys = it.keys[:0]
+	// PERFORMANCE: Ensure keys slice has sufficient capacity
+	// This avoids repeated slice growth during append
+	mapLen := len(m)
+	if cap(it.keys) < mapLen {
+		it.keys = make([]string, 0, mapLen)
+	} else {
+		it.keys = it.keys[:0]
+	}
+
+	// Pre-populate keys without interning (faster for one-time iteration)
 	for k := range m {
 		it.keys = append(it.keys, k)
 	}
@@ -1280,22 +1285,22 @@ func (it *pooledMapIterator) Release() {
 // LAZY JSON DECODER - Parse JSON on-demand
 // ============================================================================
 
-// LazyJSONDecoder provides lazy parsing for nested structures
-type LazyJSONDecoder struct {
+// lazyJSONDecoder provides lazy parsing for nested structures
+type lazyJSONDecoder struct {
 	raw    []byte
 	parsed any
 	err    error
 }
 
-// NewLazyJSONDecoder creates a lazy JSON decoder
-func NewLazyJSONDecoder(data []byte) *LazyJSONDecoder {
-	return &LazyJSONDecoder{
+// newLazyJSONDecoder creates a lazy JSON decoder
+func newLazyJSONDecoder(data []byte) *lazyJSONDecoder {
+	return &lazyJSONDecoder{
 		raw: data,
 	}
 }
 
 // Parse parses the JSON data if not already parsed
-func (l *LazyJSONDecoder) Parse() (any, error) {
+func (l *lazyJSONDecoder) Parse() (any, error) {
 	if l.parsed != nil || l.err != nil {
 		return l.parsed, l.err
 	}
@@ -1304,7 +1309,7 @@ func (l *LazyJSONDecoder) Parse() (any, error) {
 }
 
 // GetPath gets a value at the specified path with lazy parsing
-func (l *LazyJSONDecoder) GetPath(path string) (any, error) {
+func (l *lazyJSONDecoder) GetPath(path string) (any, error) {
 	_, err := l.Parse()
 	if err != nil {
 		return nil, err
@@ -1316,7 +1321,7 @@ func (l *LazyJSONDecoder) GetPath(path string) (any, error) {
 }
 
 // Raw returns the raw JSON bytes
-func (l *LazyJSONDecoder) Raw() []byte {
+func (l *lazyJSONDecoder) Raw() []byte {
 	return l.raw
 }
 

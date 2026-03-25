@@ -8,15 +8,30 @@ import (
 	"strings"
 )
 
-// DeepMerge recursively merges two JSON values using union merge strategy
-// - If both values are objects, recursively merge their keys
-// - If both values are arrays, merge with deduplication (union)
-// - For all other cases (primitives), value2 takes precedence
+// MergeMode defines the merge strategy for combining JSON objects and arrays
+type MergeMode int
+
+const (
+	// MergeUnion performs union merge - combines all keys/elements (default)
+	MergeUnion MergeMode = iota
+	// MergeIntersection performs intersection merge - only common keys/elements
+	MergeIntersection
+	// MergeDifference performs difference merge - keys/elements only in base
+	MergeDifference
+)
+
+// DeepMerge recursively merges two JSON values using union merge strategy (default)
+// This is kept for backward compatibility - it delegates to DeepMergeWithMode
 func DeepMerge(base, override any) any {
-	return deepMerge(base, override, 0, make(map[uintptr]bool))
+	return DeepMergeWithMode(base, override, MergeUnion)
 }
 
-func deepMerge(base, override any, depth int, visited map[uintptr]bool) any {
+// DeepMergeWithMode recursively merges two JSON values with specified mode
+func DeepMergeWithMode(base, override any, mode MergeMode) any {
+	return deepMergeWithMode(base, override, mode, 0, make(map[uintptr]bool))
+}
+
+func deepMergeWithMode(base, override any, mode MergeMode, depth int, visited map[uintptr]bool) any {
 	if depth > MaxDeepMergeDepth {
 		return override
 	}
@@ -25,87 +40,238 @@ func deepMerge(base, override any, depth int, visited map[uintptr]bool) any {
 	overrideMap, overrideIsMap := override.(map[string]any)
 
 	if baseIsMap && overrideIsMap {
-		// Cycle detection using map pointer
-		basePtr := reflect.ValueOf(baseMap).Pointer()
-		if visited[basePtr] {
-			return override // Cycle detected, return override to break recursion
-		}
-		visited[basePtr] = true
-		defer delete(visited, basePtr)
-
-		result := make(map[string]any)
-
-		// First, copy all keys from base
-		for key, value := range baseMap {
-			result[key] = value
-		}
-
-		// Then, merge override keys
-		for key, overrideValue := range overrideMap {
-			if baseValue, exists := baseMap[key]; exists {
-				// Both exist - recursively merge
-				result[key] = deepMerge(baseValue, overrideValue, depth+1, visited)
-			} else {
-				// Only in override - add directly
-				result[key] = overrideValue
-			}
-		}
-
-		return result
+		return mergeObjects(baseMap, overrideMap, mode, depth, visited)
 	}
 
 	baseArray, baseIsArray := base.([]any)
 	overrideArray, overrideIsArray := override.([]any)
 
 	if baseIsArray && overrideIsArray {
-		// Cycle detection for arrays using pointer comparison
-		basePtr := reflect.ValueOf(baseArray).Pointer()
-		overridePtr := reflect.ValueOf(overrideArray).Pointer()
-
-		// Check if either array is already being visited
-		if visited[basePtr] || visited[overridePtr] {
-			return override // Cycle detected, return override to break recursion
-		}
-
-		// Mark both arrays as visited
-		visited[basePtr] = true
-		if basePtr != overridePtr {
-			visited[overridePtr] = true
-		}
-		defer func() {
-			delete(visited, basePtr)
-			if basePtr != overridePtr {
-				delete(visited, overridePtr)
-			}
-		}()
-
-		// Merge arrays with deduplication
-		result := make([]any, 0, len(baseArray)+len(overrideArray))
-		seen := make(map[string]bool)
-
-		// Add elements from base array
-		for _, item := range baseArray {
-			key := ArrayItemKey(item)
-			if !seen[key] {
-				seen[key] = true
-				result = append(result, item)
-			}
-		}
-
-		// Add elements from override array
-		for _, item := range overrideArray {
-			key := ArrayItemKey(item)
-			if !seen[key] {
-				seen[key] = true
-				result = append(result, item)
-			}
-		}
-
-		return result
+		return mergeArrays(baseArray, overrideArray, mode, visited)
 	}
 
-	// For non-map, non-array types, override takes precedence
-	return override
+	// For non-map, non-array types
+	switch mode {
+	case MergeDifference:
+		// Difference mode: if values are different, exclude (return nil)
+		// If values are the same, they're not "different" so also exclude
+		return nil
+	case MergeIntersection:
+		// Intersection mode: include if values are equal (use override)
+		// For primitives, we can't easily compare, so use override
+		return override
+	default: // MergeUnion
+		return override
+	}
+}
+
+// mergeObjects handles object merging based on mode
+func mergeObjects(baseMap, overrideMap map[string]any, mode MergeMode, depth int, visited map[uintptr]bool) map[string]any {
+	// Cycle detection
+	basePtr := reflect.ValueOf(baseMap).Pointer()
+	if visited[basePtr] {
+		return overrideMap
+	}
+	visited[basePtr] = true
+	defer delete(visited, basePtr)
+
+	switch mode {
+	case MergeUnion:
+		return mergeObjectsUnion(baseMap, overrideMap, mode, depth, visited)
+	case MergeIntersection:
+		return mergeObjectsIntersection(baseMap, overrideMap, mode, depth, visited)
+	case MergeDifference:
+		return mergeObjectsDifference(baseMap, overrideMap, mode, depth, visited)
+	}
+	return make(map[string]any)
+}
+
+// mergeObjectsUnion performs union merge - combines all keys from both objects
+func mergeObjectsUnion(baseMap, overrideMap map[string]any, mode MergeMode, depth int, visited map[uintptr]bool) map[string]any {
+	result := make(map[string]any)
+
+	// Copy all keys from base
+	for key, value := range baseMap {
+		result[key] = value
+	}
+
+	// Merge override keys
+	for key, overrideValue := range overrideMap {
+		if baseValue, exists := baseMap[key]; exists {
+			// Both exist - recursively merge
+			result[key] = deepMergeWithMode(baseValue, overrideValue, mode, depth+1, visited)
+		} else {
+			// Only in override - add directly
+			result[key] = overrideValue
+		}
+	}
+
+	return result
+}
+
+// mergeObjectsIntersection performs intersection merge - only keys present in both
+func mergeObjectsIntersection(baseMap, overrideMap map[string]any, mode MergeMode, depth int, visited map[uintptr]bool) map[string]any {
+	result := make(map[string]any)
+
+	// Only include keys that exist in both
+	for key, baseValue := range baseMap {
+		if overrideValue, exists := overrideMap[key]; exists {
+			// Key exists in both - recursively merge
+			merged := deepMergeWithMode(baseValue, overrideValue, mode, depth+1, visited)
+			// Only include non-nil results (nil means excluded by difference at deeper level)
+			if merged != nil {
+				result[key] = merged
+			}
+		}
+	}
+
+	return result
+}
+
+// mergeObjectsDifference performs difference merge - keys only in base (A - B)
+func mergeObjectsDifference(baseMap, overrideMap map[string]any, mode MergeMode, depth int, visited map[uintptr]bool) map[string]any {
+	result := make(map[string]any)
+
+	// Only include keys that exist in base but NOT in override
+	for key, baseValue := range baseMap {
+		if overrideValue, exists := overrideMap[key]; exists {
+			// Key exists in both - need to check if values are different
+			// If both are objects, recursively compute difference
+			baseNested, baseIsNested := baseValue.(map[string]any)
+			overrideNested, overrideIsNested := overrideValue.(map[string]any)
+
+			if baseIsNested && overrideIsNested {
+				// Both are objects - recursively compute difference
+				diff := mergeObjectsDifference(baseNested, overrideNested, mode, depth+1, visited)
+				// Only include if difference is not empty
+				if len(diff) > 0 {
+					result[key] = diff
+				}
+			}
+
+			// If both are arrays, compute array difference
+			baseArray, baseIsArray := baseValue.([]any)
+			overrideArray, overrideIsArray := overrideValue.([]any)
+
+			if baseIsArray && overrideIsArray {
+				// Both are arrays - compute array difference
+				diff := mergeArraysDifference(baseArray, overrideArray)
+				// Include even if empty (to preserve the key)
+				result[key] = diff
+			}
+			// If values are different types or primitives, the key exists in both
+			// so it's not part of the difference - skip it
+		} else {
+			// Key only in base - include it
+			result[key] = baseValue
+		}
+	}
+
+	return result
+}
+
+// mergeArrays handles array merging based on mode
+func mergeArrays(baseArray, overrideArray []any, mode MergeMode, visited map[uintptr]bool) []any {
+	// Cycle detection
+	basePtr := reflect.ValueOf(baseArray).Pointer()
+	overridePtr := reflect.ValueOf(overrideArray).Pointer()
+
+	if visited[basePtr] || visited[overridePtr] {
+		return overrideArray
+	}
+
+	visited[basePtr] = true
+	if basePtr != overridePtr {
+		visited[overridePtr] = true
+	}
+	defer func() {
+		delete(visited, basePtr)
+		if basePtr != overridePtr {
+			delete(visited, overridePtr)
+		}
+	}()
+
+	switch mode {
+	case MergeUnion:
+		return mergeArraysUnion(baseArray, overrideArray)
+	case MergeIntersection:
+		return mergeArraysIntersection(baseArray, overrideArray)
+	case MergeDifference:
+		return mergeArraysDifference(baseArray, overrideArray)
+	}
+	return []any{}
+}
+
+// mergeArraysUnion performs union merge - combines all elements with deduplication
+func mergeArraysUnion(baseArray, overrideArray []any) []any {
+	result := make([]any, 0, len(baseArray)+len(overrideArray))
+	seen := make(map[string]bool)
+
+	// Add elements from base array
+	for _, item := range baseArray {
+		key := ArrayItemKey(item)
+		if !seen[key] {
+			seen[key] = true
+			result = append(result, item)
+		}
+	}
+
+	// Add elements from override array
+	for _, item := range overrideArray {
+		key := ArrayItemKey(item)
+		if !seen[key] {
+			seen[key] = true
+			result = append(result, item)
+		}
+	}
+
+	return result
+}
+
+// mergeArraysIntersection performs intersection merge - only elements in both arrays
+func mergeArraysIntersection(baseArray, overrideArray []any) []any {
+	// Build a set of override elements
+	overrideSet := make(map[string]bool)
+	for _, item := range overrideArray {
+		overrideSet[ArrayItemKey(item)] = true
+	}
+
+	// Collect elements that exist in both
+	result := make([]any, 0)
+	seen := make(map[string]bool)
+
+	for _, item := range baseArray {
+		key := ArrayItemKey(item)
+		if overrideSet[key] && !seen[key] {
+			seen[key] = true
+			result = append(result, item)
+		}
+	}
+
+	return result
+}
+
+// mergeArraysDifference performs difference merge - elements only in base (A - B)
+func mergeArraysDifference(baseArray, overrideArray []any) []any {
+	// Build a set of override elements
+	overrideSet := make(map[string]bool)
+	for _, item := range overrideArray {
+		overrideSet[ArrayItemKey(item)] = true
+	}
+
+	// Collect elements that are only in base
+	result := make([]any, 0)
+	seen := make(map[string]bool)
+
+	for _, item := range baseArray {
+		key := ArrayItemKey(item)
+		if !overrideSet[key] && !seen[key] {
+			seen[key] = true
+			result = append(result, item)
+		}
+	}
+
+	return result
 }
 
 // ArrayItemKey generates a unique key for array item deduplication
@@ -336,5 +502,32 @@ func isEmptyContainer(data any) bool {
 		return v == ""
 	default:
 		return false
+	}
+}
+
+// ConvertNumbersToFloat recursively converts json.Number and Number types to float64
+// This is needed because standard json.Marshal encodes json.Number as strings
+func ConvertNumbersToFloat(data any) any {
+	switch v := data.(type) {
+	case json.Number:
+		f, err := v.Float64()
+		if err != nil {
+			return v // Keep original if conversion fails
+		}
+		return f
+	case map[string]any:
+		result := make(map[string]any, len(v))
+		for key, value := range v {
+			result[key] = ConvertNumbersToFloat(value)
+		}
+		return result
+	case []any:
+		result := make([]any, len(v))
+		for i, item := range v {
+			result[i] = ConvertNumbersToFloat(item)
+		}
+		return result
+	default:
+		return data
 	}
 }

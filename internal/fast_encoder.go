@@ -243,7 +243,6 @@ func (e *FastEncoder) EncodeString(s string) {
 
 // needsEscape checks if a string needs JSON escaping
 // PERFORMANCE: Uses SWAR (SIMD Within A Register) technique for batch processing
-// PERFORMANCE: First checks if any byte is potentially problematic using bit operations
 func needsEscape(s string) bool {
 	n := len(s)
 	if n == 0 {
@@ -258,12 +257,10 @@ func needsEscape(s string) bool {
 
 		// Check for control characters (< 0x20) using bit manipulation
 		// A byte is a control char if (byte - 0x20) has the sign bit set
-		// We use: if byte < 0x20, then (byte - 0x20) & 0x80 != 0
 		ctrlMask := ((b0 - 0x20) & 0x80) | ((b1 - 0x20) & 0x80) | ((b2 - 0x20) & 0x80) | ((b3 - 0x20) & 0x80) |
 			((b4 - 0x20) & 0x80) | ((b5 - 0x20) & 0x80) | ((b6 - 0x20) & 0x80) | ((b7 - 0x20) & 0x80)
 
 		// Quick check for common safe case: no control chars, no quotes, no backslashes
-		// This avoids individual comparisons in the common case
 		if ctrlMask != 0 ||
 			b0 == '"' || b1 == '"' || b2 == '"' || b3 == '"' ||
 			b4 == '"' || b5 == '"' || b6 == '"' || b7 == '"' ||
@@ -288,17 +285,19 @@ func needsEscape(s string) bool {
 }
 
 // escapeString escapes special characters for JSON
+// PERFORMANCE: Batch copies safe segments to reduce append calls
 func (e *FastEncoder) escapeString(s string) {
-	// Process byte by byte for proper UTF-8 handling
 	start := 0
-	for i := 0; i < len(s); {
+	n := len(s)
+
+	for i := 0; i < n; {
 		c := s[i]
 		if c >= 0x20 && c != '"' && c != '\\' {
 			i++
 			continue
 		}
 
-		// Append the safe portion
+		// Batch append the safe portion before this character
 		if start < i {
 			e.buf = append(e.buf, s[start:i]...)
 		}
@@ -330,7 +329,7 @@ func (e *FastEncoder) escapeString(s string) {
 	}
 
 	// Append remaining safe portion
-	if start < len(s) {
+	if start < n {
 		e.buf = append(e.buf, s[start:]...)
 	}
 }
@@ -479,8 +478,9 @@ func init() {
 
 	// Initialize common floats table
 	// These are the most frequently used float values in JSON
+	// PERFORMANCE: Extended coverage for 0.0-10.0 range
 	commonFloats = map[uint64][]byte{
-		// Common positive values
+		// Integers 0-10 (handled by zero check and integer path, but included for completeness)
 		0x3ff0000000000000: []byte("1"),    // 1.0
 		0x4000000000000000: []byte("2"),    // 2.0
 		0x4008000000000000: []byte("3"),    // 3.0
@@ -491,14 +491,17 @@ func init() {
 		0x4020000000000000: []byte("8"),    // 8.0
 		0x4022000000000000: []byte("9"),    // 9.0
 		0x4024000000000000: []byte("10"),   // 10.0
-		0x3fe0000000000000: []byte("0.5"),  // 0.5
-		0x3fc999999999999a: []byte("0.2"),  // 0.2
+		// Decimals 0.1-0.9
 		0x3fb999999999999a: []byte("0.1"),  // 0.1
+		0x3fc999999999999a: []byte("0.2"),  // 0.2
 		0x3fd3333333333333: []byte("0.3"),  // 0.3
 		0x3fd999999999999a: []byte("0.4"),  // 0.4
+		0x3fe0000000000000: []byte("0.5"),  // 0.5
 		0x3fe3333333333333: []byte("0.6"),  // 0.6
 		0x3fe6666666666666: []byte("0.7"),  // 0.7
 		0x3feccccccccccccd: []byte("0.8"),  // 0.8
+		0x3fd6666666666666: []byte("0.9"),  // 0.9
+		// 1.x range
 		0x3ff199999999999a: []byte("1.1"),  // 1.1
 		0x3ff3333333333333: []byte("1.2"),  // 1.2
 		0x3ff4cccccccccccd: []byte("1.3"),  // 1.3
@@ -508,13 +511,46 @@ func init() {
 		0x3ffb333333333333: []byte("1.7"),  // 1.7
 		0x3ffccccccccccccd: []byte("1.8"),  // 1.8
 		0x3ffe666666666666: []byte("1.9"),  // 1.9
-		0x400199999999999a: []byte("2.5"),  // 2.5
-		0x403e000000000000: []byte("30"),   // 30.0
-		0x4049000000000000: []byte("50"),   // 50.0
-		0x4059000000000000: []byte("100"),  // 100.0
-		0x408f400000000000: []byte("1000"), // 1000.0
-		// Additional powers of 10
-		0x40c3880000000000: []byte("10000"), // 10000.0
+		// 2.x range
+		0x4000666666666666: []byte("2.1"),  // 2.1
+		0x4000cccccccccccd: []byte("2.2"),  // 2.2
+		0x4001333333333333: []byte("2.3"),  // 2.3
+		0x400199999999999a: []byte("2.4"),  // 2.4
+		0x4002000000000000: []byte("2.5"),  // 2.5
+		0x4002666666666666: []byte("2.6"),  // 2.6
+		0x4002cccccccccccd: []byte("2.7"),  // 2.7
+		0x4003333333333333: []byte("2.8"),  // 2.8
+		0x400399999999999a: []byte("2.9"),  // 2.9
+		// 3.x range
+		0x4008666666666666: []byte("3.1"),  // 3.1
+		0x4008cccccccccccd: []byte("3.2"),  // 3.2
+		0x4009333333333333: []byte("3.3"),  // 3.3
+		0x400999999999999a: []byte("3.4"),  // 3.4
+		0x400a000000000000: []byte("3.5"),  // 3.5
+		0x400a666666666666: []byte("3.6"),  // 3.6
+		0x400acccccccccccd: []byte("3.7"),  // 3.7
+		0x400b333333333333: []byte("3.8"),  // 3.8
+		0x400b99999999999a: []byte("3.9"),  // 3.9
+		// 4.x range
+		0x4010666666666666: []byte("4.1"),  // 4.1
+		0x4010cccccccccccd: []byte("4.2"),  // 4.2
+		0x4011333333333333: []byte("4.3"),  // 4.3
+		0x401199999999999a: []byte("4.4"),  // 4.4
+		0x4012000000000000: []byte("4.5"),  // 4.5
+		0x4012666666666666: []byte("4.6"),  // 4.6
+		0x4012cccccccccccd: []byte("4.7"),  // 4.7
+		0x4013333333333333: []byte("4.8"),  // 4.8
+		0x401399999999999a: []byte("4.9"),  // 4.9
+		// 5.x range
+		0x4014666666666666: []byte("5.1"),  // 5.1
+		0x4014cccccccccccd: []byte("5.2"),  // 5.2
+		0x4015333333333333: []byte("5.3"),  // 5.3
+		0x401599999999999a: []byte("5.4"),  // 5.4
+		0x4016000000000000: []byte("5.5"),  // 5.5
+		0x4016666666666666: []byte("5.6"),  // 5.6
+		0x4016cccccccccccd: []byte("5.7"),  // 5.7
+		0x4017333333333333: []byte("5.8"),  // 5.8
+		0x401799999999999a: []byte("5.9"),  // 5.9
 		// Common fractions
 		0x3fd0000000000000: []byte("0.25"),  // 0.25
 		0x3fe4000000000000: []byte("0.75"),  // 0.75
@@ -526,6 +562,12 @@ func init() {
 		0x3fc3333333333333: []byte("0.15"), // 0.15
 		// Small decimals
 		0x3f50624dd2f1a9fc: []byte("0.001"), // 0.001
+		// Powers of 10
+		0x403e000000000000: []byte("30"),    // 30.0
+		0x4049000000000000: []byte("50"),    // 50.0
+		0x4059000000000000: []byte("100"),   // 100.0
+		0x408f400000000000: []byte("1000"),  // 1000.0
+		0x40c3880000000000: []byte("10000"), // 10000.0
 		// Common negative values
 		0xbff0000000000000: []byte("-1"),    // -1.0
 		0xc000000000000000: []byte("-2"),    // -2.0
@@ -933,8 +975,32 @@ func FastParseInt(b []byte) (int64, error) {
 }
 
 // FastParseFloat parses a float from a byte slice
+// SECURITY: Rejects NaN and Infinity values which are invalid in standard JSON (RFC 8259)
 func FastParseFloat(b []byte) (float64, error) {
-	// For now, use strconv (float parsing is complex)
+	// SECURITY: Fast check for invalid JSON float values
+	// NaN, Inf, +Inf, -Inf are not valid JSON numbers per RFC 8259
+	if len(b) >= 3 {
+		// Check first 3 characters (case-insensitive)
+		c0, c1, c2 := b[0], b[1], b[2]
+		// Check for "nan", "inf" (with optional sign)
+		if (c0 == 'N' || c0 == 'n') && (c1 == 'A' || c1 == 'a') && (c2 == 'N' || c2 == 'n') {
+			return 0, strconv.ErrSyntax
+		}
+		if (c0 == 'I' || c0 == 'i') && (c1 == 'N' || c1 == 'n') && (c2 == 'F' || c2 == 'f') {
+			return 0, strconv.ErrSyntax
+		}
+		// Check for "+inf", "-inf", "+nan", "-nan"
+		if len(b) >= 4 && (c0 == '+' || c0 == '-') {
+			c1, c2, c3 := b[1], b[2], b[3]
+			if (c1 == 'N' || c1 == 'n') && (c2 == 'A' || c2 == 'a') && (c3 == 'N' || c3 == 'n') {
+				return 0, strconv.ErrSyntax
+			}
+			if (c1 == 'I' || c1 == 'i') && (c2 == 'N' || c2 == 'n') && (c3 == 'F' || c3 == 'f') {
+				return 0, strconv.ErrSyntax
+			}
+		}
+	}
+	// Use strconv for actual parsing
 	return strconv.ParseFloat(unsafeString(b), 64)
 }
 

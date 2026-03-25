@@ -106,8 +106,8 @@ func BenchmarkUnifiedTypeConversion(b *testing.B) {
 	}
 }
 
-// TestAdvancedPathOperations tests advanced path features
-func TestAdvancedPathOperations(t *testing.T) {
+// TestAdvancedPathoperations tests advanced path features
+func TestAdvancedPathoperations(t *testing.T) {
 	helper := NewTestHelper(t)
 
 	t.Run("WildcardAccess", func(t *testing.T) {
@@ -169,14 +169,14 @@ func TestAdvancedPathOperations(t *testing.T) {
 	})
 }
 
-// TestArrayExtensionError tests the ArrayExtensionError type
+// TestArrayExtensionError tests the arrayExtensionError type
 func TestArrayExtensionError(t *testing.T) {
 	// Test default message
-	err1 := &ArrayExtensionError{
-		CurrentLength:  5,
-		RequiredLength: 10,
-		TargetIndex:    9,
-		Value:          "test",
+	err1 := &arrayExtensionError{
+		currentLength:  5,
+		requiredLength: 10,
+		targetIndex:    9,
+		value:          "test",
 	}
 	expectedMsg1 := "array extension required: current length 5, required length 10 for index 9"
 	if err1.Error() != expectedMsg1 {
@@ -184,24 +184,24 @@ func TestArrayExtensionError(t *testing.T) {
 	}
 
 	// Test custom message
-	err2 := &ArrayExtensionError{
-		CurrentLength:  5,
-		RequiredLength: 10,
-		TargetIndex:    9,
-		Value:          "test",
-		Message:        "Custom error message",
+	err2 := &arrayExtensionError{
+		currentLength:  5,
+		requiredLength: 10,
+		targetIndex:    9,
+		value:          "test",
+		message:        "Custom error message",
 	}
 	if err2.Error() != "Custom error message" {
 		t.Errorf("Error() with custom message = %q, want %q", err2.Error(), "Custom error message")
 	}
 
 	// Test with custom message
-	err3 := &ArrayExtensionError{
-		CurrentLength:  3,
-		RequiredLength: 10,
-		TargetIndex:    9,
-		Value:          "test",
-		Message:        "Array too small",
+	err3 := &arrayExtensionError{
+		currentLength:  3,
+		requiredLength: 10,
+		targetIndex:    9,
+		value:          "test",
+		message:        "Array too small",
 	}
 	if err3.Error() != "Array too small" {
 		t.Errorf("Error() with custom message = %q, want %q", err3.Error(), "Array too small")
@@ -253,13 +253,16 @@ func TestConfigConstantsComprehensive(t *testing.T) {
 
 	t.Run("ConfigValidation", func(t *testing.T) {
 		config := DefaultConfig()
-		err := ValidateConfig(config)
+		err := config.Validate()
 		helper.AssertNoError(err)
 
-		invalidConfig := DefaultConfig()
-		invalidConfig.MaxCacheSize = -1
-		err = ValidateConfig(invalidConfig)
-		helper.AssertError(err)
+		// Negative cache size should be clamped to 0 and cache disabled
+		configWithNegativeCache := DefaultConfig()
+		configWithNegativeCache.MaxCacheSize = -1
+		err = configWithNegativeCache.Validate()
+		helper.AssertNoError(err)
+		helper.AssertEqual(0, configWithNegativeCache.MaxCacheSize)
+		helper.AssertFalse(configWithNegativeCache.EnableCache)
 	})
 
 	t.Run("Constants", func(t *testing.T) {
@@ -272,23 +275,9 @@ func TestConfigConstantsComprehensive(t *testing.T) {
 		helper.AssertTrue(DefaultOperationTimeout > 0)
 	})
 
-	t.Run("ErrorCodes", func(t *testing.T) {
-		errorCodes := []string{
-			ErrCodeInvalidJSON,
-			ErrCodePathNotFound,
-			ErrCodeTypeMismatch,
-			ErrCodeSizeLimit,
-			ErrCodeSecurityViolation,
-		}
-
-		for _, code := range errorCodes {
-			helper.AssertTrue(len(code) > 0)
-			helper.AssertTrue(code[:4] == "ERR_")
-		}
-	})
-
 	t.Run("GlobalProcessor", func(t *testing.T) {
-		SetGlobalProcessor(New(DefaultConfig()))
+		p, _ := New(DefaultConfig())
+		SetGlobalProcessor(p)
 		ShutdownGlobalProcessor()
 	})
 }
@@ -910,22 +899,22 @@ func TestConvertToUint64(t *testing.T) {
 	}
 }
 
-// TestDeletedMarker tests the DeletedMarker constant
-func TestDeletedMarker(t *testing.T) {
-	if DeletedMarker == nil {
-		t.Errorf("DeletedMarker should not be nil")
+// TestIsDeletedMarker tests the IsDeletedMarker function
+func TestIsDeletedMarker(t *testing.T) {
+	// Test that IsDeletedMarker returns false for nil
+	if IsDeletedMarker(nil) {
+		t.Errorf("IsDeletedMarker(nil) should return false")
 	}
 
-	// Test that DeletedMarker can be used for comparison
-	arr := []any{1, DeletedMarker, 3}
-	count := 0
-	for _, v := range arr {
-		if v == DeletedMarker {
-			count++
-		}
+	// Test that IsDeletedMarker returns false for regular values
+	if IsDeletedMarker(1) {
+		t.Errorf("IsDeletedMarker(1) should return false")
 	}
-	if count != 1 {
-		t.Errorf("Found %d DeletedMarker, want 1", count)
+	if IsDeletedMarker("test") {
+		t.Errorf("IsDeletedMarker(\"test\") should return false")
+	}
+	if IsDeletedMarker(map[string]any{"key": "value"}) {
+		t.Errorf("IsDeletedMarker(map) should return false")
 	}
 }
 
@@ -961,12 +950,12 @@ func TestEncodeConfig_Clone(t *testing.T) {
 	}
 }
 
-// TestEncodeConfig_Clone_Nil tests Clone with nil receiver
-func TestEncodeConfig_Clone_Nil(t *testing.T) {
-	var config *Config
+// TestEncodeConfig_Clone_Zero tests Clone with zero value
+func TestEncodeConfig_Clone_Zero(t *testing.T) {
+	var config Config
 	cloned := config.Clone()
-	if cloned == nil {
-		t.Error("Clone of nil should return default config, not nil")
+	if cloned.Pretty != false {
+		t.Error("Clone of zero value should have default values")
 	}
 }
 
@@ -1325,7 +1314,7 @@ func TestErrorScenarios(t *testing.T) {
 	})
 
 	t.Run("ProcessorClosed", func(t *testing.T) {
-		processor := New(DefaultConfig())
+		processor := MustNew(DefaultConfig())
 		processor.Close()
 
 		testData := `{"test": "value"}`
@@ -1355,7 +1344,7 @@ func TestErrorScenarios(t *testing.T) {
 	})
 
 	t.Run("ConcurrentErrors", func(t *testing.T) {
-		processor := New(DefaultConfig())
+		processor := MustNew(DefaultConfig())
 		defer processor.Close()
 
 		// Attempt to access after close from multiple goroutines
@@ -1430,7 +1419,7 @@ func TestFormatNumber(t *testing.T) {
 
 // TestGetStatsWithResourceManager tests processor GetStats functionality with resource manager
 func TestGetStatsWithResourceManager(t *testing.T) {
-	p := New()
+	p := MustNew()
 	defer p.Close()
 
 	stats := p.GetStats()
@@ -1477,7 +1466,7 @@ func TestHealthCheckSystem(t *testing.T) {
 	helper := NewTestHelper(t)
 
 	t.Run("BasicHealthCheck", func(t *testing.T) {
-		processor := New()
+		processor := MustNew()
 		defer processor.Close()
 
 		health := processor.GetHealthStatus()
@@ -1487,7 +1476,7 @@ func TestHealthCheckSystem(t *testing.T) {
 	})
 
 	t.Run("HealthCheckWithLoad", func(t *testing.T) {
-		processor := New()
+		processor := MustNew()
 		defer processor.Close()
 
 		testData := `{"test": "value"}`
@@ -1553,7 +1542,7 @@ func TestIteratorAdvancedFeatures(t *testing.T) {
 
 	t.Run("IterableValueGetPath", func(t *testing.T) {
 		testData := `{"user": {"name": "Alice", "profile": {"age": 25}}}`
-		processor := New()
+		processor := MustNew()
 		defer processor.Close()
 
 		var data map[string]any
@@ -1623,23 +1612,23 @@ func TestMarshalerError(t *testing.T) {
 	}
 }
 
-// TestOperation_String tests Operation.String method
+// TestOperation_String tests operation.String method
 func TestOperation_String(t *testing.T) {
 	tests := []struct {
-		op       Operation
+		op       operation
 		expected string
 	}{
-		{OpGet, "get"},
-		{OpSet, "set"},
-		{OpDelete, "delete"},
-		{OpValidate, "validate"},
-		{Operation(999), "unknown"},
+		{opGet, "get"},
+		{opSet, "set"},
+		{opDelete, "delete"},
+		{opValidate, "validate"},
+		{operation(999), "unknown"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.expected, func(t *testing.T) {
 			if got := tt.op.String(); got != tt.expected {
-				t.Errorf("Operation.String() = %v, want %v", got, tt.expected)
+				t.Errorf("operation.String() = %v, want %v", got, tt.expected)
 			}
 		})
 	}
@@ -1677,8 +1666,8 @@ func TestProcessorConcurrencyComprehensive(t *testing.T) {
 	helper := NewTestHelper(t)
 	generator := NewTestDataGenerator()
 
-	t.Run("ProcessorOperations", func(t *testing.T) {
-		processor := New()
+	t.Run("Processoroperations", func(t *testing.T) {
+		processor := MustNew()
 		defer processor.Close()
 
 		testData := `{
@@ -1718,7 +1707,7 @@ func TestProcessorConcurrencyComprehensive(t *testing.T) {
 			helper.AssertTrue(len(health.Checks) > 0)
 		})
 
-		t.Run("CacheOperations", func(t *testing.T) {
+		t.Run("Cacheoperations", func(t *testing.T) {
 			_, _ = processor.Get(testData, "user.name")
 			processor.ClearCache()
 
@@ -1727,7 +1716,7 @@ func TestProcessorConcurrencyComprehensive(t *testing.T) {
 		})
 
 		t.Run("Lifecycle", func(t *testing.T) {
-			p := New()
+			p := MustNew()
 			helper.AssertFalse(p.IsClosed())
 			p.Close()
 			helper.AssertTrue(p.IsClosed())
@@ -1737,7 +1726,7 @@ func TestProcessorConcurrencyComprehensive(t *testing.T) {
 		})
 	})
 
-	t.Run("ConcurrentOperations", func(t *testing.T) {
+	t.Run("Concurrentoperations", func(t *testing.T) {
 		t.Run("ConcurrentReads", func(t *testing.T) {
 			jsonStr := generator.GenerateComplexJSON()
 			concurrencyTester := NewConcurrencyTester(t, 20, 100)
@@ -1775,7 +1764,7 @@ func TestProcessorConcurrencyComprehensive(t *testing.T) {
 			helper.AssertTrue(len(results) > 0)
 		})
 
-		t.Run("MixedOperations", func(t *testing.T) {
+		t.Run("Mixedoperations", func(t *testing.T) {
 			baseJSON := `{"data": {"counter": 0}, "array": [1, 2, 3]}`
 			var operations int64
 
@@ -1800,7 +1789,7 @@ func TestProcessorConcurrencyComprehensive(t *testing.T) {
 		})
 
 		t.Run("SharedProcessor", func(t *testing.T) {
-			processor := New()
+			processor := MustNew()
 			defer processor.Close()
 
 			jsonStr := generator.GenerateComplexJSON()
@@ -1831,7 +1820,7 @@ func TestProcessorConcurrencyComprehensive(t *testing.T) {
 				wg.Add(1)
 				go func(processorID int) {
 					defer wg.Done()
-					processor := New()
+					processor := MustNew()
 					defer processor.Close()
 
 					for j := 0; j < operationsPerProcessor; j++ {
@@ -1854,7 +1843,7 @@ func TestProcessorConcurrencyComprehensive(t *testing.T) {
 			config.EnableCache = true
 			config.MaxCacheSize = 100
 
-			processor := New(config)
+			processor := MustNew(config)
 			defer processor.Close()
 
 			jsonStr := `{"cached": "value", "number": 123}`
@@ -1885,7 +1874,7 @@ func TestProcessorConcurrencyComprehensive(t *testing.T) {
 	// Additional concurrency tests from concurrency_test.go
 	t.Run("ConcurrentAccessDetailed", func(t *testing.T) {
 		t.Run("ConcurrentReadsWithProcessor", func(t *testing.T) {
-			proc := New(DefaultConfig())
+			proc := MustNew(DefaultConfig())
 			defer proc.Close()
 
 			testData := `{"users": [` + generateUserJSON(100) + `]}`
@@ -1950,7 +1939,7 @@ func TestProcessorConcurrencyComprehensive(t *testing.T) {
 		})
 
 		t.Run("ConcurrentMixedReadWrite", func(t *testing.T) {
-			proc := New(DefaultConfig())
+			proc := MustNew(DefaultConfig())
 			defer proc.Close()
 
 			testData := `{"data": {"value": 0}}`
@@ -1997,7 +1986,7 @@ func TestProcessorConcurrencyComprehensive(t *testing.T) {
 				go func(workerID int) {
 					defer wg.Done()
 
-					proc := New(DefaultConfig())
+					proc := MustNew(DefaultConfig())
 					defer proc.Close()
 
 					for j := 0; j < iterations; j++ {
@@ -2010,13 +1999,13 @@ func TestProcessorConcurrencyComprehensive(t *testing.T) {
 		})
 	})
 
-	t.Run("ConcurrentCacheOperations", func(t *testing.T) {
+	t.Run("ConcurrentCacheoperations", func(t *testing.T) {
 		t.Run("CacheConcurrency", func(t *testing.T) {
 			config := DefaultConfig()
 			config.EnableCache = true
 			config.MaxCacheSize = 100
 
-			proc := New(config)
+			proc := MustNew(config)
 			defer proc.Close()
 
 			testData := `{"user": {"name": "Alice", "age": 30}}`
@@ -2052,7 +2041,7 @@ func TestProcessorConcurrencyComprehensive(t *testing.T) {
 			config.EnableCache = true
 			config.CacheTTL = 100 * time.Millisecond
 
-			proc := New(config)
+			proc := MustNew(config)
 			defer proc.Close()
 
 			testData := `{"value": "test"}`
@@ -2066,7 +2055,7 @@ func TestProcessorConcurrencyComprehensive(t *testing.T) {
 		})
 	})
 
-	t.Run("ConcurrentIteratorOperations", func(t *testing.T) {
+	t.Run("ConcurrentIteratoroperations", func(t *testing.T) {
 		t.Run("ConcurrentForeach", func(t *testing.T) {
 			testData := `{"items": [` + generateArrayItems(50) + `]}`
 
@@ -2141,7 +2130,7 @@ func TestProcessorConcurrencyComprehensive(t *testing.T) {
 		})
 
 		t.Run("SharedProcessorStats", func(t *testing.T) {
-			proc := New(DefaultConfig())
+			proc := MustNew(DefaultConfig())
 			defer proc.Close()
 
 			testData := `{"data": "value"}`
@@ -2180,7 +2169,7 @@ func TestProcessorConcurrencyComprehensive(t *testing.T) {
 		}
 
 		t.Run("HighConcurrency", func(t *testing.T) {
-			proc := New(DefaultConfig())
+			proc := MustNew(DefaultConfig())
 			defer proc.Close()
 
 			testData := NewTestDataGenerator().GenerateComplexJSON()
@@ -2209,7 +2198,7 @@ func TestProcessorConcurrencyComprehensive(t *testing.T) {
 
 		t.Run("RapidClose", func(t *testing.T) {
 			for i := 0; i < 20; i++ {
-				proc := New(DefaultConfig())
+				proc := MustNew(DefaultConfig())
 				proc.Get(`{"test": "value"}`, "test")
 				proc.Close()
 			}
@@ -2217,8 +2206,8 @@ func TestProcessorConcurrencyComprehensive(t *testing.T) {
 	})
 
 	t.Run("ProcessorLifecycleConcurrency", func(t *testing.T) {
-		t.Run("CloseDuringOperations", func(t *testing.T) {
-			proc := New(DefaultConfig())
+		t.Run("CloseDuringoperations", func(t *testing.T) {
+			proc := MustNew(DefaultConfig())
 
 			testData := `{"test": "value"}`
 
@@ -2247,7 +2236,8 @@ func TestProcessorConcurrencyComprehensive(t *testing.T) {
 		})
 
 		t.Run("GlobalProcessorConcurrency", func(t *testing.T) {
-			SetGlobalProcessor(New(DefaultConfig()))
+			p, _ := New(DefaultConfig())
+			SetGlobalProcessor(p)
 			defer ShutdownGlobalProcessor()
 
 			testData := `{"test": "value"}`
@@ -2270,30 +2260,30 @@ func TestProcessorConcurrencyComprehensive(t *testing.T) {
 	})
 }
 
-// TestPropertyAccessResult tests the PropertyAccessResult type
+// TestPropertyAccessResult tests the propertyAccessResult type
 func TestPropertyAccessResult(t *testing.T) {
 	// Test exists case
-	result1 := PropertyAccessResult{
-		Value:  "test",
-		Exists: true,
+	result1 := propertyAccessResult{
+		value:  "test",
+		exists: true,
 	}
 
-	if !result1.Exists {
-		t.Errorf("Exists should be true")
+	if !result1.exists {
+		t.Errorf("exists should be true")
 	}
 
-	if result1.Value != "test" {
-		t.Errorf("Value = %v, want %v", result1.Value, "test")
+	if result1.value != "test" {
+		t.Errorf("value = %v, want %v", result1.value, "test")
 	}
 
 	// Test not exists case
-	result2 := PropertyAccessResult{
-		Value:  nil,
-		Exists: false,
+	result2 := propertyAccessResult{
+		value:  nil,
+		exists: false,
 	}
 
-	if result2.Exists {
-		t.Errorf("Exists should be false")
+	if result2.exists {
+		t.Errorf("exists should be false")
 	}
 }
 
@@ -2302,7 +2292,7 @@ func TestResourceManager(t *testing.T) {
 	helper := NewTestHelper(t)
 
 	t.Run("StringBuilderPool", func(t *testing.T) {
-		processor := New()
+		processor := MustNew()
 		defer processor.Close()
 
 		success := TestProcessorResourcePools(processor)
@@ -2310,7 +2300,7 @@ func TestResourceManager(t *testing.T) {
 	})
 
 	t.Run("MemoryEfficiency", func(t *testing.T) {
-		processor := New()
+		processor := MustNew()
 		defer processor.Close()
 
 		testData := `{"data": {"nested": {"deep": "value"}}}`
@@ -2354,7 +2344,7 @@ func TestResourceMonitor(t *testing.T) {
 		}
 	})
 
-	t.Run("RecordPoolOperations", func(t *testing.T) {
+	t.Run("RecordPooloperations", func(t *testing.T) {
 		rm := NewResourceMonitor()
 
 		rm.RecordPoolHit()
@@ -2477,12 +2467,12 @@ func TestResourceMonitor_EfficiencyMethods(t *testing.T) {
 	})
 }
 
-// TestRootDataTypeConversionError tests the RootDataTypeConversionError type
+// TestRootDataTypeConversionError tests the rootDataTypeConversionError type
 func TestRootDataTypeConversionError(t *testing.T) {
-	err := &RootDataTypeConversionError{
-		RequiredType: "object",
-		RequiredSize: 100,
-		CurrentType:  "string",
+	err := &rootDataTypeConversionError{
+		requiredType: "object",
+		requiredSize: 100,
+		currentType:  "string",
 	}
 
 	expectedMsg := "root data type conversion required: from string to object (size: 100)"
@@ -2491,7 +2481,7 @@ func TestRootDataTypeConversionError(t *testing.T) {
 	}
 
 	// Test nil error
-	var nilErr *RootDataTypeConversionError
+	var nilErr *rootDataTypeConversionError
 	if nilErr != nil {
 		t.Errorf("nil error should be nil")
 	}

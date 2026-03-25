@@ -17,7 +17,7 @@ import (
 
 // Processor is the main JSON processing engine with thread safety and performance optimization
 type Processor struct {
-	config            *Config
+	config            Config
 	cache             *internal.CacheManager
 	state             int32
 	cleanupOnce       sync.Once
@@ -52,37 +52,44 @@ type processorMetrics struct {
 	enabled              bool // Flag to enable/disable metrics collection
 }
 
-// New creates a new JSON processor with optimized configuration.
+// New creates a new JSON processor with the given configuration.
 // If no configuration is provided, uses default configuration.
-// This function follows the explicit config pattern as required by the design guidelines.
-func New(config ...*Config) *Processor {
-	var cfg *Config
-	if len(config) > 0 && config[0] != nil {
-		cfg = config[0].Clone() // Use clone to prevent external modifications
+// Returns an error if the configuration is invalid.
+//
+// Example:
+//
+//	// Using default configuration
+//	processor, err := json.New()
+//
+//	// With custom configuration
+//	cfg := json.DefaultConfig()
+//	cfg.CreatePaths = true
+//	processor, err := json.New(cfg)
+//
+//	// Using preset configuration
+//	processor, err := json.New(json.SecurityConfig())
+func New(cfg ...Config) (*Processor, error) {
+	var config Config
+	if len(cfg) > 0 {
+		config = cfg[0]
 	} else {
-		cfg = DefaultConfig()
+		config = DefaultConfig()
 	}
 
 	// Validate configuration and apply corrections for invalid values
-	// ValidateConfig modifies the config in-place to fix invalid values
-	// Only replace with default config if validation fails for critical errors
-	if err := ValidateConfig(cfg); err != nil {
-		// Log warning about validation failure but continue with corrected config
-		// The ValidateConfig function already applies corrections to invalid values
-		// We don't discard the entire config, just log the issue
-		slog.Default().With("component", "json-processor").Warn("configuration validation warning, corrections applied",
-			"error", err.Error())
+	if err := config.Validate(); err != nil {
+		return nil, fmt.Errorf("invalid configuration: %w", err)
 	}
 
 	p := &Processor{
-		config:          cfg,
-		cache:           internal.NewCacheManager(cfg),
+		config:          config,
+		cache:           internal.NewCacheManager(&config),
 		resourceMonitor: NewResourceMonitor(),
 		securityValidator: newSecurityValidator(
-			cfg.MaxJSONSize,
+			config.MaxJSONSize,
 			MaxPathLength,
-			cfg.MaxNestingDepthSecurity,
-			cfg.FullSecurityScan,
+			config.MaxNestingDepthSecurity,
+			config.FullSecurityScan,
 		),
 		resources: &processorResources{
 			lastPoolReset:   0,
@@ -91,8 +98,8 @@ func New(config ...*Config) *Processor {
 		},
 		metrics: &processorMetrics{
 			operationWindow:      0, // Disabled by default for better performance
-			concurrencySemaphore: make(chan struct{}, cfg.MaxConcurrency),
-			enabled:              cfg.EnableMetrics,
+			concurrencySemaphore: make(chan struct{}, config.MaxConcurrency),
+			enabled:              config.EnableMetrics,
 		},
 		// OPTIMIZED: Initialize hash cache for large JSON strings
 		hashCache:     make(map[string]uint64, 64),
@@ -103,13 +110,34 @@ func New(config ...*Config) *Processor {
 	p.logger.Store(slog.Default().With("component", "json-processor"))
 
 	// Only create metrics collector if metrics are enabled
-	if cfg.EnableMetrics {
+	if config.EnableMetrics {
 		p.metrics.collector = internal.NewMetricsCollector()
 	}
 
 	// Initialize cached RecursiveProcessor for reuse
 	p.recursiveProcessor = &RecursiveProcessor{processor: p}
 
+	return p, nil
+}
+
+// MustNew creates a new JSON processor with the given configuration.
+// It panics if the configuration is invalid.
+// Use this for simple cases where configuration errors are programming errors.
+//
+// Example:
+//
+//	// Using default configuration
+//	processor := json.MustNew()
+//
+//	// With custom configuration
+//	cfg := json.DefaultConfig()
+//	cfg.CreatePaths = true
+//	processor := json.MustNew(cfg)
+func MustNew(cfg ...Config) *Processor {
+	p, err := New(cfg...)
+	if err != nil {
+		panic(fmt.Sprintf("json: failed to create processor: %v", err))
+	}
 	return p
 }
 
@@ -187,7 +215,7 @@ func (p *Processor) IsClosed() bool {
 }
 
 // ProcessBatch processes multiple operations in a single batch
-func (p *Processor) ProcessBatch(operations []BatchOperation, opts ...*Config) ([]BatchResult, error) {
+func (p *Processor) ProcessBatch(operations []BatchOperation, opts ...Config) ([]BatchResult, error) {
 	if err := p.checkClosed(); err != nil {
 		return nil, err
 	}
@@ -237,7 +265,7 @@ func (p *Processor) ClearCache() {
 }
 
 // WarmupCache pre-loads commonly used paths into cache to improve first-access performance
-func (p *Processor) WarmupCache(jsonStr string, paths []string, opts ...*Config) (*WarmupResult, error) {
+func (p *Processor) WarmupCache(jsonStr string, paths []string, opts ...Config) (*WarmupResult, error) {
 	if err := p.checkClosed(); err != nil {
 		return nil, err
 	}
@@ -301,7 +329,7 @@ func (p *Processor) WarmupCache(jsonStr string, paths []string, opts ...*Config)
 		}
 
 		// Try to get the value (this will cache it if successful)
-		_, err := p.Get(jsonStr, path, options)
+		_, err := p.Get(jsonStr, path, *options)
 		if err != nil {
 			errorCount++
 			failedPaths = append(failedPaths, path)
@@ -806,9 +834,8 @@ func (p *Processor) isValidCacheKey(key string) bool {
 }
 
 // GetConfig returns a copy of the processor configuration
-func (p *Processor) GetConfig() *Config {
-	configCopy := *p.config
-	return &configCopy
+func (p *Processor) GetConfig() Config {
+	return p.config.Clone()
 }
 
 // SetLogger sets a custom structured logger for the processor
@@ -849,9 +876,10 @@ func (p *Processor) checkClosed() error {
 }
 
 // prepareOptions prepares and validates processor options
-func (p *Processor) prepareOptions(opts ...*Config) (*Config, error) {
-	var options *Config
-	if len(opts) > 0 && opts[0] != nil {
+// Accepts Config values and returns a pointer for internal use
+func (p *Processor) prepareOptions(opts ...Config) (*Config, error) {
+	var options Config
+	if len(opts) > 0 {
 		options = opts[0]
 	} else {
 		options = DefaultConfig()
@@ -862,23 +890,23 @@ func (p *Processor) prepareOptions(opts ...*Config) (*Config, error) {
 		return nil, err
 	}
 
-	return options, nil
+	return &options, nil
 }
 
 // mergeOptionsWithOverride creates a new Config with overrides applied
-func mergeOptionsWithOverride(opts []*Config, override func(*Config)) *Config {
-	var result *Config
-	if len(opts) > 0 && opts[0] != nil {
+func mergeOptionsWithOverride(opts []Config, override func(*Config)) *Config {
+	var result Config
+	if len(opts) > 0 {
 		result = opts[0].Clone()
 	} else {
 		result = DefaultConfig()
 	}
-	override(result)
-	return result
+	override(&result)
+	return &result
 }
 
 // Delete removes a value from JSON at the specified path
-func (p *Processor) Delete(jsonStr, path string, opts ...*Config) (string, error) {
+func (p *Processor) Delete(jsonStr, path string, opts ...Config) (string, error) {
 	if err := p.checkClosed(); err != nil {
 		return "", err
 	}
@@ -971,12 +999,12 @@ func (p *Processor) isArrayDeletePath(path string) bool {
 // Example:
 //
 //	result, err := processor.DeleteClean(data, "users[0].profile")
-func (p *Processor) DeleteClean(jsonStr, path string, opts ...*Config) (string, error) {
+func (p *Processor) DeleteClean(jsonStr, path string, opts ...Config) (string, error) {
 	cleanupOpts := mergeOptionsWithOverride(opts, func(o *Config) {
 		o.CleanupNulls = true
 		o.CompactArrays = true
 	})
-	return p.Delete(jsonStr, path, cleanupOpts)
+	return p.Delete(jsonStr, path, *cleanupOpts)
 }
 
 // Foreach iterates over JSON arrays or objects using this processor
@@ -985,7 +1013,7 @@ func (p *Processor) Foreach(jsonStr string, fn func(key any, item *IterableValue
 		return
 	}
 
-	data, err := p.Get(jsonStr, ".", nil)
+	data, err := p.Get(jsonStr, ".")
 	if err != nil {
 		return
 	}
@@ -1000,7 +1028,7 @@ func (p *Processor) ForeachWithPath(jsonStr, path string, fn func(key any, item 
 		return err
 	}
 
-	data, err := p.Get(jsonStr, path, nil)
+	data, err := p.Get(jsonStr, path)
 	if err != nil {
 		return err
 	}
@@ -1015,7 +1043,7 @@ func (p *Processor) ForeachWithPathAndIterator(jsonStr, path string, fn func(key
 		return err
 	}
 
-	data, err := p.Get(jsonStr, path, nil)
+	data, err := p.Get(jsonStr, path)
 	if err != nil {
 		return err
 	}
@@ -1029,7 +1057,7 @@ func (p *Processor) ForeachWithPathAndControl(jsonStr, path string, fn func(key 
 		return err
 	}
 
-	data, err := p.Get(jsonStr, path, nil)
+	data, err := p.Get(jsonStr, path)
 	if err != nil {
 		return err
 	}
@@ -1044,7 +1072,7 @@ func (p *Processor) ForeachReturn(jsonStr string, fn func(key any, item *Iterabl
 		return "", err
 	}
 
-	data, err := p.Get(jsonStr, ".", nil)
+	data, err := p.Get(jsonStr, ".")
 	if err != nil {
 		return "", err
 	}
@@ -1063,7 +1091,7 @@ func (p *Processor) ForeachNested(jsonStr string, fn func(key any, item *Iterabl
 		return
 	}
 
-	data, err := p.Get(jsonStr, ".", nil)
+	data, err := p.Get(jsonStr, ".")
 	if err != nil {
 		return
 	}
@@ -1135,7 +1163,7 @@ func SafeGetTypedWithProcessor[T any](p *Processor, jsonStr, path string) TypeSa
 }
 
 // Get retrieves a value from JSON using a path expression with performance
-func (p *Processor) Get(jsonStr, path string, opts ...*Config) (any, error) {
+func (p *Processor) Get(jsonStr, path string, opts ...Config) (any, error) {
 	// Check rate limiting for security
 	if err := p.checkRateLimit(); err != nil {
 		return nil, err
@@ -1253,7 +1281,7 @@ func (p *Processor) Get(jsonStr, path string, opts ...*Config) (any, error) {
 	}
 
 	// Use unified recursive processor for all paths (cached instance)
-	result, err := p.recursiveProcessor.ProcessRecursively(data, path, OpGet, nil)
+	result, err := p.recursiveProcessor.ProcessRecursively(data, path, opGet, nil)
 	if err != nil {
 		p.incrementErrorCount()
 		recordMetrics(false)
@@ -1286,7 +1314,7 @@ func (p *Processor) Get(jsonStr, path string, opts ...*Config) (any, error) {
 //	if err != nil { return err }
 //	value1, _ := processor.GetFromParsed(parsed, "path1")
 //	value2, _ := processor.GetFromParsed(parsed, "path2")
-func (p *Processor) PreParse(jsonStr string, opts ...*Config) (*ParsedJSON, error) {
+func (p *Processor) PreParse(jsonStr string, opts ...Config) (*ParsedJSON, error) {
 	if err := p.checkClosed(); err != nil {
 		return nil, err
 	}
@@ -1332,7 +1360,7 @@ func (p *Processor) PreParse(jsonStr string, opts ...*Config) (*ParsedJSON, erro
 // This is significantly faster than Get() for repeated queries on the same JSON.
 //
 // OPTIMIZED: Skips JSON parsing, goes directly to path navigation.
-func (p *Processor) GetFromParsed(parsed *ParsedJSON, path string, opts ...*Config) (any, error) {
+func (p *Processor) GetFromParsed(parsed *ParsedJSON, path string, opts ...Config) (any, error) {
 	if parsed == nil {
 		return nil, &JsonsError{
 			Op:      "get_from_parsed",
@@ -1355,7 +1383,7 @@ func (p *Processor) GetFromParsed(parsed *ParsedJSON, path string, opts ...*Conf
 	}
 
 	// Use unified recursive processor for path navigation
-	result, err := p.recursiveProcessor.ProcessRecursively(parsed.data, path, OpGet, nil)
+	result, err := p.recursiveProcessor.ProcessRecursively(parsed.data, path, opGet, nil)
 	if err != nil {
 		return nil, &JsonsError{
 			Op:      "get_from_parsed",
@@ -1378,7 +1406,7 @@ func (p *Processor) GetFromParsed(parsed *ParsedJSON, path string, opts ...*Conf
 // Returns a new ParsedJSON with the modified data (original is not modified).
 //
 // OPTIMIZED: Skips JSON parsing, works directly on parsed data.
-func (p *Processor) SetFromParsed(parsed *ParsedJSON, path string, value any, opts ...*Config) (*ParsedJSON, error) {
+func (p *Processor) SetFromParsed(parsed *ParsedJSON, path string, value any, opts ...Config) (*ParsedJSON, error) {
 	if parsed == nil {
 		return nil, &JsonsError{
 			Op:      "set_from_parsed",
@@ -1404,7 +1432,7 @@ func (p *Processor) SetFromParsed(parsed *ParsedJSON, path string, value any, op
 	dataCopy := p.deepCopyData(parsed.data)
 
 	// Use unified recursive processor for path navigation and modification
-	result, err := p.recursiveProcessor.ProcessRecursivelyWithOptions(dataCopy, path, OpSet, value, options.CreatePaths)
+	result, err := p.recursiveProcessor.ProcessRecursivelyWithOptions(dataCopy, path, opSet, value, options.CreatePaths)
 	if err != nil {
 		return nil, &JsonsError{
 			Op:      "set_from_parsed",
@@ -1423,37 +1451,37 @@ func (p *Processor) SetFromParsed(parsed *ParsedJSON, path string, value any, op
 }
 
 // GetString retrieves a string value from JSON at the specified path
-func (p *Processor) GetString(jsonStr, path string, opts ...*Config) (string, error) {
+func (p *Processor) GetString(jsonStr, path string, opts ...Config) (string, error) {
 	return GetTypedWithProcessor[string](p, jsonStr, path, opts...)
 }
 
 // GetInt retrieves an int value from JSON at the specified path
-func (p *Processor) GetInt(jsonStr, path string, opts ...*Config) (int, error) {
+func (p *Processor) GetInt(jsonStr, path string, opts ...Config) (int, error) {
 	return GetTypedWithProcessor[int](p, jsonStr, path, opts...)
 }
 
 // GetFloat64 retrieves a float64 value from JSON at the specified path
-func (p *Processor) GetFloat64(jsonStr, path string, opts ...*Config) (float64, error) {
+func (p *Processor) GetFloat64(jsonStr, path string, opts ...Config) (float64, error) {
 	return GetTypedWithProcessor[float64](p, jsonStr, path, opts...)
 }
 
 // GetBool retrieves a bool value from JSON at the specified path
-func (p *Processor) GetBool(jsonStr, path string, opts ...*Config) (bool, error) {
+func (p *Processor) GetBool(jsonStr, path string, opts ...Config) (bool, error) {
 	return GetTypedWithProcessor[bool](p, jsonStr, path, opts...)
 }
 
 // GetArray retrieves an array value from JSON at the specified path
-func (p *Processor) GetArray(jsonStr, path string, opts ...*Config) ([]any, error) {
+func (p *Processor) GetArray(jsonStr, path string, opts ...Config) ([]any, error) {
 	return GetTypedWithProcessor[[]any](p, jsonStr, path, opts...)
 }
 
 // GetObject retrieves an object value from JSON at the specified path
-func (p *Processor) GetObject(jsonStr, path string, opts ...*Config) (map[string]any, error) {
+func (p *Processor) GetObject(jsonStr, path string, opts ...Config) (map[string]any, error) {
 	return GetTypedWithProcessor[map[string]any](p, jsonStr, path, opts...)
 }
 
 // GetWithDefault retrieves a value from JSON with a default fallback
-func (p *Processor) GetWithDefault(jsonStr, path string, defaultValue any, opts ...*Config) any {
+func (p *Processor) GetWithDefault(jsonStr, path string, defaultValue any, opts ...Config) any {
 	value, err := p.Get(jsonStr, path, opts...)
 	if err != nil || value == nil {
 		return defaultValue
@@ -1462,7 +1490,7 @@ func (p *Processor) GetWithDefault(jsonStr, path string, defaultValue any, opts 
 }
 
 // GetStringWithDefault retrieves a string value from JSON with a default fallback
-func (p *Processor) GetStringWithDefault(jsonStr, path, defaultValue string, opts ...*Config) string {
+func (p *Processor) GetStringWithDefault(jsonStr, path, defaultValue string, opts ...Config) string {
 	value, err := p.GetString(jsonStr, path, opts...)
 	if err != nil {
 		return defaultValue
@@ -1471,7 +1499,7 @@ func (p *Processor) GetStringWithDefault(jsonStr, path, defaultValue string, opt
 }
 
 // GetIntWithDefault retrieves an int value from JSON with a default fallback
-func (p *Processor) GetIntWithDefault(jsonStr, path string, defaultValue int, opts ...*Config) int {
+func (p *Processor) GetIntWithDefault(jsonStr, path string, defaultValue int, opts ...Config) int {
 	value, err := p.GetInt(jsonStr, path, opts...)
 	if err != nil {
 		return defaultValue
@@ -1480,7 +1508,7 @@ func (p *Processor) GetIntWithDefault(jsonStr, path string, defaultValue int, op
 }
 
 // GetFloat64WithDefault retrieves a float64 value from JSON with a default fallback
-func (p *Processor) GetFloat64WithDefault(jsonStr, path string, defaultValue float64, opts ...*Config) float64 {
+func (p *Processor) GetFloat64WithDefault(jsonStr, path string, defaultValue float64, opts ...Config) float64 {
 	value, err := p.GetFloat64(jsonStr, path, opts...)
 	if err != nil {
 		return defaultValue
@@ -1489,7 +1517,7 @@ func (p *Processor) GetFloat64WithDefault(jsonStr, path string, defaultValue flo
 }
 
 // GetBoolWithDefault retrieves a bool value from JSON with a default fallback
-func (p *Processor) GetBoolWithDefault(jsonStr, path string, defaultValue bool, opts ...*Config) bool {
+func (p *Processor) GetBoolWithDefault(jsonStr, path string, defaultValue bool, opts ...Config) bool {
 	value, err := p.GetBool(jsonStr, path, opts...)
 	if err != nil {
 		return defaultValue
@@ -1498,7 +1526,7 @@ func (p *Processor) GetBoolWithDefault(jsonStr, path string, defaultValue bool, 
 }
 
 // GetArrayWithDefault retrieves an array value from JSON with a default fallback
-func (p *Processor) GetArrayWithDefault(jsonStr, path string, defaultValue []any, opts ...*Config) []any {
+func (p *Processor) GetArrayWithDefault(jsonStr, path string, defaultValue []any, opts ...Config) []any {
 	value, err := p.GetArray(jsonStr, path, opts...)
 	if err != nil {
 		return defaultValue
@@ -1507,7 +1535,7 @@ func (p *Processor) GetArrayWithDefault(jsonStr, path string, defaultValue []any
 }
 
 // GetObjectWithDefault retrieves an object value from JSON with a default fallback
-func (p *Processor) GetObjectWithDefault(jsonStr, path string, defaultValue map[string]any, opts ...*Config) map[string]any {
+func (p *Processor) GetObjectWithDefault(jsonStr, path string, defaultValue map[string]any, opts ...Config) map[string]any {
 	value, err := p.GetObject(jsonStr, path, opts...)
 	if err != nil {
 		return defaultValue
@@ -1516,7 +1544,7 @@ func (p *Processor) GetObjectWithDefault(jsonStr, path string, defaultValue map[
 }
 
 // GetMultiple retrieves multiple values from JSON using multiple path expressions
-func (p *Processor) GetMultiple(jsonStr string, paths []string, opts ...*Config) (map[string]any, error) {
+func (p *Processor) GetMultiple(jsonStr string, paths []string, opts ...Config) (map[string]any, error) {
 	if err := p.checkClosed(); err != nil {
 		return nil, err
 	}
@@ -1548,7 +1576,7 @@ func (p *Processor) GetMultiple(jsonStr string, paths []string, opts ...*Config)
 		}
 
 		// Use cached recursive processor
-		result, err := p.recursiveProcessor.ProcessRecursively(data, path, OpGet, nil)
+		result, err := p.recursiveProcessor.ProcessRecursively(data, path, opGet, nil)
 
 		if err != nil {
 			// Continue with other paths, store error as result
@@ -1723,7 +1751,7 @@ func (p *Processor) putStringBuilder(sb *strings.Builder) {
 // Returns:
 //   - On success: modified JSON string and nil error
 //   - On failure: original unmodified JSON string and error information
-func (p *Processor) Set(jsonStr, path string, value any, opts ...*Config) (string, error) {
+func (p *Processor) Set(jsonStr, path string, value any, opts ...Config) (string, error) {
 	if err := p.checkClosed(); err != nil {
 		return jsonStr, err
 	}
@@ -1768,7 +1796,7 @@ func (p *Processor) Set(jsonStr, path string, value any, opts ...*Config) (strin
 	if err != nil {
 		// Return original data and detailed error information
 		var setError *JsonsError
-		if _, ok := err.(*RootDataTypeConversionError); ok && createPaths {
+		if _, ok := err.(*rootDataTypeConversionError); ok && createPaths {
 			setError = &JsonsError{
 				Op:      "set",
 				Path:    path,
@@ -1805,7 +1833,7 @@ func (p *Processor) Set(jsonStr, path string, value any, opts ...*Config) (strin
 // Returns:
 //   - On success: modified JSON string and nil error
 //   - On failure: original unmodified JSON string and error information
-func (p *Processor) SetMultiple(jsonStr string, updates map[string]any, opts ...*Config) (string, error) {
+func (p *Processor) SetMultiple(jsonStr string, updates map[string]any, opts ...Config) (string, error) {
 	if err := p.checkClosed(); err != nil {
 		return jsonStr, err
 	}
@@ -1880,7 +1908,7 @@ func (p *Processor) SetMultiple(jsonStr string, updates map[string]any, opts ...
 		err := p.setValueAtPathWithOptions(dataCopy, path, value, createPaths)
 		if err != nil {
 			// Handle root data type conversion errors
-			if _, ok := err.(*RootDataTypeConversionError); ok && createPaths {
+			if _, ok := err.(*rootDataTypeConversionError); ok && createPaths {
 				lastError = &JsonsError{
 					Op:      "set_multiple",
 					Path:    path,
@@ -1943,11 +1971,11 @@ func (p *Processor) SetMultiple(jsonStr string, updates map[string]any, opts ...
 // Example:
 //
 //	result, err := processor.SetCreate(data, "users[0].profile.name", "Alice")
-func (p *Processor) SetCreate(jsonStr, path string, value any, opts ...*Config) (string, error) {
+func (p *Processor) SetCreate(jsonStr, path string, value any, opts ...Config) (string, error) {
 	addOpts := mergeOptionsWithOverride(opts, func(o *Config) {
 		o.CreatePaths = true
 	})
-	return p.Set(jsonStr, path, value, addOpts)
+	return p.Set(jsonStr, path, value, *addOpts)
 }
 
 // SetMultipleCreate sets multiple values, creating intermediate paths as needed.
@@ -1956,11 +1984,11 @@ func (p *Processor) SetCreate(jsonStr, path string, value any, opts ...*Config) 
 // Example:
 //
 //	result, err := processor.SetMultipleCreate(data, map[string]any{"user.name": "Alice", "user.age": 30})
-func (p *Processor) SetMultipleCreate(jsonStr string, updates map[string]any, opts ...*Config) (string, error) {
+func (p *Processor) SetMultipleCreate(jsonStr string, updates map[string]any, opts ...Config) (string, error) {
 	addOpts := mergeOptionsWithOverride(opts, func(o *Config) {
 		o.CreatePaths = true
 	})
-	return p.SetMultiple(jsonStr, updates, addOpts)
+	return p.SetMultiple(jsonStr, updates, *addOpts)
 }
 
 // GetStats returns processor performance statistics

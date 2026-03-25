@@ -201,7 +201,13 @@ result, err := json.TypeSafeConvert[string](value)
 
 // JSON utilities
 equal, err := json.CompareJson(json1, json2)
-merged, err := json.MergeJson(json1, json2)
+
+// MergeJson with optional mode (defaults to MergeUnion)
+merged, err := json.MergeJson(json1, json2)                    // Union (default)
+merged, err := json.MergeJson(json1, json2, json.MergeUnion)   // Union (explicit)
+merged, err := json.MergeJson(json1, json2, json.MergeIntersection) // Intersection
+merged, err := json.MergeJson(json1, json2, json.MergeDifference)   // Difference
+
 copy, err := json.DeepCopy(data)
 ```
 
@@ -213,7 +219,7 @@ copy, err := json.DeepCopy(data)
 
 ```go
 // Create processor with config
-cfg := &json.Config{
+cfg := json.Config{
     EnableCache:      true,
     MaxCacheSize:     256,
     CacheTTL:         5 * time.Minute,
@@ -224,7 +230,10 @@ cfg := &json.Config{
     CleanupNulls:     true,  // Cleanup nulls after Delete
 }
 
-processor := json.New(cfg)
+processor, err := json.New(cfg)
+if err != nil {
+    // handle configuration error
+}
 defer processor.Close()
 
 // Use processor methods
@@ -232,6 +241,15 @@ result, err := processor.Get(jsonStr, "user.name")
 stats := processor.GetStats()
 health := processor.GetHealthStatus()
 processor.ClearCache()
+```
+
+### Quick Start with MustNew
+
+For simple cases where configuration errors are not expected:
+
+```go
+processor := json.MustNew() // Panics on error (should never happen with default config)
+defer processor.Close()
 ```
 
 ### Preset Configurations
@@ -413,7 +431,10 @@ secureConfig := json.SecurityConfig()
 // - Strict mode validation
 // - Prototype pollution protection
 
-processor := json.New(secureConfig)
+processor, err := json.New(secureConfig)
+if err != nil {
+    // handle error
+}
 defer processor.Close()
 ```
 

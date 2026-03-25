@@ -201,7 +201,13 @@ result, err := json.TypeSafeConvert[string](value)
 
 // JSON 工具
 equal, err := json.CompareJson(json1, json2)
-merged, err := json.MergeJson(json1, json2)
+
+// MergeJson 可选模式参数 (默认为 MergeUnion)
+merged, err := json.MergeJson(json1, json2)                    // 并集 (默认)
+merged, err := json.MergeJson(json1, json2, json.MergeUnion)   // 并集 (显式)
+merged, err := json.MergeJson(json1, json2, json.MergeIntersection) // 交集
+merged, err := json.MergeJson(json1, json2, json.MergeDifference)   // 差集
+
 copy, err := json.DeepCopy(data)
 ```
 

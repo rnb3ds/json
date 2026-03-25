@@ -18,7 +18,7 @@ import (
 
 // TestLoadFromFile tests the LoadFromFile method
 func TestLoadFromFile(t *testing.T) {
-	processor := New()
+	processor := MustNew()
 	defer processor.Close()
 
 	t.Run("ValidFile", func(t *testing.T) {
@@ -81,7 +81,7 @@ func TestLoadFromFile(t *testing.T) {
 
 // TestSaveToFile tests the SaveToFile method
 func TestSaveToFile(t *testing.T) {
-	processor := New()
+	processor := MustNew()
 	defer processor.Close()
 
 	t.Run("SaveAndLoad", func(t *testing.T) {
@@ -166,7 +166,7 @@ func TestSaveToFile(t *testing.T) {
 
 // TestLoadFromReader tests the LoadFromReader method
 func TestLoadFromReader(t *testing.T) {
-	processor := New()
+	processor := MustNew()
 	defer processor.Close()
 
 	t.Run("ValidReader", func(t *testing.T) {
@@ -200,7 +200,7 @@ func TestLoadFromReader(t *testing.T) {
 
 // TestSaveToWriter tests the SaveToWriter method
 func TestSaveToWriter(t *testing.T) {
-	processor := New()
+	processor := MustNew()
 	defer processor.Close()
 
 	t.Run("SaveToWriter", func(t *testing.T) {
@@ -238,7 +238,7 @@ func TestSaveToWriter(t *testing.T) {
 
 // TestMarshalToFile tests the MarshalToFile method
 func TestMarshalToFile(t *testing.T) {
-	processor := New()
+	processor := MustNew()
 	defer processor.Close()
 
 	t.Run("MarshalAndUnmarshal", func(t *testing.T) {

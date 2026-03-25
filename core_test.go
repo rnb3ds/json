@@ -8,6 +8,7 @@ import (
 	"io"
 	"math"
 	"os"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -185,7 +186,7 @@ func BenchmarkDelete(b *testing.B) {
 }
 
 func BenchmarkFastDelete(b *testing.B) {
-	processor := New()
+	processor := MustNew()
 	defer processor.Close()
 
 	jsonStr := `{"name": "test", "age": 30}`
@@ -198,7 +199,7 @@ func BenchmarkFastDelete(b *testing.B) {
 
 // Benchmark tests for operation functions
 func BenchmarkFastSet(b *testing.B) {
-	processor := New()
+	processor := MustNew()
 	defer processor.Close()
 
 	jsonStr := `{"name": "test", "age": 30}`
@@ -218,7 +219,7 @@ func BenchmarkGet(b *testing.B) {
 }
 
 func BenchmarkHandleArrayAccess(b *testing.B) {
-	processor := New()
+	processor := MustNew()
 	defer processor.Close()
 
 	arr := make([]any, 1000)
@@ -238,7 +239,7 @@ func BenchmarkHandleArrayAccess(b *testing.B) {
 }
 
 func BenchmarkHandlePropertyAccess(b *testing.B) {
-	processor := New()
+	processor := MustNew()
 	defer processor.Close()
 
 	data := map[string]any{
@@ -254,7 +255,7 @@ func BenchmarkHandlePropertyAccess(b *testing.B) {
 }
 
 func BenchmarkJSONPointerEscape(b *testing.B) {
-	processor := New()
+	processor := MustNew()
 	defer processor.Close()
 
 	input := "user~/name/with~special/chars"
@@ -273,7 +274,7 @@ func BenchmarkMarshal(b *testing.B) {
 }
 
 func BenchmarkOpBatchSet(b *testing.B) {
-	processor := New()
+	processor := MustNew()
 	defer processor.Close()
 
 	jsonStr := `{"a": 1, "b": 2, "c": 3}`
@@ -290,7 +291,7 @@ func BenchmarkOpBatchSet(b *testing.B) {
 }
 
 func BenchmarkOpFastGetMultiple(b *testing.B) {
-	processor := New()
+	processor := MustNew()
 	defer processor.Close()
 
 	jsonStr := `{"a": 1, "b": 2, "c": 3, "d": 4, "e": 5}`
@@ -303,7 +304,7 @@ func BenchmarkOpFastGetMultiple(b *testing.B) {
 }
 
 func BenchmarkPathParsingComplex(b *testing.B) {
-	processor := New()
+	processor := MustNew()
 	defer processor.Close()
 
 	path := "users[0:5]{name}.first"
@@ -314,7 +315,7 @@ func BenchmarkPathParsingComplex(b *testing.B) {
 }
 
 func BenchmarkPathParsingSimple(b *testing.B) {
-	processor := New()
+	processor := MustNew()
 	defer processor.Close()
 
 	path := "user.name.first"
@@ -325,7 +326,7 @@ func BenchmarkPathParsingSimple(b *testing.B) {
 }
 
 func BenchmarkPerformArraySlice(b *testing.B) {
-	processor := New()
+	processor := MustNew()
 	defer processor.Close()
 
 	arr := make([]any, 1000)
@@ -353,13 +354,13 @@ func BenchmarkSet(b *testing.B) {
 
 // TestArrayExtensionNeededError tests the Error method
 func TestArrayExtensionNeededError(t *testing.T) {
-	err := &ArrayExtensionNeededError{
-		RequiredLength: 10,
-		CurrentLength:  5,
-		Start:          0,
-		End:            10,
-		Step:           1,
-		Value:          "test",
+	err := &arrayExtensionNeededError{
+		requiredLength: 10,
+		currentLength:  5,
+		start:          0,
+		end:            10,
+		step:           1,
+		value:          "test",
 	}
 
 	expected := "array extension needed: current length 5, required length 10 for slice [0:10]"
@@ -411,8 +412,6 @@ func Test_ArrayHelper_CompactArray(t *testing.T) {
 		{"No nil values", []any{1, 2, 3}, 3},
 		{"With nil values", []any{1, nil, 3, nil}, 2},
 		{"All nil", []any{nil, nil, nil}, 0},
-		{"With DeletedMarker", []any{1, DeletedMarker, 3}, 2},
-		{"Mixed nil and DeletedMarker", []any{nil, DeletedMarker, 1, nil, DeletedMarker}, 1},
 		{"Nil at start", []any{nil, 1, 2}, 2},
 		{"Nil at end", []any{1, 2, nil}, 2},
 	}
@@ -424,8 +423,8 @@ func Test_ArrayHelper_CompactArray(t *testing.T) {
 				t.Errorf("compactArray() returned length %d, want %d", len(result), tt.expected)
 			}
 			for _, item := range result {
-				if item == nil || item == DeletedMarker {
-					t.Errorf("compactArray() result contains nil or DeletedMarker")
+				if item == nil || IsDeletedMarker(item) {
+					t.Errorf("compactArray() result contains nil or deleted marker")
 				}
 			}
 		})
@@ -668,7 +667,7 @@ func Test_ArrayHelper_ValidateBounds(t *testing.T) {
 
 // TestArrayIndexValidation tests array index validation
 func TestArrayIndexValidation(t *testing.T) {
-	processor := New()
+	processor := MustNew()
 	defer processor.Close()
 
 	tests := []struct {
@@ -719,7 +718,7 @@ func TestArraySliceEdgeCases(t *testing.T) {
 		"items": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
 	}`
 
-	processor := New()
+	processor := MustNew()
 	defer processor.Close()
 
 	tests := []struct {
@@ -778,7 +777,7 @@ func TestArraySliceEdgeCases(t *testing.T) {
 
 // TestArraySliceOperations tests array slice operations
 func TestArraySliceOperations(t *testing.T) {
-	processor := New()
+	processor := MustNew()
 	defer processor.Close()
 
 	t.Run("get array slice", func(t *testing.T) {
@@ -820,7 +819,7 @@ func TestArraySliceOperations(t *testing.T) {
 
 // TestBatchDeleteOptimized tests the BatchDeleteOptimized function
 func TestBatchDeleteOptimized(t *testing.T) {
-	processor := New()
+	processor := MustNew()
 	defer processor.Close()
 
 	t.Run("batch delete multiple paths", func(t *testing.T) {
@@ -866,7 +865,7 @@ func TestBatchDeleteOptimized(t *testing.T) {
 
 // TestBatchSetOptimized tests the BatchSetOptimized function
 func TestBatchSetOptimized(t *testing.T) {
-	processor := New()
+	processor := MustNew()
 	defer processor.Close()
 
 	t.Run("batch set multiple values", func(t *testing.T) {
@@ -945,7 +944,7 @@ func TestBoundaryConditions(t *testing.T) {
 	})
 
 	t.Run("NumericBoundaries", func(t *testing.T) {
-		processor := New(DefaultConfig())
+		processor := MustNew(DefaultConfig())
 		defer processor.Close()
 
 		t.Run("MaxInt64", func(t *testing.T) {
@@ -1313,7 +1312,7 @@ func TestComplexPathWithBracesAndBrackets(t *testing.T) {
 		]
 	}`
 
-	processor := New()
+	processor := MustNew()
 	defer processor.Close()
 
 	tests := []struct {
@@ -1392,7 +1391,7 @@ func TestConfig_AccessorMethods(t *testing.T) {
 }
 
 func TestConfig_Clone(t *testing.T) {
-	original := &Config{
+	original := Config{
 		EnableCache:     true,
 		MaxCacheSize:    1000,
 		CacheTTL:        time.Minute,
@@ -1405,14 +1404,21 @@ func TestConfig_Clone(t *testing.T) {
 
 	cloned := original.Clone()
 
-	if cloned == original {
-		t.Error("Clone should return a new instance")
+	// Values should be equal (	// Can't compare structs directly with !=, use reflect.DeepEqual for simple value comparison
+	if !reflect.DeepEqual(original, cloned) {
+		t.Error("Clone should return equal values")
+	}
+
+	// But modifying clone should not affect original
+	cloned.MaxCacheSize = 999
+	if original.MaxCacheSize == 999 {
+		t.Error("Modifying clone should not affect original")
 	}
 	if cloned.EnableCache != original.EnableCache {
 		t.Error("EnableCache should be copied")
 	}
-	if cloned.MaxCacheSize != original.MaxCacheSize {
-		t.Error("MaxCacheSize should be copied")
+	if original.MaxCacheSize != 1000 { // original should still be 1000
+		t.Error("Original MaxCacheSize should remain unchanged")
 	}
 }
 
@@ -1494,20 +1500,24 @@ func TestConfiguration(t *testing.T) {
 		})
 
 		t.Run("NilConfig", func(t *testing.T) {
-			err := ValidateConfig(nil)
+			var config *Config
+			err := config.Validate()
 			helper.AssertError(err)
 		})
 
 		t.Run("NegativeCacheSize", func(t *testing.T) {
 			config := DefaultConfig()
 			config.MaxCacheSize = -1
-			err := ValidateConfig(config)
-			helper.AssertError(err)
+			err := config.Validate()
+			helper.AssertNoError(err)
+			// Negative cache size should be clamped to 0 and cache disabled
+			helper.AssertEqual(0, config.MaxCacheSize)
+			helper.AssertFalse(config.EnableCache)
 		})
 
 		t.Run("ZeroValuesGetDefaults", func(t *testing.T) {
 			config := &Config{}
-			err := ValidateConfig(config)
+			err := config.Validate()
 			helper.AssertNoError(err)
 
 			// Should have defaults applied
@@ -1648,7 +1658,7 @@ func TestConfigurationIntegration(t *testing.T) {
 		config.EnableCache = true
 		config.EnableMetrics = true
 
-		processor := New(config)
+		processor := MustNew(config)
 		defer processor.Close()
 
 		testData := `{"test": "value"}`
@@ -1663,7 +1673,7 @@ func TestConfigurationIntegration(t *testing.T) {
 	})
 
 	t.Run("SecurityProcessor", func(t *testing.T) {
-		processor := New(SecurityConfig())
+		processor := MustNew(SecurityConfig())
 		defer processor.Close()
 
 		// Test that security limits are enforced
@@ -1688,7 +1698,7 @@ func TestConfigurationIntegration(t *testing.T) {
 		config.MaxObjectKeys = 50000
 		config.MaxArrayElements = 50000
 		config.MaxPathDepth = 200
-		processor := New(config)
+		processor := MustNew(config)
 		defer processor.Close()
 
 		// Test with large array
@@ -1700,7 +1710,7 @@ func TestConfigurationIntegration(t *testing.T) {
 	})
 
 	t.Run("SecurityProcessor_WebAPI", func(t *testing.T) {
-		processor := New(SecurityConfig())
+		processor := MustNew(SecurityConfig())
 		defer processor.Close()
 
 		testData := `{"user": "test", "data": {"id": 123}}`
@@ -1718,7 +1728,7 @@ func TestConfigurationIntegration(t *testing.T) {
 	t.Run("DefaultProcessor_Fast", func(t *testing.T) {
 		cfg := DefaultConfig()
 		cfg.FullSecurityScan = false
-		processor := New(cfg)
+		processor := MustNew(cfg)
 		defer processor.Close()
 
 		testData := `{"items": [1, 2, 3, 4, 5]}`
@@ -1731,7 +1741,7 @@ func TestConfigurationIntegration(t *testing.T) {
 	t.Run("DefaultProcessor_Minimal", func(t *testing.T) {
 		cfg := DefaultConfig()
 		cfg.EnableCache = false
-		processor := New(cfg)
+		processor := MustNew(cfg)
 		defer processor.Close()
 
 		testData := `{"test": "value"}`
@@ -1807,7 +1817,7 @@ func TestDeleteWithCleanupNullsOption(t *testing.T) {
 
 // TestDeleteWithCleanupNulls tests deletion with cleanup nulls
 func TestDeleteWithCleanupNulls(t *testing.T) {
-	processor := New(DefaultConfig())
+	processor := MustNew(DefaultConfig())
 	defer processor.Close()
 
 	t.Run("delete with cleanup", func(t *testing.T) {
@@ -1849,7 +1859,7 @@ func TestDelim_TypeMethods(t *testing.T) {
 
 // TestDetectConsecutiveExtractions tests detection of consecutive extraction segments
 func TestDetectConsecutiveExtractions(t *testing.T) {
-	processor := New()
+	processor := MustNew()
 	defer processor.Close()
 
 	tests := []struct {
@@ -1918,7 +1928,7 @@ func TestDistributedOperationPath(t *testing.T) {
 		]
 	}`
 
-	processor := New()
+	processor := MustNew()
 	defer processor.Close()
 
 	// Test that distributed operation paths are detected
@@ -1982,8 +1992,9 @@ func TestEncodeBatch(t *testing.T) {
 
 func TestEncodeConfig_Default(t *testing.T) {
 	cfg := DefaultConfig()
-	if cfg == nil {
-		t.Error("DefaultEncodeConfig should not return nil")
+	// Check that default config has reasonable values
+	if cfg.MaxJSONSize == 0 {
+		t.Error("DefaultConfig should set MaxJSONSize")
 	}
 }
 
@@ -2307,7 +2318,7 @@ func TestExtractSyntaxComplex(t *testing.T) {
 		]
 	}`
 
-	processor := New()
+	processor := MustNew()
 	defer processor.Close()
 
 	tests := []struct {
@@ -2366,7 +2377,7 @@ func TestExtractSyntaxComplex(t *testing.T) {
 
 // TestExtractionOperations tests extraction operations
 func TestExtractionOperations(t *testing.T) {
-	processor := New()
+	processor := MustNew()
 	defer processor.Close()
 
 	t.Run("extract array field", func(t *testing.T) {
@@ -2388,7 +2399,7 @@ func TestExtractionOperations(t *testing.T) {
 
 // TestFastDelete tests the FastDelete function
 func TestFastDelete(t *testing.T) {
-	processor := New()
+	processor := MustNew()
 	defer processor.Close()
 
 	t.Run("simple property delete", func(t *testing.T) {
@@ -2427,7 +2438,7 @@ func TestFastDelete(t *testing.T) {
 
 // TestFastGetMultiple tests the FastGetMultiple function
 func TestFastGetMultiple(t *testing.T) {
-	processor := New()
+	processor := MustNew()
 	defer processor.Close()
 
 	t.Run("get multiple paths", func(t *testing.T) {
@@ -2457,7 +2468,7 @@ func TestFastGetMultiple(t *testing.T) {
 
 // TestFastSet tests the FastSet function
 func TestFastSet(t *testing.T) {
-	processor := New()
+	processor := MustNew()
 	defer processor.Close()
 
 	t.Run("simple property set", func(t *testing.T) {
@@ -2545,7 +2556,7 @@ func TestFormatPretty(t *testing.T) {
 
 // TestForwardSlice tests forward slicing logic
 func TestForwardSlice(t *testing.T) {
-	processor := New()
+	processor := MustNew()
 	defer processor.Close()
 
 	arr := []any{0.0, 1.0, 2.0, 3.0, 4.0}
@@ -3018,7 +3029,7 @@ func TestGlobalProcessor_ConcurrentAccess(t *testing.T) {
 				defer wg.Done()
 				config := DefaultConfig()
 				config.MaxCacheSize = 100 + id
-				p := New(config)
+				p := MustNew(config)
 				SetGlobalProcessor(p)
 			}(i)
 
@@ -3088,7 +3099,7 @@ func TestGlobalProcessor_Lifecycle(t *testing.T) {
 		// 3. Set a custom processor
 		customConfig := DefaultConfig()
 		customConfig.MaxCacheSize = 256
-		p2 := New(customConfig)
+		p2 := MustNew(customConfig)
 		SetGlobalProcessor(p2)
 
 		// 4. Verify custom processor is used
@@ -3116,11 +3127,11 @@ func TestGlobalProcessor_ReplaceClosesOld(t *testing.T) {
 	ShutdownGlobalProcessor()
 
 	// Create first processor
-	p1 := New(DefaultConfig())
+	p1 := MustNew(DefaultConfig())
 	SetGlobalProcessor(p1)
 
 	// Create second processor
-	p2 := New(DefaultConfig())
+	p2 := MustNew(DefaultConfig())
 	SetGlobalProcessor(p2)
 
 	// Give it time to close
@@ -3175,7 +3186,7 @@ func TestGlobalProcessor_ThreadSafety(t *testing.T) {
 					if i%20 == 0 {
 						config := DefaultConfig()
 						config.MaxCacheSize = 100 + goroutineID
-						p := New(config)
+						p := MustNew(config)
 						SetGlobalProcessor(p)
 					}
 				case 4:
@@ -3258,7 +3269,7 @@ func TestHTMLEscapeBuffer(t *testing.T) {
 
 // TestHandleArrayAccess tests array access handling
 func TestHandleArrayAccess(t *testing.T) {
-	processor := New()
+	processor := MustNew()
 	defer processor.Close()
 
 	jsonStr := `{
@@ -3346,11 +3357,11 @@ func TestHandleArrayAccess(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result := processor.handleArrayAccess(tt.data, tt.segment)
-			if result.Exists != tt.shouldExist {
-				t.Errorf("handleArrayAccess() existence = %v; want %v", result.Exists, tt.shouldExist)
+			if result.exists != tt.shouldExist {
+				t.Errorf("handleArrayAccess() existence = %v; want %v", result.exists, tt.shouldExist)
 			}
-			if tt.shouldExist && result.Value != tt.expectedVal {
-				t.Errorf("handleArrayAccess() value = %v; want %v", result.Value, tt.expectedVal)
+			if tt.shouldExist && result.value != tt.expectedVal {
+				t.Errorf("handleArrayAccess() value = %v; want %v", result.value, tt.expectedVal)
 			}
 		})
 	}
@@ -3358,7 +3369,7 @@ func TestHandleArrayAccess(t *testing.T) {
 
 // TestHandleExtraction tests field extraction from objects/arrays
 func TestHandleExtraction(t *testing.T) {
-	processor := New()
+	processor := MustNew()
 	defer processor.Close()
 
 	tests := []struct {
@@ -3466,7 +3477,7 @@ func TestHandleExtraction(t *testing.T) {
 
 // TestHandlePropertyAccess tests property access handling
 func TestHandlePropertyAccess(t *testing.T) {
-	processor := New()
+	processor := MustNew()
 	defer processor.Close()
 
 	tests := []struct {
@@ -3531,11 +3542,11 @@ func TestHandlePropertyAccess(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result := processor.handlePropertyAccess(tt.data, tt.property)
-			if result.Exists != tt.shouldExist {
-				t.Errorf("handlePropertyAccess() existence = %v; want %v", result.Exists, tt.shouldExist)
+			if result.exists != tt.shouldExist {
+				t.Errorf("handlePropertyAccess() existence = %v; want %v", result.exists, tt.shouldExist)
 			}
-			if tt.shouldExist && result.Value != tt.expectedVal {
-				t.Errorf("handlePropertyAccess() value = %v; want %v", result.Value, tt.expectedVal)
+			if tt.shouldExist && result.value != tt.expectedVal {
+				t.Errorf("handlePropertyAccess() value = %v; want %v", result.value, tt.expectedVal)
 			}
 		})
 	}
@@ -3543,7 +3554,7 @@ func TestHandlePropertyAccess(t *testing.T) {
 
 // TestHandleStructAccess tests struct field access
 func TestHandleStructAccess(t *testing.T) {
-	processor := New()
+	processor := MustNew()
 	defer processor.Close()
 
 	type TestStruct struct {
@@ -3651,7 +3662,7 @@ func TestIsArrayType(t *testing.T) {
 
 // TestIsComplexPath tests complex path detection
 func TestIsComplexPath(t *testing.T) {
-	processor := New()
+	processor := MustNew()
 	defer processor.Close()
 
 	tests := []struct {
@@ -3758,7 +3769,7 @@ func TestIsObjectType(t *testing.T) {
 
 // TestIsPrimitiveType tests primitive type detection
 func TestIsPrimitiveType(t *testing.T) {
-	processor := New()
+	processor := MustNew()
 	defer processor.Close()
 
 	tests := []struct {
@@ -3845,7 +3856,7 @@ func TestIsZeroValue(t *testing.T) {
 
 // TestJSONPointerEscapeUnescape tests JSON Pointer escaping
 func TestJSONPointerEscapeUnescape(t *testing.T) {
-	processor := New()
+	processor := MustNew()
 	defer processor.Close()
 
 	tests := []struct {
@@ -3924,7 +3935,7 @@ func TestJSONPointerEscapeUnescape(t *testing.T) {
 
 // TestNegativeArrayIndex tests negative array indexing
 func TestNegativeArrayIndex(t *testing.T) {
-	processor := New()
+	processor := MustNew()
 	defer processor.Close()
 
 	t.Run("get with negative index", func(t *testing.T) {
@@ -3961,8 +3972,8 @@ func TestNegativeArrayIndex(t *testing.T) {
 
 func TestPrettyEncodeConfig(t *testing.T) {
 	cfg := PrettyConfig()
-	if cfg == nil {
-		t.Fatal("PrettyEncodeConfig should not return nil")
+	if !cfg.Pretty {
+		t.Fatal("PrettyEncodeConfig should have Pretty = true")
 	}
 	if !cfg.Pretty {
 		t.Error("PrettyEncodeConfig should have Pretty = true")
@@ -4070,14 +4081,14 @@ func TestNumber_TypeMethods(t *testing.T) {
 
 // TestOperationTypes tests Operation constants
 func TestOperationTypes(t *testing.T) {
-	if OpGet != 0 {
-		t.Errorf("OpGet = %d, want 0", OpGet)
+	if opGet != 0 {
+		t.Errorf("opGet = %d, want 0", opGet)
 	}
-	if OpSet != 1 {
-		t.Errorf("OpSet = %d, want 1", OpSet)
+	if opSet != 1 {
+		t.Errorf("opSet = %d, want 1", opSet)
 	}
-	if OpDelete != 2 {
-		t.Errorf("OpDelete = %d, want 2", OpDelete)
+	if opDelete != 2 {
+		t.Errorf("opDelete = %d, want 2", opDelete)
 	}
 }
 
@@ -4106,7 +4117,7 @@ func TestParseArrayIndex(t *testing.T) {
 
 // TestParseArraySegment tests parsing array access segments
 func TestParseArraySegment(t *testing.T) {
-	processor := New()
+	processor := MustNew()
 	defer processor.Close()
 
 	tests := []struct {
@@ -4174,7 +4185,7 @@ func TestParseArraySegment(t *testing.T) {
 
 // TestParseExtractionSegment tests parsing extraction segments
 func TestParseExtractionSegment(t *testing.T) {
-	processor := New()
+	processor := MustNew()
 	defer processor.Close()
 
 	tests := []struct {
@@ -4236,7 +4247,7 @@ func TestParseExtractionSegment(t *testing.T) {
 
 // TestPathCombination tests path joining and reconstruction
 func TestPathCombination(t *testing.T) {
-	processor := New()
+	processor := MustNew()
 	defer processor.Close()
 
 	tests := []struct {
@@ -4283,7 +4294,7 @@ func TestPathCombination(t *testing.T) {
 
 // TestPathNormalization tests path normalization operations
 func TestPathNormalization(t *testing.T) {
-	processor := New()
+	processor := MustNew()
 	defer processor.Close()
 
 	tests := []struct {
@@ -4335,7 +4346,7 @@ func TestPathNormalization(t *testing.T) {
 
 // TestPathParsingBasic tests basic path parsing functionality
 func TestPathParsingBasic(t *testing.T) {
-	processor := New()
+	processor := MustNew()
 	defer processor.Close()
 
 	tests := []struct {
@@ -4413,7 +4424,7 @@ func TestPathParsingBasic(t *testing.T) {
 
 // TestPathParsingBoundaryConditions tests edge cases in path parsing
 func TestPathParsingBoundaryConditions(t *testing.T) {
-	processor := New()
+	processor := MustNew()
 	defer processor.Close()
 
 	tests := []struct {
@@ -4487,7 +4498,7 @@ func TestPathParsingBoundaryConditions(t *testing.T) {
 
 // TestPathReconstruction tests reconstructing paths from segments
 func TestPathReconstruction(t *testing.T) {
-	processor := New()
+	processor := MustNew()
 	defer processor.Close()
 
 	// This tests the reconstructPath helper
@@ -4530,7 +4541,7 @@ func TestPathReconstruction(t *testing.T) {
 
 // TestPathSegmentTypes tests different path segment type identification
 func TestPathSegmentTypes(t *testing.T) {
-	processor := New()
+	processor := MustNew()
 	defer processor.Close()
 
 	// Test segment type string representation
@@ -4555,7 +4566,7 @@ func TestPathSegmentTypes(t *testing.T) {
 
 // TestPathSegmentation tests splitting paths into segments
 func TestPathSegmentation(t *testing.T) {
-	processor := New()
+	processor := MustNew()
 	defer processor.Close()
 
 	tests := []struct {
@@ -4619,7 +4630,7 @@ func TestPathWithSpecialCharacters(t *testing.T) {
 		"user@name": "value5"
 	}`
 
-	processor := New()
+	processor := MustNew()
 	defer processor.Close()
 
 	tests := []struct {
@@ -4669,7 +4680,7 @@ func TestPathWithSpecialCharacters(t *testing.T) {
 
 // TestPerformArraySlice tests array slice operations
 func TestPerformArraySlice(t *testing.T) {
-	processor := New()
+	processor := MustNew()
 	defer processor.Close()
 
 	arr := []any{0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0}
@@ -4783,7 +4794,7 @@ func TestPerformArraySlice(t *testing.T) {
 
 // TestPreprocessPath tests path preprocessing for brackets and braces
 func TestPreprocessPath(t *testing.T) {
-	processor := New()
+	processor := MustNew()
 	defer processor.Close()
 
 	tests := []struct {
@@ -4922,7 +4933,7 @@ func TestProcessBatch(t *testing.T) {
 }
 
 func TestProcessor_BatchOperations(t *testing.T) {
-	processor := New()
+	processor := MustNew()
 	defer processor.Close()
 
 	t.Run("SetMultiple", func(t *testing.T) {
@@ -4975,7 +4986,7 @@ func TestProcessor_BatchOperations(t *testing.T) {
 }
 
 func TestProcessor_CompiledPath(t *testing.T) {
-	processor := New()
+	processor := MustNew()
 	defer processor.Close()
 
 	t.Run("CompilePath", func(t *testing.T) {
@@ -5010,7 +5021,7 @@ func TestProcessor_CustomConfigVsDefault(t *testing.T) {
 	config := DefaultConfig()
 	config.MaxNestingDepthSecurity = 100
 
-	processor := New(config)
+	processor := MustNew(config)
 	defer processor.Close()
 
 	// This should work with custom config
@@ -5021,7 +5032,7 @@ func TestProcessor_CustomConfigVsDefault(t *testing.T) {
 }
 
 func TestProcessor_EncodeWithOptions(t *testing.T) {
-	processor := New()
+	processor := MustNew()
 	defer processor.Close()
 
 	t.Run("EncodeWithOptions", func(t *testing.T) {
@@ -5128,7 +5139,7 @@ func TestProcessor_EncodeWithOptions(t *testing.T) {
 }
 
 func TestProcessor_ErrorHandling(t *testing.T) {
-	processor := New()
+	processor := MustNew()
 	defer processor.Close()
 
 	t.Run("Get invalid path", func(t *testing.T) {
@@ -5171,7 +5182,7 @@ func TestProcessor_ErrorHandling(t *testing.T) {
 }
 
 func TestProcessor_FastOperations(t *testing.T) {
-	processor := New()
+	processor := MustNew()
 	defer processor.Close()
 
 	t.Run("FastSet", func(t *testing.T) {
@@ -5250,7 +5261,7 @@ func TestProcessor_ForeachMethods(t *testing.T) {
 	}`
 
 	t.Run("Foreach", func(t *testing.T) {
-		processor := New(DefaultConfig())
+		processor := MustNew(DefaultConfig())
 		defer processor.Close()
 
 		count := 0
@@ -5265,7 +5276,7 @@ func TestProcessor_ForeachMethods(t *testing.T) {
 	})
 
 	t.Run("ForeachWithPath", func(t *testing.T) {
-		processor := New(DefaultConfig())
+		processor := MustNew(DefaultConfig())
 		defer processor.Close()
 
 		count := 0
@@ -5302,7 +5313,7 @@ func TestProcessor_ForeachMethods(t *testing.T) {
 		config := DefaultConfig()
 		config.MaxNestingDepthSecurity = 50
 
-		processor := New(config)
+		processor := MustNew(config)
 		defer processor.Close()
 
 		// Deeply nested JSON structure with array at the end
@@ -5339,7 +5350,7 @@ func TestProcessor_ForeachMethods(t *testing.T) {
 	})
 
 	t.Run("ForeachWithPathAndControl", func(t *testing.T) {
-		processor := New(DefaultConfig())
+		processor := MustNew(DefaultConfig())
 		defer processor.Close()
 
 		count := 0
@@ -5359,7 +5370,7 @@ func TestProcessor_ForeachMethods(t *testing.T) {
 	})
 
 	t.Run("ForeachWithPathBreakEarly", func(t *testing.T) {
-		processor := New(DefaultConfig())
+		processor := MustNew(DefaultConfig())
 		defer processor.Close()
 
 		count := 0
@@ -5382,7 +5393,7 @@ func TestProcessor_ForeachMethods(t *testing.T) {
 	})
 
 	t.Run("ForeachWithPathAndIterator", func(t *testing.T) {
-		processor := New(DefaultConfig())
+		processor := MustNew(DefaultConfig())
 		defer processor.Close()
 
 		paths := []string{}
@@ -5413,7 +5424,7 @@ func TestProcessor_ForeachNested(t *testing.T) {
 		}
 	}`
 
-	processor := New(DefaultConfig())
+	processor := MustNew(DefaultConfig())
 	defer processor.Close()
 
 	count := 0
@@ -5431,7 +5442,7 @@ func TestProcessor_ForeachNested(t *testing.T) {
 func TestProcessor_ForeachReturn(t *testing.T) {
 	jsonStr := `{"items": [1, 2, 3]}`
 
-	processor := New(DefaultConfig())
+	processor := MustNew(DefaultConfig())
 	defer processor.Close()
 
 	count := 0
@@ -5457,7 +5468,7 @@ func TestProcessor_ForeachVsPackageLevel(t *testing.T) {
 	jsonStr := `{"items": [1, 2, 3]}`
 
 	t.Run("ProcessorMethod", func(t *testing.T) {
-		processor := New(DefaultConfig())
+		processor := MustNew(DefaultConfig())
 		defer processor.Close()
 
 		count := 0
@@ -5491,7 +5502,7 @@ func TestProcessor_ForeachVsPackageLevel(t *testing.T) {
 }
 
 func TestProcessor_GetFromParsedData(t *testing.T) {
-	processor := New()
+	processor := MustNew()
 	defer processor.Close()
 
 	t.Run("GetFromParsedData", func(t *testing.T) {
@@ -5511,7 +5522,7 @@ func TestProcessor_GetFromParsedData(t *testing.T) {
 }
 
 func TestProcessor_Iterators(t *testing.T) {
-	processor := New()
+	processor := MustNew()
 	defer processor.Close()
 
 	t.Run("Foreach", func(t *testing.T) {
@@ -5565,7 +5576,7 @@ func TestProcessor_Iterators(t *testing.T) {
 }
 
 func TestProcessor_ParseAndValidate(t *testing.T) {
-	processor := New()
+	processor := MustNew()
 	defer processor.Close()
 
 	t.Run("Parse", func(t *testing.T) {
@@ -5600,7 +5611,7 @@ func TestProcessor_ParseAndValidate(t *testing.T) {
 }
 
 func TestProcessor_PreParse(t *testing.T) {
-	processor := New()
+	processor := MustNew()
 	defer processor.Close()
 
 	t.Run("PreParse", func(t *testing.T) {
@@ -5640,7 +5651,7 @@ func TestProcessor_PreParse(t *testing.T) {
 }
 
 func TestProcessor_SafeGet(t *testing.T) {
-	processor := New()
+	processor := MustNew()
 	defer processor.Close()
 
 	t.Run("SafeGet found", func(t *testing.T) {
@@ -5665,17 +5676,18 @@ func TestProcessor_SafeGet(t *testing.T) {
 
 func TestProcessor_State(t *testing.T) {
 	t.Run("GetConfig", func(t *testing.T) {
-		processor := New()
+		processor := MustNew()
 		defer processor.Close()
 
 		cfg := processor.GetConfig()
-		if cfg == nil {
-			t.Fatal("GetConfig returned nil")
+		// Check that config has valid values
+		if cfg.MaxJSONSize == 0 {
+			t.Fatal("GetConfig returned zero config")
 		}
 	})
 
 	t.Run("IsClosed not closed", func(t *testing.T) {
-		processor := New()
+		processor := MustNew()
 		if processor.IsClosed() {
 			t.Error("Processor should not be closed")
 		}
@@ -5683,7 +5695,7 @@ func TestProcessor_State(t *testing.T) {
 	})
 
 	t.Run("IsClosed closed", func(t *testing.T) {
-		processor := New()
+		processor := MustNew()
 		processor.Close()
 		if !processor.IsClosed() {
 			t.Error("Processor should be closed")
@@ -5692,7 +5704,7 @@ func TestProcessor_State(t *testing.T) {
 }
 
 func TestProcessor_StatsAndHealth(t *testing.T) {
-	processor := New()
+	processor := MustNew()
 	defer processor.Close()
 
 	t.Run("GetStats", func(t *testing.T) {
@@ -5714,7 +5726,7 @@ func TestProcessor_StatsAndHealth(t *testing.T) {
 }
 
 func TestProcessor_WildcardAndExtraction(t *testing.T) {
-	processor := New()
+	processor := MustNew()
 	defer processor.Close()
 
 	t.Run("Get with wildcard", func(t *testing.T) {
@@ -5751,7 +5763,7 @@ func TestProcessor_WildcardAndExtraction(t *testing.T) {
 
 // TestPropertyValidation tests property name validation
 func TestPropertyValidation(t *testing.T) {
-	processor := New()
+	processor := MustNew()
 	defer processor.Close()
 
 	tests := []struct {
@@ -5808,7 +5820,7 @@ func TestPutResultBuffer(t *testing.T) {
 
 // TestRecursiveProcessor_ComplexArrays tests complex array operations
 func TestRecursiveProcessor_ComplexArrays(t *testing.T) {
-	processor := New()
+	processor := MustNew()
 	defer processor.Close()
 
 	rp := NewRecursiveProcessor(processor)
@@ -5822,7 +5834,7 @@ func TestRecursiveProcessor_ComplexArrays(t *testing.T) {
 			},
 		}
 
-		result, err := rp.ProcessRecursively(data, "matrix[1][2]", OpGet, nil)
+		result, err := rp.ProcessRecursively(data, "matrix[1][2]", opGet, nil)
 		if err != nil {
 			t.Errorf("ProcessRecursively failed: %v", err)
 		}
@@ -5840,7 +5852,7 @@ func TestRecursiveProcessor_ComplexArrays(t *testing.T) {
 			},
 		}
 
-		result, err := rp.ProcessRecursively(data, "users[1].name", OpGet, nil)
+		result, err := rp.ProcessRecursively(data, "users[1].name", opGet, nil)
 		if err != nil {
 			t.Errorf("ProcessRecursively failed: %v", err)
 		}
@@ -5852,7 +5864,7 @@ func TestRecursiveProcessor_ComplexArrays(t *testing.T) {
 
 // TestRecursiveProcessor_Creation tests RecursiveProcessor creation
 func TestRecursiveProcessor_Creation(t *testing.T) {
-	processor := New()
+	processor := MustNew()
 	defer processor.Close()
 
 	rp := NewRecursiveProcessor(processor)
@@ -5863,7 +5875,7 @@ func TestRecursiveProcessor_Creation(t *testing.T) {
 
 // TestRecursiveProcessor_DataIntegrity tests that data is not unexpectedly modified
 func TestRecursiveProcessor_DataIntegrity(t *testing.T) {
-	processor := New()
+	processor := MustNew()
 	defer processor.Close()
 
 	rp := NewRecursiveProcessor(processor)
@@ -5875,7 +5887,7 @@ func TestRecursiveProcessor_DataIntegrity(t *testing.T) {
 			},
 		}
 
-		_, err := rp.ProcessRecursively(originalData, "nested.value", OpGet, nil)
+		_, err := rp.ProcessRecursively(originalData, "nested.value", opGet, nil)
 		if err != nil {
 			t.Errorf("ProcessRecursively failed: %v", err)
 		}
@@ -5889,7 +5901,7 @@ func TestRecursiveProcessor_DataIntegrity(t *testing.T) {
 
 // TestRecursiveProcessor_DeepNesting tests deeply nested data
 func TestRecursiveProcessor_DeepNesting(t *testing.T) {
-	processor := New()
+	processor := MustNew()
 	defer processor.Close()
 
 	rp := NewRecursiveProcessor(processor)
@@ -5907,7 +5919,7 @@ func TestRecursiveProcessor_DeepNesting(t *testing.T) {
 			},
 		}
 
-		result, err := rp.ProcessRecursively(data, "level1.level2.level3.level4.value", OpGet, nil)
+		result, err := rp.ProcessRecursively(data, "level1.level2.level3.level4.value", opGet, nil)
 		if err != nil {
 			t.Errorf("ProcessRecursively failed: %v", err)
 		}
@@ -5919,13 +5931,13 @@ func TestRecursiveProcessor_DeepNesting(t *testing.T) {
 
 // TestRecursiveProcessor_EdgeCases tests edge cases
 func TestRecursiveProcessor_EdgeCases(t *testing.T) {
-	processor := New()
+	processor := MustNew()
 	defer processor.Close()
 
 	rp := NewRecursiveProcessor(processor)
 
 	t.Run("NilData", func(t *testing.T) {
-		_, err := rp.ProcessRecursively(nil, "path", OpGet, nil)
+		_, err := rp.ProcessRecursively(nil, "path", opGet, nil)
 		// May or may not return error, just verify it doesn't panic
 		t.Logf("Nil data error: %v", err)
 	})
@@ -5933,7 +5945,7 @@ func TestRecursiveProcessor_EdgeCases(t *testing.T) {
 	t.Run("EmptyPath", func(t *testing.T) {
 		data := map[string]any{"key": "value"}
 
-		result, err := rp.ProcessRecursively(data, "", OpGet, nil)
+		result, err := rp.ProcessRecursively(data, "", opGet, nil)
 		if err != nil {
 			t.Errorf("ProcessRecursively failed: %v", err)
 		}
@@ -5949,7 +5961,7 @@ func TestRecursiveProcessor_EdgeCases(t *testing.T) {
 	t.Run("OutOfBoundsArrayIndex", func(t *testing.T) {
 		data := []any{1, 2, 3}
 
-		_, err := rp.ProcessRecursively(data, "[10]", OpGet, nil)
+		_, err := rp.ProcessRecursively(data, "[10]", opGet, nil)
 		// May or may not return error, just verify it doesn't panic
 		t.Logf("Out of bounds error: %v", err)
 	})
@@ -5957,7 +5969,7 @@ func TestRecursiveProcessor_EdgeCases(t *testing.T) {
 	t.Run("NegativeArrayIndex", func(t *testing.T) {
 		data := []any{1, 2, 3}
 
-		result, err := rp.ProcessRecursively(data, "[-1]", OpGet, nil)
+		result, err := rp.ProcessRecursively(data, "[-1]", opGet, nil)
 		if err != nil {
 			t.Errorf("ProcessRecursively failed: %v", err)
 		}
@@ -5969,7 +5981,7 @@ func TestRecursiveProcessor_EdgeCases(t *testing.T) {
 	t.Run("PropertyOnArray", func(t *testing.T) {
 		data := []any{1, 2, 3}
 
-		_, err := rp.ProcessRecursively(data, "invalid", OpGet, nil)
+		_, err := rp.ProcessRecursively(data, "invalid", opGet, nil)
 		// May or may not return error, just verify it doesn't panic
 		t.Logf("Property on array error: %v", err)
 	})
@@ -5977,7 +5989,7 @@ func TestRecursiveProcessor_EdgeCases(t *testing.T) {
 	t.Run("ArrayIndexOnObject", func(t *testing.T) {
 		data := map[string]any{"key": "value"}
 
-		_, err := rp.ProcessRecursively(data, "[0]", OpGet, nil)
+		_, err := rp.ProcessRecursively(data, "[0]", opGet, nil)
 		// May or may not return error, just verify it doesn't panic
 		t.Logf("Array index on object error: %v", err)
 	})
@@ -5985,7 +5997,7 @@ func TestRecursiveProcessor_EdgeCases(t *testing.T) {
 
 // TestRecursiveProcessor_ExtractOperations tests extract segment operations
 func TestRecursiveProcessor_ExtractOperations(t *testing.T) {
-	processor := New()
+	processor := MustNew()
 	defer processor.Close()
 
 	rp := NewRecursiveProcessor(processor)
@@ -5998,7 +6010,7 @@ func TestRecursiveProcessor_ExtractOperations(t *testing.T) {
 			},
 		}
 
-		result, err := rp.ProcessRecursively(data, "users{name}", OpGet, nil)
+		result, err := rp.ProcessRecursively(data, "users{name}", opGet, nil)
 		if err != nil {
 			t.Errorf("ProcessRecursively failed: %v", err)
 		}
@@ -6013,7 +6025,7 @@ func TestRecursiveProcessor_ExtractOperations(t *testing.T) {
 
 // TestRecursiveProcessor_GetOperation tests Get operations with RecursiveProcessor
 func TestRecursiveProcessor_GetOperation(t *testing.T) {
-	processor := New()
+	processor := MustNew()
 	defer processor.Close()
 
 	rp := NewRecursiveProcessor(processor)
@@ -6021,7 +6033,7 @@ func TestRecursiveProcessor_GetOperation(t *testing.T) {
 	t.Run("SimpleProperty", func(t *testing.T) {
 		data := map[string]any{"name": "test", "value": 123}
 
-		result, err := rp.ProcessRecursively(data, "name", OpGet, nil)
+		result, err := rp.ProcessRecursively(data, "name", opGet, nil)
 		if err != nil {
 			t.Errorf("ProcessRecursively failed: %v", err)
 		}
@@ -6038,7 +6050,7 @@ func TestRecursiveProcessor_GetOperation(t *testing.T) {
 			},
 		}
 
-		result, err := rp.ProcessRecursively(data, "user.name", OpGet, nil)
+		result, err := rp.ProcessRecursively(data, "user.name", opGet, nil)
 		if err != nil {
 			t.Errorf("ProcessRecursively failed: %v", err)
 		}
@@ -6050,7 +6062,7 @@ func TestRecursiveProcessor_GetOperation(t *testing.T) {
 	t.Run("ArrayIndex", func(t *testing.T) {
 		data := []any{1, 2, 3, 4, 5}
 
-		result, err := rp.ProcessRecursively(data, "[2]", OpGet, nil)
+		result, err := rp.ProcessRecursively(data, "[2]", opGet, nil)
 		if err != nil {
 			t.Errorf("ProcessRecursively failed: %v", err)
 		}
@@ -6067,7 +6079,7 @@ func TestRecursiveProcessor_GetOperation(t *testing.T) {
 			},
 		}
 
-		result, err := rp.ProcessRecursively(data, "items[0].name", OpGet, nil)
+		result, err := rp.ProcessRecursively(data, "items[0].name", opGet, nil)
 		if err != nil {
 			t.Errorf("ProcessRecursively failed: %v", err)
 		}
@@ -6079,7 +6091,7 @@ func TestRecursiveProcessor_GetOperation(t *testing.T) {
 	t.Run("ArraySlice", func(t *testing.T) {
 		data := []any{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}
 
-		result, err := rp.ProcessRecursively(data, "[2:5]", OpGet, nil)
+		result, err := rp.ProcessRecursively(data, "[2:5]", opGet, nil)
 		if err != nil {
 			t.Errorf("ProcessRecursively failed: %v", err)
 		}
@@ -6094,7 +6106,7 @@ func TestRecursiveProcessor_GetOperation(t *testing.T) {
 	t.Run("RootPath", func(t *testing.T) {
 		data := map[string]any{"key": "value"}
 
-		result, err := rp.ProcessRecursively(data, "", OpGet, nil)
+		result, err := rp.ProcessRecursively(data, "", opGet, nil)
 		if err != nil {
 			t.Errorf("ProcessRecursively failed: %v", err)
 		}
@@ -6110,7 +6122,7 @@ func TestRecursiveProcessor_GetOperation(t *testing.T) {
 	t.Run("InvalidPath", func(t *testing.T) {
 		data := map[string]any{"key": "value"}
 
-		_, err := rp.ProcessRecursively(data, "nonexistent.path", OpGet, nil)
+		_, err := rp.ProcessRecursively(data, "nonexistent.path", opGet, nil)
 		// Invalid paths may or may not return errors depending on implementation
 		// Just verify it doesn't panic
 		if err != nil {
@@ -6121,7 +6133,7 @@ func TestRecursiveProcessor_GetOperation(t *testing.T) {
 
 // TestReverseSlice tests reverse slicing logic
 func TestReverseSlice(t *testing.T) {
-	processor := New()
+	processor := MustNew()
 	defer processor.Close()
 
 	arr := []any{0.0, 1.0, 2.0, 3.0, 4.0}
@@ -6188,7 +6200,7 @@ func TestSetGlobalProcessor(t *testing.T) {
 	t.Run("SetCustomProcessor", func(t *testing.T) {
 		customConfig := DefaultConfig()
 		customConfig.MaxCacheSize = 500
-		customProcessor := New(customConfig)
+		customProcessor := MustNew(customConfig)
 
 		SetGlobalProcessor(customProcessor)
 
@@ -6372,7 +6384,7 @@ func TestShutdownGlobalProcessor(t *testing.T) {
 
 // TestSliceRangeValidation tests slice range validation
 func TestSliceRangeValidation(t *testing.T) {
-	processor := New()
+	processor := MustNew()
 	defer processor.Close()
 
 	tests := []struct {

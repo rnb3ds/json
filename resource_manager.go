@@ -180,7 +180,8 @@ func (urm *UnifiedResourceManager) GetOptions() *Config {
 		// Log this rare event for debugging purposes
 		slog.Debug("pool corruption detected: options type assertion failed", "type", fmt.Sprintf("%T", obj))
 		// Fallback: create new options if type assertion fails
-		opts = DefaultConfig()
+		cfg := DefaultConfig()
+		opts = &cfg
 	}
 	// Reset to default values
 	*opts = Config{

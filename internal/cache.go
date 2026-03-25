@@ -306,6 +306,18 @@ func (cm *CacheManager) Set(key string, value any) {
 		cm.evictLRU(shard)
 	}
 
+	// SECURITY FIX: Check total memory usage to prevent unbounded growth
+	// Proactively evict if approaching memory limit (80% of 2GB)
+	const maxTotalMemory = int64(2 * 1024 * 1024 * 1024) // 2GB total limit
+	const highWatermark = int64(80) * maxTotalMemory / 100 // 80% = 1.6GB
+	currentMemory := atomic.LoadInt64(&cm.memoryUsage)
+	if currentMemory+int64(entrySize) > highWatermark {
+		// Proactively evict to prevent memory exhaustion
+		for i := 0; i < 3 && atomic.LoadInt64(&cm.memoryUsage)+int64(entrySize) > highWatermark; i++ {
+			cm.evictLRU(shard)
+		}
+	}
+
 	// Store entry - OPTIMIZED: Update existing entry in-place to avoid pool churn
 	if oldElement, exists := shard.items[key]; exists {
 		oldEntry := oldElement.Value.(*lruEntry)

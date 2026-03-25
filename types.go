@@ -149,13 +149,13 @@ type Stats struct {
 	ErrorCount       int64         `json:"error_count"`
 }
 
-// DetailedStats provides comprehensive processor statistics for debugging
-type DetailedStats struct {
+// detailedStats provides comprehensive processor statistics for debugging
+type detailedStats struct {
 	Stats Stats `json:"stats"`
 }
 
-// CacheStats provides comprehensive cache statistics
-type CacheStats struct {
+// cacheStats provides comprehensive cache statistics
+type cacheStats struct {
 	HitCount         int64        `json:"hit_count"`
 	MissCount        int64        `json:"miss_count"`
 	TotalMemory      int64        `json:"total_memory"`
@@ -163,32 +163,13 @@ type CacheStats struct {
 	MemoryEfficiency float64      `json:"memory_efficiency"`
 	Evictions        int64        `json:"evictions"`
 	ShardCount       int          `json:"shard_count"`
-	ShardStats       []ShardStats `json:"shard_stats"`
+	ShardStats       []shardStats `json:"shard_stats"`
 }
 
-// ShardStats provides statistics for a single cache shard
-type ShardStats struct {
+// shardStats provides statistics for a single cache shard
+type shardStats struct {
 	Size   int64 `json:"size"`
 	Memory int64 `json:"memory"`
-}
-
-// ProcessorMetrics provides comprehensive processor performance metrics
-type ProcessorMetrics struct {
-	TotalOperations       int64         `json:"total_operations"`
-	SuccessfulOperations  int64         `json:"successful_operations"`
-	FailedOperations      int64         `json:"failed_operations"`
-	SuccessRate           float64       `json:"success_rate"`
-	CacheHits             int64         `json:"cache_hits"`
-	CacheMisses           int64         `json:"cache_misses"`
-	CacheHitRate          float64       `json:"cache_hit_rate"`
-	AverageProcessingTime time.Duration `json:"average_processing_time"`
-	MaxProcessingTime     time.Duration `json:"max_processing_time"`
-	MinProcessingTime     time.Duration `json:"min_processing_time"`
-	TotalMemoryAllocated  int64         `json:"total_memory_allocated"`
-	PeakMemoryUsage       int64         `json:"peak_memory_usage"`
-	CurrentMemoryUsage    int64         `json:"current_memory_usage"`
-	ActiveConcurrentOps   int64         `json:"active_concurrent_ops"`
-	MaxConcurrentOps      int64         `json:"max_concurrent_ops"`
 }
 
 // HealthStatus represents the health status of the processor
@@ -351,66 +332,47 @@ func (e *MarshalerError) Error() string {
 
 func (e *MarshalerError) Unwrap() error { return e.Err }
 
-// Operation represents the type of operation being performed
-type Operation int
+// operation represents the type of operation being performed
+type operation int
 
 const (
-	OpGet Operation = iota
-	OpSet
-	OpDelete
-	OpValidate
+	opGet operation = iota
+	opSet
+	opDelete
+	opValidate
 )
 
 // String returns the string representation of the operation
-func (op Operation) String() string {
+func (op operation) String() string {
 	switch op {
-	case OpGet:
+	case opGet:
 		return "get"
-	case OpSet:
+	case opSet:
 		return "set"
-	case OpDelete:
+	case opDelete:
 		return "delete"
-	case OpValidate:
+	case opValidate:
 		return "validate"
 	default:
 		return "unknown"
 	}
 }
 
-// OperationContext contains context information for operations
-type OperationContext struct {
-	Context     context.Context
-	Operation   Operation
-	Path        string
-	Value       any
-	Options     *Config
-	StartTime   time.Time
-	CreatePaths bool
-}
-
-// CacheKey represents a cache key for operations
-type CacheKey struct {
-	Operation string
-	JSONStr   string
-	Path      string
-	Options   string
-}
-
-// DeletedMarker is a special sentinel value used to mark array elements
+// deletedMarker is a special sentinel value used to mark array elements
 // for deletion. It is compared by pointer identity (using ==).
 // SECURITY: This is an unexported struct pointer to prevent external modification.
 // The zero-size struct{}{} is used because we only need unique pointer identity.
 // IMPORTANT: Do not reassign this variable. Use IsDeletedMarker() for comparisons.
-var DeletedMarker = &struct{}{} // deleted marker - empty struct for pointer identity
+var deletedMarker = &struct{}{} // deleted marker - empty struct for pointer identity
 
 // IsDeletedMarker checks if a value is the deleted marker sentinel.
 // This is the recommended way to check for deleted markers instead of direct comparison.
 func IsDeletedMarker(v any) bool {
-	return v == DeletedMarker
+	return v == deletedMarker
 }
 
-// ValidateOptions validates processor options with enhanced checks
-func ValidateOptions(options *Config) error {
+// validateOptions validates processor options with enhanced checks
+func validateOptions(options *Config) error {
 	if options == nil {
 		return &JsonsError{
 			Op:      "validate_options",
@@ -437,41 +399,39 @@ func ValidateOptions(options *Config) error {
 	return nil
 }
 
-// PropertyAccessResult represents the result of a property access operation
-type PropertyAccessResult struct {
-	Value  any
-	Exists bool
-	Path   string // Path that was accessed
-	Error  error
+// propertyAccessResult represents the result of a property access operation
+type propertyAccessResult struct {
+	value  any
+	exists bool
 }
 
-// RootDataTypeConversionError signals that root data type conversion is needed
-type RootDataTypeConversionError struct {
-	RequiredType string
-	RequiredSize int
-	CurrentType  string
+// rootDataTypeConversionError signals that root data type conversion is needed
+type rootDataTypeConversionError struct {
+	requiredType string
+	requiredSize int
+	currentType  string
 }
 
-func (e *RootDataTypeConversionError) Error() string {
+func (e *rootDataTypeConversionError) Error() string {
 	return fmt.Sprintf("root data type conversion required: from %s to %s (size: %d)",
-		e.CurrentType, e.RequiredType, e.RequiredSize)
+		e.currentType, e.requiredType, e.requiredSize)
 }
 
-// ArrayExtensionError signals that array extension is needed
-type ArrayExtensionError struct {
-	CurrentLength  int
-	RequiredLength int
-	TargetIndex    int
-	Value          any
-	Message        string
+// arrayExtensionError signals that array extension is needed
+type arrayExtensionError struct {
+	currentLength  int
+	requiredLength int
+	targetIndex    int
+	value          any
+	message        string
 }
 
-func (e *ArrayExtensionError) Error() string {
-	if e.Message != "" {
-		return e.Message
+func (e *arrayExtensionError) Error() string {
+	if e.message != "" {
+		return e.message
 	}
 	return fmt.Sprintf("array extension required: current length %d, required length %d for index %d",
-		e.CurrentLength, e.RequiredLength, e.TargetIndex)
+		e.currentLength, e.requiredLength, e.targetIndex)
 }
 
 // PathSegment represents a parsed path segment with its type and value
@@ -983,7 +943,6 @@ func DefaultSchema() *Schema {
 
 // SchemaConfig provides configuration options for creating a Schema.
 // This follows the Config pattern as required by the design guidelines.
-// Use this instead of the deprecated Set* methods.
 type SchemaConfig struct {
 	Type                 string
 	Properties           map[string]*Schema
@@ -1108,3 +1067,28 @@ func (s *Schema) HasMinItems() bool {
 func (s *Schema) HasMaxItems() bool {
 	return s.hasMaxItems
 }
+
+// ============================================================================
+// MERGE CONFIGURATION
+// Configuration types for JSON merge operations with union/intersection/difference modes.
+// ============================================================================
+
+// MergeMode defines the merge strategy for combining JSON objects and arrays
+type MergeMode int
+
+const (
+	// MergeUnion performs union merge - combines all keys/elements (default)
+	// For objects: all keys from both, conflicts resolved by override value
+	// For arrays: all elements from both with deduplication
+	MergeUnion MergeMode = iota
+
+	// MergeIntersection performs intersection merge - only common keys/elements
+	// For objects: only keys present in both, values from override
+	// For arrays: only elements present in both arrays
+	MergeIntersection
+
+	// MergeDifference performs difference merge - keys/elements only in base
+	// For objects: keys in base but not in override
+	// For arrays: elements in base but not in override
+	MergeDifference
+)

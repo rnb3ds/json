@@ -29,17 +29,21 @@ type ConfigInterface interface {
 // Configuration constants with optimized defaults for production workloads.
 const (
 	// Buffer and Pool Sizes - Optimized for production workloads
-	DefaultBufferSize        = 1024
-	MaxPoolBufferSize        = 32768 // 32KB max for better buffer reuse
-	MinPoolBufferSize        = 256   // 256B min for efficiency
-	DefaultPathSegmentCap    = 8
-	MaxPathSegmentCap        = 32 // Reduced from 128
-	DefaultStringBuilderSize = 256
+	DefaultBufferSize = 1024
+	MaxPoolBufferSize = 32768 // 32KB max for better buffer reuse
+	MinPoolBufferSize = 256   // 256B min for efficiency
+
+	// Internal buffer/pool sizes (not exported)
+	defaultPathSegmentCap    = 8
+	maxPathSegmentCap        = 32 // Reduced from 128
+	defaultStringBuilderSize = 256
 
 	// Cache Sizes - Balanced for performance and memory
-	DefaultCacheSize     = 128
-	MaxCacheEntries      = 512
-	CacheCleanupKeepSize = 256
+	DefaultCacheSize = 128
+
+	// Internal cache sizes (not exported)
+	maxCacheEntries      = 512
+	cacheCleanupKeepSize = 256
 
 	// Operation Limits - Secure defaults with reasonable headroom
 	// InvalidArrayIndex is a sentinel value indicating an invalid or out-of-bounds array index.
@@ -53,31 +57,35 @@ const (
 	//	if index == json.InvalidArrayIndex {
 	//	    // Handle invalid index
 	//	}
-	InvalidArrayIndex        = -999999
-	DefaultMaxJSONSize       = 100 * 1024 * 1024 // 100MB
-	DefaultMaxSecuritySize   = 10 * 1024 * 1024
-	DefaultMaxNestingDepth   = 200
-	DefaultMaxObjectKeys     = 100000
-	DefaultMaxArrayElements  = 100000
-	DefaultMaxPathDepth      = 50
-	DefaultMaxBatchSize      = 2000
-	DefaultMaxConcurrency    = 50
-	DefaultParallelThreshold = 10
+	InvalidArrayIndex      = -999999
+	DefaultMaxJSONSize     = 100 * 1024 * 1024 // 100MB
+	DefaultMaxNestingDepth = 200
+	DefaultMaxPathDepth    = 50
+	DefaultMaxConcurrency  = 50
+
+	// Internal operation limits (not exported)
+	defaultMaxSecuritySize   = 10 * 1024 * 1024
+	defaultMaxObjectKeys     = 100000
+	defaultMaxArrayElements  = 100000
+	defaultMaxBatchSize      = 2000
+	defaultParallelThreshold = 10
 
 	// Timing and Intervals - Optimized for responsiveness
-	MemoryPressureCheckInterval = 30 * time.Second
-	PoolResetInterval           = 60 * time.Second
-	PoolResetIntervalPressure   = 30 * time.Second
-	CacheCleanupInterval        = 30 * time.Second
-	DeadlockCheckInterval       = 30 * time.Second
-	DeadlockThreshold           = 30 * time.Second
+	// Internal timing constants (not exported)
+	memoryPressureCheckInterval = 30 * time.Second
+	poolResetInterval           = 60 * time.Second
+	poolResetIntervalPressure   = 30 * time.Second
+	cacheCleanupInterval        = 30 * time.Second
+	deadlockCheckInterval       = 30 * time.Second
+	deadlockThreshold           = 30 * time.Second
 	SlowOperationThreshold      = 100 * time.Millisecond
 
 	// Retry and Timeout - Production-ready settings
-	MaxRetries              = 3
-	BaseRetryDelay          = 10 * time.Millisecond
+	// Internal retry constants (not exported)
+	maxRetries              = 3
+	baseRetryDelay          = 10 * time.Millisecond
 	DefaultOperationTimeout = 30 * time.Second
-	AcquireSlotRetryDelay   = 1 * time.Millisecond
+	acquireSlotRetryDelay   = 1 * time.Millisecond
 
 	// Processor lifecycle timeouts
 	CloseOperationTimeout    = 5 * time.Second // Timeout waiting for active operations during Close()
@@ -87,19 +95,22 @@ const (
 	// Path Validation - Secure but flexible
 	// MaxPathLength is the maximum allowed path length for security.
 	// Re-exported from internal package for public API access.
-	MaxPathLength    = internal.MaxPathLength
-	MaxSegmentLength = 1024
+	MaxPathLength = internal.MaxPathLength
+
+	// Internal path validation (not exported)
+	maxSegmentLength = 1024
 
 	// Cache TTL
 	DefaultCacheTTL = 5 * time.Minute
 
 	// Cache key constants - OPTIMIZED: Increased limits for better cache hit rate
-	CacheKeyHashLength   = 32      // Length for cache key hash
-	SmallJSONCacheLimit  = 2048    // Limit for caching small JSON strings (fast path)
-	MediumJSONCacheLimit = 51200   // Limit for caching medium JSON strings (50KB)
-	LargeJSONCacheLimit  = 1048576 // Limit for caching large JSON strings (1MB) - OPTIMIZED: increased for better performance
-	EstimatedKeyOverhead = 32      // Estimated overhead for cache key generation
-	LargeJSONKeyOverhead = 64      // Overhead for large JSON cache keys
+	// Internal cache key constants (not exported)
+	cacheKeyHashLength   = 32      // Length for cache key hash
+	smallJSONCacheLimit  = 2048    // Limit for caching small JSON strings (fast path)
+	mediumJSONCacheLimit = 51200   // Limit for caching medium JSON strings (50KB)
+	largeJSONCacheLimit  = 1048576 // Limit for caching large JSON strings (1MB) - OPTIMIZED: increased for better performance
+	estimatedKeyOverhead = 32      // Estimated overhead for cache key generation
+	largeJSONKeyOverhead = 64      // Overhead for large JSON cache keys
 	MaxCacheKeyLength    = 500     // Maximum allowed cache key length
 
 	// Validation constants
@@ -107,25 +118,26 @@ const (
 )
 
 // Error codes for machine-readable error identification.
+// Internal use only - users should use errors.Is() with error variables.
 const (
-	ErrCodeInvalidJSON       = "ERR_INVALID_JSON"
-	ErrCodePathNotFound      = "ERR_PATH_NOT_FOUND"
-	ErrCodeTypeMismatch      = "ERR_TYPE_MISMATCH"
-	ErrCodeSizeLimit         = "ERR_SIZE_LIMIT"
-	ErrCodeDepthLimit        = "ERR_DEPTH_LIMIT"
-	ErrCodeSecurityViolation = "ERR_SECURITY_VIOLATION"
-	ErrCodeOperationFailed   = "ERR_OPERATION_FAILED"
-	ErrCodeTimeout           = "ERR_TIMEOUT"
-	ErrCodeConcurrencyLimit  = "ERR_CONCURRENCY_LIMIT"
-	ErrCodeProcessorClosed   = "ERR_PROCESSOR_CLOSED"
-	ErrCodeRateLimit         = "ERR_RATE_LIMIT"
+	errCodeInvalidJSON       = "ERR_INVALID_JSON"
+	errCodePathNotFound      = "ERR_PATH_NOT_FOUND"
+	errCodeTypeMismatch      = "ERR_TYPE_MISMATCH"
+	errCodeSizeLimit         = "ERR_SIZE_LIMIT"
+	errCodeDepthLimit        = "ERR_DEPTH_LIMIT"
+	errCodeSecurityViolation = "ERR_SECURITY_VIOLATION"
+	errCodeOperationFailed   = "ERR_OPERATION_FAILED"
+	errCodeTimeout           = "ERR_TIMEOUT"
+	errCodeConcurrencyLimit  = "ERR_CONCURRENCY_LIMIT"
+	errCodeProcessorClosed   = "ERR_PROCESSOR_CLOSED"
+	errCodeRateLimit         = "ERR_RATE_LIMIT"
 )
 
 // DefaultConfig returns the default configuration.
 // Creates a new instance each time to allow modifications without affecting other callers.
 // PERFORMANCE NOTE: For read-only access in hot paths, cache the result.
-func DefaultConfig() *Config {
-	return &Config{
+func DefaultConfig() Config {
+	return Config{
 		// Cache Settings
 		MaxCacheSize: DefaultCacheSize,
 		CacheTTL:     DefaultCacheTTL,
@@ -135,18 +147,18 @@ func DefaultConfig() *Config {
 		// Size Limits
 		MaxJSONSize:  DefaultMaxJSONSize,
 		MaxPathDepth: DefaultMaxPathDepth,
-		MaxBatchSize: DefaultMaxBatchSize,
+		MaxBatchSize: defaultMaxBatchSize,
 
 		// Security Limits
 		MaxNestingDepthSecurity:   DefaultMaxNestingDepth,
-		MaxSecurityValidationSize: DefaultMaxSecuritySize,
-		MaxObjectKeys:             DefaultMaxObjectKeys,
-		MaxArrayElements:          DefaultMaxArrayElements,
+		MaxSecurityValidationSize: defaultMaxSecuritySize,
+		MaxObjectKeys:             defaultMaxObjectKeys,
+		MaxArrayElements:          defaultMaxArrayElements,
 		FullSecurityScan:          false,
 
 		// Concurrency
 		MaxConcurrency:    DefaultMaxConcurrency,
-		ParallelThreshold: DefaultParallelThreshold,
+		ParallelThreshold: defaultParallelThreshold,
 
 		// Processing Options
 		EnableValidation: true,
@@ -191,8 +203,8 @@ func DefaultConfig() *Config {
 	}
 }
 
-// ValidateConfig validates configuration values and applies corrections
-func ValidateConfig(config *Config) error {
+// validateConfig validates configuration values and applies corrections
+func validateConfig(config *Config) error {
 	if config == nil {
 		return newOperationError("validate_config", "config cannot be nil", ErrOperationFailed)
 	}
@@ -215,10 +227,10 @@ func ValidateConfig(config *Config) error {
 		config.MaxNestingDepthSecurity = DefaultMaxNestingDepth
 	}
 	if config.MaxObjectKeys <= 0 {
-		config.MaxObjectKeys = DefaultMaxObjectKeys
+		config.MaxObjectKeys = defaultMaxObjectKeys
 	}
 	if config.MaxArrayElements <= 0 {
-		config.MaxArrayElements = DefaultMaxArrayElements
+		config.MaxArrayElements = defaultMaxArrayElements
 	}
 
 	return nil
@@ -226,12 +238,8 @@ func ValidateConfig(config *Config) error {
 
 // Clone creates a copy of the configuration.
 // Performs a deep copy of reference types (maps, slices).
-func (c *Config) Clone() *Config {
-	if c == nil {
-		return DefaultConfig()
-	}
-
-	clone := *c
+func (c Config) Clone() Config {
+	clone := c
 
 	// Deep copy CustomEscapes map
 	if c.CustomEscapes != nil {
@@ -241,7 +249,7 @@ func (c *Config) Clone() *Config {
 		}
 	}
 
-	return &clone
+	return clone
 }
 
 // Validate validates the configuration and applies corrections
@@ -351,7 +359,7 @@ func (c *Config) ShouldFullSecurityScan() bool { return c.FullSecurityScan }
 //   - Caching enabled for repeated operations
 //
 // This function unifies HighSecurityConfig and WebAPIConfig into a single entry point.
-func SecurityConfig() *Config {
+func SecurityConfig() Config {
 	config := DefaultConfig()
 	// Security settings - conservative limits for untrusted input
 	config.MaxNestingDepthSecurity = 30
@@ -381,7 +389,7 @@ func SecurityConfig() *Config {
 // Example:
 //
 //	result, err := json.Encode(data, json.PrettyConfig())
-func PrettyConfig() *Config {
+func PrettyConfig() Config {
 	cfg := DefaultConfig()
 	cfg.Pretty = true
 	cfg.Indent = "  "

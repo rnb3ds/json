@@ -17,12 +17,21 @@ import (
 	"golang.org/x/text/unicode/norm"
 )
 
-// globalRand is a thread-safe random source for sampling operations
+// globalRand is a random source for sampling operations
 // Initialized with current time for different seeds across runs
+// SECURITY FIX: Protected by globalRandMu for concurrent access
 var globalRand = rand.New(rand.NewSource(time.Now().UnixNano()))
+var globalRandMu sync.Mutex
+
+// randIntn returns a random integer in [0, n) in a thread-safe manner
+func randIntn(n int) int {
+	globalRandMu.Lock()
+	defer globalRandMu.Unlock()
+	return globalRand.Intn(n)
+}
 
 // LoadFromFile loads JSON data from a file and returns the raw JSON string.
-func (p *Processor) LoadFromFile(filePath string, opts ...*Config) (string, error) {
+func (p *Processor) LoadFromFile(filePath string, opts ...Config) (string, error) {
 	if err := p.checkClosed(); err != nil {
 		return "", err
 	}
@@ -46,7 +55,7 @@ func (p *Processor) LoadFromFile(filePath string, opts ...*Config) (string, erro
 }
 
 // LoadFromFileAsData loads JSON data from a file and returns the parsed data structure.
-func (p *Processor) LoadFromFileAsData(filePath string, opts ...*Config) (any, error) {
+func (p *Processor) LoadFromFileAsData(filePath string, opts ...Config) (any, error) {
 	if err := p.checkClosed(); err != nil {
 		return nil, err
 	}
@@ -73,7 +82,7 @@ func (p *Processor) LoadFromFileAsData(filePath string, opts ...*Config) (any, e
 }
 
 // LoadFromReader loads JSON data from an io.Reader and returns the raw JSON string.
-func (p *Processor) LoadFromReader(reader io.Reader, opts ...*Config) (string, error) {
+func (p *Processor) LoadFromReader(reader io.Reader, opts ...Config) (string, error) {
 	if err := p.checkClosed(); err != nil {
 		return "", err
 	}
@@ -104,7 +113,7 @@ func (p *Processor) LoadFromReader(reader io.Reader, opts ...*Config) (string, e
 }
 
 // LoadFromReaderAsData loads JSON data from an io.Reader and returns the parsed data structure.
-func (p *Processor) LoadFromReaderAsData(reader io.Reader, opts ...*Config) (any, error) {
+func (p *Processor) LoadFromReaderAsData(reader io.Reader, opts ...Config) (any, error) {
 	if err := p.checkClosed(); err != nil {
 		return nil, err
 	}
@@ -191,7 +200,7 @@ func (p *Processor) createDirectoryIfNotExists(filePath string) error {
 // Example:
 //
 //	err := processor.SaveToFile("data.json", data, json.PrettyConfig())
-func (p *Processor) SaveToFile(filePath string, data any, cfg ...*Config) error {
+func (p *Processor) SaveToFile(filePath string, data any, cfg ...Config) error {
 	if err := p.checkClosed(); err != nil {
 		return err
 	}
@@ -218,7 +227,7 @@ func (p *Processor) SaveToFile(filePath string, data any, cfg ...*Config) error 
 
 	// Encode data to JSON
 	config := DefaultConfig()
-	if len(cfg) > 0 && cfg[0] != nil {
+	if len(cfg) > 0 {
 		config = cfg[0]
 	}
 	jsonStr, err := p.EncodeWithConfig(processedData, config)
@@ -246,7 +255,7 @@ func (p *Processor) SaveToFile(filePath string, data any, cfg ...*Config) error 
 //
 //	var buf bytes.Buffer
 //	err := processor.SaveToWriter(&buf, data, json.PrettyConfig())
-func (p *Processor) SaveToWriter(writer io.Writer, data any, cfg ...*Config) error {
+func (p *Processor) SaveToWriter(writer io.Writer, data any, cfg ...Config) error {
 	if err := p.checkClosed(); err != nil {
 		return err
 	}
@@ -259,7 +268,7 @@ func (p *Processor) SaveToWriter(writer io.Writer, data any, cfg ...*Config) err
 
 	// Encode data to JSON
 	config := DefaultConfig()
-	if len(cfg) > 0 && cfg[0] != nil {
+	if len(cfg) > 0 {
 		config = cfg[0]
 	}
 	jsonStr, err := p.EncodeWithConfig(processedData, config)
@@ -286,7 +295,7 @@ func (p *Processor) SaveToWriter(writer io.Writer, data any, cfg ...*Config) err
 // Example:
 //
 //	err := processor.MarshalToFile("data.json", data, json.PrettyConfig())
-func (p *Processor) MarshalToFile(path string, data any, cfg ...*Config) error {
+func (p *Processor) MarshalToFile(path string, data any, cfg ...Config) error {
 	if err := p.checkClosed(); err != nil {
 		return err
 	}
@@ -313,7 +322,7 @@ func (p *Processor) MarshalToFile(path string, data any, cfg ...*Config) error {
 
 	// Determine formatting preference
 	config := DefaultConfig()
-	if len(cfg) > 0 && cfg[0] != nil {
+	if len(cfg) > 0 {
 		config = cfg[0]
 	}
 
@@ -347,7 +356,7 @@ func (p *Processor) MarshalToFile(path string, data any, cfg ...*Config) error {
 }
 
 // UnmarshalFromFile reads JSON data from the specified file and unmarshals it into the provided value.
-func (p *Processor) UnmarshalFromFile(path string, v any, opts ...*Config) error {
+func (p *Processor) UnmarshalFromFile(path string, v any, opts ...Config) error {
 	if err := p.checkClosed(); err != nil {
 		return err
 	}
@@ -1371,7 +1380,8 @@ func (sr *SamplingReader) Sample(fn func(index int, item any) bool) error {
 		} else {
 			// Random replacement with uniform probability k/(index+1)
 			// Using math/rand for performance - for cryptographic security use crypto/rand
-			j := globalRand.Intn(index + 1)
+			// SECURITY FIX: Using thread-safe randIntn wrapper
+			j := randIntn(index + 1)
 			if j < sr.sampleSize {
 				samples[j] = item
 			}

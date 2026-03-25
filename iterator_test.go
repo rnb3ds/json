@@ -94,7 +94,7 @@ func BenchmarkSafeTypeAssert(b *testing.B) {
 
 // TestBulkProcessor tests BulkProcessor functionality
 func TestBulkProcessor(t *testing.T) {
-	processor := New()
+	processor := MustNew()
 	defer processor.Close()
 
 	bp := NewBulkProcessor(processor, 10)
@@ -1274,11 +1274,11 @@ func TestIterableValue_RealWorldScenario(t *testing.T) {
 
 // TestIteratorDataState tests iterator maintains correct state
 func TestIteratorDataState(t *testing.T) {
-	processor := New()
+	processor := MustNew()
 	defer processor.Close()
 
 	data := []any{1, 2, 3, 4, 5}
-	it := NewIterator(processor, data, nil)
+	it := NewIterator(data)
 
 	// Check initial state
 	if it.position != 0 {
@@ -1304,12 +1304,12 @@ func TestIteratorDataState(t *testing.T) {
 
 // TestIteratorHasNext tests Iterator.HasNext method
 func TestIteratorHasNext(t *testing.T) {
-	processor := New()
+	processor := MustNew()
 	defer processor.Close()
 
 	t.Run("array iterator", func(t *testing.T) {
 		data := []any{1, 2, 3}
-		it := NewIterator(processor, data, nil)
+		it := NewIterator(data)
 
 		count := 0
 		for it.HasNext() {
@@ -1324,7 +1324,7 @@ func TestIteratorHasNext(t *testing.T) {
 
 	t.Run("object iterator", func(t *testing.T) {
 		data := map[string]any{"a": 1, "b": 2, "c": 3}
-		it := NewIterator(processor, data, nil)
+		it := NewIterator(data)
 
 		count := 0
 		for it.HasNext() {
@@ -1339,7 +1339,7 @@ func TestIteratorHasNext(t *testing.T) {
 
 	t.Run("empty array", func(t *testing.T) {
 		data := []any{}
-		it := NewIterator(processor, data, nil)
+		it := NewIterator(data)
 
 		if it.HasNext() {
 			t.Error("Expected no elements in empty array")
@@ -1349,12 +1349,12 @@ func TestIteratorHasNext(t *testing.T) {
 
 // TestIteratorNext tests Iterator.Next method
 func TestIteratorNext(t *testing.T) {
-	processor := New()
+	processor := MustNew()
 	defer processor.Close()
 
 	t.Run("array elements", func(t *testing.T) {
 		data := []any{"a", "b", "c"}
-		it := NewIterator(processor, data, nil)
+		it := NewIterator(data)
 
 		expected := []any{"a", "b", "c"}
 		for i := 0; i < len(expected); i++ {
@@ -1376,7 +1376,7 @@ func TestIteratorNext(t *testing.T) {
 
 	t.Run("object values", func(t *testing.T) {
 		data := map[string]any{"a": 1, "b": 2}
-		it := NewIterator(processor, data, nil)
+		it := NewIterator(data)
 
 		count := 0
 		for it.HasNext() {
@@ -2016,7 +2016,7 @@ func TestWarmupPathCache(t *testing.T) {
 
 // TestWarmupPathCacheWithProcessor tests path cache warmup with processor
 func TestWarmupPathCacheWithProcessor(t *testing.T) {
-	processor := New()
+	processor := MustNew()
 	defer processor.Close()
 
 	paths := []string{

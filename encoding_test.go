@@ -13,7 +13,7 @@ func TestEncodingAdvanced(t *testing.T) {
 	helper := NewTestHelper(t)
 
 	t.Run("EncodeWithConfig", func(t *testing.T) {
-		processor := New(DefaultConfig())
+		processor := MustNew(DefaultConfig())
 		defer processor.Close()
 
 		type User struct {
@@ -160,7 +160,7 @@ func TestEncodingAdvanced(t *testing.T) {
 	})
 
 	t.Run("HTMLEscaping", func(t *testing.T) {
-		processor := New(DefaultConfig())
+		processor := MustNew(DefaultConfig())
 		defer processor.Close()
 
 		type Data struct {
@@ -192,7 +192,7 @@ func TestEncodingAdvanced(t *testing.T) {
 	})
 
 	t.Run("UnicodeEscaping", func(t *testing.T) {
-		processor := New(DefaultConfig())
+		processor := MustNew(DefaultConfig())
 		defer processor.Close()
 
 		type Data struct {
@@ -224,7 +224,7 @@ func TestEncodingAdvanced(t *testing.T) {
 	})
 
 	t.Run("IncludeNulls", func(t *testing.T) {
-		processor := New(DefaultConfig())
+		processor := MustNew(DefaultConfig())
 		defer processor.Close()
 
 		type Data struct {
@@ -267,7 +267,7 @@ func TestEncodingAdvanced(t *testing.T) {
 func TestEncodingTypes(t *testing.T) {
 	helper := NewTestHelper(t)
 
-	processor := New(DefaultConfig())
+	processor := MustNew(DefaultConfig())
 	defer processor.Close()
 
 	t.Run("BasicTypes", func(t *testing.T) {
@@ -380,7 +380,7 @@ func TestEncodingTypes(t *testing.T) {
 func TestEncodingStreams(t *testing.T) {
 	helper := NewTestHelper(t)
 
-	processor := New(DefaultConfig())
+	processor := MustNew(DefaultConfig())
 	defer processor.Close()
 
 	t.Run("EncodeStream", func(t *testing.T) {
@@ -469,7 +469,7 @@ func TestEncodingCompatibility(t *testing.T) {
 		original := User{Name: "Alice", Age: 30}
 
 		// Marshal with our processor
-		processor := New(DefaultConfig())
+		processor := MustNew(DefaultConfig())
 		defer processor.Close()
 
 		jsonBytes, err := processor.Marshal(original)
@@ -495,7 +495,7 @@ func TestEncodingCompatibility(t *testing.T) {
 			"object": map[string]interface{}{"nested": "value"},
 		}
 
-		processor := New(DefaultConfig())
+		processor := MustNew(DefaultConfig())
 		defer processor.Close()
 
 		// Encode
@@ -504,7 +504,7 @@ func TestEncodingCompatibility(t *testing.T) {
 
 		// Decode
 		var decoded map[string]interface{}
-		err = processor.Unmarshal([]byte(encoded), &decoded, nil)
+		err = processor.Unmarshal([]byte(encoded), &decoded)
 		helper.AssertNoError(err)
 
 		// Verify
@@ -518,7 +518,7 @@ func TestEncodingCompatibility(t *testing.T) {
 func TestEncodingErrors(t *testing.T) {
 	helper := NewTestHelper(t)
 
-	processor := New(DefaultConfig())
+	processor := MustNew(DefaultConfig())
 	defer processor.Close()
 
 	t.Run("ClosedProcessor", func(t *testing.T) {
@@ -542,7 +542,7 @@ func TestEncodingErrors(t *testing.T) {
 			},
 		}
 
-		_, err := processor.EncodeWithOptions(deepData, config, nil)
+		_, err := processor.EncodeWithOptions(deepData, config)
 		helper.AssertError(err)
 	})
 
@@ -560,7 +560,7 @@ func TestEncodingErrors(t *testing.T) {
 func TestEncodeDecodeIntegration(t *testing.T) {
 	helper := NewTestHelper(t)
 
-	processor := New(DefaultConfig())
+	processor := MustNew(DefaultConfig())
 	defer processor.Close()
 
 	t.Run("FullCycle", func(t *testing.T) {
@@ -590,7 +590,7 @@ func TestEncodeDecodeIntegration(t *testing.T) {
 
 		// Decode
 		var decoded User
-		err = processor.Unmarshal([]byte(encoded), &decoded, nil)
+		err = processor.Unmarshal([]byte(encoded), &decoded)
 		helper.AssertNoError(err)
 
 		// Verify
@@ -618,7 +618,7 @@ func TestEncodeDecodeIntegration(t *testing.T) {
 
 		// Decode from buffer using Unmarshal
 		var decoded map[string]interface{}
-		err = processor.Unmarshal(buf.Bytes(), &decoded, nil)
+		err = processor.Unmarshal(buf.Bytes(), &decoded)
 		helper.AssertNoError(err)
 
 		helper.AssertEqual(data["message"], decoded["message"])
@@ -633,7 +633,7 @@ func TestEncodeDecodeIntegration(t *testing.T) {
 
 // TestProcessorValidateSchema tests Processor.ValidateSchema method
 func TestProcessorValidateSchema(t *testing.T) {
-	processor := New()
+	processor := MustNew()
 	defer processor.Close()
 
 	t.Run("valid object with schema", func(t *testing.T) {

@@ -794,10 +794,47 @@ Compares two JSON strings for semantic equality.
 ### MergeJson
 
 ```go
-func MergeJson(json1, json2 string) (string, error)
+func MergeJson(json1, json2 string, mode ...MergeMode) (string, error)
 ```
 
-Merges two JSON objects using deep merge strategy.
+Merges two JSON objects using deep merge strategy. The optional mode parameter specifies the merge strategy (defaults to MergeUnion).
+
+**Merge Modes:**
+| Mode | Description |
+|------|-------------|
+| `MergeUnion` | Combines all keys from both objects (default) |
+| `MergeIntersection` | Only keys present in both objects |
+| `MergeDifference` | Only keys in first object but not in second |
+
+**Example:**
+```go
+// Union merge (default)
+result, err := json.MergeJson(a, b)
+
+// Union merge (explicit)
+result, err := json.MergeJson(a, b, json.MergeUnion)
+
+// Intersection merge (only common keys)
+result, err := json.MergeJson(a, b, json.MergeIntersection)
+
+// Difference merge (keys only in first)
+result, err := json.MergeJson(a, b, json.MergeDifference)
+```
+
+---
+
+### MergeJsonMany
+
+```go
+func MergeJsonMany(mode MergeMode, jsons ...string) (string, error)
+```
+
+Merges multiple JSON objects with specified merge mode. Requires at least 2 JSON strings.
+
+**Example:**
+```go
+result, err := json.MergeJsonMany(json.MergeUnion, config1, config2, config3)
+```
 
 ---
 

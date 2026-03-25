@@ -201,7 +201,7 @@ func demonstrateSecurityValidation() {
 	fmt.Println("───────────────────────")
 
 	// Create a security processor
-	processor := json.New(json.SecurityConfig())
+	processor, _ := json.New(json.SecurityConfig())
 	defer processor.Close()
 
 	testCases := []struct {
@@ -246,7 +246,7 @@ func demonstrateProcessorValidation() {
 	config.EnableValidation = true
 	config.MaxJSONSize = 1024 * 1024 // 1MB
 
-	processor := json.New(config)
+	processor, _ := json.New(config)
 	defer processor.Close()
 
 	testJSON := `{

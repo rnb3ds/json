@@ -91,7 +91,7 @@ func demonstrateProcessBatch() {
 	}
 
 	// Using with processor for more control
-	processor := json.New(json.DefaultConfig())
+	processor, _ := json.New(json.DefaultConfig())
 	defer processor.Close()
 
 	// Note: BatchOperation also supports JSONStr field for different JSON inputs
@@ -174,7 +174,7 @@ func demonstrateBulkProcessor() {
 	fmt.Println("\n3. Bulk Processor")
 	fmt.Println("------------------")
 
-	processor := json.New(json.DefaultConfig())
+	processor, _ := json.New(json.DefaultConfig())
 	defer processor.Close()
 
 	// Create bulk processor with batch size
@@ -302,12 +302,12 @@ func demonstrateBatchPerformance() {
 	fmt.Println("   Performance comparison (1000 operations):")
 
 	// Without cache optimization
-	configNoCache := &json.Config{
+	configNoCache := json.Config{
 		EnableCache:  false,
 		MaxJSONSize:  10 * 1024 * 1024,
 		MaxBatchSize: 1000,
 	}
-	procNoCache := json.New(configNoCache)
+	procNoCache, _ := json.New(configNoCache)
 	defer procNoCache.Close()
 
 	start := time.Now()
@@ -317,14 +317,14 @@ func demonstrateBatchPerformance() {
 	noCacheDuration := time.Since(start)
 
 	// With cache optimization
-	configCache := &json.Config{
+	configCache := json.Config{
 		EnableCache:  true,
 		MaxCacheSize: 1000,
 		CacheTTL:     10 * time.Minute,
 		MaxJSONSize:  10 * 1024 * 1024,
 		MaxBatchSize: 1000,
 	}
-	procCache := json.New(configCache)
+	procCache, _ := json.New(configCache)
 	defer procCache.Close()
 
 	start = time.Now()

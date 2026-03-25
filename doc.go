@@ -29,17 +29,28 @@
 //
 // Advanced processor for complex operations:
 //
-//	processor := json.New() // Use default config
+//	processor, err := json.New() // Use default config
+//	if err != nil {
+//	    // handle error
+//	}
 //	defer processor.Close()
 //	value, err := processor.Get(jsonStr, "complex.path[0].field")
 //
 // # Configuration
 //
-// Use NewWithConfig for custom configuration:
+// Use DefaultConfig and optional parameters for custom configuration:
 //
-//	cfg := json.NewConfig()
+//	cfg := json.DefaultConfig()
 //	cfg.EnableCache = true
-//	processor := json.NewWithConfig(cfg)
+//	processor, err := json.New(cfg)
+//	if err != nil {
+//	    // handle error
+//	}
+//	defer processor.Close()
+//
+// For simple cases where errors are not expected, use MustNew:
+//
+//	processor := json.MustNew() // Panics on error
 //	defer processor.Close()
 //
 // # Key Features
@@ -56,9 +67,9 @@
 // The package is organized with all public API in the root package:
 //
 //   - Core types: Processor, Config, ProcessorOptions, EncodeConfig
-//   - Path types: PathSegment, PathInfo, PropertyAccessResult
+//   - Path types: PathSegment, PathInfo
 //   - Error types: JsonsError, various error constructors
-//   - Encoding types: Number, NumberPreservingDecoder, CustomEncoder
+//   - Encoding types: Number
 //
 // Implementation details are in the internal/ package:
 //
