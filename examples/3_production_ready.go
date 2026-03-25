@@ -42,28 +42,18 @@ func main() {
 	}`
 
 	// 1. CONFIGURATION PATTERNS
-	fmt.Println("1️⃣  Configuration Patterns")
-	fmt.Println("───────────────────────────")
 	demonstrateConfigurations(testData)
 
 	// 2. THREAD-SAFE OPERATIONS
-	fmt.Println("\n2️⃣  Thread-Safe Concurrent Operations")
-	fmt.Println("──────────────────────────────────────")
 	demonstrateConcurrency(testData)
 
 	// 3. PERFORMANCE OPTIMIZATION
-	fmt.Println("\n3️⃣  Performance Optimization")
-	fmt.Println("─────────────────────────────")
 	demonstratePerformance(testData)
 
 	// 4. RESOURCE MANAGEMENT
-	fmt.Println("\n4️⃣  Resource Management")
-	fmt.Println("────────────────────────")
 	demonstrateResourceManagement(testData)
 
 	// 5. MONITORING & METRICS
-	fmt.Println("\n5️⃣  Monitoring & Metrics")
-	fmt.Println("─────────────────────────")
 	demonstrateMonitoring(testData)
 
 	fmt.Println("\n✅ Production-ready patterns complete!")
@@ -71,6 +61,9 @@ func main() {
 }
 
 func demonstrateConfigurations(testData string) {
+	fmt.Println("1️⃣  Configuration Patterns")
+	fmt.Println("───────────────────────────")
+
 	// 1. Default configuration (quick start)
 	fmt.Println("   Default Configuration:")
 	defaultProc := json.New(json.DefaultConfig())
@@ -125,6 +118,9 @@ func demonstrateConfigurations(testData string) {
 }
 
 func demonstrateConcurrency(testData string) {
+	fmt.Println("\n2️⃣  Thread-Safe Concurrent Operations")
+	fmt.Println("──────────────────────────────────────")
+
 	processor := json.New(json.DefaultConfig())
 	defer processor.Close()
 
@@ -179,6 +175,9 @@ func demonstrateConcurrency(testData string) {
 }
 
 func demonstratePerformance(testData string) {
+	fmt.Println("\n3️⃣  Performance Optimization")
+	fmt.Println("─────────────────────────────")
+
 	// Test with cache enabled
 	cacheConfig := &json.Config{
 		EnableCache:       true,
@@ -234,6 +233,9 @@ func demonstratePerformance(testData string) {
 }
 
 func demonstrateResourceManagement(testData string) {
+	fmt.Println("\n4️⃣  Resource Management")
+	fmt.Println("────────────────────────")
+
 	// Proper resource lifecycle management
 	processor := json.New(json.DefaultConfig())
 
@@ -270,6 +272,9 @@ func demonstrateResourceManagement(testData string) {
 }
 
 func demonstrateMonitoring(testData string) {
+	fmt.Println("\n5️⃣  Monitoring & Metrics")
+	fmt.Println("─────────────────────────")
+
 	config := &json.Config{
 		EnableCache:       true,
 		MaxCacheSize:      1000,

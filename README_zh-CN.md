@@ -12,12 +12,12 @@
 
 ---
 
-## 🏆 为什么选择 cybergodev/json？
+## 🏆 特性
 
 | 特性 | 描述 |
 |------|------|
-| 🔄 **100% 兼容** | `encoding/json` 的直接替代品 - 零学习成本 |
-| 🎯 **强大路径** | 类 JSONPath 语法，一行代码完成复杂数据提取 |
+| 🔄 **100% 兼容** | 无需修改代码，直接替换 `encoding/json` 零学习成本 |
+| 🎯 **强大路径** | 简洁的路径语法，如 `users[0].name` 轻松访问嵌套数据 |
 | 🚀 **高性能** | 智能缓存、内存优化、并发安全 |
 | 🛡️ **类型安全** | 泛型支持，编译时类型检查 |
 | 🔧 **功能丰富** | 批量操作、流式处理、文件操作、数据验证 |
@@ -87,6 +87,7 @@ func main() {
 | `[-n]` | 负索引（从末尾） | `items[-1]`（最后一个元素） |
 | `[start:end]` | 数组切片 | `items[1:3]`（第1-2个元素） |
 | `[start:end:step]` | 带步长的切片 | `items[::2]`（每隔一个元素） |
+| `[+]` | 追加到数组 | `items[+]` |
 | `{field}` | 提取数组所有元素的字段 | `users{name}` |
 | `{flat:field}` | 扁平化嵌套数组 | `users{flat:tags}` |
 
@@ -98,13 +99,13 @@ func main() {
 
 ```go
 // 基础获取
-json.Get(data, "user.name")           // any
-json.GetString(data, "user.name")     // string
-json.GetInt(data, "user.age")         // int
-json.GetFloat64(data, "user.score")   // float64
-json.GetBool(data, "user.active")     // bool
-json.GetArray(data, "user.tags")      // []any
-json.GetObject(data, "user.profile")  // map[string]any
+json.Get(data, "user.name")           // (any, error)
+json.GetString(data, "user.name")     // (string, error)
+json.GetInt(data, "user.age")         // (int, error)
+json.GetFloat64(data, "user.score")   // (float64, error)
+json.GetBool(data, "user.active")     // (bool, error)
+json.GetArray(data, "user.tags")      // ([]any, error)
+json.GetObject(data, "user.profile")  // (map[string]any, error)
 
 // 类型安全的泛型获取
 json.GetTyped[string](data, "user.name")
@@ -135,12 +136,14 @@ cfg := json.DefaultConfig()
 cfg.CreatePaths = true
 result, err := json.Set(data, "user.profile.level", "gold", cfg)
 
+// 追加到数组
+result, _ := json.Set(data, "user.tags[+]", "new-tag")
+
 // 批量设置
-updates := map[string]any{
+result, _ := json.SetMultiple(data, map[string]any{
     "user.name": "Bob",
     "user.age":  30,
-}
-result, err := json.SetMultiple(data, updates)
+})
 
 // 删除
 result, err := json.Delete(data, "user.temp")
@@ -155,13 +158,12 @@ err = json.Unmarshal(bytes, &target)
 bytes, err := json.MarshalIndent(data, "", "  ")
 
 // 快速格式化
-jsonStr, err := json.Encode(data, json.PrettyConfig())  // 美化输出
-pretty, err := json.FormatPretty(jsonStr)                // 格式化字符串
-compact, err := json.CompactString(jsonStr)              // 压缩字符串
+pretty, _ := json.FormatPretty(jsonStr)    // 美化输出
+compact, _ := json.CompactString(jsonStr)  // 压缩
 
 // 直接输出
-json.Print(data)        // 压缩格式输出到标准输出
-json.PrintPretty(data)  // 美化格式输出到标准输出
+json.Print(data)        // 压缩格式到 stdout
+json.PrintPretty(data)  // 美化格式到 stdout
 
 // 带配置编码
 cfg := json.DefaultConfig()
@@ -169,10 +171,8 @@ cfg.Pretty = true
 cfg.SortKeys = true
 result, err := json.Encode(data, cfg)
 
-// 缓冲区操作（encoding/json 兼容）
-json.Compact(dst, src)
-json.Indent(dst, src, prefix, indent)
-json.HTMLEscape(dst, src)
+// 预设配置
+result, _ := json.Encode(data, json.PrettyConfig())
 ```
 
 ### 文件操作
@@ -221,7 +221,7 @@ cfg := &json.Config{
     MaxConcurrency:   50,
     EnableValidation: true,
     CreatePaths:      true,  // Set 操作自动创建路径
-    CleanupNulls:     true,  // 删除后清理 null 值
+    CleanupNulls:     true,  // Delete 后清理 null
 }
 
 processor := json.New(cfg)
@@ -237,14 +237,9 @@ processor.ClearCache()
 ### 预设配置
 
 ```go
-// 默认配置
-cfg := json.DefaultConfig()
-
-// 安全配置（用于不受信任的输入）
-cfg := json.SecurityConfig()
-
-// 美化输出配置
-cfg := json.PrettyConfig()
+cfg := json.DefaultConfig()    // 平衡的默认配置
+cfg := json.SecurityConfig()   // 用于不受信任的输入
+cfg := json.PrettyConfig()     // 用于美化输出
 ```
 
 ---
@@ -387,6 +382,26 @@ result, err := json.WarmupCache(jsonStr, paths)
 
 ---
 
+## 从 encoding/json 迁移
+
+只需修改导入：
+
+```go
+// 之前
+import "encoding/json"
+
+// 之后
+import "github.com/cybergodev/json"
+```
+
+所有标准函数完全兼容：
+- `json.Marshal()` / `json.Unmarshal()`
+- `json.MarshalIndent()`
+- `json.Valid()`
+- `json.Compact()` / `json.Indent()` / `json.HTMLEscape()`
+
+---
+
 ## 🛡️ 安全配置
 
 ```go
@@ -401,25 +416,6 @@ secureConfig := json.SecurityConfig()
 processor := json.New(secureConfig)
 defer processor.Close()
 ```
-
----
-
-## 📚 示例与资源
-
-### 示例文件
-
-| 文件 | 描述 |
-|------|------|
-| [1_basic_usage.go](examples/1_basic_usage.go) | 核心操作入门 |
-| [2_advanced_features.go](examples/2_advanced_features.go) | 复杂路径和文件操作 |
-| [3_production_ready.go](examples/3_production_ready.go) | 线程安全模式和监控 |
-| [10_file_operations.go](examples/10_file_operations.go) | 文件 I/O 操作 |
-| [11_with_defaults.go](examples/11_with_defaults.go) | 默认值处理 |
-
-### 文档
-
-- **[API 参考](https://pkg.go.dev/github.com/cybergodev/json)** - 完整 API 文档
-- **[安全指南](docs/SECURITY.md)** - 安全最佳实践
 
 ---
 
@@ -440,6 +436,32 @@ import "github.com/cybergodev/json"
 - `json.MarshalIndent()`
 - `json.Valid()`
 - `json.Compact()` / `json.Indent()` / `json.HTMLEscape()`
+
+---
+
+## 示例代码
+
+| 文件 | 说明 |
+|------|------|
+| [1_basic_usage.go](examples/1_basic_usage.go) | 核心操作 |
+| [2_advanced_features.go](examples/2_advanced_features.go) | 复杂路径、文件 I/O |
+| [3_production_ready.go](examples/3_production_ready.go) | 线程安全模式 |
+| [4_error_handling.go](examples/4_error_handling.go) | 错误处理模式 |
+| [5_encoding_options.go](examples/5_encoding_options.go) | 编码配置 |
+| [10_file_operations.go](examples/10_file_operations.go) | 文件 I/O 操作 |
+| [11_with_defaults.go](examples/11_with_defaults.go) | 默认值处理 |
+| [12_advanced_delete.go](examples/12_advanced_delete.go) | 高级删除操作 |
+| [13_streaming_ndjson.go](examples/13_streaming_ndjson.go) | 流式处理 & JSONL |
+| [14_batch_operations.go](examples/14_batch_operations.go) | 批量操作 |
+| [15_array_append.go](examples/15_array_append.go) | 数组追加 `[+]` |
+
+---
+
+## 文档
+
+- **[API 参考](docs/API_REFERENCE.md)** - 完整 API 文档
+- **[安全指南](docs/SECURITY.md)** - 安全最佳实践
+- **[pkg.go.dev](https://pkg.go.dev/github.com/cybergodev/json)** - GoDoc
 
 ---
 

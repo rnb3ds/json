@@ -28,34 +28,27 @@ func main() {
 	fmt.Println("================================\n ")
 
 	// 1. STRUCTURED ERRORS
-	fmt.Println("1️⃣  Structured Errors (JsonsError)")
-	fmt.Println("──────────────────────────────────")
 	demonstrateStructuredErrors()
 
 	// 2. ERROR CLASSIFICATION
-	fmt.Println("\n2️⃣  Error Classification")
-	fmt.Println("─────────────────────────")
 	demonstrateErrorClassification()
 
 	// 3. ERROR SUGGESTIONS
-	fmt.Println("\n3️⃣  Error Suggestions")
-	fmt.Println("──────────────────────")
 	demonstrateErrorSuggestions()
 
 	// 4. RETRY LOGIC
-	fmt.Println("\n4️⃣  Retry Logic")
-	fmt.Println("───────────────")
 	demonstrateRetryLogic()
 
 	// 5. ERROR WRAPPING
-	fmt.Println("\n5️⃣  Error Wrapping")
-	fmt.Println("─────────────────")
 	demonstrateErrorWrapping()
 
 	fmt.Println("\n✅ Error handling complete!")
 }
 
 func demonstrateStructuredErrors() {
+	fmt.Println("1️⃣  Structured Errors (JsonsError)")
+	fmt.Println("──────────────────────────────────")
+
 	// Invalid JSON example
 	invalidJSON := `{"name": "John", "age": }`
 
@@ -86,6 +79,9 @@ func demonstrateStructuredErrors() {
 }
 
 func demonstrateErrorClassification() {
+	fmt.Println("\n2️⃣  Error Classification")
+	fmt.Println("─────────────────────────")
+
 	testCases := []struct {
 		name string
 		err  error
@@ -111,6 +107,9 @@ func demonstrateErrorClassification() {
 }
 
 func demonstrateErrorSuggestions() {
+	fmt.Println("\n3️⃣  Error Suggestions")
+	fmt.Println("──────────────────────")
+
 	// Simulate various errors
 	errs := []error{
 		json.ErrInvalidJSON,
@@ -131,6 +130,9 @@ func demonstrateErrorSuggestions() {
 }
 
 func demonstrateRetryLogic() {
+	fmt.Println("\n4️⃣  Retry Logic")
+	fmt.Println("───────────────")
+
 	// Simulate errors and check retry ability
 	testErrors := []struct {
 		name string
@@ -154,6 +156,9 @@ func demonstrateRetryLogic() {
 }
 
 func demonstrateErrorWrapping() {
+	fmt.Println("\n5️⃣  Error Wrapping")
+	fmt.Println("─────────────────")
+
 	// Wrap errors with additional context
 	baseErr := json.ErrPathNotFound
 

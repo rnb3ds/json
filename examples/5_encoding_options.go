@@ -52,49 +52,36 @@ func main() {
 	}
 
 	// 1. PRETTY VS COMPACT
-	fmt.Println("1️⃣  Pretty vs Compact Formatting")
-	fmt.Println("─────────────────────────────────")
 	demonstratePrettyVsCompact(user)
 
 	// 2. HTML ESCAPING
-	fmt.Println("\n2️⃣  HTML Escaping Control")
-	fmt.Println("──────────────────────────")
 	demonstrateHTMLEscaping()
 
 	// 3. KEY SORTING
-	fmt.Println("\n3️⃣  Key Sorting")
-	fmt.Println("───────────────")
 	demonstrateKeySorting()
 
 	// 4. FLOAT PRECISION
-	fmt.Println("\n4️⃣  Float Precision Control")
-	fmt.Println("──────────────────────────")
 	demonstrateFloatPrecision()
 
 	// 5. OMIT EMPTY
-	fmt.Println("\n5️⃣  Omit Empty Values")
-	fmt.Println("──────────────────────")
 	demonstrateOmitEmpty()
 
 	// 6. CUSTOM ESCAPING
-	fmt.Println("\n6️⃣  Custom Escaping Options")
-	fmt.Println("───────────────────────────")
 	demonstrateCustomEscaping()
 
 	// 7. UNICODE ESCAPING
-	fmt.Println("\n7️⃣  Unicode Escaping")
-	fmt.Println("─────────────────────")
 	demonstrateUnicodeEscaping()
 
 	// 8. ENCODE METHODS
-	fmt.Println("\n8️⃣  Convenience Encode Methods")
-	fmt.Println("────────────────────────────────")
 	demonstrateEncodeMethods()
 
 	fmt.Println("\n✅ Encoding options complete!")
 }
 
 func demonstratePrettyVsCompact(user interface{}) {
+	fmt.Println("1️⃣  Pretty vs Compact Formatting")
+	fmt.Println("─────────────────────────────────")
+
 	// Pretty formatting - using new unified Config API
 	prettyJSON, _ := json.EncodeWithConfig(user, json.PrettyConfig())
 	fmt.Println("   Pretty JSON:")
@@ -107,6 +94,9 @@ func demonstratePrettyVsCompact(user interface{}) {
 }
 
 func demonstrateHTMLEscaping() {
+	fmt.Println("\n2️⃣  HTML Escaping Control")
+	fmt.Println("──────────────────────────")
+
 	// Data with HTML content
 	type HTMLContent struct {
 		Title   string `json:"title"`
@@ -136,6 +126,9 @@ func demonstrateHTMLEscaping() {
 }
 
 func demonstrateKeySorting() {
+	fmt.Println("\n3️⃣  Key Sorting")
+	fmt.Println("───────────────")
+
 	type Data struct {
 		Zebra   int `json:"zebra"`
 		Alpha   int `json:"alpha"`
@@ -165,6 +158,9 @@ func demonstrateKeySorting() {
 }
 
 func demonstrateFloatPrecision() {
+	fmt.Println("\n4️⃣  Float Precision Control")
+	fmt.Println("──────────────────────────")
+
 	type Measurement struct {
 		Name  string  `json:"name"`
 		Value float64 `json:"value"`
@@ -214,6 +210,9 @@ func demonstrateFloatPrecision() {
 }
 
 func demonstrateOmitEmpty() {
+	fmt.Println("\n5️⃣  Omit Empty Values")
+	fmt.Println("──────────────────────")
+
 	type Config struct {
 		Host     string `json:"host"`
 		Port     int    `json:"port"`
@@ -255,6 +254,9 @@ func demonstrateOmitEmpty() {
 }
 
 func demonstrateCustomEscaping() {
+	fmt.Println("\n6️⃣  Custom Escaping Options")
+	fmt.Println("───────────────────────────")
+
 	// Data with special characters
 	type Message struct {
 		Text string `json:"text"`
@@ -296,6 +298,9 @@ func demonstrateCustomEscaping() {
 }
 
 func demonstrateUnicodeEscaping() {
+	fmt.Println("\n7️⃣  Unicode Escaping")
+	fmt.Println("─────────────────────")
+
 	// Data with Unicode characters
 	type Greeting struct {
 		Emoji   string `json:"emoji"`
@@ -331,6 +336,9 @@ func demonstrateUnicodeEscaping() {
 }
 
 func demonstrateEncodeMethods() {
+	fmt.Println("\n8️⃣  Convenience Encode Methods")
+	fmt.Println("────────────────────────────────")
+
 	type Product struct {
 		ID    int     `json:"id"`
 		Name  string  `json:"name"`

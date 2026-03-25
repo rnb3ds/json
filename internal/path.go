@@ -138,6 +138,7 @@ const (
 	RecursiveSegment
 	FilterSegment
 	ExtractSegment // For extract operations
+	AppendSegment  // For append operations [+] syntax
 )
 
 // String returns the string representation of PathSegmentType
@@ -157,6 +158,8 @@ func (pst PathSegmentType) String() string {
 		return "filter"
 	case ExtractSegment:
 		return "extract"
+	case AppendSegment:
+		return "append"
 	default:
 		return "unknown"
 	}
@@ -547,8 +550,15 @@ func parseComplexSegment(part string) ([]PathSegment, error) {
 	return segments, nil
 }
 
-// parseArrayAccess parses array access patterns like "0", "-1", "1:3", "::2"
+// parseArrayAccess parses array access patterns like "0", "-1", "1:3", "::2", "+"
 func parseArrayAccess(arrayPart string) (PathSegment, error) {
+	// Check for append syntax [+] - append to array
+	if arrayPart == "+" {
+		return PathSegment{
+			Type: AppendSegment,
+		}, nil
+	}
+
 	// Check for slice notation using direct byte scan (no allocation)
 	hasColon := false
 	for i := 0; i < len(arrayPart); i++ {

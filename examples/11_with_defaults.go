@@ -49,24 +49,21 @@ func main() {
 	}`
 
 	// 1. GETDEFAULT[T] - RECOMMENDED
-	fmt.Println("1. GetDefault[T] (Recommended)")
-	fmt.Println("-----------------------------")
 	demonstrateGetDefault(partialData, completeData)
 
 	// 2. GETWITHDEFAULT
-	fmt.Println("\n2. GetWithDefault (any type)")
-	fmt.Println("----------------------------")
 	demonstrateGetWithDefault(partialData, completeData)
 
 	// 3. PRACTICAL USE CASES
-	fmt.Println("\n3. Practical Use Cases")
-	fmt.Println("-----------------------")
 	demonstratePracticalCases()
 
 	fmt.Println("\nWith defaults examples complete!")
 }
 
 func demonstrateGetDefault(partialData, completeData string) {
+	fmt.Println("1. GetDefault[T] (Recommended)")
+	fmt.Println("-----------------------------")
+
 	// String with default - RECOMMENDED approach
 	email := json.GetDefault(partialData, "user.email", "no-email@example.com")
 	fmt.Printf("   user.email: %s\n", email)
@@ -95,6 +92,9 @@ func demonstrateGetDefault(partialData, completeData string) {
 }
 
 func demonstrateGetWithDefault(partialData, completeData string) {
+	fmt.Println("\n2. GetWithDefault (any type)")
+	fmt.Println("----------------------------")
+
 	// Missing field with default
 	missingPath := "user.age"
 	defaultAge := 18
@@ -123,6 +123,9 @@ func demonstrateGetWithDefault(partialData, completeData string) {
 }
 
 func demonstratePracticalCases() {
+	fmt.Println("\n3. Practical Use Cases")
+	fmt.Println("-----------------------")
+
 	// Use case 1: Configuration with sensible defaults
 	configJSON := `{
 		"server": {

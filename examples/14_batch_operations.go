@@ -30,34 +30,27 @@ func main() {
 	fmt.Println("================================\n ")
 
 	// 1. PROCESSBATCH FOR MIXED OPERATIONS
-	fmt.Println("1. ProcessBatch for Mixed Operations")
-	fmt.Println("-------------------------------------")
 	demonstrateProcessBatch()
 
 	// 2. CACHE WARMUP
-	fmt.Println("\n2. Cache Warmup")
-	fmt.Println("----------------")
 	demonstrateCacheWarmup()
 
 	// 3. BULK PROCESSOR
-	fmt.Println("\n3. Bulk Processor")
-	fmt.Println("------------------")
 	demonstrateBulkProcessor()
 
 	// 4. ENCODE STREAM/BATCH/FIELDS
-	fmt.Println("\n4. Encode Stream/Batch/Fields")
-	fmt.Println("------------------------------")
 	demonstrateEncodeFunctions()
 
 	// 5. PERFORMANCE COMPARISON
-	fmt.Println("\n5. Performance Comparison")
-	fmt.Println("--------------------------")
 	demonstrateBatchPerformance()
 
 	fmt.Println("\nBatch operations examples complete!")
 }
 
 func demonstrateProcessBatch() {
+	fmt.Println("1. ProcessBatch for Mixed Operations")
+	fmt.Println("-------------------------------------")
+
 	jsonStr := `{
 		"user": {
 			"name": "Alice",
@@ -71,14 +64,14 @@ func demonstrateProcessBatch() {
 		"version": 1
 	}`
 
-	// Define batch operations
+	// Define batch operations with JSONStr for each operation
 	operations := []json.BatchOperation{
-		{Type: "get", Path: "user.name", ID: "op1"},
-		{Type: "get", Path: "user.age", ID: "op2"},
-		{Type: "get", Path: "settings.theme", ID: "op3"},
-		{Type: "set", Path: "user.age", Value: 31, ID: "op4"},
-		{Type: "get", Path: "user.age", ID: "op5"},
-		{Type: "get", Path: "nonexistent", ID: "op6"},
+		{Type: "get", JSONStr: jsonStr, Path: "user.name", ID: "op1"},
+		{Type: "get", JSONStr: jsonStr, Path: "user.age", ID: "op2"},
+		{Type: "get", JSONStr: jsonStr, Path: "settings.theme", ID: "op3"},
+		{Type: "set", JSONStr: jsonStr, Path: "user.age", Value: 31, ID: "op4"},
+		{Type: "get", JSONStr: jsonStr, Path: "user.age", ID: "op5"},
+		{Type: "get", JSONStr: jsonStr, Path: "nonexistent", ID: "op6"},
 	}
 
 	// Execute batch
@@ -120,6 +113,9 @@ func demonstrateProcessBatch() {
 }
 
 func demonstrateCacheWarmup() {
+	fmt.Println("\n2. Cache Warmup")
+	fmt.Println("----------------")
+
 	jsonStr := `{
 		"users": [
 			{"id": 1, "name": "Alice", "active": true},
@@ -175,6 +171,9 @@ func demonstrateCacheWarmup() {
 }
 
 func demonstrateBulkProcessor() {
+	fmt.Println("\n3. Bulk Processor")
+	fmt.Println("------------------")
+
 	processor := json.New(json.DefaultConfig())
 	defer processor.Close()
 
@@ -215,6 +214,9 @@ func demonstrateBulkProcessor() {
 }
 
 func demonstrateEncodeFunctions() {
+	fmt.Println("\n4. Encode Stream/Batch/Fields")
+	fmt.Println("------------------------------")
+
 	// EncodeStream - encode a slice as JSON array
 	users := []map[string]any{
 		{"id": 1, "name": "Alice"},
@@ -277,6 +279,9 @@ func demonstrateEncodeFunctions() {
 }
 
 func demonstrateBatchPerformance() {
+	fmt.Println("\n5. Performance Comparison")
+	fmt.Println("--------------------------")
+
 	jsonStr := `{
 		"user": {
 			"id": 1001,

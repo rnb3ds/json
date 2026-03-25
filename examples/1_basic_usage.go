@@ -148,6 +148,12 @@ func demonstrateSet(data string) {
 	updated4, _ := json.Set(data, "user.tags[0]", "VIP")
 	firstTag, _ := json.GetString(updated4, "user.tags[0]")
 	fmt.Printf("   Updated first tag: %s\n", firstTag)
+
+	// Append array element
+	updated5, _ := json.Set(data, "user.tags[+]", "Testers")
+	lastTag, _ := json.GetString(updated5, "user.tags[-1]")
+	fmt.Printf("   Append tag: %s\n", lastTag)
+
 }
 
 func demonstrateArrays(data string) {

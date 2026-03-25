@@ -1033,6 +1033,11 @@ func (p *Processor) setValueAdvancedPath(data any, path string, value any, creat
 		return p.setValueJSONPointer(data, path, value)
 	}
 
+	// Check for append syntax [+] - this takes priority
+	if strings.Contains(path, "[+]") {
+		return p.setValueDotNotationWithCreation(data, path, value, createPaths)
+	}
+
 	// Check if this is a simple array index access that might need extension
 	if createPaths && p.isSimpleArrayIndexPath(path) {
 		// Use dot notation handler for simple array index access with extension support
@@ -1142,6 +1147,12 @@ func (p *Processor) setValueWithSegments(data any, segments []PathSegment, value
 		return fmt.Errorf("no segments provided")
 	}
 
+	// Check if the last segment is an append operation
+	finalSegment := segments[len(segments)-1]
+	if finalSegment.TypeString() == "append" {
+		return p.handleAppendOperation(data, segments, value, createPaths)
+	}
+
 	// Navigate to the parent of the target
 	current := data
 	for i := 0; i < len(segments)-1; i++ {
@@ -1151,9 +1162,6 @@ func (p *Processor) setValueWithSegments(data any, segments []PathSegment, value
 		}
 		current = next
 	}
-
-	// Set the value for the final segment
-	finalSegment := segments[len(segments)-1]
 
 	// Special handling for array index or slice access that might need extension
 	if createPaths && (finalSegment.TypeString() == "array" || finalSegment.TypeString() == "slice") {
@@ -1169,6 +1177,89 @@ func (p *Processor) setValueWithSegments(data any, segments []PathSegment, value
 	}
 
 	return err
+}
+
+// handleAppendOperation handles the [+] append syntax
+// It navigates to the parent container and appends the value to the array
+func (p *Processor) handleAppendOperation(data any, segments []PathSegment, value any, createPaths bool) error {
+	if len(segments) < 2 {
+		return fmt.Errorf("append operation requires a parent path before [+]")
+	}
+
+	// Navigate to the parent container (everything before [+])
+	current := data
+	for i := 0; i < len(segments)-1; i++ {
+		next, err := p.navigateToSegment(current, segments[i], createPaths, segments, i)
+		if err != nil {
+			return err
+		}
+		current = next
+	}
+
+	// Now current should be the array we want to append to
+	arr, ok := current.([]any)
+	if !ok {
+		return fmt.Errorf("cannot append to non-array type %T", current)
+	}
+
+	// Get the parent container to update the array reference
+	// Navigate to parent of the array
+	parent := data
+	parentSegments := segments[:len(segments)-1]
+	if len(parentSegments) == 0 {
+		return fmt.Errorf("cannot determine parent container for append operation")
+	}
+
+	// Navigate to the parent of the array
+	for i := 0; i < len(parentSegments)-1; i++ {
+		next, err := p.navigateToSegment(parent, parentSegments[i], createPaths, parentSegments, i)
+		if err != nil {
+			return err
+		}
+		parent = next
+	}
+
+	// Get the last segment that identifies the array in its parent
+	arraySegment := parentSegments[len(parentSegments)-1]
+
+	// Perform the append and update the parent container
+	return p.appendAndSetParent(parent, arraySegment, arr, value)
+}
+
+// appendAndSetParent appends value to arr and updates the parent container
+func (p *Processor) appendAndSetParent(parent any, arraySegment PathSegment, arr []any, value any) error {
+	// Append the value(s) to the array
+	switch v := value.(type) {
+	case []any:
+		// Expand slice and append all elements
+		arr = append(arr, v...)
+	default:
+		// Append single value
+		arr = append(arr, v)
+	}
+
+	// Now set the updated array back to the parent
+	switch p := parent.(type) {
+	case map[string]any:
+		p[arraySegment.Key] = arr
+		return nil
+	case map[any]any:
+		p[arraySegment.Key] = arr
+		return nil
+	case []any:
+		// Parent is an array, so arraySegment should be an index
+		if arraySegment.Type == internal.ArrayIndexSegment {
+			idx := arraySegment.Index
+			if idx >= 0 && idx < len(p) {
+				p[idx] = arr
+				return nil
+			}
+			return fmt.Errorf("array index %d out of bounds for append operation", idx)
+		}
+		return fmt.Errorf("invalid segment type for array parent in append operation")
+	default:
+		return fmt.Errorf("cannot update array in parent type %T", parent)
+	}
 }
 
 func (p *Processor) setValueDotNotationWithCreation(data any, path string, value any, createPaths bool) error {

@@ -33,39 +33,30 @@ func main() {
 	fmt.Println("=============================================\n ")
 
 	// 1. STREAMING PROCESSOR BASICS
-	fmt.Println("1. Streaming Processor Basics")
-	fmt.Println("------------------------------")
 	demonstrateStreamingProcessor()
 
 	// 2. STREAMING TRANSFORMATIONS
-	fmt.Println("\n2. Streaming Transformations")
-	fmt.Println("-----------------------------")
 	demonstrateStreamingTransformations()
 
 	// 3. CHUNKED PROCESSING
-	fmt.Println("\n3. Chunked Processing")
-	fmt.Println("----------------------")
 	demonstrateChunkedProcessing()
 
 	// 4. NDJSON PROCESSING
-	fmt.Println("\n4. NDJSON Processing")
-	fmt.Println("--------------------")
 	demonstrateNDJSON()
 
 	// 5. LAZY JSON
-	fmt.Println("\n5. Lazy JSON (Deferred Parsing)")
-	fmt.Println("--------------------------------")
 	demonstrateLazyJSON()
 
 	// 6. LARGE FILE PROCESSING
-	fmt.Println("\n6. Large File Processing")
-	fmt.Println("------------------------")
 	demonstrateLargeFileProcessing()
 
 	fmt.Println("\nStreaming & NDJSON processing examples complete!")
 }
 
 func demonstrateStreamingProcessor() {
+	fmt.Println("1. Streaming Processor Basics")
+	fmt.Println("------------------------------")
+
 	// Large JSON array - simulating a large data stream
 	largeArray := `[
 		{"id": 1, "name": "Alice", "active": true},
@@ -100,6 +91,9 @@ func demonstrateStreamingProcessor() {
 }
 
 func demonstrateStreamingTransformations() {
+	fmt.Println("\n2. Streaming Transformations")
+	fmt.Println("-----------------------------")
+
 	data := `[
 		{"name": "Alice", "score": 85},
 		{"name": "Bob", "score": 92},
@@ -205,6 +199,9 @@ func demonstrateStreamingTransformations() {
 }
 
 func demonstrateChunkedProcessing() {
+	fmt.Println("\n3. Chunked Processing")
+	fmt.Println("----------------------")
+
 	data := `[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]`
 
 	reader := strings.NewReader(data)
@@ -239,6 +236,9 @@ func demonstrateChunkedProcessing() {
 }
 
 func demonstrateNDJSON() {
+	fmt.Println("\n4. NDJSON Processing")
+	fmt.Println("--------------------")
+
 	// Create a temporary NDJSON file
 	tempDir, err := os.MkdirTemp("", "json-ndjson-*")
 	if err != nil {
@@ -302,6 +302,9 @@ func demonstrateNDJSON() {
 }
 
 func demonstrateLazyJSON() {
+	fmt.Println("\n5. Lazy JSON (Deferred Parsing)")
+	fmt.Println("--------------------------------")
+
 	// LazyJSON defers parsing until a value is accessed
 	rawJSON := []byte(`{"user": {"name": "Alice", "age": 30}, "active": true}`)
 
@@ -339,6 +342,9 @@ func demonstrateLazyJSON() {
 }
 
 func demonstrateLargeFileProcessing() {
+	fmt.Println("\n6. Large File Processing")
+	fmt.Println("------------------------")
+
 	// Create a temporary large JSON file
 	tempDir, err := os.MkdirTemp("", "json-large-*")
 	if err != nil {

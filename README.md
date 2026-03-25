@@ -1,4 +1,4 @@
-# 🚀 cybergodev/json - High-Performance Go JSON Processing Library
+# 🚀 cybergodev/json - High-Performance Go JSON Library
 
 [![Go Version](https://img.shields.io/badge/Go-1.24+-blue.svg)](https://golang.org)
 [![pkg.go.dev](https://pkg.go.dev/badge/github.com/cybergodev/json.svg)](https://pkg.go.dev/github.com/cybergodev/json)
@@ -6,21 +6,21 @@
 [![Performance](https://img.shields.io/badge/performance-high%20performance-green.svg)](https://github.com/cybergodev/json)
 [![Thread Safe](https://img.shields.io/badge/thread%20safe-yes-brightgreen.svg)](https://github.com/cybergodev/json)
 
-> A high-performance, feature-rich Go JSON processing library with 100% `encoding/json` compatibility, providing powerful path operations, type safety, and production-ready performance.
+> A high-performance, feature-rich Go JSON library with 100% `encoding/json` compatibility, providing powerful path operations, type safety, and production-grade performance.
 
 **[📖 中文文档](README_zh-CN.md)**
 
 ---
 
-## 🏆 Why cybergodev/json?
+## 🏆 Features
 
 | Feature | Description |
 |---------|-------------|
-| 🔄 **100% Compatible** | Drop-in replacement for `encoding/json` - zero learning curve |
-| 🎯 **Powerful Paths** | JSONPath-like syntax for complex data extraction in one line |
-| 🚀 **High Performance** | Smart caching, memory optimization, concurrent safety |
+| 🔄 **100% Compatible** | Drop-in replacement for `encoding/json` with zero learning curve |
+| 🎯 **Powerful Paths** | Concise path syntax like `users[0].name` for easy nested data access |
+| 🚀 **High Performance** | Smart caching, memory optimization, thread-safe |
 | 🛡️ **Type Safe** | Generics support with compile-time type checking |
-| 🔧 **Feature Rich** | Batch operations, streaming, file handling, validation |
+| 🔧 **Feature Rich** | Batch operations, streaming, file operations, data validation |
 | 🏗️ **Production Ready** | Thread-safe, comprehensive error handling, security features |
 
 ---
@@ -61,7 +61,7 @@ func main() {
     age, _ := json.GetInt(data, "user.age")
     fmt.Println(age) // 28
 
-    // 3. Array access with negative index
+    // 3. Negative index array access
     lastTag, _ := json.Get(data, "user.tags[-1]")
     fmt.Println(lastTag) // "verified"
 
@@ -86,7 +86,8 @@ func main() {
 | `[n]` | Array index | `items[0]` |
 | `[-n]` | Negative index (from end) | `items[-1]` (last element) |
 | `[start:end]` | Array slice | `items[1:3]` (elements 1-2) |
-| `[start:end:step]` | Array slice with step | `items[::2]` (every 2nd element) |
+| `[start:end:step]` | Slice with step | `items[::2]` (every other element) |
+| `[+]` | Append to array | `items[+]` |
 | `{field}` | Extract field from all array elements | `users{name}` |
 | `{flat:field}` | Flatten nested arrays | `users{flat:tags}` |
 
@@ -97,21 +98,21 @@ func main() {
 ### Data Retrieval
 
 ```go
-// Basic retrieval
-json.Get(data, "user.name")           // any
-json.GetString(data, "user.name")     // string
-json.GetInt(data, "user.age")         // int
-json.GetFloat64(data, "user.score")   // float64
-json.GetBool(data, "user.active")     // bool
-json.GetArray(data, "user.tags")      // []any
-json.GetObject(data, "user.profile")  // map[string]any
+// Basic getters
+json.Get(data, "user.name")           // (any, error)
+json.GetString(data, "user.name")     // (string, error)
+json.GetInt(data, "user.age")         // (int, error)
+json.GetFloat64(data, "user.score")   // (float64, error)
+json.GetBool(data, "user.active")     // (bool, error)
+json.GetArray(data, "user.tags")      // ([]any, error)
+json.GetObject(data, "user.profile")  // (map[string]any, error)
 
 // Type-safe generic retrieval
 json.GetTyped[string](data, "user.name")
 json.GetTyped[[]int](data, "numbers")
 json.GetTyped[User](data, "user")     // Custom struct
 
-// With default values (recommended for missing fields)
+// With default values (recommended for optional fields)
 json.GetDefault(data, "user.name", "Anonymous")     // string
 json.GetDefault(data, "user.age", 0)                // int
 json.GetDefault(data, "user.score", 0.0)            // float64
@@ -127,7 +128,7 @@ results, err := json.GetMultiple(data, []string{"user.name", "user.age"})
 ### Data Modification
 
 ```go
-// Basic set - returns modified JSON on success, original on failure
+// Basic set - returns modified JSON on success, original data on failure
 result, err := json.Set(data, "user.name", "Bob")
 
 // Auto-create paths with config
@@ -135,12 +136,14 @@ cfg := json.DefaultConfig()
 cfg.CreatePaths = true
 result, err := json.Set(data, "user.profile.level", "gold", cfg)
 
+// Append to array
+result, _ := json.Set(data, "user.tags[+]", "new-tag")
+
 // Batch set
-updates := map[string]any{
+result, _ := json.SetMultiple(data, map[string]any{
     "user.name": "Bob",
     "user.age":  30,
-}
-result, err := json.SetMultiple(data, updates)
+})
 
 // Delete
 result, err := json.Delete(data, "user.temp")
@@ -155,24 +158,21 @@ err = json.Unmarshal(bytes, &target)
 bytes, err := json.MarshalIndent(data, "", "  ")
 
 // Quick formatting
-jsonStr, err := json.Encode(data, json.PrettyConfig())  // Pretty output
-pretty, err := json.FormatPretty(jsonStr)                // Format string
-compact, err := json.CompactString(jsonStr)              // Minify string
+pretty, _ := json.FormatPretty(jsonStr)    // Pretty print
+compact, _ := json.CompactString(jsonStr)  // Compact
 
 // Direct output
-json.Print(data)        // Print compact to stdout
-json.PrintPretty(data)  // Print pretty to stdout
+json.Print(data)        // Compact format to stdout
+json.PrintPretty(data)  // Pretty format to stdout
 
-// Encode with configuration
+// Encode with config
 cfg := json.DefaultConfig()
 cfg.Pretty = true
 cfg.SortKeys = true
 result, err := json.Encode(data, cfg)
 
-// Buffer operations (encoding/json compatible)
-json.Compact(dst, src)
-json.Indent(dst, src, prefix, indent)
-json.HTMLEscape(dst, src)
+// Preset configs
+result, _ := json.Encode(data, json.PrettyConfig())
 ```
 
 ### File Operations
@@ -209,10 +209,10 @@ copy, err := json.DeepCopy(data)
 
 ## 🔧 Configuration
 
-### Processor with Custom Config
+### Create Processor with Custom Config
 
 ```go
-// Create processor with configuration
+// Create processor with config
 cfg := &json.Config{
     EnableCache:      true,
     MaxCacheSize:     256,
@@ -220,8 +220,8 @@ cfg := &json.Config{
     MaxJSONSize:      100 * 1024 * 1024, // 100MB
     MaxConcurrency:   50,
     EnableValidation: true,
-    CreatePaths:      true,  // Auto-create paths in Set operations
-    CleanupNulls:     true,  // Remove null values after delete
+    CreatePaths:      true,  // Auto-create paths on Set
+    CleanupNulls:     true,  // Cleanup nulls after Delete
 }
 
 processor := json.New(cfg)
@@ -234,17 +234,12 @@ health := processor.GetHealthStatus()
 processor.ClearCache()
 ```
 
-### Configuration Presets
+### Preset Configurations
 
 ```go
-// Default configuration
-cfg := json.DefaultConfig()
-
-// Security-focused configuration (for untrusted input)
-cfg := json.SecurityConfig()
-
-// Pretty output configuration
-cfg := json.PrettyConfig()
+cfg := json.DefaultConfig()    // Balanced default config
+cfg := json.SecurityConfig()   // For untrusted input
+cfg := json.PrettyConfig()     // For pretty output
 ```
 
 ---
@@ -286,7 +281,7 @@ results, err := json.ProcessBatch(operations)
 // Stream array elements
 processor := json.NewStreamingProcessor(reader, 64*1024)
 err := processor.StreamArray(func(index int, item any) bool {
-    // Process each item
+    // Process each element
     return true // continue
 })
 
@@ -318,7 +313,7 @@ errors, err := json.ValidateSchema(jsonStr, schema)
 
 ## 🎯 Common Use Cases
 
-### API Response Processing
+### API Response Handling
 
 ```go
 apiResponse := `{
@@ -372,7 +367,7 @@ updated, _ := json.SetMultiple(config, map[string]any{
 // Package-level monitoring
 stats := json.GetStats()
 fmt.Printf("Operations: %d\n", stats.OperationCount)
-fmt.Printf("Cache hit ratio: %.2f%%\n", stats.HitRatio*100)
+fmt.Printf("Cache Hit Rate: %.2f%%\n", stats.HitRatio*100)
 
 health := json.GetHealthStatus()
 fmt.Printf("Healthy: %v\n", health.Healthy)
@@ -387,43 +382,7 @@ result, err := json.WarmupCache(jsonStr, paths)
 
 ---
 
-## 🛡️ Security Configuration
-
-```go
-// For processing untrusted JSON input
-secureConfig := json.SecurityConfig()
-// Features:
-// - Full security scan enabled
-// - Conservative size limits
-// - Strict mode validation
-// - Protection against prototype pollution
-
-processor := json.New(secureConfig)
-defer processor.Close()
-```
-
----
-
-## 📚 Examples & Resources
-
-### Example Files
-
-| File | Description |
-|------|-------------|
-| [1_basic_usage.go](examples/1_basic_usage.go) | Core operations getting started |
-| [2_advanced_features.go](examples/2_advanced_features.go) | Complex paths and file operations |
-| [3_production_ready.go](examples/3_production_ready.go) | Thread-safe patterns and monitoring |
-| [10_file_operations.go](examples/10_file_operations.go) | File I/O operations |
-| [11_with_defaults.go](examples/11_with_defaults.go) | Default value handling |
-
-### Documentation
-
-- **[API Reference](https://pkg.go.dev/github.com/cybergodev/json)** - Complete API documentation
-- **[Security Guide](docs/SECURITY.md)** - Security best practices
-
----
-
-## 🔄 Migration from encoding/json
+## Migrating from encoding/json
 
 Simply change the import:
 
@@ -435,7 +394,7 @@ import "encoding/json"
 import "github.com/cybergodev/json"
 ```
 
-All standard functions work identically:
+All standard functions are fully compatible:
 - `json.Marshal()` / `json.Unmarshal()`
 - `json.MarshalIndent()`
 - `json.Valid()`
@@ -443,9 +402,52 @@ All standard functions work identically:
 
 ---
 
+## 🛡️ Security Configuration
+
+```go
+// For handling untrusted JSON input
+secureConfig := json.SecurityConfig()
+// Features:
+// - Full security scanning enabled
+// - Conservative size limits
+// - Strict mode validation
+// - Prototype pollution protection
+
+processor := json.New(secureConfig)
+defer processor.Close()
+```
+
+---
+
+## Example Code
+
+| File | Description |
+|------|-------------|
+| [1_basic_usage.go](examples/1_basic_usage.go) | Core operations |
+| [2_advanced_features.go](examples/2_advanced_features.go) | Complex paths, file I/O |
+| [3_production_ready.go](examples/3_production_ready.go) | Thread-safe patterns |
+| [4_error_handling.go](examples/4_error_handling.go) | Error handling patterns |
+| [5_encoding_options.go](examples/5_encoding_options.go) | Encoding configuration |
+| [10_file_operations.go](examples/10_file_operations.go) | File I/O operations |
+| [11_with_defaults.go](examples/11_with_defaults.go) | Default value handling |
+| [12_advanced_delete.go](examples/12_advanced_delete.go) | Advanced delete operations |
+| [13_streaming_ndjson.go](examples/13_streaming_ndjson.go) | Streaming & JSONL |
+| [14_batch_operations.go](examples/14_batch_operations.go) | Batch operations |
+| [15_array_append.go](examples/15_array_append.go) | Array append `[+]` |
+
+---
+
+## Documentation
+
+- **[API Reference](docs/API_REFERENCE.md)** - Complete API documentation
+- **[Security Guide](docs/SECURITY.md)** - Security best practices
+- **[pkg.go.dev](https://pkg.go.dev/github.com/cybergodev/json)** - GoDoc
+
+---
+
 ## 📄 License
 
-MIT License - see [LICENSE](LICENSE) file for details.
+MIT License - See [LICENSE](LICENSE) file for details.
 
 ---
 

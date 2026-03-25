@@ -29,29 +29,24 @@ func main() {
 	fmt.Println("================================\n ")
 
 	// 1. JSON COMPARISON
-	fmt.Println("1. JSON Comparison (CompareJson)")
-	fmt.Println("--------------------------------")
 	demonstrateComparison()
 
 	// 2. JSON MERGE
-	fmt.Println("\n2. JSON Merge (MergeJson)")
-	fmt.Println("--------------------------")
 	demonstrateMerge()
 
 	// 3. FORMATTING
-	fmt.Println("\n3. Formatting (FormatPretty/CompactString)")
-	fmt.Println("-------------------------------------------")
 	demonstrateFormatting()
 
 	// 4. QUICK PRINT
-	fmt.Println("\n4. Quick Print Functions")
-	fmt.Println("------------------------")
 	demonstratePrint()
 
 	fmt.Println("\nHelper functions examples complete!")
 }
 
 func demonstrateComparison() {
+	fmt.Println("1. JSON Comparison (CompareJson)")
+	fmt.Println("--------------------------------")
+
 	testCases := []struct {
 		name  string
 		json1 string
@@ -113,6 +108,9 @@ func demonstrateComparison() {
 }
 
 func demonstrateMerge() {
+	fmt.Println("\n2. JSON Merge (MergeJson)")
+	fmt.Println("--------------------------")
+
 	// Base configuration
 	baseConfig := `{
 		"database": {
@@ -170,6 +168,9 @@ func demonstrateMerge() {
 }
 
 func demonstrateFormatting() {
+	fmt.Println("\n3. Formatting (FormatPretty/CompactString)")
+	fmt.Println("-------------------------------------------")
+
 	compactJSON := `{"name":"John","age":30,"address":{"city":"NYC","zip":"10001"},"active":true}`
 
 	fmt.Println("   Format formatting:")
@@ -200,6 +201,9 @@ func demonstrateFormatting() {
 }
 
 func demonstratePrint() {
+	fmt.Println("\n4. Quick Print Functions")
+	fmt.Println("------------------------")
+
 	data := map[string]any{
 		"user":    "Alice",
 		"age":     30,

@@ -38,34 +38,27 @@ func main() {
 	fmt.Printf("Using temp directory: %s\n\n", tempDir)
 
 	// 1. SAVE TO FILE
-	fmt.Println("1️⃣  Save to File")
-	fmt.Println("─────────────────")
 	demonstrateSaveToFile(tempDir)
 
 	// 2. LOAD FROM FILE
-	fmt.Println("\n2️⃣  Load from File")
-	fmt.Println("───────────────────")
 	demonstrateLoadFromFile(tempDir)
 
 	// 3. MARSHAL TO FILE
-	fmt.Println("\n3️⃣  Marshal to File")
-	fmt.Println("────────────────────")
 	demonstrateMarshalToFile(tempDir)
 
 	// 4. UNMARSHAL FROM FILE
-	fmt.Println("\n4️⃣  Unmarshal from File")
-	fmt.Println("───────────────────────")
 	demonstrateUnmarshalFromFile(tempDir)
 
 	// 5. READ-MODIFY-WRITE
-	fmt.Println("\n5️⃣  Read-Modify-Write Pattern")
-	fmt.Println("────────────────────────────")
 	demonstrateReadModifyWrite(tempDir)
 
 	fmt.Println("\n✅ File operations examples complete!")
 }
 
 func demonstrateSaveToFile(tempDir string) {
+	fmt.Println("1️⃣  Save to File")
+	fmt.Println("─────────────────")
+
 	// Sample data
 	config := map[string]interface{}{
 		"version": "1.0.0",
@@ -107,6 +100,9 @@ func demonstrateSaveToFile(tempDir string) {
 }
 
 func demonstrateLoadFromFile(tempDir string) {
+	fmt.Println("\n2️⃣  Load from File")
+	fmt.Println("───────────────────")
+
 	// First create a file
 	data := `{
 		"user": "Alice",
@@ -133,6 +129,9 @@ func demonstrateLoadFromFile(tempDir string) {
 }
 
 func demonstrateMarshalToFile(tempDir string) {
+	fmt.Println("\n3️⃣  Marshal to File")
+	fmt.Println("────────────────────")
+
 	type User struct {
 		ID     int      `json:"id"`
 		Name   string   `json:"name"`
@@ -167,6 +166,9 @@ func demonstrateMarshalToFile(tempDir string) {
 }
 
 func demonstrateUnmarshalFromFile(tempDir string) {
+	fmt.Println("\n4️⃣  Unmarshal from File")
+	fmt.Println("───────────────────────")
+
 	// First create a file with JSON data
 	data := `{
 		"id": 2,
@@ -205,6 +207,9 @@ func demonstrateUnmarshalFromFile(tempDir string) {
 }
 
 func demonstrateReadModifyWrite(tempDir string) {
+	fmt.Println("\n5️⃣  Read-Modify-Write Pattern")
+	fmt.Println("────────────────────────────")
+
 	// Create initial config file
 	initialConfig := `{
 		"version": "1.0.0",

@@ -217,15 +217,22 @@ func ParseArraySegment(part string, segments []PathSegment) []PathSegment {
 			Flags: flags,
 		})
 	} else {
-		segment := PathSegment{
-			Type: ArrayIndexSegment,
-		}
+		// Check for append syntax [+]
+		if bracketContent == "+" {
+			segments = append(segments, PathSegment{
+				Type: AppendSegment,
+			})
+		} else {
+			segment := PathSegment{
+				Type: ArrayIndexSegment,
+			}
 
-		if index, err := strconv.Atoi(bracketContent); err == nil {
-			segment.Index = index
-		}
+			if index, err := strconv.Atoi(bracketContent); err == nil {
+				segment.Index = index
+			}
 
-		segments = append(segments, segment)
+			segments = append(segments, segment)
+		}
 	}
 
 	if closeBracket+1 < len(part) {

@@ -174,10 +174,7 @@ func demonstrateDeepModifications(data string) {
 		"skills": []string{"Rust", "WebAssembly"},
 	}
 
-	// Get current members and append
-	members, _ := json.GetArray(data, "departments[0].teams[0].members")
-	members = append(members, newMember)
-	updated2, _ := json.Set(data, "departments[0].teams[0].members", members)
+	updated2, _ := json.Set(data, "departments[0].teams[0].members[+]", newMember)
 
 	// Verify addition
 	allMembers, _ := json.Get(updated2, "departments[0].teams[0].members{name}")

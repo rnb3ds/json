@@ -277,6 +277,40 @@ result, err := json.Set(data, "new.nested.path", "value", cfg)
 
 ---
 
+### Array Append with [+]
+
+The `[+]` syntax allows appending values to arrays in a single operation:
+
+```go
+// Append single value to array
+result, err := json.Set(data, "items[+]", "new-item")
+
+// Append object to nested array
+newMember := map[string]any{
+    "name": "Charlie",
+    "role": "Developer",
+}
+result, err := json.Set(data, "departments[0].teams[0].members[+]", newMember)
+
+// Append multiple values (slice expansion)
+moreItems := []any{4, 5, 6}
+result, err := json.Set(data, "numbers[+]", moreItems)
+// Result: numbers becomes [1, 2, 3, 4, 5, 6]
+```
+
+**Comparison with old approach:**
+```go
+// OLD WAY: 3 operations
+members, _ := json.GetArray(data, "users")           // Step 1: Get
+members = append(members, newUser)                   // Step 2: Append
+result, _ := json.Set(data, "users", members)        // Step 3: Set back
+
+// NEW WAY: 1 operation
+result, _ := json.Set(data, "users[+]", newUser)     // Single operation!
+```
+
+---
+
 ### SetMultiple
 
 ```go

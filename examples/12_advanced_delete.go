@@ -27,39 +27,30 @@ func main() {
 	fmt.Println("=========================================\n ")
 
 	// 1. BASIC DELETE
-	fmt.Println("1. Basic Delete Operations")
-	fmt.Println("--------------------------")
 	demonstrateBasicDelete()
 
 	// 2. ARRAY DELETION
-	fmt.Println("\n2. Array Element Deletion")
-	fmt.Println("-------------------------")
 	demonstrateArrayDelete()
 
 	// 3. DELETE WITH CLEANUP
-	fmt.Println("\n3. Delete with Cleanup (Config{CleanupNulls: true})")
-	fmt.Println("---------------------------------------------------")
 	demonstrateDeleteWithCleanup()
 
 	// 4. NESTED DELETION
-	fmt.Println("\n4. Nested Path Deletion")
-	fmt.Println("-----------------------")
 	demonstrateNestedDelete()
 
 	// 5. BATCH DELETION
-	fmt.Println("\n5. Batch Deletion")
-	fmt.Println("-----------------")
 	demonstrateBatchDelete()
 
 	// 6. PRACTICAL USE CASES
-	fmt.Println("\n6. Practical Use Cases")
-	fmt.Println("----------------------")
 	demonstratePracticalUseCases()
 
 	fmt.Println("\nAdvanced delete operations complete!")
 }
 
 func demonstrateBasicDelete() {
+	fmt.Println("1. Basic Delete Operations")
+	fmt.Println("--------------------------")
+
 	data := `{
 		"user": {
 			"name": "Alice",
@@ -93,6 +84,9 @@ func demonstrateBasicDelete() {
 }
 
 func demonstrateArrayDelete() {
+	fmt.Println("\n2. Array Element Deletion")
+	fmt.Println("-------------------------")
+
 	data := `{
 		"items": ["apple", "banana", "cherry", "date", "elderberry"],
 		"numbers": [10, 20, 30, 40, 50]
@@ -118,6 +112,9 @@ func demonstrateArrayDelete() {
 }
 
 func demonstrateDeleteWithCleanup() {
+	fmt.Println("\n3. Delete with Cleanup (Config{CleanupNulls: true})")
+	fmt.Println("---------------------------------------------------")
+
 	data := `{
 		"user": {
 			"name": "Bob",
@@ -174,6 +171,9 @@ func demonstrateDeleteWithCleanup() {
 }
 
 func demonstrateNestedDelete() {
+	fmt.Println("\n4. Nested Path Deletion")
+	fmt.Println("-----------------------")
+
 	data := `{
 		"config": {
 			"database": {
@@ -211,6 +211,9 @@ func demonstrateNestedDelete() {
 }
 
 func demonstrateBatchDelete() {
+	fmt.Println("\n5. Batch Deletion")
+	fmt.Println("-----------------")
+
 	data := `{
 		"user": {
 			"id": 1,
@@ -253,6 +256,9 @@ func demonstrateBatchDelete() {
 }
 
 func demonstratePracticalUseCases() {
+	fmt.Println("\n6. Practical Use Cases")
+	fmt.Println("----------------------")
+
 	// Cleanup config for reuse
 	cleanupCfg := json.DefaultConfig()
 	cleanupCfg.CleanupNulls = true
