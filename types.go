@@ -149,22 +149,9 @@ type Stats struct {
 	ErrorCount       int64         `json:"error_count"`
 }
 
-// DetailedStats provides comprehensive processor statistics for internal debugging.
-// Note: Some internal fields are excluded from JSON serialization (json:"-") because:
-// - state: Represents internal processor lifecycle state (not meaningful externally)
-// - configSnapshot: Contains potentially sensitive configuration data
-// - resourcePoolStats: Internal implementation details subject to change
+// DetailedStats provides comprehensive processor statistics for debugging
 type DetailedStats struct {
-	Stats             Stats             `json:"stats"`
-	state             int32             `json:"-"` // Internal: Processor state (0=active, 1=closing, 2=closed)
-	configSnapshot    Config            `json:"-"` // Internal: config snapshot for debugging
-	resourcePoolStats ResourcePoolStats `json:"-"` // Internal: resource pool statistics
-}
-
-// ResourcePoolStats provides statistics about resource pools
-type ResourcePoolStats struct {
-	StringBuilderPoolActive bool `json:"string_builder_pool_active"` // Whether string builder pool is active
-	PathSegmentPoolActive   bool `json:"path_segment_pool_active"`   // Whether path segment pool is active
+	Stats Stats `json:"stats"`
 }
 
 // CacheStats provides comprehensive cache statistics
@@ -187,24 +174,21 @@ type ShardStats struct {
 
 // ProcessorMetrics provides comprehensive processor performance metrics
 type ProcessorMetrics struct {
-	TotalOperations       int64            `json:"total_operations"`
-	SuccessfulOperations  int64            `json:"successful_operations"`
-	FailedOperations      int64            `json:"failed_operations"`
-	SuccessRate           float64          `json:"success_rate"`
-	CacheHits             int64            `json:"cache_hits"`
-	CacheMisses           int64            `json:"cache_misses"`
-	CacheHitRate          float64          `json:"cache_hit_rate"`
-	AverageProcessingTime time.Duration    `json:"average_processing_time"`
-	MaxProcessingTime     time.Duration    `json:"max_processing_time"`
-	MinProcessingTime     time.Duration    `json:"min_processing_time"`
-	TotalMemoryAllocated  int64            `json:"total_memory_allocated"`
-	PeakMemoryUsage       int64            `json:"peak_memory_usage"`
-	CurrentMemoryUsage    int64            `json:"current_memory_usage"`
-	ActiveConcurrentOps   int64            `json:"active_concurrent_ops"`
-	MaxConcurrentOps      int64            `json:"max_concurrent_ops"`
-	runtimeMemStats       runtime.MemStats `json:"-"`
-	uptime                time.Duration    `json:"-"`
-	errorsByType          map[string]int64 `json:"-"`
+	TotalOperations       int64         `json:"total_operations"`
+	SuccessfulOperations  int64         `json:"successful_operations"`
+	FailedOperations      int64         `json:"failed_operations"`
+	SuccessRate           float64       `json:"success_rate"`
+	CacheHits             int64         `json:"cache_hits"`
+	CacheMisses           int64         `json:"cache_misses"`
+	CacheHitRate          float64       `json:"cache_hit_rate"`
+	AverageProcessingTime time.Duration `json:"average_processing_time"`
+	MaxProcessingTime     time.Duration `json:"max_processing_time"`
+	MinProcessingTime     time.Duration `json:"min_processing_time"`
+	TotalMemoryAllocated  int64         `json:"total_memory_allocated"`
+	PeakMemoryUsage       int64         `json:"peak_memory_usage"`
+	CurrentMemoryUsage    int64         `json:"current_memory_usage"`
+	ActiveConcurrentOps   int64         `json:"active_concurrent_ops"`
+	MaxConcurrentOps      int64         `json:"max_concurrent_ops"`
 }
 
 // HealthStatus represents the health status of the processor

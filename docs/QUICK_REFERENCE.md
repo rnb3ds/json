@@ -196,14 +196,17 @@ json.ForeachWithPathAndControl(data, "users", func(key any, value any) json.Iter
 })
 ```
 
-### Iteration with Path Information
+### Iteration with Path Tracking
 
 ```go
-// Iterate with detailed path tracking
-json.ForeachWithPathAndIterator(data, "data.users", func(key any, item *json.IterableValue, currentPath string) json.IteratorControl {
+// Manual path tracking during iteration
+// Note: ForeachWithPathAndIterator is not available; use manual tracking instead
+basePath := "data.users"
+json.ForeachWithPath(data, basePath, func(key any, item *json.IterableValue) {
+    // Build current path manually
+    currentPath := fmt.Sprintf("%s[%v]", basePath, key)
     name := item.GetString("name")
     fmt.Printf("User at %s: %s\n", currentPath, name)
-    return json.IteratorContinue
 })
 ```
 
@@ -226,8 +229,9 @@ err := processor.StreamArray(func(index int, item any) bool {
 | `ForeachNested(data, callback)` | Recursive iteration | All nested levels |
 | `ForeachWithPath(data, path, callback)` | Path-specific iteration | Specific JSON subset |
 | `ForeachWithPathAndControl(data, path, callback)` | With flow control | Early termination |
-| `ForeachWithPathAndIterator(data, path, callback)` | With path info | Path tracking |
-| `ForeachReturn(data, callback)` | Modify and return | Data transformation |
+| `ForeachReturn(data, callback)` | Read-only, returns original JSON | Iteration with error handling |
+
+**Note:** ForeachReturn is read-only - it returns the original JSON string unchanged. Use `json.Set()` for modifications.
 
 ---
 
@@ -506,7 +510,7 @@ if err != nil {
 - ✅ Use default values for potentially missing fields
 - ✅ Enable validation in production (enabled by default)
 - ✅ Use defer processor.Close() to release resources
-- ✅ Use HighSecurityConfig() for untrusted input
+- ✅ Use SecurityConfig() for untrusted input
 
 ### Common Pitfalls
 - ⚠️ Note the difference between null and missing fields

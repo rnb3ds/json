@@ -72,34 +72,27 @@ func main() {
 	}`
 
 	// 1. COMPLEX PATH QUERIES
-	fmt.Println("1. Complex Path Queries")
-	fmt.Println("-----------------------")
 	demonstrateComplexPaths(complexData)
 
 	// 2. NESTED EXTRACTION
-	fmt.Println("\n2. Nested Extraction")
-	fmt.Println("--------------------")
 	demonstrateExtraction(complexData)
 
 	// 3. FLAT EXTRACTION
-	fmt.Println("\n3. Flat Extraction")
-	fmt.Println("------------------")
 	demonstrateFlatExtraction(complexData)
 
 	// 4. DEEP MODIFICATIONS
-	fmt.Println("\n4. Deep Modifications")
-	fmt.Println("---------------------")
 	demonstrateDeepModifications(complexData)
 
 	// 5. BATCH OPERATIONS
-	fmt.Println("\n5. Batch Operations")
-	fmt.Println("-------------------")
 	demonstrateBatchOperations(complexData)
 
 	fmt.Println("\nAdvanced features complete!")
 }
 
 func demonstrateComplexPaths(data string) {
+	fmt.Println("1. Complex Path Queries")
+	fmt.Println("-----------------------")
+
 	// Access first team of first department
 	firstTeam, _ := json.GetString(data, "departments[0].teams[0].name")
 	fmt.Printf("   First team: %s\n", firstTeam)
@@ -122,6 +115,9 @@ func demonstrateComplexPaths(data string) {
 }
 
 func demonstrateExtraction(data string) {
+	fmt.Println("\n2. Nested Extraction")
+	fmt.Println("--------------------")
+
 	// Extract all department names
 	deptNames, _ := json.Get(data, "departments{name}")
 	fmt.Printf("   Department names: %v\n", deptNames)
@@ -140,6 +136,9 @@ func demonstrateExtraction(data string) {
 }
 
 func demonstrateFlatExtraction(data string) {
+	fmt.Println("\n3. Flat Extraction")
+	fmt.Println("------------------")
+
 	// Flat extraction - flattens all nested arrays into single array
 
 	// Extract all teams (flat) from all departments
@@ -160,6 +159,9 @@ func demonstrateFlatExtraction(data string) {
 }
 
 func demonstrateDeepModifications(data string) {
+	fmt.Println("\n4. Deep Modifications")
+	fmt.Println("---------------------")
+
 	// Modify deep nested value
 	updated, _ := json.Set(data, "departments[0].teams[0].members[0].role", "Senior Lead")
 	newRole, _ := json.GetString(updated, "departments[0].teams[0].members[0].role")
@@ -190,6 +192,9 @@ func demonstrateDeepModifications(data string) {
 }
 
 func demonstrateBatchOperations(data string) {
+	fmt.Println("\n5. Batch Operations")
+	fmt.Println("-------------------")
+
 	// Batch update multiple deep paths
 	updates := map[string]any{
 		"departments[0].name":                     "Engineering & Innovation",

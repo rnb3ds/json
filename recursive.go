@@ -109,11 +109,6 @@ func (urp *RecursiveProcessor) ProcessRecursivelyWithOptions(data any, path stri
 	return result, nil
 }
 
-// processRecursivelyAtSegments recursively processes path segments for any operation
-func (urp *RecursiveProcessor) processRecursivelyAtSegments(data any, segments []internal.PathSegment, segmentIndex int, operation Operation, value any) (any, error) {
-	return urp.processRecursivelyAtSegmentsWithOptions(data, segments, segmentIndex, operation, value, false)
-}
-
 // processRecursivelyAtSegmentsWithOptions recursively processes path segments with path creation options
 func (urp *RecursiveProcessor) processRecursivelyAtSegmentsWithOptions(data any, segments []internal.PathSegment, segmentIndex int, operation Operation, value any, createPaths bool) (any, error) {
 	// Base case: no more segments to process

@@ -1,524 +1,1067 @@
 # API Reference - cybergodev/json
 
-> Unified API Design for github.com/cybergodev/json library
+> Complete API Reference for github.com/cybergodev/json library
 
 ---
 
 ## Table of Contents
 
-1. [API Design Principles](#api-design-principles)
-2. [New vs Old API Comparison](#new-vs-old-api-comparison)
-3. [Migration Guide](#migration-guide)
-4. [Configuration Reference](#configuration-reference)
-5. [Phased Execution Plan](#phased-execution-plan)
+- [Core Functions](#core-functions)
+- [Data Retrieval (Get)](#data-retrieval-get)
+- [Data Modification (Set)](#data-modification-set)
+- [Data Deletion (Delete)](#data-deletion-delete)
+- [Encoding Functions](#encoding-functions)
+- [Decoding Functions](#decoding-functions)
+- [File Operations](#file-operations)
+- [Iteration Functions](#iteration-functions)
+- [Streaming Processing](#streaming-processing)
+- [JSONL Support](#jsonl-support)
+- [Validation Functions](#validation-functions)
+- [Type Conversion](#type-conversion)
+- [Configuration](#configuration)
+- [Error Types](#error-types)
 
 ---
 
-## API Design Principles
+## Core Functions
 
-### Core Principles
-
-1. **Config Struct Pattern** - Use `Config` struct instead of functional options
-2. **DefaultConfig() Entry Point** - Always start from `DefaultConfig()` and modify
-3. **Reasonable Defaults** - All configuration items have sensible defaults
-4. **Minimal Cognitive Load** - Simple use cases should be simple
-
-### Two-Layer Design
-
-| Layer | Use Case | When to Use |
-|-------|----------|-------------|
-| **Package Level** | Quick operations | Simple, one-off operations |
-| **Processor Level** | Advanced control | Repeated operations, custom config, resource management |
+### Marshal
 
 ```go
-// Package Level - Simple, quick operations
-value, err := json.Get(data, "user.name")
-
-// Processor Level - Advanced control
-processor := json.New(json.DefaultConfig())
-defer processor.Close()
-value, err := processor.Get(data, "user.name")
+func Marshal(v any) ([]byte, error)
 ```
 
----
+Encodes a Go value to JSON. 100% compatible with `encoding/json.Marshal`.
 
-## New vs Old API Comparison
+**Parameters:**
+- `v` - Any Go value to encode
 
-### 1. Configuration Creation
-
-| Old API | New API | Notes |
-|---------|---------|-------|
-| `json.New()` | `json.New()` | No change - uses DefaultConfig |
-| `json.New(nil)` | `json.New()` | Remove nil parameter |
-| `&json.Config{...}` | `json.DefaultConfig()` then modify | Always start from DefaultConfig |
-| `json.SecurityConfig()` | `json.SecurityConfig()` | No change - unified security config |
-| Compact output | `cfg := json.DefaultConfig(); cfg.IncludeNulls = false` | Use Config |
-| Strict validation | `cfg := json.DefaultConfig(); cfg.StrictMode = true` | Use Config |
-| Fast processing | `cfg := json.DefaultConfig(); cfg.SkipValidation = true` | Use Config |
-
-### 2. Get Operations
-
-| Old API | New API | Notes |
-|---------|---------|-------|
-| `json.Get(data, path)` | `json.Get(data, path)` | No change |
-| `json.GetString(data, path)` | `json.GetString(data, path)` | No change |
-| `json.GetInt(data, path)` | `json.GetInt(data, path)` | No change |
-| `json.GetTyped[T](data, path)` | `json.GetTyped[T](data, path)` | No change |
-| ~~`json.GetStringWithDefault(data, path, default)`~~ | `json.GetDefault[string](data, path, default)` | Use generic |
-| ~~`json.GetIntWithDefault(data, path, default)`~~ | `json.GetDefault[int](data, path, default)` | Use generic |
-| ~~`json.GetBoolWithDefault(data, path, default)`~~ | `json.GetDefault[bool](data, path, default)` | Use generic |
-| ~~`json.GetTypedWithDefault[T](data, path, default)`~~ | `json.GetDefault[T](data, path, default)` | Renamed |
-
-### 3. Set Operations
-
-| Old API | New API | Notes |
-|---------|---------|-------|
-| `json.Set(data, path, value)` | `json.Set(data, path, value)` | No change |
-| `json.Set(data, path, value, cfg)` | `json.Set(data, path, value, cfg)` | No change |
-| ~~`json.SetCreate(data, path, value)`~~ | `cfg := json.DefaultConfig(); cfg.CreatePaths = true; json.Set(data, path, value, cfg)` | Use Config |
-| ~~`json.SetCreate(data, path, value, cfg)`~~ | `cfg.CreatePaths = true; json.Set(data, path, value, cfg)` | Set flag in Config |
-
-### 4. Batch Operations
-
-| Old API | New API | Notes |
-|---------|---------|-------|
-| `json.SetMultiple(data, updates)` | `json.SetMultiple(data, updates)` | No change |
-| ~~`json.SetMultipleCreate(data, updates)`~~ | `cfg := json.DefaultConfig(); cfg.CreatePaths = true; json.SetMultiple(data, updates, cfg)` | Use Config |
-
-### 5. Delete Operations
-
-| Old API | New API | Notes |
-|---------|---------|-------|
-| `json.Delete(data, path)` | `json.Delete(data, path)` | No change |
-| ~~`json.DeleteClean(data, path)`~~ | `cfg := json.DefaultConfig(); cfg.CleanupNulls = true; json.Delete(data, path, cfg)` | Use Config |
-
-### 6. Encoding Operations
-
-| Old API | New API | Notes |
-|---------|---------|-------|
-| `json.Encode(value)` | `json.Encode(value)` | No change |
-| `json.Encode(value, cfg)` | `json.Encode(value, cfg)` | No change |
-| `json.EncodeWithConfig(value, cfg)` | `json.Encode(value, cfg)` | Consolidated into Encode |
-| ~~`json.EncodeWithOpts(value, opts...)`~~ | `json.Encode(value, cfg)` | Use Config |
-
-### 7. File Operations
-
-| Old API | New API | Notes |
-|---------|---------|-------|
-| `json.LoadFromFile(path)` | `json.LoadFromFile(path)` | No change |
-| `json.SaveToFile(path, data)` | `json.SaveToFile(path, data)` | No change |
-| `json.SaveToFile(path, data, cfg)` | `json.SaveToFile(path, data, cfg)` | No change |
-| ~~`json.SaveToFileWithOpts(path, data, opts...)`~~ | `json.SaveToFile(path, data, cfg)` | Use Config |
-| `json.MarshalToFile(path, data, cfg)` | `json.MarshalToFile(path, data, cfg)` | No change |
-
----
-
-## Migration Guide
-
-### Phase 1: Quick Migration (Minimal Changes)
-
-If you just want to remove deprecation warnings:
-
-```go
-// BEFORE (deprecated)
-name := json.GetStringWithDefault(data, "user.name", "Anonymous")
-result, _ := json.SetCreate(data, "user.profile.name", "Alice")
-result, _ := json.DeleteClean(data, "user.temp")
-
-// AFTER (quick fix)
-name := json.GetDefault[string](data, "user.name", "Anonymous")
-
-cfg := json.DefaultConfig()
-cfg.CreatePaths = true
-result, _ := json.Set(data, "user.profile.name", "Alice", cfg)
-
-cfg2 := json.DefaultConfig()
-cfg2.CleanupNulls = true
-result, _ = json.Delete(data, "user.temp", cfg2)
-```
-
-### Phase 2: Recommended Migration (Clean Pattern)
-
-Create reusable config patterns:
-
-```go
-// BEFORE (deprecated patterns)
-result, _ := json.SetCreate(data, "path.to.value", "new")
-
-// AFTER (recommended pattern)
-var createPathConfig = func() *json.Config {
-    cfg := json.DefaultConfig()
-    cfg.CreatePaths = true
-    return cfg
-}()
-
-result, _ := json.Set(data, "path.to.value", "new", createPathConfig)
-```
-
-### Phase 3: Full Migration (Processor Pattern)
-
-For production code with repeated operations:
-
-```go
-// BEFORE (package-level with repeated config)
-cfg := json.DefaultConfig()
-cfg.CreatePaths = true
-cfg.EnableCache = true
-result1, _ := json.Set(data1, "path", value1, cfg)
-result2, _ := json.Set(data2, "path", value2, cfg)
-result3, _ := json.Set(data3, "path", value3, cfg)
-
-// AFTER (processor pattern - recommended for production)
-processorCfg := json.DefaultConfig()
-processorCfg.CreatePaths = true
-processorCfg.EnableCache = true
-processor := json.New(processorCfg)
-defer processor.Close()
-
-result1, _ := processor.Set(data1, "path", value1)
-result2, _ := processor.Set(data2, "path", value2)
-result3, _ := processor.Set(data3, "path", value3)
-```
-
-### Migration Examples by Use Case
-
-#### 1. Simple Script/Tool
-
-```go
-// Old approach - still works but shows deprecation warnings
-func processData(data string) string {
-    name := json.GetStringWithDefault(data, "user.name", "Unknown")
-    age := json.GetIntWithDefault(data, "user.age", 0)
-    result, _ := json.SetCreate(data, "processed", true)
-    return result
-}
-
-// New approach - clean and future-proof
-func processData(data string) string {
-    name := json.GetDefault[string](data, "user.name", "Unknown")
-    age := json.GetDefault[int](data, "user.age", 0)
-
-    cfg := json.DefaultConfig()
-    cfg.CreatePaths = true
-    result, _ := json.Set(data, "processed", true, cfg)
-    return result
-}
-```
-
-#### 2. Web API Handler
-
-```go
-// Old approach
-func handleRequest(w http.ResponseWriter, r *http.Request) {
-    body, _ := io.ReadAll(r.Body)
-    data := string(body)
-
-    // Using deprecated security config
-    processor := json.New(json.HighSecurityConfig())
-    defer processor.Close()
-
-    email, _ := processor.GetString(data, "user.email")
-    // ...
-}
-
-// New approach
-var secureProcessor *json.Processor
-
-func init() {
-    secureProcessor = json.New(json.SecurityConfig())
-}
-
-func handleRequest(w http.ResponseWriter, r *http.Request) {
-    body, _ := io.ReadAll(r.Body)
-    data := string(body)
-
-    email, _ := secureProcessor.GetString(data, "user.email")
-    // ...
-}
-```
-
-#### 3. Batch Processing Service
-
-```go
-// Old approach with deprecated methods
-func processBatch(items []string) []string {
-    results := make([]string, len(items))
-    for i, item := range items {
-        result, _ := json.SetCreate(item, "processedAt", time.Now().Format(time.RFC3339))
-        result, _ = json.DeleteClean(result, "temporary")
-        results[i] = result
-    }
-    return results
-}
-
-// New approach with processor pattern
-type BatchProcessor struct {
-    processor *json.Processor
-}
-
-func NewBatchProcessor() *BatchProcessor {
-    cfg := json.DefaultConfig()
-    cfg.CreatePaths = true
-    cfg.CleanupNulls = true
-    cfg.EnableCache = true
-    return &BatchProcessor{processor: json.New(cfg)}
-}
-
-func (bp *BatchProcessor) Close() {
-    bp.processor.Close()
-}
-
-func (bp *BatchProcessor) Process(items []string) []string {
-    results := make([]string, len(items))
-    for i, item := range items {
-        result, _ := bp.processor.Set(item, "processedAt", time.Now().Format(time.RFC3339))
-        result, _ = bp.processor.Delete(result, "temporary")
-        results[i] = result
-    }
-    return results
-}
-```
-
----
-
-## Configuration Reference
-
-### Config Struct Overview
-
-```go
-type Config struct {
-    // ===== Cache Settings =====
-    MaxCacheSize int           // Maximum cache entries (default: 128)
-    CacheTTL     time.Duration // Cache time-to-live (default: 5 minutes)
-    EnableCache  bool          // Enable caching (default: true)
-    CacheResults bool          // Cache operation results (default: true)
-
-    // ===== Size Limits =====
-    MaxJSONSize  int64 // Maximum JSON size in bytes (default: 100MB)
-    MaxPathDepth int   // Maximum path depth (default: 50)
-    MaxBatchSize int   // Maximum batch size (default: 2000)
-
-    // ===== Security Limits =====
-    MaxNestingDepthSecurity   int   // Maximum nesting depth (default: 200)
-    MaxSecurityValidationSize int64 // Max size for security validation (default: 10MB)
-    MaxObjectKeys             int   // Maximum object keys (default: 100000)
-    MaxArrayElements          int   // Maximum array elements (default: 100000)
-    FullSecurityScan          bool  // Full security scan for all input (default: false)
-
-    // ===== Concurrency =====
-    MaxConcurrency    int // Maximum concurrent operations (default: 50)
-    ParallelThreshold int // Threshold for parallel processing (default: 10)
-
-    // ===== Processing Options =====
-    EnableValidation bool // Enable validation (default: true)
-    StrictMode       bool // Strict parsing mode (default: false)
-    CreatePaths      bool // Auto-create paths in Set operations (default: false)
-    CleanupNulls     bool // Clean up null values in Delete operations (default: false)
-    CompactArrays    bool // Compact arrays after deletion (default: false)
-    ContinueOnError  bool // Continue batch on error (default: false)
-
-    // ===== Input/Output Options =====
-    AllowComments    bool // Allow JSON comments (default: false)
-    PreserveNumbers  bool // Preserve number precision (default: false)
-    ValidateInput    bool // Validate input JSON (default: true)
-    ValidateFilePath bool // Validate file paths (default: true)
-    SkipValidation   bool // Skip validation for trusted input (default: false)
-
-    // ===== Encoding Options =====
-    Pretty          bool            // Pretty print output (default: false)
-    Indent          string          // Indentation string (default: "  ")
-    Prefix          string          // Line prefix (default: "")
-    EscapeHTML      bool            // Escape HTML characters (default: true)
-    SortKeys        bool            // Sort object keys (default: false)
-    ValidateUTF8    bool            // Validate UTF-8 (default: true)
-    MaxDepth        int             // Maximum encoding depth (default: 100)
-    DisallowUnknown bool            // Disallow unknown fields (default: false)
-    FloatPrecision  int             // Float precision (-1 = default) (default: -1)
-    FloatTruncate   bool            // Truncate float precision (default: false)
-    DisableEscaping bool            // Disable all escaping (default: false)
-    EscapeUnicode   bool            // Escape Unicode characters (default: false)
-    EscapeSlash     bool            // Escape forward slash (default: false)
-    EscapeNewlines  bool            // Escape newlines (default: true)
-    EscapeTabs      bool            // Escape tabs (default: true)
-    IncludeNulls    bool            // Include null values (default: true)
-    CustomEscapes   map[rune]string // Custom escape mappings (default: nil)
-
-    // ===== Observability =====
-    EnableMetrics     bool // Enable metrics collection (default: false)
-    EnableHealthCheck bool // Enable health checks (default: false)
-
-    // ===== Context =====
-    Context context.Context // Operation context (default: nil)
-}
-```
-
-### Preset Configurations
-
-```go
-// DefaultConfig - General purpose, balanced settings
-cfg := json.DefaultConfig()
-
-// SecurityConfig - For untrusted input (public APIs, user data)
-cfg := json.SecurityConfig()
-
-// PrettyConfig - For human-readable output
-cfg := json.PrettyConfig()
-```
-
-### Common Configuration Patterns
-
-```go
-// Pattern 1: Auto-create paths
-cfg := json.DefaultConfig()
-cfg.CreatePaths = true
-
-// Pattern 2: High performance (trusted input only)
-cfg := json.DefaultConfig()
-cfg.EnableValidation = false
-cfg.SkipValidation = true
-cfg.EnableCache = true
-cfg.MaxCacheSize = 1000
-
-// Pattern 3: Large files
-cfg := json.DefaultConfig()
-cfg.MaxJSONSize = 500 * 1024 * 1024 // 500MB
-cfg.MaxNestingDepthSecurity = 500
-
-// Pattern 4: Streaming/batch processing
-cfg := json.DefaultConfig()
-cfg.EnableCache = true
-cfg.CacheResults = true
-cfg.MaxConcurrency = 100
-cfg.ParallelThreshold = 5
-
-// Pattern 5: Compact output
-cfg := json.DefaultConfig()
-cfg.IncludeNulls = false
-cfg.Pretty = false
-
-// Pattern 6: Strict validation
-cfg := json.DefaultConfig()
-cfg.StrictMode = true
-cfg.EnableValidation = true
-cfg.FullSecurityScan = true
-```
-
----
-
-## Phased Execution Plan
-
-### Phase 1: Documentation & Deprecation Warnings (Current)
-
-**Timeline: v1.x**
-
-**Goal:** Inform users of upcoming changes without breaking existing code
-
-**Actions:**
-- [x] Add `Deprecated:` comments to all functions scheduled for removal
-- [x] Update documentation with migration examples
-- [x] Create this API reference document
-- [ ] Add runtime warnings (optional, controlled by environment variable)
-
-**Impact:** No breaking changes, users see deprecation warnings
-
-### Phase 2: Remove Deprecated Functions
-
-**Timeline: v2.0.0**
-
-**Goal:** Clean up API by removing deprecated functions
-
-**Functions to Remove:**
-```go
-// Get operations
-GetStringWithDefault      // Use GetDefault[string]
-GetIntWithDefault         // Use GetDefault[int]
-GetFloat64WithDefault     // Use GetDefault[float64]
-GetBoolWithDefault        // Use GetDefault[bool]
-GetArrayWithDefault       // Use GetDefault[[]any]
-GetObjectWithDefault      // Use GetDefault[map[string]any]
-GetTypedWithDefault       // Use GetDefault[T]
-
-// Set operations
-SetCreate                 // Use Set with Config.CreatePaths = true
-SetMultipleCreate         // Use SetMultiple with Config.CreatePaths = true
-
-// Delete operations
-DeleteClean               // Use Delete with Config.CleanupNulls = true
-
-// Config presets
-CompactConfig             // Use DefaultConfig() with modifications
-StrictConfig              // Use DefaultConfig() with modifications
-FastConfig                // Use DefaultConfig() with modifications
-
-// Encoding operations
-EncodeWithOpts            // Use Encode with Config
-SaveToFileWithOpts        // Use SaveToFile with Config
-MarshalToFileWithOpts     // Use MarshalToFile with Config
-SaveToWriterWithOpts      // Use SaveToWriter with Config
-EncodeBatchWithOpts       // Use EncodeBatch with Config
-EncodeFieldsWithOpts      // Use EncodeFields with Config
-EncodeStreamWithOpts      // Use EncodeStream with Config
-```
-
-**Migration Steps:**
-1. Update all imports to v2
-2. Run `go fix` to apply automated migrations
-3. Manually update remaining deprecated calls
-4. Test thoroughly
-
-### Phase 3: API Consolidation
-
-**Timeline: v2.1.0**
-
-**Goal:** Further simplify the API surface
-
-**Potential Changes:**
-- Consolidate `EncodeWithConfig` into `Encode`
-- Review and potentially remove underutilized functions
-- Simplify configuration patterns
+**Returns:**
+- `[]byte` - JSON encoded bytes
+- `error` - Encoding error if any
 
 **Example:**
 ```go
-// Simple struct-based configuration
-cfg := json.DefaultConfig()
-cfg.CreatePaths = true
-cfg.Pretty = true
-cfg.MaxCacheSize = 1000
+data := map[string]any{"name": "Alice", "age": 30}
+jsonBytes, err := json.Marshal(data)
 ```
-
-### Phase 4: Documentation & Examples Update
-
-**Timeline: Ongoing**
-
-**Goal:** Ensure all documentation reflects new API
-
-**Actions:**
-- Update all example files
-- Update QUICK_REFERENCE.md
-- Update README.md
-- Add more migration examples
-- Create interactive playground/examples
 
 ---
 
-## Summary
+### Unmarshal
 
-### What Stays the Same
-- Core functions: `Get`, `Set`, `Delete`, `Marshal`, `Unmarshal`
-- Type-safe getters: `GetString`, `GetInt`, `GetBool`, `GetFloat64`, `GetArray`, `GetObject`
-- Generic getter: `GetTyped[T]`
-- Batch operations: `GetMultiple`, `SetMultiple`
-- Config struct pattern with `DefaultConfig()`
-- Processor pattern for advanced use cases
+```go
+func Unmarshal(data []byte, v any) error
+```
 
-### What Changes
-- Use `GetDefault[T]` instead of type-specific `GetXxxWithDefault`
-- Use `Config.CreatePaths = true` instead of `SetCreate`
-- Use `Config.CleanupNulls = true` instead of `DeleteClean`
-- Use `SecurityConfig()` instead of `HighSecurityConfig()`/`WebAPIConfig()`
+Decodes JSON bytes into a Go value. 100% compatible with `encoding/json.Unmarshal`.
 
-### Key Benefits
-1. **Reduced API Surface** - Fewer functions to learn
-2. **Consistent Patterns** - Same config approach everywhere
-3. **Better Discoverability** - Clear entry points (DefaultConfig, SecurityConfig, PrettyConfig)
-4. **Future-Proof** - Easier to add new features via Config fields
+**Parameters:**
+- `data` - JSON bytes to decode
+- `v` - Pointer to target value
+
+**Returns:**
+- `error` - Decoding error if any
+
+**Example:**
+```go
+var result map[string]any
+err := json.Unmarshal(jsonBytes, &result)
+```
+
+---
+
+### MarshalIndent
+
+```go
+func MarshalIndent(v any, prefix, indent string) ([]byte, error)
+```
+
+Encodes a Go value to formatted JSON with indentation.
+
+**Parameters:**
+- `v` - Any Go value to encode
+- `prefix` - Prefix for each line
+- `indent` - Indentation string
+
+**Example:**
+```go
+jsonBytes, err := json.MarshalIndent(data, "", "  ")
+```
+
+---
+
+### Valid
+
+```go
+func Valid(data []byte) bool
+```
+
+Reports whether data is valid JSON.
+
+**Parameters:**
+- `data` - JSON bytes to validate
+
+**Returns:**
+- `bool` - true if valid JSON
+
+---
+
+## Data Retrieval (Get)
+
+### Get
+
+```go
+func Get(jsonStr, path string, cfg ...*Config) (any, error)
+```
+
+Retrieves a value from JSON at the specified path.
+
+**Parameters:**
+- `jsonStr` - JSON string
+- `path` - Path expression (e.g., "user.name", "items[0]")
+- `cfg` - Optional configuration
+
+**Returns:**
+- `any` - The value at the path
+- `error` - Path or parsing error
+
+**Example:**
+```go
+value, err := json.Get(data, "users[0].name")
+```
+
+---
+
+### GetString
+
+```go
+func GetString(jsonStr, path string, cfg ...*Config) (string, error)
+```
+
+Retrieves a string value from JSON at the specified path.
+
+---
+
+### GetInt
+
+```go
+func GetInt(jsonStr, path string, cfg ...*Config) (int, error)
+```
+
+Retrieves an integer value from JSON at the specified path.
+
+---
+
+### GetFloat64
+
+```go
+func GetFloat64(jsonStr, path string, cfg ...*Config) (float64, error)
+```
+
+Retrieves a float64 value from JSON at the specified path.
+
+---
+
+### GetBool
+
+```go
+func GetBool(jsonStr, path string, cfg ...*Config) (bool, error)
+```
+
+Retrieves a boolean value from JSON at the specified path.
+
+---
+
+### GetArray
+
+```go
+func GetArray(jsonStr, path string, cfg ...*Config) ([]any, error)
+```
+
+Retrieves an array value from JSON at the specified path.
+
+---
+
+### GetObject
+
+```go
+func GetObject(jsonStr, path string, cfg ...*Config) (map[string]any, error)
+```
+
+Retrieves an object value from JSON at the specified path.
+
+---
+
+### GetTyped[T]
+
+```go
+func GetTyped[T any](jsonStr, path string, cfg ...*Config) (T, error)
+```
+
+Retrieves a typed value from JSON at the specified path using generics.
+
+**Example:**
+```go
+name, err := json.GetTyped[string](data, "user.name")
+numbers, err := json.GetTyped[[]int](data, "scores")
+```
+
+---
+
+### GetDefault[T]
+
+```go
+func GetDefault[T any](jsonStr, path string, defaultValue T, cfg ...*Config) T
+```
+
+Retrieves a typed value with a default fallback if path not found or error occurs.
+
+**Example:**
+```go
+name := json.GetDefault[string](data, "user.name", "Anonymous")
+age := json.GetDefault[int](data, "user.age", 0)
+```
+
+---
+
+### GetMultiple
+
+```go
+func GetMultiple(jsonStr string, paths []string, cfg ...*Config) (map[string]any, error)
+```
+
+Retrieves multiple values from JSON at the specified paths in a single operation.
+
+**Example:**
+```go
+paths := []string{"user.name", "user.age", "user.email"}
+results, err := json.GetMultiple(data, paths)
+name := results["user.name"]
+```
+
+---
+
+## Data Modification (Set)
+
+### Set
+
+```go
+func Set(jsonStr, path string, value any, cfg ...*Config) (string, error)
+```
+
+Sets a value in JSON at the specified path.
+
+**Parameters:**
+- `jsonStr` - JSON string
+- `path` - Path expression
+- `value` - Value to set
+- `cfg` - Optional configuration (use `CreatePaths: true` to auto-create paths)
+
+**Returns:**
+- `string` - Modified JSON string
+- `error` - Error if operation failed
+
+**Safety Guarantee:** On failure, returns the original unmodified JSON string.
+
+**Example:**
+```go
+// Basic set
+result, err := json.Set(data, "user.name", "Alice")
+
+// Auto-create nested paths
+cfg := json.DefaultConfig()
+cfg.CreatePaths = true
+result, err := json.Set(data, "new.nested.path", "value", cfg)
+```
+
+---
+
+### SetMultiple
+
+```go
+func SetMultiple(jsonStr string, updates map[string]any, cfg ...*Config) (string, error)
+```
+
+Sets multiple values in a single operation.
+
+**Example:**
+```go
+updates := map[string]any{
+    "user.name": "Bob",
+    "user.age":  30,
+}
+result, err := json.SetMultiple(data, updates)
+```
+
+---
+
+## Data Deletion (Delete)
+
+### Delete
+
+```go
+func Delete(jsonStr, path string, cfg ...*Config) (string, error)
+```
+
+Deletes a value from JSON at the specified path.
+
+**Parameters:**
+- `jsonStr` - JSON string
+- `path` - Path expression
+- `cfg` - Optional configuration (use `CleanupNulls: true` to remove null values)
+
+**Example:**
+```go
+result, err := json.Delete(data, "user.temp")
+
+// With null cleanup
+cfg := json.DefaultConfig()
+cfg.CleanupNulls = true
+result, err := json.Delete(data, "user.temp", cfg)
+```
+
+---
+
+## Encoding Functions
+
+### Encode
+
+```go
+func Encode(value any, cfg ...*Config) (string, error)
+```
+
+Converts any Go value to JSON string.
+
+**Example:**
+```go
+result, err := json.Encode(data)
+```
+
+---
+
+### EncodeWithConfig
+
+```go
+func EncodeWithConfig(value any, cfg *Config) (string, error)
+```
+
+Converts any Go value to JSON string with custom configuration.
+
+**Example:**
+```go
+cfg := json.PrettyConfig()
+result, err := json.EncodeWithConfig(data, cfg)
+```
+
+---
+
+### FormatPretty
+
+```go
+func FormatPretty(jsonStr string, cfg ...*Config) (string, error)
+```
+
+Formats JSON string with pretty indentation.
+
+---
+
+### CompactString
+
+```go
+func CompactString(jsonStr string, cfg ...*Config) (string, error)
+```
+
+Removes whitespace from JSON string.
+
+---
+
+## Decoding Functions
+
+### Parse
+
+```go
+func Parse(jsonStr string, cfg ...*Config) (any, error)
+```
+
+Parses a JSON string into a Go value.
+
+**Example:**
+```go
+data, err := json.Parse(jsonStr)
+
+// With security configuration
+cfg := json.SecurityConfig()
+data, err := json.Parse(untrustedInput, cfg)
+```
+
+---
+
+## File Operations
+
+### LoadFromFile
+
+```go
+func LoadFromFile(filePath string, cfg ...*Config) (string, error)
+```
+
+Loads JSON data from a file.
+
+**Example:**
+```go
+data, err := json.LoadFromFile("config.json")
+```
+
+---
+
+### SaveToFile
+
+```go
+func SaveToFile(filePath string, data any, cfg ...*Config) error
+```
+
+Saves JSON data to a file.
+
+**Example:**
+```go
+cfg := json.PrettyConfig()
+err := json.SaveToFile("output.json", data, cfg)
+```
+
+---
+
+### MarshalToFile
+
+```go
+func MarshalToFile(filePath string, data any, cfg ...*Config) error
+```
+
+Marshals data to JSON and writes to a file.
+
+---
+
+### UnmarshalFromFile
+
+```go
+func UnmarshalFromFile(path string, v any, cfg ...*Config) error
+```
+
+Reads JSON from a file and unmarshals it into v.
+
+---
+
+## Iteration Functions
+
+### Foreach
+
+```go
+func Foreach(jsonStr string, fn func(key any, item *IterableValue))
+```
+
+Iterates over JSON arrays or objects (read-only).
+
+**Example:**
+```go
+json.Foreach(data, func(key any, item *json.IterableValue) {
+    name := item.GetString("name")
+    fmt.Printf("Key: %v, Name: %s\n", key, name)
+})
+```
+
+---
+
+### ForeachWithPath
+
+```go
+func ForeachWithPath(jsonStr, path string, fn func(key any, item *IterableValue)) error
+```
+
+Iterates over a specific path in JSON.
+
+---
+
+### ForeachNested
+
+```go
+func ForeachNested(jsonStr string, fn func(key any, item *IterableValue))
+```
+
+Recursively iterates through all nested levels.
+
+---
+
+### ForeachWithPathAndControl
+
+```go
+func ForeachWithPathAndControl(jsonStr, path string, fn func(key any, value any) IteratorControl) error
+```
+
+Iterates with early termination support.
+
+**Example:**
+```go
+err := json.ForeachWithPathAndControl(data, "users", func(key any, value any) json.IteratorControl {
+    if shouldStop {
+        return json.IteratorBreak
+    }
+    return json.IteratorContinue
+})
+```
+
+---
+
+### ForeachReturn
+
+```go
+func ForeachReturn(jsonStr string, fn func(key any, item *IterableValue)) (string, error)
+```
+
+Iterates and returns the original JSON string (read-only).
+
+**Note:** This function is read-only. Use `json.Set()` for modifications.
+
+---
+
+## Streaming Processing
+
+### NewStreamingProcessor
+
+```go
+func NewStreamingProcessor(reader io.Reader, bufferSize int) *StreamingProcessor
+```
+
+Creates a streaming processor for large JSON arrays.
+
+**Example:**
+```go
+processor := json.NewStreamingProcessor(reader, 64*1024)
+err := processor.StreamArray(func(index int, item any) bool {
+    fmt.Printf("Item %d: %v\n", index, item)
+    return true  // continue
+})
+```
+
+---
+
+### StreamArrayFilter
+
+```go
+func StreamArrayFilter(reader io.Reader, predicate func(any) bool) ([]any, error)
+```
+
+Filters array elements during streaming.
+
+---
+
+### StreamArrayMap
+
+```go
+func StreamArrayMap(reader io.Reader, transform func(any) any) ([]any, error)
+```
+
+Transforms array elements during streaming.
+
+---
+
+### StreamArrayTake
+
+```go
+func StreamArrayTake(reader io.Reader, n int) ([]any, error)
+```
+
+Returns the first n elements from a streaming array.
+
+---
+
+### StreamArraySkip
+
+```go
+func StreamArraySkip(reader io.Reader, n int) ([]any, error)
+```
+
+Skips the first n elements and returns the rest.
+
+---
+
+## JSONL Support
+
+### NewJSONLProcessor
+
+```go
+func NewJSONLProcessor(reader io.Reader) *JSONLProcessor
+```
+
+Creates a processor for JSON Lines (NDJSON) data.
+
+---
+
+### ParseJSONL
+
+```go
+func ParseJSONL(data []byte) ([]any, error)
+```
+
+Parses JSONL data into a slice of values.
+
+---
+
+### ToJSONL
+
+```go
+func ToJSONL(data any) (string, error)
+```
+
+Converts a slice to JSONL format.
+
+---
+
+### StreamLinesInto[T]
+
+```go
+func StreamLinesInto[T any](reader io.Reader, fn func(lineNum int, data T) error) ([]T, error)
+```
+
+Type-safe streaming of JSONL lines.
+
+---
+
+## Validation Functions
+
+### ValidateSchema
+
+```go
+func ValidateSchema(jsonStr string, schema *Schema, cfg ...*Config) ([]ValidationError, error)
+```
+
+Validates JSON data against a schema.
+
+**Example:**
+```go
+schema := &json.Schema{
+    Type: "object",
+    Properties: map[string]*json.Schema{
+        "name": {Type: "string", MinLength: 1},
+        "age":  {Type: "number", Minimum: 0},
+    },
+    Required: []string{"name"},
+}
+errors, err := json.ValidateSchema(data, schema)
+```
+
+---
+
+### IsValidJSON
+
+```go
+func IsValidJSON(jsonStr string) bool
+```
+
+Quickly checks if a string is valid JSON.
+
+---
+
+### IsValidPath
+
+```go
+func IsValidPath(path string) bool
+```
+
+Checks if a path expression is valid.
+
+---
+
+## Type Conversion
+
+### ConvertToInt
+
+```go
+func ConvertToInt(value any) (int, bool)
+```
+
+Safely converts any value to int.
+
+---
+
+### ConvertToFloat64
+
+```go
+func ConvertToFloat64(value any) (float64, bool)
+```
+
+Safely converts any value to float64.
+
+---
+
+### ConvertToBool
+
+```go
+func ConvertToBool(value any) (bool, bool)
+```
+
+Safely converts any value to bool.
+
+---
+
+### ConvertToString
+
+```go
+func ConvertToString(value any) string
+```
+
+Converts any value to string.
+
+---
+
+### TypeSafeConvert[T]
+
+```go
+func TypeSafeConvert[T any](value any) (T, error)
+```
+
+Type-safe conversion with error handling.
+
+---
+
+### FastToString / FastToInt / FastToFloat64 / FastToBool
+
+```go
+func FastToString(value any) (string, bool)
+func FastToInt(value any) (int, bool)
+func FastToFloat64(value any) (float64, bool)
+func FastToBool(value any) (bool, bool)
+```
+
+Optimized conversion functions for hot paths.
+
+---
+
+## Data Utilities
+
+### DeepCopy
+
+```go
+func DeepCopy(data any) (any, error)
+```
+
+Creates a deep copy of JSON-compatible data.
+
+---
+
+### CompareJson
+
+```go
+func CompareJson(json1, json2 string) (bool, error)
+```
+
+Compares two JSON strings for semantic equality.
+
+---
+
+### MergeJson
+
+```go
+func MergeJson(json1, json2 string) (string, error)
+```
+
+Merges two JSON objects using deep merge strategy.
+
+---
+
+## Configuration
+
+### DefaultConfig
+
+```go
+func DefaultConfig() *Config
+```
+
+Returns the default configuration with balanced settings.
+
+**Default Values:**
+| Setting | Value |
+|---------|-------|
+| MaxJSONSize | 100MB |
+| MaxPathDepth | 50 |
+| MaxNestingDepthSecurity | 200 |
+| MaxObjectKeys | 100,000 |
+| MaxArrayElements | 100,000 |
+| EnableValidation | true |
+| EnableCache | true |
+| CacheTTL | 5 minutes |
+
+---
+
+### SecurityConfig
+
+```go
+func SecurityConfig() *Config
+```
+
+Returns a configuration with enhanced security settings for untrusted input.
+
+**Security Values:**
+| Setting | Value |
+|---------|-------|
+| MaxJSONSize | 10MB |
+| MaxPathDepth | 30 |
+| MaxNestingDepthSecurity | 30 |
+| MaxObjectKeys | 5,000 |
+| MaxArrayElements | 5,000 |
+| FullSecurityScan | true |
+| StrictMode | true |
+
+---
+
+### PrettyConfig
+
+```go
+func PrettyConfig() *Config
+```
+
+Returns a configuration for pretty-printed JSON output.
+
+---
+
+### Config Methods
+
+```go
+func (c *Config) Clone() *Config
+func (c *Config) Validate() error
+func (c *Config) GetSecurityLimits() map[string]any
+```
+
+---
+
+## Processor Type
+
+### New
+
+```go
+func New(config ...*Config) *Processor
+```
+
+Creates a new Processor with optional configuration.
+
+**Example:**
+```go
+processor := json.New()
+defer processor.Close()
+
+// Or with configuration
+processor := json.New(json.DefaultConfig())
+defer processor.Close()
+```
+
+---
+
+### Processor Methods
+
+```go
+// Core operations
+func (p *Processor) Get(jsonStr, path string, opts ...*Config) (any, error)
+func (p *Processor) Set(jsonStr, path string, value any, opts ...*Config) (string, error)
+func (p *Processor) Delete(jsonStr, path string, opts ...*Config) (string, error)
+
+// Encoding/Decoding
+func (p *Processor) Marshal(v any) ([]byte, error)
+func (p *Processor) Unmarshal(data []byte, v any, opts ...*Config) error
+func (p *Processor) EncodeWithConfig(value any, cfg *Config) (string, error)
+
+// File operations
+func (p *Processor) LoadFromFile(filePath string, opts ...*Config) (string, error)
+func (p *Processor) SaveToFile(filePath string, data any, cfg ...*Config) error
+
+// Schema validation
+func (p *Processor) ValidateSchema(jsonStr string, schema *Schema, opts ...*Config) ([]ValidationError, error)
+
+// Cache operations
+func (p *Processor) ClearCache()
+func (p *Processor) GetStats() Stats
+func (p *Processor) GetHealthStatus() HealthStatus
+
+// Lifecycle
+func (p *Processor) Close() error
+```
+
+---
+
+## Error Types
+
+### Standard Errors (encoding/json compatible)
+
+```go
+type SyntaxError struct {
+    Offset int64
+}
+type UnmarshalTypeError struct { ... }
+type InvalidUnmarshalError struct { ... }
+type UnsupportedTypeError struct { ... }
+type UnsupportedValueError struct { ... }
+type MarshalerError struct { ... }
+```
+
+---
+
+### Extended Error Types
+
+```go
+type JsonsError struct {
+    Op      string  // Operation name
+    Path    string  // JSON path
+    Message string  // Error message
+    Err     error   // Underlying error
+}
+
+type PathError struct {
+    Path    string
+    Message string
+    Err     error
+}
+
+type SizeLimitError struct {
+    Size    int64
+    MaxSize int64
+}
+
+type SecurityError struct {
+    Op      string
+    Message string
+}
+```
+
+---
+
+### Error Variables
+
+```go
+var ErrInvalidJSON       = errors.New("invalid JSON")
+var ErrPathNotFound      = errors.New("path not found")
+var ErrTypeMismatch      = errors.New("type mismatch")
+var ErrSizeLimit         = errors.New("size limit exceeded")
+var ErrDepthLimit        = errors.New("depth limit exceeded")
+var ErrSecurityViolation = errors.New("security violation")
+var ErrOperationFailed   = errors.New("operation failed")
+var ErrInvalidPath       = errors.New("invalid path")
+```
+
+---
+
+### Error Handling Example
+
+```go
+result, err := json.Get(data, "user.name")
+if err != nil {
+    // Check specific error types
+    var jsonsErr *json.JsonsError
+    if errors.As(err, &jsonsErr) {
+        fmt.Printf("Operation: %s, Path: %s\n", jsonsErr.Op, jsonsErr.Path)
+    }
+
+    // Check error codes
+    if errors.Is(err, json.ErrPathNotFound) {
+        // Handle missing path
+    }
+}
+```
+
+---
+
+## IterableValue Type
+
+```go
+type IterableValue struct {
+    // Contains methods for safe data access during iteration
+}
+
+func (iv *IterableValue) Get(path string) any
+func (iv *IterableValue) GetString(key string) string
+func (iv *IterableValue) GetInt(key string) int
+func (iv *IterableValue) GetFloat64(key string) float64
+func (iv *IterableValue) GetBool(key string) bool
+func (iv *IterableValue) GetArray(key string) []any
+func (iv *IterableValue) GetObject(key string) map[string]any
+func (iv *IterableValue) GetWithDefault(key string, defaultValue any) any
+func (iv *IterableValue) Exists(key string) bool
+func (iv *IterableValue) IsNull(key string) bool
+func (iv *IterableValue) IsEmpty(key string) bool
+```
+
+---
+
+## TypeSafeResult[T] Type
+
+```go
+type TypeSafeResult[T any] struct {
+    Value  T
+    Exists bool
+    Error  error
+}
+
+func (r TypeSafeResult[T]) Ok() bool
+func (r TypeSafeResult[T]) Unwrap() T
+func (r TypeSafeResult[T]) UnwrapOr(defaultValue T) T
+func (r TypeSafeResult[T]) UnwrapOrPanic() T
+```
+
+---
+
+## Schema Type
+
+```go
+type Schema struct {
+    Type                 string             `json:"type,omitempty"`
+    Properties           map[string]*Schema `json:"properties,omitempty"`
+    Items                *Schema            `json:"items,omitempty"`
+    Required             []string           `json:"required,omitempty"`
+    MinLength            int                `json:"minLength,omitempty"`
+    MaxLength            int                `json:"maxLength,omitempty"`
+    Minimum              float64            `json:"minimum,omitempty"`
+    Maximum              float64            `json:"maximum,omitempty"`
+    Pattern              string             `json:"pattern,omitempty"`
+    Format               string             `json:"format,omitempty"`
+    AdditionalProperties bool               `json:"additionalProperties,omitempty"`
+    MinItems             int                `json:"minItems,omitempty"`
+    MaxItems             int                `json:"maxItems,omitempty"`
+    UniqueItems          bool               `json:"uniqueItems,omitempty"`
+    Enum                 []any              `json:"enum,omitempty"`
+}
+
+type ValidationError struct {
+    Path    string `json:"path"`
+    Message string `json:"message"`
+}
+```
+
+---
+
+## Iterator Control Constants
+
+```go
+const (
+    IteratorNormal   IteratorControl = iota
+    IteratorContinue
+    IteratorBreak
+)
+```
+
+---
+
+## Path Expression Syntax
+
+| Syntax | Description | Example |
+|--------|-------------|---------|
+| `.` | Property access | `user.name` |
+| `[n]` | Array index | `items[0]` |
+| `[-n]` | Negative index | `items[-1]` |
+| `[start:end]` | Array slice | `items[1:3]` |
+| `[::step]` | Step slice | `numbers[::2]` |
+| `{field}` | Batch extract | `users{name}` |
+| `{flat:field}` | Flatten extract | `users{flat:skills}` |
+| `$` | Root reference | `$` |
+
+---
+
+**For more information, see:**
+- [Compatibility Guide](./COMPATIBILITY.md)
+- [Security Guide](./SECURITY.md)
+- [Quick Reference](./QUICK_REFERENCE.md)

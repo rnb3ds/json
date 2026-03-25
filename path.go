@@ -999,7 +999,3 @@ func (p *Processor) isValidArrayIndex(index string) bool {
 func (p *Processor) isValidSliceRange(rangeStr string) bool {
 	return internal.IsValidSliceRange(rangeStr)
 }
-
-func (p *Processor) wrapError(err error, context string) error {
-	return internal.WrapError(err, context)
-}

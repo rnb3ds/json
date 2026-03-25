@@ -387,4 +387,3 @@ func PrettyConfig() *Config {
 	cfg.Indent = "  "
 	return cfg
 }
-

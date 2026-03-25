@@ -178,15 +178,16 @@ Check current security configuration:
 ```go
 limits := config.GetSecurityLimits()
 fmt.Printf("Security Limits: %+v\n", limits)
-// Output:
+// Output (DefaultConfig values):
 // {
-//   "max_nesting_depth": 50,
-//   "max_security_validation_size": 104857600,
-//   "max_object_keys": 10000,
-//   "max_array_elements": 10000,
-//   "max_json_size": 10485760,
-//   "max_path_depth": 100
+//   "max_nesting_depth": 200,
+//   "max_security_validation_size": 10485760,
+//   "max_object_keys": 100000,
+//   "max_array_elements": 100000,
+//   "max_json_size": 104857600,
+//   "max_path_depth": 50
 // }
+// Note: SecurityConfig() uses more restrictive values than DefaultConfig().
 ```
 
 ---
@@ -294,7 +295,7 @@ For large JSON (>4KB), the library uses an optimized security scanning approach:
 // Full scan mode (FullSecurityScan: true) - Maximum security:
 // - All JSON is fully scanned regardless of size
 // - Recommended for untrusted input and sensitive data
-config := json.HighSecurityConfig()  // Has FullSecurityScan: true by default
+config := json.SecurityConfig()  // Has FullSecurityScan: true by default
 ```
 
 ---

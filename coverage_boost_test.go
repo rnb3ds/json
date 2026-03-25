@@ -30,10 +30,16 @@ func TestAPI_UnmarshalFromFile(t *testing.T) {
 			name:        "UnmarshalFromFileValid",
 			setupFile:   true,
 			fileContent: `{"name":"test","value":123}`,
-			target:      &struct{ Name string; Value int }{},
-			wantErr:     false,
+			target: &struct {
+				Name  string
+				Value int
+			}{},
+			wantErr: false,
 			checkResult: func(t *testing.T, result interface{}) {
-				r := result.(*struct{ Name string; Value int })
+				r := result.(*struct {
+					Name  string
+					Value int
+				})
 				if r.Name != "test" || r.Value != 123 {
 					t.Errorf("Result = %+v, want {Name:test, Value:123}", r)
 				}
@@ -176,9 +182,9 @@ func TestConfigValidateEdgeCases(t *testing.T) {
 		checkResult func(t *testing.T, config *Config)
 	}{
 		{
-			name:       "ZeroValues",
-			config:     &Config{},
-			wantErr:    false,
+			name:    "ZeroValues",
+			config:  &Config{},
+			wantErr: false,
 			checkResult: func(t *testing.T, config *Config) {
 				if config.MaxJSONSize <= 0 {
 					t.Error("MaxJSONSize should be set to default after validation")

@@ -67,7 +67,6 @@ func GetDefault[T any](jsonStr, path string, defaultValue T, cfg ...*Config) T {
 	return result
 }
 
-
 // GetMultiple retrieves multiple values from JSON at the specified paths
 func GetMultiple(jsonStr string, paths []string, cfg ...*Config) (map[string]any, error) {
 	return getDefaultProcessor().GetMultiple(jsonStr, paths, cfg...)
@@ -256,8 +255,8 @@ func Encode(value any, cfg ...*Config) (string, error) {
 //	// Pretty output
 //	result, err := json.EncodeWithConfig(data, json.PrettyConfig())
 //
-//	// Web-safe output
-//	result, err := json.EncodeWithConfig(data, json.WebSafeConfig())
+//	// Security-focused output
+//	result, err := json.EncodeWithConfig(data, json.SecurityConfig())
 //
 //	// Custom configuration
 //	cfg := json.DefaultConfig()

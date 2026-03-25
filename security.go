@@ -119,14 +119,6 @@ var dangerousPatterns = []struct {
 	{"Symbol(", "symbol creation"},
 }
 
-// caseSensitivePatterns contains patterns that must match exact case
-var caseSensitivePatterns = []struct {
-	pattern string
-	name    string
-}{
-	{"__proto__", "prototype pollution"},
-}
-
 // sensitivePatterns contains patterns for detecting sensitive data in cache values
 // PERFORMANCE: Defined at package level to avoid allocation on each containsSensitivePatterns() call
 var sensitivePatterns = []string{
@@ -184,8 +176,6 @@ type securityValidator struct {
 	// SECURITY FIX: Use entries with timestamps for LRU eviction
 	validationCache map[string]*validationCacheEntry
 	cacheMutex      sync.RWMutex
-	// Additional mutex for nested locking to avoid deadlock
-	securityScanMutex sync.Mutex
 }
 
 // newSecurityValidator creates a new security validator with the given limits.
@@ -1067,87 +1057,4 @@ func (sv *securityValidator) validatePathSyntax(path string) error {
 
 func isValidJSONPrimitive(s string) bool {
 	return internal.IsValidJSONPrimitive(s)
-}
-
-func isValidJSONNumber(s string) bool {
-	return internal.IsValidJSONNumber(s)
-}
-
-// hashStringFast computes a fast 16-byte hash of a string using FNV-1a
-// This is used for caching large JSON strings without storing the full content
-// Optimized: samples characters for very large strings to reduce CPU overhead
-func hashStringFast(s string) [16]byte {
-	// Use two FNV-1a hashes for better distribution
-	const (
-		offsetBasis1 = 14695981039346656037
-		prime1       = 1099511628211
-		offsetBasis2 = 2166136261
-		prime2       = 16777619
-	)
-
-	h1 := uint64(offsetBasis1)
-	h2 := uint32(offsetBasis2)
-
-	lenS := len(s)
-
-	// For very large strings, use sampling to reduce CPU overhead
-	// Sample every Nth character where N depends on string length
-	if lenS > securityNestingValidationThreshold {
-		// Sample approximately 8192 characters for large strings
-		step := lenS / 8192
-		if step < 1 {
-			step = 1
-		}
-
-		for i := 0; i < lenS; i += step {
-			c := s[i]
-			h1 ^= uint64(c)
-			h1 *= prime1
-			h2 ^= uint32(c)
-			h2 *= prime2
-		}
-
-		// Always include first and last characters
-		if lenS > 0 {
-			h1 ^= uint64(s[0])
-			h1 *= prime1
-			h1 ^= uint64(s[lenS-1])
-			h1 *= prime1
-		}
-	} else {
-		// For smaller strings, process all characters
-		for i := 0; i < lenS; i++ {
-			c := s[i]
-			h1 ^= uint64(c)
-			h1 *= prime1
-			h2 ^= uint32(c)
-			h2 *= prime2
-		}
-	}
-
-	// Also incorporate length to avoid collisions
-	h1 ^= uint64(lenS)
-
-	var result [16]byte
-	// Encode h1 (8 bytes)
-	result[0] = byte(h1)
-	result[1] = byte(h1 >> 8)
-	result[2] = byte(h1 >> 16)
-	result[3] = byte(h1 >> 24)
-	result[4] = byte(h1 >> 32)
-	result[5] = byte(h1 >> 40)
-	result[6] = byte(h1 >> 48)
-	result[7] = byte(h1 >> 56)
-	// Encode h2 (4 bytes)
-	result[8] = byte(h2)
-	result[9] = byte(h2 >> 8)
-	result[10] = byte(h2 >> 16)
-	result[11] = byte(h2 >> 24)
-	// Encode length (4 bytes)
-	result[12] = byte(lenS)
-	result[13] = byte(lenS >> 8)
-	result[14] = byte(lenS >> 16)
-	result[15] = byte(lenS >> 24)
-
-	return result
 }
