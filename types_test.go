@@ -169,45 +169,6 @@ func TestAdvancedPathoperations(t *testing.T) {
 	})
 }
 
-// TestArrayExtensionError tests the arrayExtensionError type
-func TestArrayExtensionError(t *testing.T) {
-	// Test default message
-	err1 := &arrayExtensionError{
-		currentLength:  5,
-		requiredLength: 10,
-		targetIndex:    9,
-		value:          "test",
-	}
-	expectedMsg1 := "array extension required: current length 5, required length 10 for index 9"
-	if err1.Error() != expectedMsg1 {
-		t.Errorf("Error() = %q, want %q", err1.Error(), expectedMsg1)
-	}
-
-	// Test custom message
-	err2 := &arrayExtensionError{
-		currentLength:  5,
-		requiredLength: 10,
-		targetIndex:    9,
-		value:          "test",
-		message:        "Custom error message",
-	}
-	if err2.Error() != "Custom error message" {
-		t.Errorf("Error() with custom message = %q, want %q", err2.Error(), "Custom error message")
-	}
-
-	// Test with custom message
-	err3 := &arrayExtensionError{
-		currentLength:  3,
-		requiredLength: 10,
-		targetIndex:    9,
-		value:          "test",
-		message:        "Array too small",
-	}
-	if err3.Error() != "Array too small" {
-		t.Errorf("Error() with custom message = %q, want %q", err3.Error(), "Array too small")
-	}
-}
-
 // TestConfigConstantsComprehensive consolidates configuration and constants tests
 // This replaces: config_constants_test.go
 func TestConfigConstantsComprehensive(t *testing.T) {
@@ -247,7 +208,7 @@ func TestConfigConstantsComprehensive(t *testing.T) {
 		// Default config is compact (Pretty = false)
 		helper.AssertFalse(config.Pretty)
 
-		cloned := config.Clone()
+		cloned := (&config).Clone()
 		helper.AssertNotNil(cloned)
 	})
 
@@ -953,7 +914,7 @@ func TestEncodeConfig_Clone(t *testing.T) {
 // TestEncodeConfig_Clone_Zero tests Clone with zero value
 func TestEncodeConfig_Clone_Zero(t *testing.T) {
 	var config Config
-	cloned := config.Clone()
+	cloned := (&config).Clone()
 	if cloned.Pretty != false {
 		t.Error("Clone of zero value should have default values")
 	}
@@ -1301,7 +1262,7 @@ func TestErrorScenarios(t *testing.T) {
 			helper.AssertNil(result)
 		})
 
-		t.Run("GetTypedNull", func(t *testing.T) {
+		t.Run("GetAsNull", func(t *testing.T) {
 			_, err := GetTyped[string](testData, "null_value")
 			// Null to string might error or return "null"
 			_ = err
@@ -1635,9 +1596,8 @@ func TestOperation_String(t *testing.T) {
 }
 
 // TestPathInfo tests the pathInfo type (internal)
-// Note: PathInfo is deprecated, this tests the internal pathInfo struct
 func TestPathInfo(t *testing.T) {
-	segments := []PathSegment{
+	segments := []internal.PathSegment{
 		{Type: internal.PropertySegment, Key: "user"},
 		{Type: internal.ArrayIndexSegment, Index: 0},
 	}
@@ -2122,7 +2082,7 @@ func TestProcessorConcurrencyComprehensive(t *testing.T) {
 				go func(workerID int) {
 					defer wg.Done()
 
-					localConfig := config.Clone()
+					localConfig := (&config).Clone()
 					localConfig.Validate()
 				}(i)
 			}
@@ -2433,20 +2393,20 @@ func TestResourceMonitor_CheckForLeaks(t *testing.T) {
 	t.Logf("CheckForLeaks returned: %v", issues)
 }
 
-// TestResourceMonitor_EfficiencyMethods tests GetMemoryEfficiency and GetPoolEfficiency
+// TestResourceMonitor_EfficiencyMethods tests GetDeallocationRatio and GetPoolEfficiency
 func TestResourceMonitor_EfficiencyMethods(t *testing.T) {
-	t.Run("GetMemoryEfficiency", func(t *testing.T) {
+	t.Run("GetDeallocationRatio", func(t *testing.T) {
 		rm := newResourceMonitor()
 		// Initially 100% (no allocations)
-		if eff := rm.GetMemoryEfficiency(); eff != 100.0 {
-			t.Errorf("GetMemoryEfficiency() = %v, want 100.0", eff)
+		if eff := rm.GetDeallocationRatio(); eff != 100.0 {
+			t.Errorf("GetDeallocationRatio() = %v, want 100.0", eff)
 		}
 
 		rm.RecordAllocation(1000)
 		rm.RecordDeallocation(500)
 		// 500 / 1000 * 100 = 50%
-		if eff := rm.GetMemoryEfficiency(); eff != 50.0 {
-			t.Errorf("GetMemoryEfficiency() = %v, want 50.0", eff)
+		if eff := rm.GetDeallocationRatio(); eff != 50.0 {
+			t.Errorf("GetDeallocationRatio() = %v, want 50.0", eff)
 		}
 	})
 
@@ -2911,8 +2871,8 @@ func TestTypeConversionBoundaryConditions(t *testing.T) {
 	})
 }
 
-// TestTypeSafeAccessResult_AsBool tests AsBool method
-func TestTypeSafeAccessResult_AsBool(t *testing.T) {
+// TestAccessResult_AsBool tests AsBool method
+func TestAccessResult_AsBool(t *testing.T) {
 	tests := []struct {
 		name        string
 		value       any
@@ -2933,7 +2893,7 @@ func TestTypeSafeAccessResult_AsBool(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := TypeSafeAccessResult{Value: tt.value, Exists: tt.exists}
+			result := AccessResult{Value: tt.value, Exists: tt.exists}
 			got, err := result.AsBool()
 			if tt.expectError {
 				if err == nil {
@@ -2951,8 +2911,8 @@ func TestTypeSafeAccessResult_AsBool(t *testing.T) {
 	}
 }
 
-// TestTypeSafeAccessResult_AsFloat64 tests AsFloat64 method
-func TestTypeSafeAccessResult_AsFloat64(t *testing.T) {
+// TestAccessResult_AsFloat64 tests AsFloat64 method
+func TestAccessResult_AsFloat64(t *testing.T) {
 	tests := []struct {
 		name        string
 		value       any
@@ -2973,7 +2933,7 @@ func TestTypeSafeAccessResult_AsFloat64(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := TypeSafeAccessResult{Value: tt.value, Exists: tt.exists}
+			result := AccessResult{Value: tt.value, Exists: tt.exists}
 			got, err := result.AsFloat64()
 			if tt.expectError {
 				if err == nil {
@@ -2991,8 +2951,8 @@ func TestTypeSafeAccessResult_AsFloat64(t *testing.T) {
 	}
 }
 
-// TestTypeSafeAccessResult_AsInt tests AsInt method
-func TestTypeSafeAccessResult_AsInt(t *testing.T) {
+// TestAccessResult_AsInt tests AsInt method
+func TestAccessResult_AsInt(t *testing.T) {
 	tests := []struct {
 		name        string
 		value       any
@@ -3020,7 +2980,7 @@ func TestTypeSafeAccessResult_AsInt(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := TypeSafeAccessResult{Value: tt.value, Exists: tt.exists}
+			result := AccessResult{Value: tt.value, Exists: tt.exists}
 			got, err := result.AsInt()
 			if tt.expectError {
 				if err == nil {
@@ -3038,10 +2998,10 @@ func TestTypeSafeAccessResult_AsInt(t *testing.T) {
 	}
 }
 
-// TestTypeSafeAccessResult_AsString tests AsString method
-func TestTypeSafeAccessResult_AsString(t *testing.T) {
+// TestAccessResult_AsString tests AsString method
+func TestAccessResult_AsString(t *testing.T) {
 	t.Run("valid string", func(t *testing.T) {
-		result := TypeSafeAccessResult{Value: "hello", Exists: true}
+		result := AccessResult{Value: "hello", Exists: true}
 		got, err := result.AsString()
 		if err != nil {
 			t.Errorf("AsString() unexpected error: %v", err)
@@ -3052,7 +3012,7 @@ func TestTypeSafeAccessResult_AsString(t *testing.T) {
 	})
 
 	t.Run("not exists returns error", func(t *testing.T) {
-		result := TypeSafeAccessResult{Value: nil, Exists: false}
+		result := AccessResult{Value: nil, Exists: false}
 		_, err := result.AsString()
 		if err == nil {
 			t.Error("AsString() should return error when not exists")
@@ -3060,7 +3020,7 @@ func TestTypeSafeAccessResult_AsString(t *testing.T) {
 	})
 
 	t.Run("type mismatch returns error", func(t *testing.T) {
-		result := TypeSafeAccessResult{Value: 123, Exists: true}
+		result := AccessResult{Value: 123, Exists: true}
 		_, err := result.AsString()
 		if err == nil {
 			t.Error("AsString() should return error for non-string type")
@@ -3068,10 +3028,10 @@ func TestTypeSafeAccessResult_AsString(t *testing.T) {
 	})
 }
 
-// TestTypeSafeAccessResult_AsStringConverted tests AsStringConverted method
-func TestTypeSafeAccessResult_AsStringConverted(t *testing.T) {
+// TestAccessResult_AsStringConverted tests AsStringConverted method
+func TestAccessResult_AsStringConverted(t *testing.T) {
 	t.Run("valid string", func(t *testing.T) {
-		result := TypeSafeAccessResult{Value: "hello", Exists: true}
+		result := AccessResult{Value: "hello", Exists: true}
 		got, err := result.AsStringConverted()
 		if err != nil {
 			t.Errorf("AsStringConverted() unexpected error: %v", err)
@@ -3082,7 +3042,7 @@ func TestTypeSafeAccessResult_AsStringConverted(t *testing.T) {
 	})
 
 	t.Run("int converts to string", func(t *testing.T) {
-		result := TypeSafeAccessResult{Value: 123, Exists: true}
+		result := AccessResult{Value: 123, Exists: true}
 		got, err := result.AsStringConverted()
 		if err != nil {
 			t.Errorf("AsStringConverted() unexpected error: %v", err)
@@ -3093,7 +3053,7 @@ func TestTypeSafeAccessResult_AsStringConverted(t *testing.T) {
 	})
 
 	t.Run("not exists returns error", func(t *testing.T) {
-		result := TypeSafeAccessResult{Value: nil, Exists: false}
+		result := AccessResult{Value: nil, Exists: false}
 		_, err := result.AsStringConverted()
 		if err == nil {
 			t.Error("AsStringConverted() should return error when not exists")
@@ -3101,31 +3061,31 @@ func TestTypeSafeAccessResult_AsStringConverted(t *testing.T) {
 	})
 }
 
-// TestTypeSafeResult_Ok tests the Ok method
-func TestTypeSafeResult_Ok(t *testing.T) {
+// TestResult_Ok tests the Ok method
+func TestResult_Ok(t *testing.T) {
 	tests := []struct {
 		name     string
-		result   TypeSafeResult[string]
+		result   Result[string]
 		expected bool
 	}{
 		{
 			name:     "valid result",
-			result:   TypeSafeResult[string]{Value: "hello", Exists: true, Error: nil},
+			result:   Result[string]{Value: "hello", Exists: true, Error: nil},
 			expected: true,
 		},
 		{
 			name:     "result with error",
-			result:   TypeSafeResult[string]{Value: "", Exists: true, Error: fmt.Errorf("error")},
+			result:   Result[string]{Value: "", Exists: true, Error: fmt.Errorf("error")},
 			expected: false,
 		},
 		{
 			name:     "result not exists",
-			result:   TypeSafeResult[string]{Value: "", Exists: false, Error: nil},
+			result:   Result[string]{Value: "", Exists: false, Error: nil},
 			expected: false,
 		},
 		{
 			name:     "result with error and not exists",
-			result:   TypeSafeResult[string]{Value: "", Exists: false, Error: fmt.Errorf("error")},
+			result:   Result[string]{Value: "", Exists: false, Error: fmt.Errorf("error")},
 			expected: false,
 		},
 	}
@@ -3133,52 +3093,52 @@ func TestTypeSafeResult_Ok(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := tt.result.Ok(); got != tt.expected {
-				t.Errorf("TypeSafeResult.Ok() = %v, want %v", got, tt.expected)
+				t.Errorf("Result.Ok() = %v, want %v", got, tt.expected)
 			}
 		})
 	}
 }
 
-// TestTypeSafeResult_Unwrap tests the Unwrap method
-func TestTypeSafeResult_Unwrap(t *testing.T) {
+// TestResult_Unwrap tests the Unwrap method
+func TestResult_Unwrap(t *testing.T) {
 	t.Run("valid result returns value", func(t *testing.T) {
-		result := TypeSafeResult[int]{Value: 42, Exists: true, Error: nil}
+		result := Result[int]{Value: 42, Exists: true, Error: nil}
 		if got := result.Unwrap(); got != 42 {
-			t.Errorf("TypeSafeResult.Unwrap() = %v, want 42", got)
+			t.Errorf("Result.Unwrap() = %v, want 42", got)
 		}
 	})
 
 	t.Run("result with error returns zero", func(t *testing.T) {
-		result := TypeSafeResult[int]{Value: 42, Exists: true, Error: fmt.Errorf("error")}
+		result := Result[int]{Value: 42, Exists: true, Error: fmt.Errorf("error")}
 		if got := result.Unwrap(); got != 0 {
-			t.Errorf("TypeSafeResult.Unwrap() with error = %v, want 0", got)
+			t.Errorf("Result.Unwrap() with error = %v, want 0", got)
 		}
 	})
 }
 
-// TestTypeSafeResult_UnwrapOr tests the UnwrapOr method
-func TestTypeSafeResult_UnwrapOr(t *testing.T) {
+// TestResult_UnwrapOr tests the UnwrapOr method
+func TestResult_UnwrapOr(t *testing.T) {
 	tests := []struct {
 		name         string
-		result       TypeSafeResult[int]
+		result       Result[int]
 		defaultValue int
 		expected     int
 	}{
 		{
 			name:         "valid result returns value",
-			result:       TypeSafeResult[int]{Value: 42, Exists: true, Error: nil},
+			result:       Result[int]{Value: 42, Exists: true, Error: nil},
 			defaultValue: 0,
 			expected:     42,
 		},
 		{
 			name:         "result with error returns default",
-			result:       TypeSafeResult[int]{Value: 42, Exists: true, Error: fmt.Errorf("error")},
+			result:       Result[int]{Value: 42, Exists: true, Error: fmt.Errorf("error")},
 			defaultValue: 100,
 			expected:     100,
 		},
 		{
 			name:         "result not exists returns default",
-			result:       TypeSafeResult[int]{Value: 42, Exists: false, Error: nil},
+			result:       Result[int]{Value: 42, Exists: false, Error: nil},
 			defaultValue: 200,
 			expected:     200,
 		},
@@ -3187,29 +3147,29 @@ func TestTypeSafeResult_UnwrapOr(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := tt.result.UnwrapOr(tt.defaultValue); got != tt.expected {
-				t.Errorf("TypeSafeResult.UnwrapOr() = %v, want %v", got, tt.expected)
+				t.Errorf("Result.UnwrapOr() = %v, want %v", got, tt.expected)
 			}
 		})
 	}
 }
 
-// TestTypeSafeResult_UnwrapOrPanic tests the UnwrapOrPanic method
-func TestTypeSafeResult_UnwrapOrPanic(t *testing.T) {
+// TestResult_Must tests the Must method
+func TestResult_Must(t *testing.T) {
 	t.Run("valid result returns value", func(t *testing.T) {
-		result := TypeSafeResult[string]{Value: "hello", Exists: true, Error: nil}
-		if got := result.UnwrapOrPanic(); got != "hello" {
-			t.Errorf("TypeSafeResult.UnwrapOrPanic() = %v, want hello", got)
+		result := Result[string]{Value: "hello", Exists: true, Error: nil}
+		if got := result.Must(); got != "hello" {
+			t.Errorf("Result.Must() = %v, want hello", got)
 		}
 	})
 
 	t.Run("result with error panics", func(t *testing.T) {
 		defer func() {
 			if r := recover(); r == nil {
-				t.Error("TypeSafeResult.UnwrapOrPanic() should panic on error")
+				t.Error("Result.Must() should panic on error")
 			}
 		}()
-		result := TypeSafeResult[int]{Value: 0, Exists: true, Error: fmt.Errorf("error")}
-		result.UnwrapOrPanic()
+		result := Result[int]{Value: 0, Exists: true, Error: fmt.Errorf("error")}
+		result.Must()
 	})
 }
 
@@ -3381,17 +3341,6 @@ func TestUnifiedResourceManager(t *testing.T) {
 		// Note: Oversized/undersized builders are discarded automatically
 	})
 
-	t.Run("PerformMaintenance", func(t *testing.T) {
-		rm := newUnifiedResourceManager()
-
-		// Should not panic
-		rm.PerformMaintenance()
-
-		// Multiple calls should be safe
-		for i := 0; i < 10; i++ {
-			rm.PerformMaintenance()
-		}
-	})
 }
 
 // TestUnifiedTypeConversion tests generic type conversion

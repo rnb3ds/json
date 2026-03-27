@@ -5,7 +5,7 @@
 //   - 100% encoding/json compatibility - drop-in replacement
 //   - High-performance path operations with smart caching
 //   - Thread-safe concurrent operations
-//   - Type-safe generic operations with Go 1.22+ features
+//   - Type-safe generic operations with Go 1.18+ generics
 //   - Memory-efficient resource pooling
 //   - Production-ready error handling and validation
 //
@@ -21,7 +21,7 @@
 //
 //	// Type-safe operations
 //	name, err := json.GetString(jsonStr, "user.name")
-//	age, err := json.GetInt(jsonStr, "user.age")
+//	age, err := json.GetAsInt(jsonStr, "user.age")
 //
 //	// Advanced processor for complex operations
 //	processor := json.New() // Use default config
@@ -190,74 +190,73 @@ type JSONLProcessor struct {
 	linesCount int64
 }
 
-// jsonlProcessorPool for reusing JSONL processors
-var jsonlProcessorPool = sync.Pool{
-	New: func() any {
-		return &JSONLProcessor{}
-	},
-}
+// JSONLOption configures a JSONLProcessor during construction.
+type JSONLOption func(*JSONLProcessor)
 
-// NewJSONLProcessor creates a new JSONL processor with default configuration
-func NewJSONLProcessor(reader io.Reader) *JSONLProcessor {
-	return NewJSONLProcessorWithConfig(reader, DefaultJSONLConfig())
-}
-
-// NewJSONLProcessorWithConfig creates a new JSONL processor with custom configuration
-func NewJSONLProcessorWithConfig(reader io.Reader, config JSONLConfig) *JSONLProcessor {
-	if config.BufferSize <= 0 {
-		config.BufferSize = 64 * 1024
+// WithProcessor sets a custom Processor for JSONL operations.
+// Use this for dependency injection or when you need a specific processor configuration.
+func WithProcessor(p *Processor) JSONLOption {
+	return func(j *JSONLProcessor) {
+		if p != nil {
+			j.processor = p
+		}
 	}
-	if config.MaxLineSize <= 0 {
-		config.MaxLineSize = 1024 * 1024
+}
+
+// WithJSONLConfig sets a custom JSONL configuration.
+func WithJSONLConfig(config JSONLConfig) JSONLOption {
+	return func(j *JSONLProcessor) {
+		j.config = config
+	}
+}
+
+// NewJSONLProcessor creates a new JSONL processor with default configuration.
+func NewJSONLProcessor(reader io.Reader) *JSONLProcessor {
+	return NewJSONLProcessorWithOptions(reader)
+}
+
+// NewJSONLProcessorWithOptions creates a new JSONL processor with functional options.
+// Options are applied in order, allowing flexible configuration.
+//
+// Example:
+//
+//	proc := json.NewJSONLProcessorWithOptions(reader,
+//	    json.WithProcessor(customProcessor),
+//	    json.WithJSONLConfig(json.JSONLConfig{SkipEmpty: false}))
+func NewJSONLProcessorWithOptions(reader io.Reader, opts ...JSONLOption) *JSONLProcessor {
+	config := DefaultJSONLConfig()
+	j := &JSONLProcessor{
+		config:    config,
+		processor: getDefaultProcessor(),
+	}
+
+	// Apply options
+	for _, opt := range opts {
+		opt(j)
+	}
+
+	// Apply config defaults
+	if j.config.BufferSize <= 0 {
+		j.config.BufferSize = 64 * 1024
+	}
+	if j.config.MaxLineSize <= 0 {
+		j.config.MaxLineSize = 1024 * 1024
 	}
 
 	scanner := bufio.NewScanner(reader)
-	scanner.Buffer(make([]byte, config.BufferSize), config.MaxLineSize)
+	scanner.Buffer(make([]byte, j.config.BufferSize), j.config.MaxLineSize)
 
-	p := jsonlProcessorPool.Get().(*JSONLProcessor)
-	// Reset all fields to ensure consistent state for pooled object
-	// resetForPool sets stopped=true for safety
-	p.resetForPool()
+	j.stopped.Store(true) // Start in stopped state for safety
+	j.scanner = scanner
+	j.stopped.Store(false)
 
-	// SAFETY: Use defer/recover to ensure object is returned to pool in safe state
-	// if initialization panics. This prevents pool pollution with partially
-	// initialized objects.
-	defer func() {
-		if r := recover(); r != nil {
-			// Reset to safe state before returning to pool
-			p.resetForPool()
-			jsonlProcessorPool.Put(p)
-			panic(r) // Re-panic after cleanup
-		}
-	}()
-
-	// Initialize all fields while stopped=true
-	p.scanner = scanner
-	p.config = config
-	p.processor = getDefaultProcessor()
-
-	// SAFETY: Only set stopped=false after all fields are fully initialized
-	// This prevents race conditions where another goroutine might access
-	// partially initialized fields
-	p.stopped.Store(false)
-
-	return p
+	return j
 }
 
-// resetForPool clears all fields when retrieving from pool.
-// Sets default values before new values are assigned.
-// SAFETY: Sets stopped=true first to ensure object is in safe state before other fields are cleared.
-func (j *JSONLProcessor) resetForPool() {
-	// SAFETY: Set stopped first to prevent any concurrent operations
-	// This ensures the object is in a safe state before we clear other fields
-	j.stopped.Store(true)
-	j.scanner = nil
-	j.config = JSONLConfig{}
-	j.lineNum = 0
-	j.err = nil
-	j.processor = nil
-	j.bytesRead = 0
-	j.linesCount = 0
+// NewJSONLProcessorWithConfig creates a new JSONL processor with custom configuration.
+// Deprecated: Use NewJSONLProcessorWithOptions(reader, WithJSONLConfig(config)) instead.
+func NewJSONLProcessorWithConfig(reader io.Reader, config JSONLConfig) *JSONLProcessor {
+	return NewJSONLProcessorWithOptions(reader, WithJSONLConfig(config))
 }
 
 // shouldSkipLine checks if a line should be skipped based on configuration.
@@ -481,7 +480,7 @@ func (j *JSONLProcessor) GetStats() JSONLStats {
 	}
 }
 
-// Release returns the JSONLProcessor to the pool for reuse.
+// Release releases resources held by the JSONLProcessor.
 //
 // IMPORTANT:
 //   - Call this after all processing is complete
@@ -491,17 +490,13 @@ func (j *JSONLProcessor) GetStats() JSONLStats {
 // Resource Management:
 //   - Sets stopped flag to halt any pending operations
 //   - Clears internal processor reference to allow garbage collection
-//   - Returns the struct to the pool for reuse
 func (j *JSONLProcessor) Release() {
 	// Signal stop to any running operations first
 	j.stopped.Store(true)
 
 	// Clear all references including processor for GC
-	// Note: resetForPool sets processor=nil and stopped=true
-	j.resetForPool()
-
-	// Return to pool for reuse
-	jsonlProcessorPool.Put(j)
+	j.scanner = nil
+	j.processor = nil
 }
 
 // ============================================================================

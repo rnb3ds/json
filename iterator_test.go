@@ -1420,40 +1420,40 @@ func TestLargeBuffer(t *testing.T) {
 	putLargeBuffer(buf2)
 }
 
-// TestLazyJSON tests LazyJSON functionality
-func TestLazyJSON(t *testing.T) {
+// TestLazyParserFunctionality tests LazyParser functionality
+func TestLazyParserFunctionality(t *testing.T) {
 	t.Run("lazy parsing", func(t *testing.T) {
 		data := []byte(`{"name":"test","value":42}`)
-		lj := NewLazyJSON(data)
+		lp := NewLazyParser(data)
 
 		// Should not be parsed yet
-		if lj.IsParsed() {
-			t.Error("LazyJSON should not be parsed yet")
+		if lp.IsParsed() {
+			t.Error("LazyParser should not be parsed yet")
 		}
 
 		// Get triggers parsing
-		result, err := lj.Get("name")
+		result, err := lp.Get("name")
 		if err != nil {
-			t.Fatalf("LazyJSON.Get error: %v", err)
+			t.Fatalf("LazyParser.Get error: %v", err)
 		}
 
 		if result != "test" {
-			t.Errorf("LazyJSON.Get = %v, want test", result)
+			t.Errorf("LazyParser.Get = %v, want test", result)
 		}
 
 		// Should be parsed now
-		if !lj.IsParsed() {
-			t.Error("LazyJSON should be parsed now")
+		if !lp.IsParsed() {
+			t.Error("LazyParser should be parsed now")
 		}
 	})
 
 	t.Run("parse method", func(t *testing.T) {
 		data := []byte(`{"key":"value"}`)
-		lj := NewLazyJSON(data)
+		lp := NewLazyParser(data)
 
-		parsed, err := lj.Parse()
+		parsed, err := lp.Parse()
 		if err != nil {
-			t.Fatalf("LazyJSON.Parse error: %v", err)
+			t.Fatalf("LazyParser.Parse error: %v", err)
 		}
 
 		obj, ok := parsed.(map[string]any)
@@ -1468,53 +1468,53 @@ func TestLazyJSON(t *testing.T) {
 
 	t.Run("raw method", func(t *testing.T) {
 		data := []byte(`{"test":"data"}`)
-		lj := NewLazyJSON(data)
+		lp := NewLazyParser(data)
 
-		raw := lj.Raw()
+		raw := lp.Raw()
 		if !bytes.Equal(raw, data) {
-			t.Errorf("LazyJSON.Raw = %s, want %s", raw, data)
+			t.Errorf("LazyParser.Raw = %s, want %s", raw, data)
 		}
 	})
 
 	t.Run("parsed method", func(t *testing.T) {
 		data := []byte(`{"test":"data"}`)
-		lj := NewLazyJSON(data)
+		lp := NewLazyParser(data)
 
 		// Before parsing
-		if lj.Parsed() != nil {
-			t.Error("LazyJSON.Parsed should be nil before parsing")
+		if lp.Parsed() != nil {
+			t.Error("LazyParser.Parsed should be nil before parsing")
 		}
 
 		// Trigger parsing
-		_, _ = lj.Get("test")
+		_, _ = lp.Get("test")
 
 		// After parsing
-		if lj.Parsed() == nil {
-			t.Error("LazyJSON.Parsed should not be nil after parsing")
+		if lp.Parsed() == nil {
+			t.Error("LazyParser.Parsed should not be nil after parsing")
 		}
 	})
 
 	t.Run("error method", func(t *testing.T) {
 		data := []byte(`{invalid json}`)
-		lj := NewLazyJSON(data)
+		lp := NewLazyParser(data)
 
-		err := lj.Error()
+		err := lp.Error()
 		if err == nil {
-			t.Error("LazyJSON.Error should return error for invalid JSON")
+			t.Error("LazyParser.Error should return error for invalid JSON")
 		}
 	})
 
 	t.Run("nested path", func(t *testing.T) {
 		data := []byte(`{"nested":{"key":"value"}}`)
-		lj := NewLazyJSON(data)
+		lp := NewLazyParser(data)
 
-		result, err := lj.Get("nested.key")
+		result, err := lp.Get("nested.key")
 		if err != nil {
-			t.Fatalf("LazyJSON.Get nested error: %v", err)
+			t.Fatalf("LazyParser.Get nested error: %v", err)
 		}
 
 		if result != "value" {
-			t.Errorf("LazyJSON.Get nested = %v, want value", result)
+			t.Errorf("LazyParser.Get nested = %v, want value", result)
 		}
 	})
 }

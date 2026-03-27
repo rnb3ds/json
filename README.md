@@ -1,33 +1,33 @@
-# 🚀 cybergodev/json
+# cybergodev/json
 
 [![Go Version](https://img.shields.io/badge/Go-1.24+-00ADD8.svg)](https://golang.org)
 [![GoDoc](https://pkg.go.dev/badge/github.com/cybergodev/json.svg)](https://pkg.go.dev/github.com/cybergodev/json)
 [![MIT License](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
-[![Thread Safe](https://img.shields.io/badge/Thread_Safe-✓-brightgreen.svg)]()
+[![Thread Safe](https://img.shields.io/badge/Thread_Safe-Yes-brightgreen.svg)]()
 [![Security](https://img.shields.io/badge/Security-Hardened-red.svg)](docs/SECURITY.md)
 [![Zero Deps](https://img.shields.io/badge/deps-zero-brightgreen.svg)](go.mod)
 
 > A high-performance, feature-rich Go JSON processing library with 100% `encoding/json` compatibility.
 > Powerful path syntax, type safety, streaming processing, production-grade performance.
 
-**[📖 中文文档](README_zh-CN.md)**
+**[中文文档](README_zh-CN.md)**
 
 ---
 
-## ✨ Core Features
+## Features
 
 | Feature | Description |
 |---------|-------------|
-| 🔄 **100% Compatible** | Drop-in replacement for `encoding/json`, zero learning curve |
-| 🎯 **Powerful Paths** | Intuitive syntax: `users[0].name`, `items[-1]`, `data{flat:tags}` |
-| 🚀 **High Performance** | Smart caching, memory pooling, optimized hot paths |
-| 🛡️ **Type Safe** | Generics support, compile-time type checking |
-| 🔧 **Feature Rich** | Batch operations, streaming, file I/O, schema validation, deep merge |
-| 🏗️ **Production Ready** | Thread-safe, comprehensive error handling, security hardened |
+| **100% Compatible** | Drop-in replacement for `encoding/json`, zero learning curve |
+| **Powerful Paths** | Intuitive syntax: `users[0].name`, `items[-1]`, `data{flat:tags}` |
+| **High Performance** | Smart caching, memory pooling, optimized hot paths |
+| **Type Safe** | Generics support, compile-time type checking |
+| **Feature Rich** | Batch operations, streaming, file I/O, schema validation, deep merge |
+| **Production Ready** | Thread-safe, comprehensive error handling, security hardened |
 
 ---
 
-## 📦 Installation
+## Installation
 
 ```bash
 go get github.com/cybergodev/json
@@ -35,7 +35,7 @@ go get github.com/cybergodev/json
 
 ---
 
-## ⚡ Quick Start (5 Minutes)
+## Quick Start
 
 ```go
 package main
@@ -79,44 +79,44 @@ func main() {
 
 ---
 
-## 📋 Path Syntax Reference
+## Path Syntax Reference
 
 | Syntax | Description | Example |
 |--------|-------------|---------|
-| `.property` | Access property | `user.name` → "Alice" |
-| `[n]` | Array index | `items[0]` → first element |
-| `[-n]` | Negative index (from end) | `items[-1]` → last element |
-| `[start:end]` | Array slice | `items[1:3]` → elements 1-2 |
-| `[start:end:step]` | Slice with step | `items[::2]` → every other element |
-| `[+]` | Append to array | `items[+]` → append position |
-| `{field}` | Extract field from all elements | `users{name}` → ["Alice", "Bob"] |
-| `{flat:field}` | Flatten nested arrays | `users{flat:tags}` → merge all tags |
+| `.property` | Access property | `user.name` -> "Alice" |
+| `[n]` | Array index | `items[0]` -> first element |
+| `[-n]` | Negative index (from end) | `items[-1]` -> last element |
+| `[start:end]` | Array slice | `items[1:3]` -> elements 1-2 |
+| `[start:end:step]` | Slice with step | `items[::2]` -> every other element |
+| `[+]` | Append to array | `items[+]` -> append position |
+| `{field}` | Extract field from all elements | `users{name}` -> ["Alice", "Bob"] |
+| `{flat:field}` | Flatten nested arrays | `users{flat:tags}` -> merge all tags |
 
 ---
 
-## 🎯 Core API
+## Core API
 
 ### Data Retrieval
 
 ```go
-// Basic getters — return (value, error)
-json.Get(data, "user.name")           // any
-json.GetString(data, "user.name")     // string
-json.GetInt(data, "user.age")         // int
-json.GetFloat64(data, "user.score")   // float64
-json.GetBool(data, "user.active")     // bool
-json.GetArray(data, "user.tags")      // []any
-json.GetObject(data, "user.profile")  // map[string]any
+// Basic getters - return (value, error)
+json.Get(data, "user.name")            // (any, error)
+json.GetString(data, "user.name")      // (string, error)
+json.GetInt(data, "user.age")          // (int, error)
+json.GetFloat(data, "user.score")      // (float64, error)
+json.GetBool(data, "user.active")      // (bool, error)
+json.GetArray(data, "user.tags")       // ([]any, error)
+json.GetObject(data, "user.profile")   // (map[string]any, error)
 
 // Type-safe generic retrieval
 json.GetTyped[string](data, "user.name")
 json.GetTyped[[]int](data, "numbers")
-json.GetTyped[User](data, "user")     // custom struct
+json.GetTyped[User](data, "user")      // custom struct
 
 // With defaults (no error when path doesn't exist)
-json.GetDefault(data, "user.name", "Anonymous")
-json.GetDefault(data, "user.age", 0)
-json.GetDefault[[]any](data, "user.tags", []any{})
+json.GetStringOr(data, "user.name", "Anonymous")
+json.GetIntOr(data, "user.age", 0)
+json.GetTypedOr[[]any](data, "user.tags", []any{})
 
 // Batch retrieval
 results, err := json.GetMultiple(data, []string{"user.name", "user.age"})
@@ -125,7 +125,7 @@ results, err := json.GetMultiple(data, []string{"user.name", "user.age"})
 ### Data Modification
 
 ```go
-// Basic set — returns modified JSON on success, original data on failure
+// Basic set - returns modified JSON on success, original data on failure
 result, err := json.Set(data, "user.name", "Bob")
 
 // Auto-create paths with config
@@ -155,8 +155,8 @@ json.Unmarshal(bytes, &target)
 bytes, _ := json.MarshalIndent(data, "", "  ")
 
 // Quick formatting
-pretty, _    := json.FormatPretty(jsonStr)   // pretty print
-compact, _   := json.CompactString(jsonStr)  // minify
+pretty, _    := json.Prettify(jsonStr)      // pretty print
+compact, _   := json.CompactString(jsonStr) // minify
 json.Print(data)        // compact to stdout
 json.PrintPretty(data)  // pretty to stdout
 
@@ -195,15 +195,15 @@ strVal       := json.ConvertToString(value)
 result, err := json.TypeSafeConvert[string](value)
 
 // JSON utilities
-equal, _    := json.CompareJson(json1, json2)
-merged, _   := json.MergeJson(json1, json2)                    // union (default)
-merged, _   := json.MergeJson(json1, json2, json.MergeIntersection) // intersection
+equal, _    := json.CompareJSON(json1, json2)
+merged, _   := json.MergeJSON(json1, json2)                    // union (default)
+merged, _   := json.MergeJSON(json1, json2, json.MergeIntersection) // intersection
 deepCopy, _ := json.DeepCopy(data)
 ```
 
 ---
 
-## ⚙️ Configuration
+## Configuration
 
 ### Custom Configuration
 
@@ -249,7 +249,7 @@ defer processor.Close()
 
 ---
 
-## 📁 Advanced Features
+## Advanced Features
 
 ### Data Iteration
 
@@ -316,7 +316,7 @@ errors, err := json.ValidateSchema(jsonStr, schema)
 
 ---
 
-## 🎯 Common Use Cases
+## Common Use Cases
 
 ### API Response Processing
 
@@ -351,9 +351,9 @@ config := `{
 }`
 
 // Type-safe with defaults
-dbHost := json.GetDefault(config, "database.host", "localhost")
-dbPort := json.GetDefault(config, "database.port", 5432)
-cacheEnabled := json.GetDefault(config, "cache.enabled", false)
+dbHost := json.GetStringOr(config, "database.host", "localhost")
+dbPort := json.GetIntOr(config, "database.port", 5432)
+cacheEnabled := json.GetBoolOr(config, "cache.enabled", false)
 
 // Dynamic update
 updated, _ := json.SetMultiple(config, map[string]any{
@@ -385,7 +385,7 @@ result, _ := json.WarmupCache(jsonStr, paths)
 
 ---
 
-## 🔄 Migrating from encoding/json
+## Migrating from encoding/json
 
 Simply change the import:
 
@@ -398,24 +398,24 @@ import "github.com/cybergodev/json"
 ```
 
 All standard functions are fully compatible:
-- ✅ `json.Marshal()` / `json.Unmarshal()`
-- ✅ `json.MarshalIndent()`
-- ✅ `json.Valid()`
-- ✅ `json.Compact()` / `json.Indent()` / `json.HTMLEscape()`
+- `json.Marshal()` / `json.Unmarshal()`
+- `json.MarshalIndent()`
+- `json.Valid()`
+- `json.Compact()` / `json.Indent()` / `json.HTMLEscape()`
 
 ---
 
-## 🛡️ Security Configuration
+## Security Configuration
 
 ```go
 // For handling untrusted JSON input
 secureConfig := json.SecurityConfig()
 // Features:
-// ✓ Full security scanning enabled
-// ✓ Conservative size limits (max 10MB)
-// ✓ Strict mode validation
-// ✓ Prototype pollution protection
-// ✓ Path traversal protection
+// - Full security scanning enabled
+// - Conservative size limits (max 10MB)
+// - Strict mode validation
+// - Prototype pollution protection
+// - Path traversal protection
 
 processor, _ := json.New(secureConfig)
 defer processor.Close()
@@ -423,7 +423,7 @@ defer processor.Close()
 
 ---
 
-## 📚 Example Code
+## Example Code
 
 | File | Description |
 |------|-------------|
@@ -449,18 +449,18 @@ go run -tags=example examples/1_basic_usage.go
 
 ---
 
-## 📖 Documentation
+## Documentation
 
-- **[API Reference](docs/API_REFERENCE.md)** — Complete API documentation
-- **[Security Guide](docs/SECURITY.md)** — Security best practices
-- **[pkg.go.dev](https://pkg.go.dev/github.com/cybergodev/json)** — GoDoc
-
----
-
-## 📄 License
-
-MIT License — See [LICENSE](LICENSE) file for details.
+- **[API Reference](docs/API_REFERENCE.md)** - Complete API documentation
+- **[Security Guide](docs/SECURITY.md)** - Security best practices
+- **[pkg.go.dev](https://pkg.go.dev/github.com/cybergodev/json)** - GoDoc
 
 ---
 
-If this project helps you, please give it a ⭐!
+## License
+
+MIT License - See [LICENSE](LICENSE) file for details.
+
+---
+
+If this project helps you, please give it a star!

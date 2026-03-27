@@ -651,15 +651,6 @@ func CompareJSON(json1, json2 string) (bool, error) {
 	return string(bytes1) == string(bytes2), nil
 }
 
-// CompareJson compares two JSON strings for equality.
-//
-// Deprecated: Use CompareJSON instead for consistent naming with Go conventions.
-// Migration: json.CompareJson(a, b) -> json.CompareJSON(a, b)
-// Will be removed in v2.0.0.
-func CompareJson(json1, json2 string) (bool, error) {
-	return CompareJSON(json1, json2)
-}
-
 // MergeJSON merges two JSON objects using deep merge strategy.
 // For nested objects, it recursively merges keys according to the specified mode.
 // For primitive values and arrays, the value from json2 takes precedence.
@@ -716,15 +707,6 @@ func MergeJSON(json1, json2 string, mode ...MergeMode) (string, error) {
 	return Encode(converted)
 }
 
-// MergeJson merges two JSON objects using deep merge strategy.
-//
-// Deprecated: Use MergeJSON instead for consistent naming with Go conventions.
-// Migration: json.MergeJson(a, b) -> json.MergeJSON(a, b)
-// Will be removed in v2.0.0.
-func MergeJson(json1, json2 string, mode ...MergeMode) (string, error) {
-	return MergeJSON(json1, json2, mode...)
-}
-
 // convertLibraryNumbers recursively converts the library's Number type to float64
 // This is needed because the library's NumberPreservingDecoder returns Number (not json.Number)
 func convertLibraryNumbers(data any) any {
@@ -773,15 +755,6 @@ func MergeJSONMany(mode MergeMode, jsons ...string) (string, error) {
 	}
 
 	return result, nil
-}
-
-// MergeJsonMany merges multiple JSON objects with specified merge mode.
-//
-// Deprecated: Use MergeJSONMany instead for consistent naming with Go conventions.
-// Migration: json.MergeJsonMany(mode, jsons...) -> json.MergeJSONMany(mode, jsons...)
-// Will be removed in v2.0.0.
-func MergeJsonMany(mode MergeMode, jsons ...string) (string, error) {
-	return MergeJSONMany(mode, jsons...)
 }
 
 // GetTypedWithProcessor retrieves a typed value from JSON using a specific processor

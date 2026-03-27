@@ -48,14 +48,6 @@ func TestHashBool(t *testing.T) {
 		t.Errorf("HashBool(true) == HashBool(false): both = %d", resultTrue)
 	}
 
-	// Verify deterministic behavior
-	if HashBool(h, true) != HashBool(h, true) {
-		t.Error("HashBool is not deterministic for true")
-	}
-	if HashBool(h, false) != HashBool(h, false) {
-		t.Error("HashBool is not deterministic for false")
-	}
-
 	// Verify the actual values
 	// true: h ^= 1, then *= FNVPrime
 	expectedTrue := (h ^ 1) * FNVPrime

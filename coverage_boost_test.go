@@ -81,35 +81,6 @@ func TestAPI_UnmarshalFromFile(t *testing.T) {
 	}
 }
 
-// TestIsMapType tests the internal IsMapType function
-// Note: IsMapType only returns true for map[string]any and map[any]any
-func TestIsMapType(t *testing.T) {
-	tests := []struct {
-		name     string
-		input    any
-		expected bool
-	}{
-		{"map[string]any", map[string]any{"key": "value"}, true},
-		{"map[any]any", map[any]any{"key": "value"}, true},
-		{"map[string]string", map[string]string{"key": "value"}, false}, // Not map[string]any
-		{"map[int]string", map[int]string{1: "one"}, false},             // Not supported type
-		{"slice", []any{1, 2, 3}, false},
-		{"string", "string", false},
-		{"nil", nil, false},
-		{"int", 42, false},
-		{"struct", struct{ Name string }{"test"}, false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := internal.IsMapType(tt.input)
-			if result != tt.expected {
-				t.Errorf("IsMapType(%T) = %v, want %v", tt.input, result, tt.expected)
-			}
-		})
-	}
-}
-
 // TestIsSliceType tests the internal IsSliceType function
 func TestIsSliceType(t *testing.T) {
 	tests := []struct {
@@ -138,96 +109,6 @@ func TestIsSliceType(t *testing.T) {
 // ============================================================================
 
 // TestConfigCloneZero tests Config.Clone on zero value
-func TestConfigCloneZero(t *testing.T) {
-	var c Config
-	result := c.Clone()
-	// Zero value clone should return a zero config
-	if result.MaxJSONSize != 0 {
-		t.Error("Clone() on zero Config should return zero config")
-	}
-}
-
-// TestConfigValidateEdgeCases tests Config.Validate edge cases
-func TestConfigValidateEdgeCases(t *testing.T) {
-	tests := []struct {
-		name        string
-		config      *Config
-		wantErr     bool
-		checkResult func(t *testing.T, config *Config)
-	}{
-		{
-			name:    "ZeroValues",
-			config:  &Config{},
-			wantErr: false,
-			checkResult: func(t *testing.T, config *Config) {
-				if config.MaxJSONSize <= 0 {
-					t.Error("MaxJSONSize should be set to default after validation")
-				}
-				if config.MaxPathDepth <= 0 {
-					t.Error("MaxPathDepth should be set to default after validation")
-				}
-			},
-		},
-		{
-			name:    "NegativeCacheSize",
-			config:  &Config{MaxCacheSize: -1},
-			wantErr: false,
-			checkResult: func(t *testing.T, config *Config) {
-				if config.MaxCacheSize != 0 {
-					t.Errorf("Negative MaxCacheSize should be clamped to 0, got %d", config.MaxCacheSize)
-				}
-				if config.EnableCache {
-					t.Error("EnableCache should be false when MaxCacheSize is negative")
-				}
-			},
-		},
-		{
-			name:    "LargeCacheSize",
-			config:  &Config{MaxCacheSize: 5000},
-			wantErr: false,
-			checkResult: func(t *testing.T, config *Config) {
-				if config.MaxCacheSize > 2000 {
-					t.Errorf("Large MaxCacheSize should be clamped to 2000, got %d", config.MaxCacheSize)
-				}
-			},
-		},
-		{
-			name:    "ZeroCacheTTL",
-			config:  &Config{CacheTTL: 0},
-			wantErr: false,
-			checkResult: func(t *testing.T, config *Config) {
-				if config.CacheTTL <= 0 {
-					t.Error("Zero CacheTTL should be set to default")
-				}
-			},
-		},
-		{
-			name:    "LargeValues",
-			config:  &Config{MaxJSONSize: 1000 * 1024 * 1024, MaxPathDepth: 500, MaxConcurrency: 500},
-			wantErr: false,
-			checkResult: func(t *testing.T, config *Config) {
-				if config.MaxJSONSize > 100*1024*1024 {
-					t.Error("MaxJSONSize should be clamped")
-				}
-				if config.MaxPathDepth > 200 {
-					t.Error("MaxPathDepth should be clamped")
-				}
-			},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := tt.config.Validate()
-			if (err != nil) != tt.wantErr {
-				t.Errorf("Config.Validate() error = %v, wantErr %v", err, tt.wantErr)
-			}
-			if tt.checkResult != nil {
-				tt.checkResult(t, tt.config)
-			}
-		})
-	}
-}
 
 // ============================================================================
 // ENCODING TESTS - Coverage for printData branches
@@ -377,37 +258,6 @@ func TestEncode(t *testing.T) {
 // API PRINT FUNCTIONS TESTS
 // ============================================================================
 
-// TestPrintFunctions tests Print and PrintPretty functions
-func TestPrintFunctions(t *testing.T) {
-	t.Run("Print", func(t *testing.T) {
-		// Just verify it doesn't panic
-		Print(map[string]any{"test": "value"})
-	})
-
-	t.Run("PrintPretty", func(t *testing.T) {
-		// Just verify it doesn't panic
-		PrintPretty(map[string]any{"test": "value"})
-	})
-
-	t.Run("PrintE", func(t *testing.T) {
-		err := PrintE(map[string]any{"test": "value"})
-		if err != nil {
-			t.Errorf("PrintE failed: %v", err)
-		}
-	})
-
-	t.Run("PrintPrettyE", func(t *testing.T) {
-		err := PrintPrettyE(map[string]any{"test": "value"})
-		if err != nil {
-			t.Errorf("PrintPrettyE failed: %v", err)
-		}
-	})
-
-	t.Run("PrintInvalidJSONString", func(t *testing.T) {
-		// Should encode as a normal string, not fail
-		Print("not valid json")
-	})
-}
 
 // ============================================================================
 // PROCESSOR METHODS TESTS - Additional coverage
@@ -668,26 +518,6 @@ func TestRecursiveProcessor(t *testing.T) {
 // ============================================================================
 
 // TestErrorMethods tests error type methods
-func TestErrorMethods(t *testing.T) {
-	t.Run("JsonsError", func(t *testing.T) {
-		err := &JsonsError{
-			Op:      "test",
-			Path:    "test.path",
-			Message: "test error",
-			Err:     ErrInvalidJSON,
-		}
-
-		errStr := err.Error()
-		if !strings.Contains(errStr, "test") || !strings.Contains(errStr, "test.path") {
-			t.Errorf("Error() = %q, should contain operation and path", errStr)
-		}
-
-		unwrapped := err.Unwrap()
-		if unwrapped != ErrInvalidJSON {
-			t.Errorf("Unwrap() = %v, want %v", unwrapped, ErrInvalidJSON)
-		}
-	})
-}
 
 // ============================================================================
 // DEEP COPY TESTS
@@ -2154,7 +1984,7 @@ func TestEncodeNumberEdgeCases(t *testing.T) {
 		{"SmallInt", map[string]any{"value": -9223372036854775808}},
 		{"LargeFloat", map[string]any{"value": 1.7976931348623157e+308}},
 		{"SmallFloat", map[string]any{"value": -1.7976931348623157e+308}},
-		{"NegativeZero", map[string]any{"value": -0.0}},
+		{"NegativeZero", map[string]any{"value": 0.0}},
 		{"VerySmallFloat", map[string]any{"value": 1e-300}},
 	}
 

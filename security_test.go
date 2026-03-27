@@ -91,7 +91,7 @@ func TestSecurityValidation(t *testing.T) {
 
 			// Test 1: Quick size limit validation with small data
 			t.Run("QuickSizeLimit", func(t *testing.T) {
-				smallLimitConfig := SecurityConfig().Clone()
+				smallLimitConfig := SecurityConfig()
 				smallLimitConfig.MaxJSONSize = 100 * 1024 // 100KB limit for quick testing
 				processor := MustNew(smallLimitConfig)
 				defer processor.Close()

@@ -2,6 +2,7 @@ package json
 
 import (
 	"errors"
+	"reflect"
 	"time"
 
 	"github.com/cybergodev/json/internal"
@@ -162,8 +163,17 @@ func DefaultConfig() Config {
 
 // Clone creates a copy of the configuration.
 // Performs a deep copy of reference types (maps, slices).
-func (c Config) Clone() Config {
-	clone := c
+// Returns a pointer to avoid unnecessary copying of the large Config struct.
+//
+// NOTE: Interface fields (CustomEncoder, CustomPathParser, Context) are shallow-copied
+// as they typically contain stateless or singleton implementations.
+// CustomTypeEncoders, CustomValidators, AdditionalDangerousPatterns, and Hooks are
+// deep-copied as they may be modified independently.
+func (c *Config) Clone() *Config {
+	if c == nil {
+		return nil
+	}
+	clone := *c
 
 	// Deep copy CustomEscapes map
 	if c.CustomEscapes != nil {
@@ -173,7 +183,33 @@ func (c Config) Clone() Config {
 		}
 	}
 
-	return clone
+	// Deep copy CustomTypeEncoders map
+	if c.CustomTypeEncoders != nil {
+		clone.CustomTypeEncoders = make(map[reflect.Type]TypeEncoder, len(c.CustomTypeEncoders))
+		for k, v := range c.CustomTypeEncoders {
+			clone.CustomTypeEncoders[k] = v
+		}
+	}
+
+	// Deep copy CustomValidators slice
+	if c.CustomValidators != nil {
+		clone.CustomValidators = make([]Validator, len(c.CustomValidators))
+		copy(clone.CustomValidators, c.CustomValidators)
+	}
+
+	// Deep copy AdditionalDangerousPatterns slice
+	if c.AdditionalDangerousPatterns != nil {
+		clone.AdditionalDangerousPatterns = make([]DangerousPattern, len(c.AdditionalDangerousPatterns))
+		copy(clone.AdditionalDangerousPatterns, c.AdditionalDangerousPatterns)
+	}
+
+	// Deep copy Hooks slice
+	if c.Hooks != nil {
+		clone.Hooks = make([]Hook, len(c.Hooks))
+		copy(clone.Hooks, c.Hooks)
+	}
+
+	return &clone
 }
 
 // Validate validates the configuration and applies corrections.
@@ -221,6 +257,145 @@ func (c *Config) Validate() error {
 	return nil
 }
 
+// ConfigWarning represents a configuration modification made during validation.
+type ConfigWarning struct {
+	Field    string // The field that was modified
+	OldValue any    // The original value (may be nil for invalid values)
+	NewValue any    // The corrected value
+	Reason   string // Why the modification was made
+}
+
+// ValidateWithWarnings validates the configuration and returns warnings for any
+// modifications made. This is useful for debugging configuration issues or
+// informing users about automatic adjustments.
+//
+// Example:
+//
+//	cfg := json.DefaultConfig()
+//	cfg.MaxJSONSize = -1 // Invalid value
+//	warnings := cfg.ValidateWithWarnings()
+//	for _, w := range warnings {
+//	    fmt.Printf("%s: %s\n", w.Field, w.Reason)
+//	}
+func (c *Config) ValidateWithWarnings() []ConfigWarning {
+	if c == nil {
+		return []ConfigWarning{{Field: "Config", Reason: "config cannot be nil"}}
+	}
+
+	var warnings []ConfigWarning
+
+	// Helper to record clamped int64 values
+	checkInt64Clamp := func(ptr *int64, min, max int64, fieldName string) {
+		original := *ptr
+		if original <= 0 {
+			*ptr = min
+			warnings = append(warnings, ConfigWarning{
+				Field:    fieldName,
+				OldValue: original,
+				NewValue: min,
+				Reason:   "value was invalid, set to minimum",
+			})
+		} else if original > max {
+			*ptr = max
+			warnings = append(warnings, ConfigWarning{
+				Field:    fieldName,
+				OldValue: original,
+				NewValue: max,
+				Reason:   "value exceeded maximum",
+			})
+		}
+	}
+
+	// Helper to record clamped int values
+	checkIntClamp := func(ptr *int, min, max int, fieldName string) {
+		original := *ptr
+		if original <= 0 {
+			*ptr = min
+			warnings = append(warnings, ConfigWarning{
+				Field:    fieldName,
+				OldValue: original,
+				NewValue: min,
+				Reason:   "value was invalid, set to minimum",
+			})
+		} else if original > max {
+			*ptr = max
+			warnings = append(warnings, ConfigWarning{
+				Field:    fieldName,
+				OldValue: original,
+				NewValue: max,
+				Reason:   "value exceeded maximum",
+			})
+		}
+	}
+
+	// Size and depth limits
+	checkInt64Clamp(&c.MaxJSONSize, 1024*1024, 100*1024*1024, "MaxJSONSize")
+	checkIntClamp(&c.MaxPathDepth, 10, 200, "MaxPathDepth")
+	checkIntClamp(&c.MaxNestingDepthSecurity, 10, 200, "MaxNestingDepthSecurity")
+	checkIntClamp(&c.MaxConcurrency, 1, 200, "MaxConcurrency")
+	checkIntClamp(&c.ParallelThreshold, 1, 50, "ParallelThreshold")
+
+	// Security limits
+	checkIntClamp(&c.MaxObjectKeys, 100, 100000, "MaxObjectKeys")
+	checkIntClamp(&c.MaxArrayElements, 100, 100000, "MaxArrayElements")
+	checkInt64Clamp(&c.MaxSecurityValidationSize, 1024*1024, 100*1024*1024, "MaxSecurityValidationSize")
+
+	// Cache settings
+	if c.MaxCacheSize < 0 {
+		warnings = append(warnings, ConfigWarning{
+			Field:    "MaxCacheSize",
+			OldValue: c.MaxCacheSize,
+			NewValue: 0,
+			Reason:   "negative cache size is invalid, disabled caching",
+		})
+		c.MaxCacheSize = 0
+		c.EnableCache = false
+	} else if c.MaxCacheSize > 2000 {
+		warnings = append(warnings, ConfigWarning{
+			Field:    "MaxCacheSize",
+			OldValue: c.MaxCacheSize,
+			NewValue: 2000,
+			Reason:   "cache size exceeded maximum",
+		})
+		c.MaxCacheSize = 2000
+	}
+
+	if c.CacheTTL <= 0 {
+		warnings = append(warnings, ConfigWarning{
+			Field:    "CacheTTL",
+			OldValue: c.CacheTTL,
+			NewValue: DefaultCacheTTL,
+			Reason:   "invalid TTL, set to default",
+		})
+		c.CacheTTL = DefaultCacheTTL
+	}
+
+	// Encoding options
+	if c.MaxDepth < 0 || c.MaxDepth > 1000 {
+		warnings = append(warnings, ConfigWarning{
+			Field:    "MaxDepth",
+			OldValue: c.MaxDepth,
+			NewValue: 100,
+			Reason:   "value out of valid range [0, 1000]",
+		})
+		c.MaxDepth = 100
+	}
+	if c.FloatPrecision < -1 || c.FloatPrecision > 15 {
+		warnings = append(warnings, ConfigWarning{
+			Field:    "FloatPrecision",
+			OldValue: c.FloatPrecision,
+			NewValue: -1,
+			Reason:   "value out of valid range [-1, 15]",
+		})
+		c.FloatPrecision = -1
+	}
+
+	// Batch size limits
+	checkIntClamp(&c.MaxBatchSize, 10, 10000, "MaxBatchSize")
+
+	return warnings
+}
+
 // Config accessor methods.
 // These methods implement the CacheConfig interface used by internal/cache.go
 // and provide consistent API for testing and interface-based programming.
@@ -251,6 +426,24 @@ func (c *Config) ShouldCompactArrays() bool    { return c.CompactArrays }
 func (c *Config) ShouldValidateInput() bool    { return c.ValidateInput }
 func (c *Config) GetMaxNestingDepth() int      { return c.MaxNestingDepthSecurity }
 func (c *Config) ShouldValidateFilePath() bool { return c.ValidateFilePath }
+
+// EncoderConfig interface methods for custom encoders.
+// These provide read-only access to encoding configuration.
+func (c *Config) IsHTMLEscapeEnabled() bool    { return c.EscapeHTML }
+func (c *Config) IsPrettyEnabled() bool        { return c.Pretty }
+func (c *Config) GetIndent() string            { return c.Indent }
+func (c *Config) GetPrefix() string            { return c.Prefix }
+func (c *Config) IsSortKeysEnabled() bool      { return c.SortKeys }
+func (c *Config) GetFloatPrecision() int       { return c.FloatPrecision }
+func (c *Config) IsTruncateFloatEnabled() bool { return c.FloatTruncate }
+func (c *Config) GetMaxDepth() int             { return c.MaxDepth }
+func (c *Config) ShouldIncludeNulls() bool     { return c.IncludeNulls }
+func (c *Config) ShouldValidateUTF8() bool     { return c.ValidateUTF8 }
+func (c *Config) IsDisallowUnknownEnabled() bool { return c.DisallowUnknown }
+func (c *Config) ShouldEscapeUnicode() bool    { return c.EscapeUnicode }
+func (c *Config) ShouldEscapeSlash() bool      { return c.EscapeSlash }
+func (c *Config) ShouldEscapeNewlines() bool   { return c.EscapeNewlines }
+func (c *Config) ShouldEscapeTabs() bool       { return c.EscapeTabs }
 
 // =============================================================================
 // API Unification - Config presets for common scenarios

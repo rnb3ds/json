@@ -8,15 +8,23 @@ import (
 	"github.com/cybergodev/json/internal"
 )
 
-// RecursiveProcessor implements true recursive processing for all ops
-type RecursiveProcessor struct {
-	processor *Processor
+// pathSegmentProvider is the minimal interface RecursiveProcessor needs.
+// This interface breaks the circular dependency between Processor and RecursiveProcessor.
+type pathSegmentProvider interface {
+	getCachedPathSegments(path string) ([]internal.PathSegment, error)
 }
 
-// NewRecursiveProcessor creates a new unified recursive processor
-func NewRecursiveProcessor(p *Processor) *RecursiveProcessor {
+// RecursiveProcessor implements true recursive processing for all ops
+type RecursiveProcessor struct {
+	provider pathSegmentProvider
+}
+
+// NewRecursiveProcessor creates a new unified recursive processor.
+// The provider must implement pathSegmentProvider interface.
+// Note: *Processor implicitly implements this interface.
+func NewRecursiveProcessor(provider pathSegmentProvider) *RecursiveProcessor {
 	return &RecursiveProcessor{
-		processor: p,
+		provider: provider,
 	}
 }
 
@@ -28,7 +36,7 @@ func (urp *RecursiveProcessor) ProcessRecursively(data any, path string, op oper
 // ProcessRecursivelyWithOptions performs recursive processing with path creation options
 func (urp *RecursiveProcessor) ProcessRecursivelyWithOptions(data any, path string, op operation, value any, createPaths bool) (any, error) {
 	// Parse path into segments using cached parsing
-	segments, err := urp.processor.getCachedPathSegments(path)
+	segments, err := urp.provider.getCachedPathSegments(path)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse path '%s': %w", path, err)
 	}

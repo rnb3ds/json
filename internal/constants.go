@@ -6,10 +6,10 @@ package internal
 
 const (
 	// Depth limits for various operations
-	MaxDeepMergeDepth      = 100 // Maximum depth for deep merge operations
-	MaxPathParseDepth      = 100 // Maximum depth for path parsing
-	MaxNestingDepth        = 200 // Maximum JSON nesting depth for security validation
-	MaxSensitiveDataDepth  = 10  // Maximum depth for sensitive data detection
+	MaxDeepMergeDepth     = 100 // Maximum depth for deep merge operations
+	MaxPathParseDepth     = 100 // Maximum depth for path parsing
+	MaxNestingDepth       = 200 // Maximum JSON nesting depth for security validation
+	MaxSensitiveDataDepth = 10  // Maximum depth for sensitive data detection
 
 	// Path and cache limits
 	MaxPathLength     = 5000 // Maximum path length for security (single source of truth)

@@ -118,9 +118,13 @@ func UnescapeJSONPointer(s string) string {
 	return sb.String()
 }
 
+// PathSegmentFlags are bit flags for path segment options.
+// This type is exported for use by the public API.
+type PathSegmentFlags uint8
+
 // Bit flags for PathSegment fields to avoid pointer allocations
 const (
-	FlagIsNegative uint8 = 1 << iota
+	FlagIsNegative PathSegmentFlags = 1 << iota
 	FlagIsWildcard
 	FlagIsFlat
 	FlagHasStart
@@ -128,15 +132,26 @@ const (
 	FlagHasStep
 )
 
+// Public API aliases for flag constants (backward compatibility)
+// These provide more descriptive names for the public API
+const (
+	PathFlagNegative = FlagIsNegative // Indicates negative array index
+	PathFlagWildcard = FlagIsWildcard // Indicates wildcard segment
+	PathFlagFlat     = FlagIsFlat     // Indicates flat extraction mode
+	PathFlagHasStart = FlagHasStart   // Indicates slice has start value
+	PathFlagHasEnd   = FlagHasEnd     // Indicates slice has end value
+	PathFlagHasStep  = FlagHasStep    // Indicates slice has step value
+)
+
 // PathSegment represents a single segment in a JSON path
 // Optimized to avoid pointer allocations by using direct values and bit flags
 type PathSegment struct {
 	Type  PathSegmentType
-	Key   string // Used for PropertySegment and ExtractSegment
-	Index int    // Used for ArrayIndexSegment and slice start
-	End   int    // Direct value (was *int) for ArraySliceSegment
-	Step  int    // Direct value (was *int) for ArraySliceSegment
-	Flags uint8  // Bit-packed flags
+	Key   string           // Used for PropertySegment and ExtractSegment
+	Index int              // Used for ArrayIndexSegment and slice start
+	End   int              // Direct value (was *int) for ArraySliceSegment
+	Step  int              // Direct value (was *int) for ArraySliceSegment
+	Flags PathSegmentFlags // Bit-packed flags
 }
 
 // HasStart returns true if slice has a start value
@@ -222,7 +237,7 @@ func NewPropertySegment(key string) PathSegment {
 
 // NewArrayIndexSegment creates an array index access segment
 func NewArrayIndexSegment(index int) PathSegment {
-	var flags uint8
+	var flags PathSegmentFlags
 	if index < 0 {
 		flags |= FlagIsNegative
 	}
@@ -236,7 +251,7 @@ func NewArrayIndexSegment(index int) PathSegment {
 // NewArraySliceSegment creates an array slice access segment
 // Now accepts direct values instead of pointers to avoid heap allocations
 func NewArraySliceSegment(start, end, step int, hasStart, hasEnd, hasStep bool) PathSegment {
-	var flags uint8
+	var flags PathSegmentFlags
 	if hasStart {
 		flags |= FlagHasStart
 	}
@@ -264,7 +279,7 @@ func NewExtractSegment(extract string) PathSegment {
 		actualExtract = strings.TrimPrefix(extract, "flat:")
 	}
 
-	var flags uint8
+	var flags PathSegmentFlags
 	if isFlat {
 		flags |= FlagIsFlat
 	}
@@ -272,6 +287,34 @@ func NewExtractSegment(extract string) PathSegment {
 		Type:  ExtractSegment,
 		Key:   actualExtract,
 		Flags: flags,
+	}
+}
+
+// NewExtractSegmentWithFlat creates an extraction segment with explicit flat flag
+func NewExtractSegmentWithFlat(key string, flat bool) PathSegment {
+	var flags PathSegmentFlags
+	if flat {
+		flags |= FlagIsFlat
+	}
+	return PathSegment{
+		Type:  ExtractSegment,
+		Key:   key,
+		Flags: flags,
+	}
+}
+
+// NewWildcardSegment creates a wildcard segment
+func NewWildcardSegment() PathSegment {
+	return PathSegment{
+		Type:  WildcardSegment,
+		Flags: FlagIsWildcard,
+	}
+}
+
+// NewRecursiveSegment creates a recursive descent segment
+func NewRecursiveSegment() PathSegment {
+	return PathSegment{
+		Type: RecursiveSegment,
 	}
 }
 
@@ -372,7 +415,7 @@ func parseDotNotation(path string) ([]PathSegment, error) {
 		} else {
 			// Use fast parser to avoid strconv.Atoi error allocations
 			if index, ok := fastParseInt(part); ok {
-				var flags uint8
+				var flags PathSegmentFlags
 				if index < 0 {
 					flags |= FlagIsNegative
 				}
@@ -541,7 +584,7 @@ func parseComplexSegment(part string) ([]PathSegment, error) {
 				return nil, fmt.Errorf("empty extraction field in '%s'", remaining[:braceEnd+1])
 			}
 
-			var flags uint8
+			var flags PathSegmentFlags
 			if isFlat {
 				flags |= FlagIsFlat
 			}
@@ -665,7 +708,7 @@ func parseArrayAccess(arrayPart string) (PathSegment, error) {
 		return PathSegment{}, fmt.Errorf("invalid array index '%s'", arrayPart)
 	}
 
-	var flags uint8
+	var flags PathSegmentFlags
 	if index < 0 {
 		flags |= FlagIsNegative
 	}
@@ -705,7 +748,7 @@ func parseSliceAccess(slicePart string) (PathSegment, error) {
 	}
 
 	var start, end, step int
-	var flags uint8
+	var flags PathSegmentFlags
 
 	// Parse start (before first colon) - use fast parser to avoid strconv error allocations
 	if colon1 > 0 {
@@ -771,7 +814,7 @@ func parseJSONPointer(path string) ([]PathSegment, error) {
 
 		// Try to parse as numeric index using fast parser
 		if index, ok := fastParseInt(part); ok {
-			var flags uint8
+			var flags PathSegmentFlags
 			if index < 0 {
 				flags |= FlagIsNegative
 			}

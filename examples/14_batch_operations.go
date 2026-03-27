@@ -26,8 +26,8 @@ import (
 // Run: go run -tags=example examples/14_batch_operations.go
 
 func main() {
-	fmt.Println("Batch Operations - JSON Library")
-	fmt.Println("================================\n ")
+	fmt.Println("⚡ JSON Library - Batch Operations")
+	fmt.Println("==================================\n ")
 
 	// 1. PROCESSBATCH FOR MIXED OPERATIONS
 	demonstrateProcessBatch()

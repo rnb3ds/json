@@ -1437,7 +1437,7 @@ hotKeyCache: sync.Map          // Lock-free hot keys
 All type conversions include overflow checking:
 
 ```go
-func (r TypeSafeAccessResult) AsInt() (int, error) {
+func (r AccessResult) AsInt() (int, error) {
     case int64:
         // Check for overflow when converting int64 to int
         if v > int64(1<<(strconv.IntSize-1)-1) ||

@@ -180,7 +180,7 @@ func BenchmarkHandleArrayAccess(b *testing.B) {
 		arr[i] = i
 	}
 
-	segment := PathSegment{
+	segment := internal.PathSegment{
 		Type:  internal.ArrayIndexSegment,
 		Index: 500,
 	}
@@ -571,7 +571,7 @@ func TestBoundaryConditions(t *testing.T) {
 			helper.AssertNoError(err)
 			helper.AssertEqual("", result)
 
-			withDefault := GetDefault[string](testData, "missing", "default")
+			withDefault := GetTypedOr[string](testData, "missing", "default")
 			helper.AssertEqual("default", withDefault)
 		})
 
@@ -654,7 +654,7 @@ func TestBoundaryConditions(t *testing.T) {
 			intZero, _ := GetInt(testData, "int_zero")
 			helper.AssertEqual(0, intZero)
 
-			floatZero, _ := GetFloat64(testData, "float_zero")
+			floatZero, _ := GetFloat(testData, "float_zero")
 			helper.AssertEqual(0.0, floatZero)
 
 			boolFalse, _ := GetBool(testData, "bool_false")
@@ -1059,10 +1059,10 @@ func TestConfig_Clone(t *testing.T) {
 		PreserveNumbers: true,
 	}
 
-	cloned := original.Clone()
+	cloned := (&original).Clone()
 
 	// Values should be equal — use reflect.DeepEqual for struct comparison
-	if !reflect.DeepEqual(original, cloned) {
+	if !reflect.DeepEqual(original, *cloned) {
 		t.Error("Clone should return equal values")
 	}
 
@@ -1138,7 +1138,7 @@ func TestConfiguration(t *testing.T) {
 		original.EnableCache = false
 		original.StrictMode = true
 
-		cloned := original.Clone()
+		cloned := (&original).Clone()
 
 		helper.AssertNotNil(cloned)
 		helper.AssertEqual(original.EnableCache, cloned.EnableCache)
@@ -1172,7 +1172,7 @@ func TestConfiguration(t *testing.T) {
 			helper.AssertFalse(config.EnableCache)
 		})
 
-		t.Run("ZeroValuesGetDefaults", func(t *testing.T) {
+		t.Run("ZeroValuesGetOrs", func(t *testing.T) {
 			config := &Config{}
 			err := config.Validate()
 			helper.AssertNoError(err)
@@ -2124,11 +2124,11 @@ func TestCompactString(t *testing.T) {
 	}
 }
 
-// TestFormatPretty tests pretty formatting
-func TestFormatPretty(t *testing.T) {
+// TestPrettify tests pretty formatting
+func TestPrettify(t *testing.T) {
 	compactJSON := `{"user":{"name":"Alice","age":30},"settings":{"theme":"dark"}}`
 
-	result, err := FormatPretty(compactJSON)
+	result, err := Prettify(compactJSON)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -2210,74 +2210,74 @@ func TestForwardSlice(t *testing.T) {
 	}
 }
 
-// TestGetDefaultSlice tests GetDefault[[]any] function
-func TestGetDefaultSlice(t *testing.T) {
+// TestGetOrSlice tests GetTypedOr[[]any] function
+func TestGetOrSlice(t *testing.T) {
 	jsonStr := `{"items": [1, 2, 3]}`
 	defaultArr := []any{"default"}
 
 	t.Run("existing array", func(t *testing.T) {
-		result := GetDefault[[]any](jsonStr, "items", defaultArr)
+		result := GetTypedOr[[]any](jsonStr, "items", defaultArr)
 		if len(result) != 3 {
-			t.Errorf("GetDefault[[]any](items) length = %d; want 3", len(result))
+			t.Errorf("GetOr[[]any](items) length = %d; want 3", len(result))
 		}
 	})
 
 	t.Run("missing returns default", func(t *testing.T) {
-		result := GetDefault[[]any](jsonStr, "missing", defaultArr)
+		result := GetTypedOr[[]any](jsonStr, "missing", defaultArr)
 		if len(result) != 1 || result[0] != "default" {
-			t.Errorf("GetDefault[[]any](missing) = %v; want default", result)
+			t.Errorf("GetOr[[]any](missing) = %v; want default", result)
 		}
 	})
 }
 
-// TestGetDefaultBool tests GetDefault[bool] function
-func TestGetDefaultBool(t *testing.T) {
+// TestGetOrBool tests GetTypedOr[bool] function
+func TestGetOrBool(t *testing.T) {
 	jsonStr := `{"enabled": true, "disabled": false}`
 
 	t.Run("existing true", func(t *testing.T) {
-		result := GetDefault[bool](jsonStr, "enabled", false)
+		result := GetTypedOr[bool](jsonStr, "enabled", false)
 		if result != true {
-			t.Errorf("GetDefault[bool](enabled) = %v; want true", result)
+			t.Errorf("GetOr[bool](enabled) = %v; want true", result)
 		}
 	})
 
 	t.Run("existing false", func(t *testing.T) {
-		result := GetDefault[bool](jsonStr, "disabled", true)
+		result := GetTypedOr[bool](jsonStr, "disabled", true)
 		if result != false {
-			t.Errorf("GetDefault[bool](disabled) = %v; want false", result)
+			t.Errorf("GetOr[bool](disabled) = %v; want false", result)
 		}
 	})
 
 	t.Run("missing returns default", func(t *testing.T) {
-		result := GetDefault[bool](jsonStr, "missing", true)
+		result := GetTypedOr[bool](jsonStr, "missing", true)
 		if result != true {
-			t.Errorf("GetDefault[bool](missing) = %v; want true", result)
+			t.Errorf("GetOr[bool](missing) = %v; want true", result)
 		}
 	})
 }
 
-// TestGetDefaultFloat64 tests GetDefault[float64] function
-func TestGetDefaultFloat64(t *testing.T) {
+// TestGetOrFloat64 tests GetTypedOr[float64] function
+func TestGetOrFloat64(t *testing.T) {
 	jsonStr := `{"price": 19.99, "count": 5}`
 
 	t.Run("existing float", func(t *testing.T) {
-		result := GetDefault[float64](jsonStr, "price", 0.0)
+		result := GetTypedOr[float64](jsonStr, "price", 0.0)
 		if result != 19.99 {
-			t.Errorf("GetDefault[float64](price) = %f; want 19.99", result)
+			t.Errorf("GetOr[float64](price) = %f; want 19.99", result)
 		}
 	})
 
 	t.Run("int converted to float", func(t *testing.T) {
-		result := GetDefault[float64](jsonStr, "count", 0.0)
+		result := GetTypedOr[float64](jsonStr, "count", 0.0)
 		if result != 5.0 {
-			t.Errorf("GetDefault[float64](count) = %f; want 5.0", result)
+			t.Errorf("GetOr[float64](count) = %f; want 5.0", result)
 		}
 	})
 
 	t.Run("missing returns default", func(t *testing.T) {
-		result := GetDefault[float64](jsonStr, "missing", 99.99)
+		result := GetTypedOr[float64](jsonStr, "missing", 99.99)
 		if result != 99.99 {
-			t.Errorf("GetDefault[float64](missing) = %f; want 99.99", result)
+			t.Errorf("GetOr[float64](missing) = %f; want 99.99", result)
 		}
 	})
 }
@@ -2366,22 +2366,22 @@ func TestGetMultiple(t *testing.T) {
 	}
 }
 
-// TestGetDefaultMap tests GetDefault[map[string]any] function
-func TestGetDefaultMap(t *testing.T) {
+// TestGetOrMap tests GetTypedOr[map[string]any] function
+func TestGetOrMap(t *testing.T) {
 	jsonStr := `{"config": {"theme": "dark"}}`
 	defaultObj := map[string]any{"default": true}
 
 	t.Run("existing object", func(t *testing.T) {
-		result := GetDefault[map[string]any](jsonStr, "config", defaultObj)
+		result := GetTypedOr[map[string]any](jsonStr, "config", defaultObj)
 		if result["theme"] != "dark" {
-			t.Errorf("GetDefault[map[string]any](config) = %v; want theme=dark", result)
+			t.Errorf("GetOr[map[string]any](config) = %v; want theme=dark", result)
 		}
 	})
 
 	t.Run("missing returns default", func(t *testing.T) {
-		result := GetDefault[map[string]any](jsonStr, "missing", defaultObj)
+		result := GetTypedOr[map[string]any](jsonStr, "missing", defaultObj)
 		if result["default"] != true {
-			t.Errorf("GetDefault[map[string]any](missing) = %v; want default", result)
+			t.Errorf("GetOr[map[string]any](missing) = %v; want default", result)
 		}
 	})
 }
@@ -2412,41 +2412,41 @@ func TestGetStats(t *testing.T) {
 	t.Logf("Stats: %+v", stats)
 }
 
-// TestGetDefault tests typed get with defaults
-func TestGetDefault(t *testing.T) {
+// TestGetOr tests typed get with defaults
+func TestGetOr(t *testing.T) {
 	jsonStr := `{"user": {"name": "Alice", "age": 30}}`
 
 	t.Run("existing value", func(t *testing.T) {
-		name := GetDefault[string](jsonStr, "user.name", "Unknown")
+		name := GetTypedOr[string](jsonStr, "user.name", "Unknown")
 		if name != "Alice" {
 			t.Errorf("Expected 'Alice', got '%s'", name)
 		}
 	})
 
 	t.Run("missing value with default", func(t *testing.T) {
-		name := GetDefault[string](jsonStr, "user.email", "unknown@example.com")
+		name := GetTypedOr[string](jsonStr, "user.email", "unknown@example.com")
 		if name != "unknown@example.com" {
 			t.Errorf("Expected default value, got '%s'", name)
 		}
 	})
 
 	t.Run("int with default", func(t *testing.T) {
-		age := GetDefault[int](jsonStr, "user.age", 0)
+		age := GetTypedOr[int](jsonStr, "user.age", 0)
 		if age != 30 {
 			t.Errorf("Expected 30, got %d", age)
 		}
 	})
 
 	t.Run("missing int with default", func(t *testing.T) {
-		score := GetDefault[int](jsonStr, "user.score", 100)
+		score := GetTypedOr[int](jsonStr, "user.score", 100)
 		if score != 100 {
 			t.Errorf("Expected default 100, got %d", score)
 		}
 	})
 }
 
-// TestGetDefaultGeneric tests the generic GetDefault function with generics
-func TestGetDefaultGeneric(t *testing.T) {
+// TestGetOrGeneric tests the generic GetTypedOr function with generics
+func TestGetOrGeneric(t *testing.T) {
 	jsonStr := `{"user": {"name": "Alice", "age": 30, "active": true}}`
 
 	tests := []struct {
@@ -2497,42 +2497,23 @@ func TestGetDefaultGeneric(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			switch def := tt.defaultValue.(type) {
 			case string:
-				result := GetDefault[string](jsonStr, tt.path, def)
+				result := GetTypedOr[string](jsonStr, tt.path, def)
 				if result != tt.expected.(string) {
-					t.Errorf("GetDefault[string](%s) = %v; want %v", tt.path, result, tt.expected)
+					t.Errorf("GetOr[string](%s) = %v; want %v", tt.path, result, tt.expected)
 				}
 			case int:
-				result := GetDefault[int](jsonStr, tt.path, def)
+				result := GetTypedOr[int](jsonStr, tt.path, def)
 				if result != tt.expected.(int) {
-					t.Errorf("GetDefault[int](%s) = %d; want %d", tt.path, result, tt.expected)
+					t.Errorf("GetOr[int](%s) = %d; want %d", tt.path, result, tt.expected)
 				}
 			case bool:
-				result := GetDefault[bool](jsonStr, tt.path, def)
+				result := GetTypedOr[bool](jsonStr, tt.path, def)
 				if result != tt.expected.(bool) {
-					t.Errorf("GetDefault[bool](%s) = %v; want %v", tt.path, result, tt.expected)
+					t.Errorf("GetOr[bool](%s) = %v; want %v", tt.path, result, tt.expected)
 				}
 			}
 		})
 	}
-}
-
-// TestGetWithDefault tests get with default value
-func TestGetWithDefault(t *testing.T) {
-	jsonStr := `{"user": {"name": "Alice"}}`
-
-	t.Run("existing value", func(t *testing.T) {
-		result := GetWithDefault(jsonStr, "user.name", "Unknown")
-		if result != "Alice" {
-			t.Errorf("Expected 'Alice', got '%v'", result)
-		}
-	})
-
-	t.Run("missing value", func(t *testing.T) {
-		result := GetWithDefault(jsonStr, "user.email", "unknown@example.com")
-		if result != "unknown@example.com" {
-			t.Errorf("Expected default value, got '%v'", result)
-		}
-	})
 }
 
 // TestGlobalProcessor_BasicFunctionality tests basic global processor operations
@@ -2540,7 +2521,7 @@ func TestGlobalProcessor_BasicFunctionality(t *testing.T) {
 	// Reset global processor state
 	ShutdownGlobalProcessor()
 
-	t.Run("GetDefaultProcessorCreatesProcessor", func(t *testing.T) {
+	t.Run("GetOrProcessorCreatesProcessor", func(t *testing.T) {
 		p := getDefaultProcessor()
 		if p == nil {
 			t.Fatal("getDefaultProcessor returned nil")
@@ -2550,7 +2531,7 @@ func TestGlobalProcessor_BasicFunctionality(t *testing.T) {
 		}
 	})
 
-	t.Run("GetDefaultProcessorReturnsSameInstance", func(t *testing.T) {
+	t.Run("GetOrProcessorReturnsSameInstance", func(t *testing.T) {
 		p1 := getDefaultProcessor()
 		p2 := getDefaultProcessor()
 
@@ -2568,7 +2549,7 @@ func TestGlobalProcessor_ConcurrentAccess(t *testing.T) {
 	// Reset state
 	ShutdownGlobalProcessor()
 
-	t.Run("ConcurrentGetDefaultProcessor", func(t *testing.T) {
+	t.Run("ConcurrentGetOrProcessor", func(t *testing.T) {
 		const goroutines = 100
 		var wg sync.WaitGroup
 		processors := make(chan *Processor, goroutines)
@@ -2875,14 +2856,14 @@ func TestHandleArrayAccess(t *testing.T) {
 	tests := []struct {
 		name        string
 		data        any
-		segment     PathSegment
+		segment     internal.PathSegment
 		expectedVal any
 		shouldExist bool
 	}{
 		{
 			name: "valid positive index",
 			data: getProp(data, "items"),
-			segment: PathSegment{
+			segment: internal.PathSegment{
 				Type:  internal.ArrayIndexSegment,
 				Index: 2,
 			},
@@ -2892,7 +2873,7 @@ func TestHandleArrayAccess(t *testing.T) {
 		{
 			name: "negative index",
 			data: getProp(data, "items"),
-			segment: PathSegment{
+			segment: internal.PathSegment{
 				Type:  internal.ArrayIndexSegment,
 				Index: -1,
 			},
@@ -2902,7 +2883,7 @@ func TestHandleArrayAccess(t *testing.T) {
 		{
 			name: "out of bounds positive",
 			data: getProp(data, "items"),
-			segment: PathSegment{
+			segment: internal.PathSegment{
 				Type:  internal.ArrayIndexSegment,
 				Index: 10,
 			},
@@ -2912,7 +2893,7 @@ func TestHandleArrayAccess(t *testing.T) {
 		{
 			name: "out of bounds negative",
 			data: getProp(data, "items"),
-			segment: PathSegment{
+			segment: internal.PathSegment{
 				Type:  internal.ArrayIndexSegment,
 				Index: -10,
 			},
@@ -2922,7 +2903,7 @@ func TestHandleArrayAccess(t *testing.T) {
 		{
 			name: "with property key",
 			data: getProp(getProp(data, "nested"), "arr"),
-			segment: PathSegment{
+			segment: internal.PathSegment{
 				Type:  internal.ArrayIndexSegment,
 				Index: 1,
 				Key:   "",
@@ -2933,7 +2914,7 @@ func TestHandleArrayAccess(t *testing.T) {
 		{
 			name: "invalid data type",
 			data: "not an array",
-			segment: PathSegment{
+			segment: internal.PathSegment{
 				Type:  internal.ArrayIndexSegment,
 				Index: 0,
 			},
@@ -2963,7 +2944,7 @@ func TestHandleExtraction(t *testing.T) {
 	tests := []struct {
 		name        string
 		data        any
-		segment     PathSegment
+		segment     internal.PathSegment
 		expectedLen int
 		expectError bool
 	}{
@@ -2974,7 +2955,7 @@ func TestHandleExtraction(t *testing.T) {
 				map[string]any{"name": "Bob", "age": 25},
 				map[string]any{"name": "Charlie", "age": 35},
 			},
-			segment: PathSegment{
+			segment: internal.PathSegment{
 				Type: internal.ExtractSegment,
 				Key:  "name",
 			},
@@ -2987,7 +2968,7 @@ func TestHandleExtraction(t *testing.T) {
 				"name": "Alice",
 				"age":  30,
 			},
-			segment: PathSegment{
+			segment: internal.PathSegment{
 				Type: internal.ExtractSegment,
 				Key:  "name",
 			},
@@ -3000,7 +2981,7 @@ func TestHandleExtraction(t *testing.T) {
 				map[string]any{"age": 30},
 				map[string]any{"age": 25},
 			},
-			segment: PathSegment{
+			segment: internal.PathSegment{
 				Type: internal.ExtractSegment,
 				Key:  "name",
 			},
@@ -3013,7 +2994,7 @@ func TestHandleExtraction(t *testing.T) {
 				map[string]any{"items": []any{1, 2}},
 				map[string]any{"items": []any{3, 4}},
 			},
-			segment: PathSegment{
+			segment: internal.PathSegment{
 				Type:  internal.ExtractSegment,
 				Key:   "items",
 				Flags: internal.FlagIsFlat,
@@ -3024,7 +3005,7 @@ func TestHandleExtraction(t *testing.T) {
 		{
 			name:        "invalid data type",
 			data:        "not extractable",
-			segment:     PathSegment{Type: internal.ExtractSegment, Key: "name"},
+			segment:     internal.PathSegment{Type: internal.ExtractSegment, Key: "name"},
 			expectedLen: 0,
 			expectError: false,
 		},
@@ -3033,7 +3014,7 @@ func TestHandleExtraction(t *testing.T) {
 			data: []any{
 				map[string]any{"name": "Alice"},
 			},
-			segment: PathSegment{
+			segment: internal.PathSegment{
 				Type: internal.ExtractSegment,
 				Key:  "",
 			},
@@ -3601,13 +3582,13 @@ func TestNullAndMissingFields(t *testing.T) {
 	})
 
 	t.Run("NullWithDefault", func(t *testing.T) {
-		result := GetWithDefault(testData, "null_field", "default")
+		result := GetTypedOr[string](testData, "null_field", "default")
 		helper.AssertEqual("default", result)
 
-		result = GetWithDefault(testData, "missing_field", "default")
+		result = GetTypedOr[string](testData, "missing_field", "default")
 		helper.AssertEqual("default", result)
 
-		result = GetWithDefault(testData, "string_field", "default")
+		result = GetTypedOr[string](testData, "string_field", "default")
 		helper.AssertEqual("value", result)
 	})
 
@@ -3810,7 +3791,7 @@ func TestParseExtractionSegment(t *testing.T) {
 			segments = processor.parseExtractionSegment(tt.part, segments)
 
 			// Find the extraction segment
-			var extractSeg *PathSegment
+			var extractSeg *internal.PathSegment
 			for i := range segments {
 				if segments[i].Type == internal.ExtractSegment {
 					extractSeg = &segments[i]

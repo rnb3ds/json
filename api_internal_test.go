@@ -33,7 +33,7 @@ func TestHashCustomEscapes(t *testing.T) {
 
 			// Test that different starting hashes produce different results
 			h3 := hashCustomEscapes(1000, tt.m)
-			if tt.m != nil && len(tt.m) > 0 && h1 == h3 {
+			if len(tt.m) > 0 && h1 == h3 {
 				t.Errorf("Different starting hashes should produce different results")
 			}
 		})
@@ -59,35 +59,6 @@ func TestHashCustomEscapes_DifferentMaps(t *testing.T) {
 			t.Logf("Hash collision between map[%d] and map[%d]: %d", i, other, h)
 		}
 		hashes[h] = i
-	}
-}
-
-// ============================================================================
-// CONTEXT EQUAL TESTS
-// ============================================================================
-
-// TestContextEqual tests the contextEqual function
-func TestContextEqual(t *testing.T) {
-	tests := []struct {
-		name     string
-		a        context.Context
-		b        context.Context
-		expected bool
-	}{
-		{"both nil", nil, nil, true},
-		{"a nil, b non-nil", nil, context.Background(), false},
-		{"a non-nil, b nil", context.Background(), nil, false},
-		{"both non-nil", context.Background(), context.Background(), true},
-		{"different contexts", context.Background(), context.TODO(), false}, // Different singleton pointers
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := contextEqual(tt.a, tt.b)
-			if result != tt.expected {
-				t.Errorf("contextEqual(%v, %v) = %v, want %v", tt.a, tt.b, result, tt.expected)
-			}
-		})
 	}
 }
 
@@ -316,14 +287,6 @@ func BenchmarkHashCustomEscapes(b *testing.B) {
 
 	for i := 0; i < b.N; i++ {
 		_ = hashCustomEscapes(0, m)
-	}
-}
-
-func BenchmarkContextEqual(b *testing.B) {
-	ctx := context.Background()
-
-	for i := 0; i < b.N; i++ {
-		_ = contextEqual(ctx, ctx)
 	}
 }
 

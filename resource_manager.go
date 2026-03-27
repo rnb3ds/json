@@ -221,14 +221,6 @@ func (urm *unifiedResourceManager) PutMap(m map[string]any) {
 	atomic.AddInt64(&urm.allocatedMaps, -1)
 }
 
-// PerformMaintenance is a no-op placeholder retained for API compatibility.
-// sync.Pool automatically handles cleanup via GC.
-//
-// Deprecated: This method does nothing and can be safely removed from callers.
-// sync.Pool handles resource management automatically.
-// Will be removed in v2.0.0.
-func (urm *unifiedResourceManager) PerformMaintenance() {}
-
 func (urm *unifiedResourceManager) getStats() resourceManagerStats {
 	return resourceManagerStats{
 		allocatedBuilders: atomic.LoadInt64(&urm.allocatedBuilders),

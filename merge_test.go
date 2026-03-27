@@ -43,16 +43,16 @@ func parseResult(t *testing.T, result string) map[string]any {
 }
 
 // ============================================================================
-// MergeJson TESTS
+// MergeJSON TESTS
 // ============================================================================
 
-func TestMergeJson_Union(t *testing.T) {
+func TestMergeJSON_Union(t *testing.T) {
 	base := `{"a": 1, "b": 2}`
 	override := `{"b": 3, "c": 4}`
 
-	result, err := MergeJson(base, override)
+	result, err := MergeJSON(base, override)
 	if err != nil {
-		t.Fatalf("MergeJson() error: %v", err)
+		t.Fatalf("MergeJSON() error: %v", err)
 	}
 
 	resultMap := parseResult(t, result)
@@ -69,13 +69,13 @@ func TestMergeJson_Union(t *testing.T) {
 	}
 }
 
-func TestMergeJson_NestedObjects(t *testing.T) {
+func TestMergeJSON_NestedObjects(t *testing.T) {
 	base := `{"db": {"host": "localhost", "port": 3306}}`
 	override := `{"db": {"port": 5432, "ssl": true}}`
 
-	result, err := MergeJson(base, override)
+	result, err := MergeJSON(base, override)
 	if err != nil {
-		t.Fatalf("MergeJson() error: %v", err)
+		t.Fatalf("MergeJSON() error: %v", err)
 	}
 
 	resultMap := parseResult(t, result)
@@ -92,7 +92,7 @@ func TestMergeJson_NestedObjects(t *testing.T) {
 	}
 }
 
-func TestMergeJson_InvalidJSON(t *testing.T) {
+func TestMergeJSON_InvalidJSON(t *testing.T) {
 	tests := []struct {
 		name     string
 		base     string
@@ -107,15 +107,15 @@ func TestMergeJson_InvalidJSON(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := MergeJson(tt.base, tt.override)
+			_, err := MergeJSON(tt.base, tt.override)
 			if (err != nil) != tt.wantErr {
-				t.Errorf("MergeJson() error = %v, wantErr %v", err, tt.wantErr)
+				t.Errorf("MergeJSON() error = %v, wantErr %v", err, tt.wantErr)
 			}
 		})
 	}
 }
 
-func TestMergeJson_NonObject(t *testing.T) {
+func TestMergeJSON_NonObject(t *testing.T) {
 	tests := []struct {
 		name     string
 		base     string
@@ -131,25 +131,25 @@ func TestMergeJson_NonObject(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := MergeJson(tt.base, tt.override)
+			_, err := MergeJSON(tt.base, tt.override)
 			if (err != nil) != tt.wantErr {
-				t.Errorf("MergeJson() error = %v, wantErr %v", err, tt.wantErr)
+				t.Errorf("MergeJSON() error = %v, wantErr %v", err, tt.wantErr)
 			}
 		})
 	}
 }
 
 // ============================================================================
-// MergeJson with Mode TESTS
+// MergeJSON with Mode TESTS
 // ============================================================================
 
-func TestMergeJson_UnionMode(t *testing.T) {
+func TestMergeJSON_UnionMode(t *testing.T) {
 	base := `{"a": 1, "b": 2}`
 	override := `{"b": 3, "c": 4}`
 
-	result, err := MergeJson(base, override, MergeUnion)
+	result, err := MergeJSON(base, override, MergeUnion)
 	if err != nil {
-		t.Fatalf("MergeJson() error: %v", err)
+		t.Fatalf("MergeJSON() error: %v", err)
 	}
 
 	resultMap := parseResult(t, result)
@@ -163,7 +163,7 @@ func TestMergeJson_UnionMode(t *testing.T) {
 	}
 }
 
-func TestMergeJson_IntersectionMode(t *testing.T) {
+func TestMergeJSON_IntersectionMode(t *testing.T) {
 	tests := []struct {
 		name         string
 		base         string
@@ -196,9 +196,9 @@ func TestMergeJson_IntersectionMode(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result, err := MergeJson(tt.base, tt.override, MergeIntersection)
+			result, err := MergeJSON(tt.base, tt.override, MergeIntersection)
 			if err != nil {
-				t.Fatalf("MergeJson() error: %v", err)
+				t.Fatalf("MergeJSON() error: %v", err)
 			}
 
 			resultMap := parseResult(t, result)
@@ -219,7 +219,7 @@ func TestMergeJson_IntersectionMode(t *testing.T) {
 	}
 }
 
-func TestMergeJson_DifferenceMode(t *testing.T) {
+func TestMergeJSON_DifferenceMode(t *testing.T) {
 	tests := []struct {
 		name         string
 		base         string
@@ -252,9 +252,9 @@ func TestMergeJson_DifferenceMode(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result, err := MergeJson(tt.base, tt.override, MergeDifference)
+			result, err := MergeJSON(tt.base, tt.override, MergeDifference)
 			if err != nil {
-				t.Fatalf("MergeJson() error: %v", err)
+				t.Fatalf("MergeJSON() error: %v", err)
 			}
 
 			resultMap := parseResult(t, result)
@@ -275,7 +275,7 @@ func TestMergeJson_DifferenceMode(t *testing.T) {
 	}
 }
 
-func TestMergeJson_NestedIntersectionMode(t *testing.T) {
+func TestMergeJSON_NestedIntersectionMode(t *testing.T) {
 	base := `{
 		"common": {"a": 1, "b": 2},
 		"onlyA": 1
@@ -285,9 +285,9 @@ func TestMergeJson_NestedIntersectionMode(t *testing.T) {
 		"onlyB": 2
 	}`
 
-	result, err := MergeJson(base, override, MergeIntersection)
+	result, err := MergeJSON(base, override, MergeIntersection)
 	if err != nil {
-		t.Fatalf("MergeJson() error: %v", err)
+		t.Fatalf("MergeJSON() error: %v", err)
 	}
 
 	resultMap := parseResult(t, result)
@@ -308,17 +308,17 @@ func TestMergeJson_NestedIntersectionMode(t *testing.T) {
 }
 
 // ============================================================================
-// MergeJsonMany TESTS
+// MergeJSONMany TESTS
 // ============================================================================
 
-func TestMergeJsonMany_Union(t *testing.T) {
+func TestMergeJSONMany_Union(t *testing.T) {
 	json1 := `{"a": 1}`
 	json2 := `{"b": 2}`
 	json3 := `{"c": 3}`
 
-	result, err := MergeJsonMany(MergeUnion, json1, json2, json3)
+	result, err := MergeJSONMany(MergeUnion, json1, json2, json3)
 	if err != nil {
-		t.Fatalf("MergeJsonMany() error: %v", err)
+		t.Fatalf("MergeJSONMany() error: %v", err)
 	}
 
 	resultMap := parseResult(t, result)
@@ -328,14 +328,14 @@ func TestMergeJsonMany_Union(t *testing.T) {
 	}
 }
 
-func TestMergeJsonMany_WithOverride(t *testing.T) {
+func TestMergeJSONMany_WithOverride(t *testing.T) {
 	json1 := `{"a": 1, "b": 1}`
 	json2 := `{"b": 2}`
 	json3 := `{"b": 3, "c": 3}`
 
-	result, err := MergeJsonMany(MergeUnion, json1, json2, json3)
+	result, err := MergeJSONMany(MergeUnion, json1, json2, json3)
 	if err != nil {
-		t.Fatalf("MergeJsonMany() error: %v", err)
+		t.Fatalf("MergeJSONMany() error: %v", err)
 	}
 
 	resultMap := parseResult(t, result)
@@ -354,14 +354,14 @@ func TestMergeJsonMany_WithOverride(t *testing.T) {
 	}
 }
 
-func TestMergeJsonMany_Intersection(t *testing.T) {
+func TestMergeJSONMany_Intersection(t *testing.T) {
 	json1 := `{"a": 1, "b": 2, "c": 3}`
 	json2 := `{"b": 20, "c": 30, "d": 40}`
 	json3 := `{"b": 200, "c": 300, "e": 500}`
 
-	result, err := MergeJsonMany(MergeIntersection, json1, json2, json3)
+	result, err := MergeJSONMany(MergeIntersection, json1, json2, json3)
 	if err != nil {
-		t.Fatalf("MergeJsonMany() error: %v", err)
+		t.Fatalf("MergeJSONMany() error: %v", err)
 	}
 
 	resultMap := parseResult(t, result)
@@ -375,13 +375,13 @@ func TestMergeJsonMany_Intersection(t *testing.T) {
 	}
 }
 
-func TestMergeJsonMany_Difference(t *testing.T) {
+func TestMergeJSONMany_Difference(t *testing.T) {
 	json1 := `{"a": 1, "b": 2, "c": 3}`
 	json2 := `{"b": 2, "d": 4}`
 
-	result, err := MergeJsonMany(MergeDifference, json1, json2)
+	result, err := MergeJSONMany(MergeDifference, json1, json2)
 	if err != nil {
-		t.Fatalf("MergeJsonMany() error: %v", err)
+		t.Fatalf("MergeJSONMany() error: %v", err)
 	}
 
 	resultMap := parseResult(t, result)
@@ -398,20 +398,20 @@ func TestMergeJsonMany_Difference(t *testing.T) {
 	}
 }
 
-func TestMergeJsonMany_InsufficientArgs(t *testing.T) {
-	_, err := MergeJsonMany(MergeUnion)
+func TestMergeJSONMany_InsufficientArgs(t *testing.T) {
+	_, err := MergeJSONMany(MergeUnion)
 	if err == nil {
 		t.Error("expected error for 0 arguments")
 	}
 
-	_, err = MergeJsonMany(MergeUnion, `{"a":1}`)
+	_, err = MergeJSONMany(MergeUnion, `{"a":1}`)
 	if err == nil {
 		t.Error("expected error for 1 argument")
 	}
 }
 
-func TestMergeJsonMany_InvalidJSON(t *testing.T) {
-	_, err := MergeJsonMany(MergeUnion, `{"a":1}`, `{invalid}`, `{"c":3}`)
+func TestMergeJSONMany_InvalidJSON(t *testing.T) {
+	_, err := MergeJSONMany(MergeUnion, `{"a":1}`, `{invalid}`, `{"c":3}`)
 	if err == nil {
 		t.Error("expected error for invalid JSON")
 	}
@@ -422,13 +422,13 @@ func TestMergeJsonMany_InvalidJSON(t *testing.T) {
 // ============================================================================
 
 func TestMergeMode_UnionDefault(t *testing.T) {
-	// Verify MergeJson uses union mode by default
+	// Verify MergeJSON uses union mode by default
 	base := `{"a": 1, "b": 2}`
 	override := `{"b": 3, "c": 4}`
 
-	result, err := MergeJson(base, override)
+	result, err := MergeJSON(base, override)
 	if err != nil {
-		t.Fatalf("MergeJson() error: %v", err)
+		t.Fatalf("MergeJSON() error: %v", err)
 	}
 
 	resultMap := parseResult(t, result)
@@ -440,10 +440,10 @@ func TestMergeMode_UnionDefault(t *testing.T) {
 }
 
 // ============================================================================
-// MergeJsonWithArrays TESTS
+// MergeJSONWithArrays TESTS
 // ============================================================================
 
-func TestMergeJsonWithArrays(t *testing.T) {
+func TestMergeJSONWithArrays(t *testing.T) {
 	tests := []struct {
 		name     string
 		base     string
@@ -458,9 +458,9 @@ func TestMergeJsonWithArrays(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result, err := MergeJson(tt.base, tt.override, tt.mode)
+			result, err := MergeJSON(tt.base, tt.override, tt.mode)
 			if err != nil {
-				t.Fatalf("MergeJson() error: %v", err)
+				t.Fatalf("MergeJSON() error: %v", err)
 			}
 
 			resultMap := parseResult(t, result)

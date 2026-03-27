@@ -106,7 +106,7 @@ func demonstrateTypeSafe(data string) {
 	age, _ := json.GetInt(data, "user.age")
 	fmt.Printf("   Age (int): %d\n", age)
 
-	balance, _ := json.GetFloat64(data, "user.balance")
+	balance, _ := json.GetFloat(data, "user.balance")
 	fmt.Printf("   Balance (float64): %.2f\n", balance)
 
 	active, _ := json.GetBool(data, "user.active")
@@ -118,7 +118,7 @@ func demonstrateTypeSafe(data string) {
 	settings, _ := json.GetObject(data, "settings")
 	fmt.Printf("   Settings (object): %v\n", settings)
 
-	// Generic GetTyped for custom types
+	// Generic GetAs for custom types
 	id, _ := json.GetTyped[int](data, "user.id")
 	fmt.Printf("   ID (generic): %d\n", id)
 }

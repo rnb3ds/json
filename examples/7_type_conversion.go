@@ -118,7 +118,7 @@ func demonstrateAutomaticConversion() {
 	fmt.Printf("   String '42' -> int: %d\n", intVal)
 
 	// String to float64
-	floatVal, _ := json.GetFloat64(testJSON, "floatString")
+	floatVal, _ := json.GetFloat(testJSON, "floatString")
 	fmt.Printf("   String '3.14' -> float64: %.2f\n", floatVal)
 
 	// String to bool
@@ -130,7 +130,7 @@ func demonstrateAutomaticConversion() {
 	intVal2, _ := json.GetInt(testJSON, "actualInt")
 	fmt.Printf("   int 100 -> int: %d (type: %T)\n", intVal2, intVal2)
 
-	floatVal2, _ := json.GetFloat64(testJSON, "actualFloat")
+	floatVal2, _ := json.GetFloat(testJSON, "actualFloat")
 	fmt.Printf("   float64 2.718 -> float64: %.3f (type: %T)\n", floatVal2, floatVal2)
 }
 
@@ -155,7 +155,7 @@ func demonstrateNumberHandling() {
 	fmt.Printf("   Large integer: %d\n", largeInt)
 
 	// Get as float64 for decimals
-	floatVal, _ := json.GetFloat64(numberJSON, "float")
+	floatVal, _ := json.GetFloat(numberJSON, "float")
 	fmt.Printf("   Float value: %.5f\n", floatVal)
 
 	// Get as uint64 for unsigned numbers
@@ -245,7 +245,7 @@ func demonstrateGenerics() {
 	}`
 
 	// Type-safe generic operations
-	fmt.Println("   Type-safe generic retrieval with GetTyped[T]:")
+	fmt.Println("   Type-safe generic retrieval with GetAs[T]:")
 
 	// Get as string
 	name, err := json.GetTyped[string](testJSON, "name")

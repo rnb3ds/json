@@ -213,7 +213,7 @@ func mergeArrays(baseArray, overrideArray []any, mode MergeMode, visited map[uin
 type arrayMergeContext struct {
 	overrideSet map[string]bool
 	seen        map[string]bool
-	totalLen   int
+	totalLen    int
 }
 
 // prepareArrayMergeContext creates a shared context for array merge operations
@@ -225,7 +225,7 @@ func prepareArrayMergeContext(baseArray, overrideArray []any) *arrayMergeContext
 	return &arrayMergeContext{
 		overrideSet: overrideSet,
 		seen:        make(map[string]bool, min(len(baseArray), len(overrideArray))),
-		totalLen:   len(baseArray) + len(overrideArray),
+		totalLen:    len(baseArray) + len(overrideArray),
 	}
 }
 

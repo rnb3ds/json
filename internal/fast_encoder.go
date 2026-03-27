@@ -64,7 +64,7 @@ var mediumEncoderPool = sync.Pool{
 }
 
 // largeEncoderPool for buffers between 4KB and 64KB
-// SECURITY FIX: Tiered pools prevent memory bloat from large buffers
+// Tiered pools prevent memory bloat from large buffers
 var largeEncoderPool = sync.Pool{
 	New: func() any {
 		return &FastEncoder{
@@ -949,7 +949,6 @@ func (e *FastEncoder) EncodeUint64Slice(arr []uint64) {
 
 // FastParseInt parses an integer from a byte slice
 // PERFORMANCE: Avoids string allocation by parsing directly from bytes
-// SECURITY FIX: Proper overflow detection for both positive and negative numbers
 func FastParseInt(b []byte) (int64, error) {
 	if len(b) == 0 {
 		return 0, strconv.ErrSyntax
@@ -975,7 +974,7 @@ func FastParseInt(b []byte) (int64, error) {
 		}
 		digit := int64(c - '0')
 
-		// SECURITY FIX: Improved overflow detection
+		// Overflow detection:
 		// For positive: n*10 + digit <= MaxInt64 (9223372036854775807)
 		// For negative: -(n*10 + digit) >= MinInt64 (-9223372036854775808)
 		// MinInt64 = -9223372036854775808, so we need n*10 + digit <= 9223372036854775808

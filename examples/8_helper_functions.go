@@ -14,9 +14,9 @@ import (
 // for comparison, merging, and data manipulation.
 //
 // Topics covered:
-// - CompareJson for JSON comparison
-// - MergeJson for combining JSON objects
-// - FormatPretty and FormatCompact for formatting
+// - CompareJSON for JSON comparison
+// - MergeJSON for combining JSON objects
+// - Prettify and FormatCompact for formatting
 // - Print and PrintPretty for quick output
 //
 // For JSON validation, see: 6_validation.go
@@ -25,8 +25,8 @@ import (
 // Run: go run -tags=example examples/8_helper_functions.go
 
 func main() {
-	fmt.Println("Helper Functions - JSON Library")
-	fmt.Println("================================\n ")
+	fmt.Println("🔧 JSON Library - Helper Functions")
+	fmt.Println("===================================\n ")
 
 	// 1. JSON COMPARISON
 	demonstrateComparison()
@@ -44,7 +44,7 @@ func main() {
 }
 
 func demonstrateComparison() {
-	fmt.Println("1. JSON Comparison (CompareJson)")
+	fmt.Println("1. JSON Comparison (CompareJSON)")
 	fmt.Println("--------------------------------")
 
 	testCases := []struct {
@@ -91,9 +91,9 @@ func demonstrateComparison() {
 		},
 	}
 
-	fmt.Println("   CompareJson results:")
+	fmt.Println("   CompareJSON results:")
 	for _, tc := range testCases {
-		equal, err := json.CompareJson(tc.json1, tc.json2)
+		equal, err := json.CompareJSON(tc.json1, tc.json2)
 		if err != nil {
 			fmt.Printf("   [ERROR] %s: %v\n", tc.name, err)
 			continue
@@ -108,7 +108,7 @@ func demonstrateComparison() {
 }
 
 func demonstrateMerge() {
-	fmt.Println("\n2. JSON Merge (MergeJson)")
+	fmt.Println("\n2. JSON Merge (MergeJSON)")
 	fmt.Println("--------------------------")
 
 	// Base configuration
@@ -132,7 +132,7 @@ func demonstrateMerge() {
 		"monitoring": true
 	}`
 
-	fmt.Println("   MergeJson demonstration:")
+	fmt.Println("   MergeJSON demonstration:")
 	fmt.Println("\n   Base config:")
 	fmt.Println(baseConfig)
 
@@ -140,7 +140,7 @@ func demonstrateMerge() {
 	fmt.Println(overrideConfig)
 
 	// Union merge (default)
-	merged, err := json.MergeJson(baseConfig, overrideConfig)
+	merged, err := json.MergeJSON(baseConfig, overrideConfig)
 	if err != nil {
 		fmt.Printf("   Error merging: %v\n", err)
 		return
@@ -170,12 +170,12 @@ func demonstrateMerge() {
 	fmt.Println("\n   Merge Modes:")
 
 	// Intersection merge - only common keys
-	intersected, _ := json.MergeJson(baseConfig, overrideConfig, json.MergeIntersection)
+	intersected, _ := json.MergeJSON(baseConfig, overrideConfig, json.MergeIntersection)
 	fmt.Println("\n   Intersection (common keys only):")
 	fmt.Println(intersected)
 
 	// Difference merge - keys only in base
-	diff, _ := json.MergeJson(baseConfig, overrideConfig, json.MergeDifference)
+	diff, _ := json.MergeJSON(baseConfig, overrideConfig, json.MergeDifference)
 	fmt.Println("\n   Difference (keys only in base):")
 	fmt.Println(diff)
 }
@@ -191,13 +191,13 @@ func demonstrateFormatting() {
 	fmt.Println(compactJSON)
 
 	// Format as pretty
-	pretty, err := json.FormatPretty(compactJSON)
+	pretty, err := json.Prettify(compactJSON)
 	if err != nil {
 		fmt.Printf("   Error: %v\n", err)
 		return
 	}
 
-	fmt.Println("\n   FormatPretty result:")
+	fmt.Println("\n   Prettify result:")
 	fmt.Println(pretty)
 
 	// Format as compact

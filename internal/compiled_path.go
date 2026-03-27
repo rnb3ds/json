@@ -373,8 +373,7 @@ func (c *CompiledPathCache) Get(path string) (*CompiledPath, error) {
 	if existing, ok := c.paths[path]; ok {
 		c.mu.Unlock()
 		cp.Release()
-		// SECURITY FIX: Must hold lock when cloning to prevent TOCTOU race
-		// with concurrent eviction. Re-acquire lock for safe clone.
+		// Re-acquire lock for safe clone to prevent TOCTOU race with concurrent eviction
 		c.mu.Lock()
 		result := cloneCompiledPathLocked(existing)
 		c.mu.Unlock()
@@ -386,11 +385,7 @@ func (c *CompiledPathCache) Get(path string) (*CompiledPath, error) {
 		evictKey := c.order[0]
 		copy(c.order, c.order[1:])
 		c.order = c.order[:len(c.order)-1]
-		if _, ok := c.paths[evictKey]; ok {
-			// SECURITY FIX: Do NOT call Release() on evicted entry
-			// Let GC handle it to prevent TOCTOU race where another
-			// goroutine might be cloning the evicted object
-		}
+		// Let GC handle evicted entry to prevent TOCTOU race
 		delete(c.paths, evictKey)
 	}
 

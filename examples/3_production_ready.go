@@ -21,7 +21,7 @@ import (
 // - Resource management and monitoring
 // - Best practices for production environments
 //
-// Run: go run examples/production_ready.go
+// Run: go run -tags=example examples/3_production_ready.go
 
 func main() {
 	fmt.Println("🏭 JSON Library - Production Ready")

@@ -103,6 +103,36 @@ type Config struct {
 
 	// ===== Context =====
 	Context context.Context `json:"-"` // Operation context
+
+	// ===== Extension Points =====
+
+	// CustomEncoder replaces the default encoder entirely.
+	// If set, Encode operations use this encoder instead of the built-in one.
+	CustomEncoder CustomEncoder
+
+	// CustomTypeEncoders provides encoding for specific types.
+	// Keys are reflect.Type values; values implement TypeEncoder.
+	CustomTypeEncoders map[reflect.Type]TypeEncoder
+
+	// CustomValidators run before operations.
+	// All validators must pass for the operation to proceed.
+	CustomValidators []Validator
+
+	// AdditionalDangerousPatterns adds security patterns beyond defaults.
+	// These are checked in addition to built-in patterns unless
+	// DisableDefaultPatterns is true.
+	AdditionalDangerousPatterns []DangerousPattern
+
+	// DisableDefaultPatterns disables built-in security patterns.
+	// Set to true to use only AdditionalDangerousPatterns.
+	DisableDefaultPatterns bool
+
+	// Hooks provide before/after interception for operations.
+	Hooks []Hook
+
+	// CustomPathParser replaces the default path parser.
+	// If set, path parsing uses this parser instead of the built-in one.
+	CustomPathParser PathParser
 }
 
 // GetSecurityLimits returns a summary of current security limits
@@ -115,6 +145,23 @@ func (c *Config) GetSecurityLimits() map[string]any {
 		"max_json_size":                c.MaxJSONSize,
 		"max_path_depth":               c.MaxPathDepth,
 	}
+}
+
+// AddHook adds an operation hook to the configuration.
+// Hooks are executed in order for Before and in reverse order for After.
+func (c *Config) AddHook(hook Hook) {
+	c.Hooks = append(c.Hooks, hook)
+}
+
+// AddValidator adds a custom validator to the configuration.
+// Validators are executed in order; all must pass for operations to proceed.
+func (c *Config) AddValidator(validator Validator) {
+	c.CustomValidators = append(c.CustomValidators, validator)
+}
+
+// AddDangerousPattern adds a security pattern to the configuration.
+func (c *Config) AddDangerousPattern(pattern DangerousPattern) {
+	c.AdditionalDangerousPatterns = append(c.AdditionalDangerousPatterns, pattern)
 }
 
 // ParsedJSON represents a pre-parsed JSON document that can be reused for multiple operations.
@@ -351,44 +398,14 @@ func (e *rootDataTypeConversionError) Error() string {
 		e.currentType, e.requiredType, e.requiredSize)
 }
 
-// arrayExtensionError signals that array extension is needed
-type arrayExtensionError struct {
-	currentLength  int
-	requiredLength int
-	targetIndex    int
-	value          any
-	message        string
-}
-
-func (e *arrayExtensionError) Error() string {
-	if e.message != "" {
-		return e.message
-	}
-	return fmt.Sprintf("array extension required: current length %d, required length %d for index %d",
-		e.currentLength, e.requiredLength, e.targetIndex)
-}
-
-// pathSegment represents a parsed path segment with its type and value.
-// This is an internal type alias - users should not need to access path segments directly.
-type pathSegment = internal.PathSegment
-
 // pathInfo contains parsed path information.
 // This is an internal type used for path parsing.
+// Uses internal.PathSegment directly to avoid redundant type alias.
 type pathInfo struct {
-	segments     []pathSegment
+	segments     []internal.PathSegment
 	isPointer    bool
 	originalPath string
 }
-
-// PathSegment is an alias for internal path segment type.
-// Deprecated: This is an internal implementation detail. Do not use.
-// Will be removed in v2.0.0.
-type PathSegment = internal.PathSegment
-
-// PathInfo contains parsed path information.
-// Deprecated: This is an internal implementation detail. Do not use.
-// Will be removed in v2.0.0.
-type PathInfo = pathInfo
 
 // resourceMonitor provides resource monitoring and leak detection
 type resourceMonitor struct {
@@ -568,15 +585,6 @@ func (rm *resourceMonitor) GetDeallocationRatio() float64 {
 	return float64(freed) / float64(allocated) * 100.0
 }
 
-// GetMemoryEfficiency returns the deallocation ratio.
-//
-// Deprecated: Use GetDeallocationRatio for clarity on what this metric represents.
-// Migration: rm.GetMemoryEfficiency() -> rm.GetDeallocationRatio()
-// Will be removed in v2.0.0.
-func (rm *resourceMonitor) GetMemoryEfficiency() float64 {
-	return rm.GetDeallocationRatio()
-}
-
 // GetPoolEfficiency returns the pool efficiency percentage
 // This is the hit ratio of the pool cache
 func (rm *resourceMonitor) GetPoolEfficiency() float64 {
@@ -645,56 +653,126 @@ func (ve *ValidationError) Error() string {
 	return fmt.Sprintf("validation error: %s", ve.Message)
 }
 
-// TypeSafeResult represents a type-safe operation result
-type TypeSafeResult[T any] struct {
-	Value  T
-	Exists bool
-	Error  error
+// =============================================================================
+// Unified Result Type - Result[T]
+// =============================================================================
+
+// Result represents a type-safe operation result with comprehensive error handling.
+// This is the unified type for all type-safe operations.
+//
+// Example:
+//
+//	result := json.GetResult[string](data, "user.name")
+//	if result.Ok() {
+//	    name := result.Unwrap()
+//	}
+//	// Or with default
+//	name := json.GetResult[string](data, "user.name").UnwrapOr("unknown")
+type Result[T any] struct {
+	Value  T     // The result value (exported for backward compatibility)
+	Exists bool  // Whether the path exists
+	Error  error // Error if any
 }
 
-// Ok returns true if the result is valid (no error and exists)
-func (r TypeSafeResult[T]) Ok() bool {
-	return r.Error == nil && r.Exists
+// NewResult creates a new Result with the given value.
+func NewResult[T any](value T, exists bool, err error) Result[T] {
+	return Result[T]{Value: value, Exists: exists, Error: err}
 }
 
-// Unwrap returns the value or zero value if there's an error
-// For panic behavior, use UnwrapOrPanic instead
-func (r TypeSafeResult[T]) Unwrap() T {
-	if r.Error != nil {
+// Ok returns true if the result is valid (no error and exists).
+func (r Result[T]) Ok() bool { return r.Error == nil && r.Exists }
+
+// Unwrap returns the value or zero value if there's an error or value doesn't exist.
+// For panic behavior, use Must() instead.
+func (r Result[T]) Unwrap() T {
+	if r.Error != nil || !r.Exists {
 		var zero T
 		return zero
 	}
 	return r.Value
 }
 
-// UnwrapOrPanic returns the value or panics if there's an error
-// Use this only when you're certain the operation succeeded
-func (r TypeSafeResult[T]) UnwrapOrPanic() T {
-	if r.Error != nil {
-		panic(fmt.Sprintf("unwrap called on result with error: %v", r.Error))
-	}
-	return r.Value
-}
-
-// UnwrapOr returns the value or the provided default if there's an error or value doesn't exist
-func (r TypeSafeResult[T]) UnwrapOr(defaultValue T) T {
+// UnwrapOr returns the value or the provided default if there's an error or value doesn't exist.
+func (r Result[T]) UnwrapOr(defaultValue T) T {
 	if r.Error != nil || !r.Exists {
 		return defaultValue
 	}
 	return r.Value
 }
 
-// TypeSafeAccessResult represents the result of a type-safe access operation
-type TypeSafeAccessResult struct {
-	Value  any
-	Exists bool
-	Type   string
+// Must returns the value or panics if there's an error.
+// Use this only when you're certain the operation succeeded.
+func (r Result[T]) Must() T {
+	if r.Error != nil {
+		panic(fmt.Sprintf("Result.Must(): %v", r.Error))
+	}
+	return r.Value
+}
+
+// =============================================================================
+// AccessResult - For dynamic type access with conversion methods
+// =============================================================================
+
+// AccessResult represents the result of a dynamic access operation.
+// It extends Result[any] with type conversion methods for safe type handling.
+//
+// Example:
+//
+//	result := processor.SafeGet(data, "user.age")
+//	age, err := result.AsInt()
+//	name, err := result.AsString()
+type AccessResult struct {
+	Value  any    // The result value (exported for backward compatibility)
+	Exists bool   // Whether the path exists
+	Type   string // Runtime type info (for debugging)
+}
+
+// NewAccessResult creates a new AccessResult.
+func NewAccessResult(value any, exists bool) AccessResult {
+	var typeStr string
+	if value != nil {
+		typeStr = fmt.Sprintf("%T", value)
+	}
+	return AccessResult{Value: value, Exists: exists, Type: typeStr}
+}
+
+// Ok returns true if the value exists.
+func (r AccessResult) Ok() bool { return r.Exists }
+
+// Unwrap returns the value or nil if it doesn't exist.
+func (r AccessResult) Unwrap() any {
+	if !r.Exists {
+		return nil
+	}
+	return r.Value
+}
+
+// UnwrapOr returns the value or the provided default if it doesn't exist.
+func (r AccessResult) UnwrapOr(defaultValue any) any {
+	if !r.Exists {
+		return defaultValue
+	}
+	return r.Value
+}
+
+// As safely converts the result to type T.
+// Returns error if the type doesn't match.
+func As[T any](r AccessResult) (T, error) {
+	if !r.Exists {
+		var zero T
+		return zero, ErrPathNotFound
+	}
+	if v, ok := r.Value.(T); ok {
+		return v, nil
+	}
+	var zero T
+	return zero, fmt.Errorf("cannot convert %T to %T", r.Value, zero)
 }
 
 // AsString safely converts the result to string.
 // Returns ErrTypeMismatch if the value is not a string type.
 // Use AsStringConverted() for explicit type conversion with formatting.
-func (r TypeSafeAccessResult) AsString() (string, error) {
+func (r AccessResult) AsString() (string, error) {
 	if !r.Exists {
 		return "", ErrPathNotFound
 	}
@@ -708,7 +786,7 @@ func (r TypeSafeAccessResult) AsString() (string, error) {
 // AsStringConverted converts the result to string using fmt.Sprintf formatting.
 // Use this when you explicitly want string representation of any type.
 // For strict type checking, use AsString() instead.
-func (r TypeSafeAccessResult) AsStringConverted() (string, error) {
+func (r AccessResult) AsStringConverted() (string, error) {
 	if !r.Exists {
 		return "", ErrPathNotFound
 	}
@@ -722,7 +800,7 @@ func (r TypeSafeAccessResult) AsStringConverted() (string, error) {
 // AsInt safely converts the result to int with overflow and precision checks.
 // Unlike ConvertToInt, this method is stricter and does NOT convert bool to int.
 // Use ConvertToInt directly if you need more permissive conversion.
-func (r TypeSafeAccessResult) AsInt() (int, error) {
+func (r AccessResult) AsInt() (int, error) {
 	if !r.Exists {
 		return 0, ErrPathNotFound
 	}
@@ -743,7 +821,7 @@ func (r TypeSafeAccessResult) AsInt() (int, error) {
 // AsFloat64 safely converts the result to float64 with precision checks.
 // Unlike ConvertToFloat64, this method is stricter and does NOT convert bool to float64.
 // Use ConvertToFloat64 directly if you need more permissive conversion.
-func (r TypeSafeAccessResult) AsFloat64() (float64, error) {
+func (r AccessResult) AsFloat64() (float64, error) {
 	if !r.Exists {
 		return 0, ErrPathNotFound
 	}
@@ -764,7 +842,7 @@ func (r TypeSafeAccessResult) AsFloat64() (float64, error) {
 // AsBool safely converts the result to bool.
 // Unlike ConvertToBool, this method is stricter and only accepts bool and string types.
 // Use ConvertToBool directly if you need more permissive conversion (e.g., int to bool).
-func (r TypeSafeAccessResult) AsBool() (bool, error) {
+func (r AccessResult) AsBool() (bool, error) {
 	if !r.Exists {
 		return false, ErrPathNotFound
 	}

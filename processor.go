@@ -42,6 +42,8 @@ type Processor struct {
 	// Uses uint64 keys directly instead of hex strings for memory efficiency
 	hashCache   map[uint64]*hashCacheEntry
 	hashCacheMu sync.RWMutex
+	// Extension points for hooks
+	hooks []Hook
 }
 
 // hashCacheEntry stores a cached hash with its last access time for LRU eviction
@@ -131,7 +133,7 @@ func New(cfg ...Config) (*Processor, error) {
 	}
 
 	// Initialize cached RecursiveProcessor for reuse
-	p.recursiveProcessor = &RecursiveProcessor{processor: p}
+	p.recursiveProcessor = NewRecursiveProcessor(p)
 
 	return p, nil
 }
@@ -233,6 +235,28 @@ func (p *Processor) Close() error {
 // IsClosed returns true if the processor has been closed
 func (p *Processor) IsClosed() bool {
 	return atomic.LoadInt32(&p.state) == processorStateClosed
+}
+
+// AddHook adds an operation hook to the processor.
+// Hooks are called before and after each operation.
+// Multiple hooks can be added and are executed in order (Before) and reverse order (After).
+//
+// Example:
+//
+//	type LoggingHook struct{}
+//	func (h *LoggingHook) Before(ctx json.HookContext) error {
+//	    log.Printf("before %s", ctx.Operation)
+//	    return nil
+//	}
+//	func (h *LoggingHook) After(ctx json.HookContext, result any, err error) (any, error) {
+//	    log.Printf("after %s", ctx.Operation)
+//	    return result, err
+//	}
+//
+//	p := json.MustNew()
+//	p.AddHook(&LoggingHook{})
+func (p *Processor) AddHook(hook Hook) {
+	p.hooks = append(p.hooks, hook)
 }
 
 // ProcessBatch processes multiple operations in a single batch
@@ -352,7 +376,13 @@ func (p *Processor) WarmupCache(jsonStr string, paths []string, opts ...Config) 
 		}
 
 		// Try to get the value (this will cache it if successful)
-		_, err := p.Get(jsonStr, path, *options)
+		// Handle nil options to prevent nil pointer dereference
+		var err error
+		if options != nil {
+			_, err = p.Get(jsonStr, path, *options)
+		} else {
+			_, err = p.Get(jsonStr, path)
+		}
 		if err != nil {
 			errorCount++
 			failedPaths = append(failedPaths, path)
@@ -403,52 +433,11 @@ func hashStringToUint64(s string) uint64 {
 	return internal.HashStringFNV1a(s)
 }
 
-// computeHashCacheKey computes a strong cache lookup key for large JSON strings.
-// PERFORMANCE: Uses sampled FNV-1a hash for optimal speed vs collision resistance.
-// Samples first 512B + middle 256B + last 512B + length for good distribution.
+// computeHashCacheKey computes a cache lookup key for JSON strings.
+// Delegates to hashStringToUint64 for consistent implementation.
+// PERFORMANCE: Uses sampled FNV-1a hash for large strings.
 func computeHashCacheKey(s string) uint64 {
-	const (
-		firstSample  = 512
-		middleSample = 256
-		lastSample   = 512
-	)
-
-	h := internal.FNVOffsetBasis
-	lenS := len(s)
-
-	// Include length first (prevents prefix/suffix collisions)
-	h ^= uint64(lenS)
-	h *= internal.FNVPrime
-	h ^= uint64(lenS >> 8)
-	h *= internal.FNVPrime
-
-	// Hash first sample - unrolled for better performance
-	endFirst := min(firstSample, lenS)
-	for i := 0; i < endFirst; i++ {
-		h ^= uint64(s[i])
-		h *= internal.FNVPrime
-	}
-
-	// Hash middle sample (only if string is large enough)
-	if lenS > firstSample+middleSample {
-		midStart := lenS/2 - middleSample/2
-		midEnd := midStart + middleSample
-		for i := midStart; i < midEnd; i++ {
-			h ^= uint64(s[i])
-			h *= internal.FNVPrime
-		}
-	}
-
-	// Hash last sample
-	if lenS > firstSample {
-		startLast := max(lenS-lastSample, endFirst)
-		for i := startLast; i < lenS; i++ {
-			h ^= uint64(s[i])
-			h *= internal.FNVPrime
-		}
-	}
-
-	return h
+	return hashStringToUint64(s)
 }
 
 // evictOldestHashCacheEntries removes the oldest entries from the hash cache using LRU strategy
@@ -738,7 +727,7 @@ func (p *Processor) isValidCacheKey(key string) bool {
 
 // GetConfig returns a copy of the processor configuration
 func (p *Processor) GetConfig() Config {
-	return p.config.Clone()
+	return *p.config.Clone()
 }
 
 // SetLogger sets a custom structured logger for the processor
@@ -802,7 +791,7 @@ func (p *Processor) prepareOptions(opts ...Config) (*Config, error) {
 func mergeOptionsWithOverride(opts []Config, override func(*Config)) Config {
 	var result Config
 	if len(opts) > 0 {
-		result = opts[0].Clone()
+		result = *(&opts[0]).Clone()
 	} else {
 		result = DefaultConfig()
 	}
@@ -1005,19 +994,19 @@ func (p *Processor) ForeachNested(jsonStr string, fn func(key any, item *Iterabl
 }
 
 // SafeGet performs a type-safe get operation with comprehensive error handling
-func (p *Processor) SafeGet(jsonStr, path string) TypeSafeAccessResult {
+func (p *Processor) SafeGet(jsonStr, path string) AccessResult {
 	// Validate inputs
 	if jsonStr == "" {
-		return TypeSafeAccessResult{Exists: false}
+		return AccessResult{Exists: false}
 	}
 	if path == "" {
-		return TypeSafeAccessResult{Exists: false}
+		return AccessResult{Exists: false}
 	}
 
 	// Perform the get operation
 	value, err := p.Get(jsonStr, path)
 	if err != nil {
-		return TypeSafeAccessResult{Exists: false}
+		return AccessResult{Exists: false}
 	}
 
 	// Determine the type
@@ -1028,7 +1017,7 @@ func (p *Processor) SafeGet(jsonStr, path string) TypeSafeAccessResult {
 		valueType = fmt.Sprintf("%T", value)
 	}
 
-	return TypeSafeAccessResult{
+	return AccessResult{
 		Value:  value,
 		Exists: true,
 		Type:   valueType,
@@ -1036,31 +1025,31 @@ func (p *Processor) SafeGet(jsonStr, path string) TypeSafeAccessResult {
 }
 
 // SafeGetTypedWithProcessor performs a type-safe get operation with generic type constraints
-func SafeGetTypedWithProcessor[T any](p *Processor, jsonStr, path string) TypeSafeResult[T] {
+func SafeGetTypedWithProcessor[T any](p *Processor, jsonStr, path string) Result[T] {
 	var zero T
 
 	// Validate inputs
 	if jsonStr == "" || path == "" {
-		return TypeSafeResult[T]{Value: zero, Exists: false, Error: ErrPathNotFound}
+		return Result[T]{Value: zero, Exists: false, Error: ErrPathNotFound}
 	}
 
 	// Perform the get operation
 	value, err := p.Get(jsonStr, path)
 	if err != nil {
-		return TypeSafeResult[T]{Value: zero, Exists: false, Error: err}
+		return Result[T]{Value: zero, Exists: false, Error: err}
 	}
 
 	// Type assertion with safety
 	if typedValue, ok := value.(T); ok {
-		return TypeSafeResult[T]{Value: typedValue, Exists: true, Error: nil}
+		return Result[T]{Value: typedValue, Exists: true, Error: nil}
 	}
 
 	// Attempt type conversion
 	if converted, err := TypeSafeConvert[T](value); err == nil {
-		return TypeSafeResult[T]{Value: converted, Exists: true, Error: nil}
+		return Result[T]{Value: converted, Exists: true, Error: nil}
 	}
 
-	return TypeSafeResult[T]{
+	return Result[T]{
 		Value:  zero,
 		Exists: true,
 		Error:  fmt.Errorf("type mismatch: expected %T, got %T", zero, value),
@@ -1368,8 +1357,8 @@ func (p *Processor) GetInt(jsonStr, path string, opts ...Config) (int, error) {
 	return GetTypedWithProcessor[int](p, jsonStr, path, opts...)
 }
 
-// GetFloat64 retrieves a float64 value from JSON at the specified path
-func (p *Processor) GetFloat64(jsonStr, path string, opts ...Config) (float64, error) {
+// GetFloat retrieves a float64 value from JSON at the specified path
+func (p *Processor) GetFloat(jsonStr, path string, opts ...Config) (float64, error) {
 	return GetTypedWithProcessor[float64](p, jsonStr, path, opts...)
 }
 
@@ -1386,69 +1375,6 @@ func (p *Processor) GetArray(jsonStr, path string, opts ...Config) ([]any, error
 // GetObject retrieves an object value from JSON at the specified path
 func (p *Processor) GetObject(jsonStr, path string, opts ...Config) (map[string]any, error) {
 	return GetTypedWithProcessor[map[string]any](p, jsonStr, path, opts...)
-}
-
-// GetWithDefault retrieves a value from JSON with a default fallback
-func (p *Processor) GetWithDefault(jsonStr, path string, defaultValue any, opts ...Config) any {
-	value, err := p.Get(jsonStr, path, opts...)
-	if err != nil || value == nil {
-		return defaultValue
-	}
-	return value
-}
-
-// GetStringWithDefault retrieves a string value from JSON with a default fallback
-func (p *Processor) GetStringWithDefault(jsonStr, path, defaultValue string, opts ...Config) string {
-	value, err := p.GetString(jsonStr, path, opts...)
-	if err != nil {
-		return defaultValue
-	}
-	return value
-}
-
-// GetIntWithDefault retrieves an int value from JSON with a default fallback
-func (p *Processor) GetIntWithDefault(jsonStr, path string, defaultValue int, opts ...Config) int {
-	value, err := p.GetInt(jsonStr, path, opts...)
-	if err != nil {
-		return defaultValue
-	}
-	return value
-}
-
-// GetFloat64WithDefault retrieves a float64 value from JSON with a default fallback
-func (p *Processor) GetFloat64WithDefault(jsonStr, path string, defaultValue float64, opts ...Config) float64 {
-	value, err := p.GetFloat64(jsonStr, path, opts...)
-	if err != nil {
-		return defaultValue
-	}
-	return value
-}
-
-// GetBoolWithDefault retrieves a bool value from JSON with a default fallback
-func (p *Processor) GetBoolWithDefault(jsonStr, path string, defaultValue bool, opts ...Config) bool {
-	value, err := p.GetBool(jsonStr, path, opts...)
-	if err != nil {
-		return defaultValue
-	}
-	return value
-}
-
-// GetArrayWithDefault retrieves an array value from JSON with a default fallback
-func (p *Processor) GetArrayWithDefault(jsonStr, path string, defaultValue []any, opts ...Config) []any {
-	value, err := p.GetArray(jsonStr, path, opts...)
-	if err != nil {
-		return defaultValue
-	}
-	return value
-}
-
-// GetObjectWithDefault retrieves an object value from JSON with a default fallback
-func (p *Processor) GetObjectWithDefault(jsonStr, path string, defaultValue map[string]any, opts ...Config) map[string]any {
-	value, err := p.GetObject(jsonStr, path, opts...)
-	if err != nil {
-		return defaultValue
-	}
-	return value
 }
 
 // GetMultiple retrieves multiple values from JSON using multiple path expressions
@@ -1636,12 +1562,12 @@ func (p *Processor) getProcessorID() string {
 }
 
 // getPathSegments gets a path segments slice from the unified resource manager
-func (p *Processor) getPathSegments() []PathSegment {
+func (p *Processor) getPathSegments() []internal.PathSegment {
 	return getGlobalResourceManager().GetPathSegments()
 }
 
 // putPathSegments returns a path segments slice to the unified resource manager
-func (p *Processor) putPathSegments(segments []PathSegment) {
+func (p *Processor) putPathSegments(segments []internal.PathSegment) {
 	getGlobalResourceManager().PutPathSegments(segments)
 }
 

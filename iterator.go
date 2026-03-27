@@ -1313,53 +1313,6 @@ func (it *pooledMapIterator) Release() {
 }
 
 // ============================================================================
-// LAZY JSON DECODER - Parse JSON on-demand
-// ============================================================================
-
-// lazyJSONDecoder provides lazy parsing for nested structures
-type lazyJSONDecoder struct {
-	raw    []byte
-	parsed any
-	err    error
-}
-
-// newLazyJSONDecoder creates a lazy JSON decoder
-func newLazyJSONDecoder(data []byte) *lazyJSONDecoder {
-	return &lazyJSONDecoder{
-		raw: data,
-	}
-}
-
-// Parse parses the JSON data if not already parsed
-func (l *lazyJSONDecoder) Parse() (any, error) {
-	if l.parsed != nil || l.err != nil {
-		return l.parsed, l.err
-	}
-	l.err = json.Unmarshal(l.raw, &l.parsed)
-	return l.parsed, l.err
-}
-
-// GetPath gets a value at the specified path with lazy parsing
-func (l *lazyJSONDecoder) GetPath(path string) (any, error) {
-	_, err := l.Parse()
-	if err != nil {
-		return nil, err
-	}
-
-	// Use processor for path navigation
-	p := getDefaultProcessor()
-	if p == nil {
-		return nil, ErrInternalError
-	}
-	return p.Get(string(l.raw), path)
-}
-
-// Raw returns the raw JSON bytes
-func (l *lazyJSONDecoder) Raw() []byte {
-	return l.raw
-}
-
-// ============================================================================
 // BATCH ITERATOR - Efficient batch processing for large arrays
 // PERFORMANCE: Processes arrays in batches to reduce per-element overhead
 // ============================================================================

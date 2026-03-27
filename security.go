@@ -137,28 +137,130 @@ var dangerousPatterns = []dangerousPattern{
 	{"Symbol(", "symbol creation"},
 }
 
-// patternGroups organizes dangerous patterns by their first character for O(1) lookup
-// PERFORMANCE: Reduces average pattern matching from O(n) to O(k) where k << n
-var patternGroups = buildPatternGroups()
-
-// buildPatternGroups creates grouped pattern lookup tables for fast matching
-func buildPatternGroups() map[byte][]dangerousPattern {
-	groups := make(map[byte][]dangerousPattern)
-	for _, p := range dangerousPatterns {
-		if len(p.pattern) > 0 {
-			firstChar := p.pattern[0]
-			groups[firstChar] = append(groups[firstChar], p)
-		}
-	}
-	return groups
-}
-
 // criticalPatterns are always fully scanned regardless of JSON size
 // These patterns are too dangerous to miss due to sampling
 var criticalPatterns = []dangerousPattern{
 	{"__proto__", "prototype pollution"},
 	{"constructor[", "constructor access"},
 	{"prototype.", "prototype manipulation"},
+}
+
+// =============================================================================
+// Global Pattern Registry
+// =============================================================================
+
+// globalPatternRegistry provides thread-safe registration of dangerous patterns.
+// Patterns registered here are used in addition to the default patterns.
+var globalPatternRegistry = &patternRegistry{
+	patterns: make(map[string]DangerousPattern),
+}
+
+// patternRegistry manages dangerous patterns with thread-safe operations.
+type patternRegistry struct {
+	mu       sync.RWMutex
+	patterns map[string]DangerousPattern
+}
+
+// Add registers a new dangerous pattern.
+func (r *patternRegistry) Add(pattern DangerousPattern) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.patterns[pattern.Pattern] = pattern
+}
+
+// Remove unregisters a pattern by its pattern string.
+func (r *patternRegistry) Remove(pattern string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.patterns, pattern)
+}
+
+// List returns all registered patterns.
+func (r *patternRegistry) List() []DangerousPattern {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	result := make([]DangerousPattern, 0, len(r.patterns))
+	for _, p := range r.patterns {
+		result = append(result, p)
+	}
+	return result
+}
+
+// ListByLevel returns patterns filtered by severity level.
+func (r *patternRegistry) ListByLevel(level PatternLevel) []DangerousPattern {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	result := make([]DangerousPattern, 0)
+	for _, p := range r.patterns {
+		if p.Level == level {
+			result = append(result, p)
+		}
+	}
+	return result
+}
+
+// Clear removes all registered patterns.
+func (r *patternRegistry) Clear() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.patterns = make(map[string]DangerousPattern)
+}
+
+// RegisterDangerousPattern adds a pattern to the global registry.
+// Patterns registered here are checked in addition to default patterns.
+//
+// Example:
+//
+//	json.RegisterDangerousPattern(json.DangerousPattern{
+//	    Pattern: "malicious_keyword",
+//	    Name:    "Custom dangerous pattern",
+//	    Level:   json.PatternLevelCritical,
+//	})
+func RegisterDangerousPattern(pattern DangerousPattern) {
+	globalPatternRegistry.Add(pattern)
+}
+
+// UnregisterDangerousPattern removes a pattern from the global registry.
+func UnregisterDangerousPattern(pattern string) {
+	globalPatternRegistry.Remove(pattern)
+}
+
+// ListDangerousPatterns returns all registered custom patterns.
+func ListDangerousPatterns() []DangerousPattern {
+	return globalPatternRegistry.List()
+}
+
+// ClearDangerousPatterns removes all custom patterns from the global registry.
+// Use with caution - this does not affect built-in patterns.
+func ClearDangerousPatterns() {
+	globalPatternRegistry.Clear()
+}
+
+// GetDefaultPatterns returns the built-in dangerous patterns as DangerousPattern values.
+// All default patterns are considered Critical level.
+func GetDefaultPatterns() []DangerousPattern {
+	result := make([]DangerousPattern, len(dangerousPatterns))
+	for i, p := range dangerousPatterns {
+		result[i] = DangerousPattern{
+			Pattern: p.pattern,
+			Name:    p.name,
+			Level:   PatternLevelCritical,
+		}
+	}
+	return result
+}
+
+// GetCriticalPatterns returns patterns that are always fully scanned.
+func GetCriticalPatterns() []DangerousPattern {
+	result := make([]DangerousPattern, len(criticalPatterns))
+	for i, p := range criticalPatterns {
+		result[i] = DangerousPattern{
+			Pattern: p.pattern,
+			Name:    p.name,
+			Level:   PatternLevelCritical,
+		}
+	}
+	return result
 }
 
 // indicatorChars contains characters that indicate potential dangerous patterns

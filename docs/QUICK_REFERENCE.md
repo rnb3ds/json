@@ -34,44 +34,44 @@ value, err := json.Get(data, "path")
 str, err := json.GetString(data, "user.name")
 
 // Get integer
-num, err := json.GetInt(data, "user.age")
+num, err := json.GetAsInt(data, "user.age")
 
 // Get boolean
-flag, err := json.GetBool(data, "user.active")
+flag, err := json.GetAsBool(data, "user.active")
 
 // Get float
-price, err := json.GetFloat64(data, "product.price")
+price, err := json.GetAsFloat(data, "product.price")
 
 // Get array
-arr, err := json.GetArray(data, "items")
+arr, err := json.GetAsArray(data, "items")
 
 // Get object
-obj, err := json.GetObject(data, "user.profile")
+obj, err := json.GetAsObject(data, "user.profile")
 ```
 
 ### Retrieval with Default Values
 
 ```go
-// Recommended: Use GetDefault[T] for type-safe defaults
-name := json.GetDefault[string](data, "user.name", "Anonymous")
-age := json.GetDefault[int](data, "user.age", 0)
-active := json.GetDefault[bool](data, "user.active", false)
-price := json.GetDefault[float64](data, "product.price", 0.0)
-tags := json.GetDefault[[]any](data, "user.tags", []any{})
-settings := json.GetDefault[map[string]any](data, "settings", map[string]any{})
+// Recommended: Use GetOr[T] for type-safe defaults
+name := json.GetOr[string](data, "user.name", "Anonymous")
+age := json.GetOr[int](data, "user.age", 0)
+active := json.GetOr[bool](data, "user.active", false)
+price := json.GetOr[float64](data, "product.price", 0.0)
+tags := json.GetOr[[]any](data, "user.tags", []any{})
+settings := json.GetOr[map[string]any](data, "settings", map[string]any{})
 ```
 
 ### Type-Safe Retrieval (Generics)
 
 ```go
 // Get string
-name, err := json.GetTyped[string](data, "user.name")
+name, err := json.GetAs[string](data, "user.name")
 
 // Get integer slice
-numbers, err := json.GetTyped[[]int](data, "scores")
+numbers, err := json.GetAs[[]int](data, "scores")
 
 // Get custom type
-users, err := json.GetTyped[[]User](data, "users")
+users, err := json.GetAs[[]User](data, "users")
 ```
 
 ### Batch Retrieval
@@ -455,9 +455,9 @@ if err != nil {
     return err
 }
 
-// 2. Use default values (recommended: GetDefault[T])
-name := json.GetDefault[string](data, "user.name", "Anonymous")
-age := json.GetDefault[int](data, "user.age", 0)
+// 2. Use default values (recommended: GetOr[T])
+name := json.GetOr[string](data, "user.name", "Anonymous")
+age := json.GetOr[int](data, "user.age", 0)
 
 // 3. Type checking
 if errors.Is(err, json.ErrTypeMismatch) {
@@ -471,7 +471,7 @@ if errors.As(err, &jsonsErr) {
 }
 
 // 5. Type-safe result handling
-result := json.TypeSafeResult[string]{}
+result := json.Result[string]{}
 if result.Ok() {
     fmt.Println(result.Value)
 }
@@ -506,7 +506,7 @@ if err != nil {
 - ✅ Use `SkipValidation` option for trusted input only
 
 ### Best Practices
-- ✅ Use type-safe GetTyped methods for compile-time checking
+- ✅ Use type-safe GetAs methods for compile-time checking
 - ✅ Use default values for potentially missing fields
 - ✅ Enable validation in production (enabled by default)
 - ✅ Use defer processor.Close() to release resources

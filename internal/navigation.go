@@ -185,7 +185,7 @@ func ParseArraySegment(part string, segments []PathSegment) []PathSegment {
 
 	if strings.Contains(bracketContent, ":") {
 		var start, end, step int
-		var flags uint8
+		var flags PathSegmentFlags
 
 		parts := strings.Split(bracketContent, ":")
 		if len(parts) >= 2 {
@@ -270,7 +270,7 @@ func ParseExtractionSegment(part string, segments []PathSegment) []PathSegment {
 
 	braceContent := part[openBrace+1 : closeBrace]
 
-	var flags uint8
+	var flags PathSegmentFlags
 	var key string
 	if strings.HasPrefix(braceContent, "flat:") {
 		key = braceContent[5:]
@@ -426,15 +426,6 @@ func IsObjectType(data any) bool {
 	default:
 		return false
 	}
-}
-
-// IsMapType checks if data is a map type.
-//
-// Deprecated: Use IsObjectType instead; they are equivalent.
-// Migration: IsMapType(data) -> IsObjectType(data)
-// Will be removed in v2.0.0.
-func IsMapType(data any) bool {
-	return IsObjectType(data)
 }
 
 // IsSliceType checks if data is a slice type using reflection

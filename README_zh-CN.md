@@ -1,33 +1,33 @@
-# 🚀 cybergodev/json
+# cybergodev/json
 
 [![Go Version](https://img.shields.io/badge/Go-1.24+-00ADD8.svg)](https://golang.org)
 [![GoDoc](https://pkg.go.dev/badge/github.com/cybergodev/json.svg)](https://pkg.go.dev/github.com/cybergodev/json)
 [![MIT License](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
-[![Thread Safe](https://img.shields.io/badge/Thread_Safe-✓-brightgreen.svg)]()
+[![Thread Safe](https://img.shields.io/badge/Thread_Safe-Yes-brightgreen.svg)]()
 [![Security](https://img.shields.io/badge/Security-Hardened-red.svg)](docs/SECURITY.md)
 [![Zero Deps](https://img.shields.io/badge/deps-zero-brightgreen.svg)](go.mod)
 
 > 一个高性能、功能丰富的 Go JSON 处理库，100% 兼容 `encoding/json`。
 > 强大的路径语法、类型安全、流式处理、生产级性能。
 
-**[📖 English Documentation](README.md)** 
+**[English Documentation](README.md)**
 
 ---
 
-## ✨ 核心特性
+## 特性
 
-|  特性 | 描述 |
-|--------|--------|
-| 🔄 **100% 兼容** | 直接替换 `encoding/json`，零学习成本 |
-| 🎯 **强大路径** | 直观语法：`users[0].name`、`items[-1]`、`data{flat:tags}` |
-| 🚀 **高性能** | 智能缓存、内存池、优化的热路径 |
-| 🛡️ **类型安全** | 泛型支持，编译时类型检查 |
-| 🔧 **功能丰富** | 批量操作、流式处理、文件I/O、模式验证、深度合并 |
-| 🏗️ **生产就绪** | 线程安全、完善的错误处理、安全加固 |
+| 特性 | 描述 |
+|------|------|
+| **100% 兼容** | 直接替换 `encoding/json`，零学习成本 |
+| **强大路径** | 直观语法：`users[0].name`、`items[-1]`、`data{flat:tags}` |
+| **高性能** | 智能缓存、内存池、优化的热路径 |
+| **类型安全** | 泛型支持，编译时类型检查 |
+| **功能丰富** | 批量操作、流式处理、文件I/O、模式验证、深度合并 |
+| **生产就绪** | 线程安全、完善的错误处理、安全加固 |
 
 ---
 
-## 📦 安装
+## 安装
 
 ```bash
 go get github.com/cybergodev/json
@@ -35,7 +35,7 @@ go get github.com/cybergodev/json
 
 ---
 
-## ⚡ 快速开始（5分钟）
+## 快速开始
 
 ```go
 package main
@@ -79,10 +79,10 @@ func main() {
 
 ---
 
-## 📋 路径语法参考
+## 路径语法参考
 
 | 语法 | 描述 | 示例 |
-|-------|--------|--------|
+|------|------|------|
 | `.property` | 访问属性 | `user.name` → "Alice" |
 | `[n]` | 数组索引 | `items[0]` → 第一个元素 |
 | `[-n]` | 负索引（从末尾） | `items[-1]` → 最后一个元素 |
@@ -94,29 +94,29 @@ func main() {
 
 ---
 
-## 🎯 核心 API
+## 核心 API
 
 ### 数据获取
 
 ```go
 // 基础获取器 — 返回 (value, error)
-json.Get(data, "user.name")           // any
-json.GetString(data, "user.name")     // string
-json.GetInt(data, "user.age")         // int
-json.GetFloat64(data, "user.score")   // float64
-json.GetBool(data, "user.active")     // bool
-json.GetArray(data, "user.tags")      // []any
-json.GetObject(data, "user.profile")  // map[string]any
+json.Get(data, "user.name")            // (any, error)
+json.GetString(data, "user.name")      // (string, error)
+json.GetInt(data, "user.age")          // (int, error)
+json.GetFloat(data, "user.score")      // (float64, error)
+json.GetBool(data, "user.active")      // (bool, error)
+json.GetArray(data, "user.tags")       // ([]any, error)
+json.GetObject(data, "user.profile")   // (map[string]any, error)
 
 // 类型安全的泛型获取
 json.GetTyped[string](data, "user.name")
 json.GetTyped[[]int](data, "numbers")
-json.GetTyped[User](data, "user")     // 自定义结构体
+json.GetTyped[User](data, "user")      // 自定义结构体
 
 // 带默认值（路径不存在时不报错）
-json.GetDefault(data, "user.name", "Anonymous")
-json.GetDefault(data, "user.age", 0)
-json.GetDefault[[]any](data, "user.tags", []any{})
+json.GetStringOr(data, "user.name", "Anonymous")
+json.GetIntOr(data, "user.age", 0)
+json.GetTypedOr[[]any](data, "user.tags", []any{})
 
 // 批量获取
 results, err := json.GetMultiple(data, []string{"user.name", "user.age"})
@@ -155,8 +155,8 @@ json.Unmarshal(bytes, &target)
 bytes, _ := json.MarshalIndent(data, "", "  ")
 
 // 快速格式化
-pretty, _    := json.FormatPretty(jsonStr)   // 美化输出
-compact, _   := json.CompactString(jsonStr)  // 压缩
+pretty, _    := json.Prettify(jsonStr)      // 美化输出
+compact, _   := json.CompactString(jsonStr) // 压缩
 json.Print(data)        // 压缩格式到 stdout
 json.PrintPretty(data)  // 美化格式到 stdout
 
@@ -195,15 +195,15 @@ strVal       := json.ConvertToString(value)
 result, err := json.TypeSafeConvert[string](value)
 
 // JSON 工具
-equal, _    := json.CompareJson(json1, json2)
-merged, _   := json.MergeJson(json1, json2)                    // 并集（默认）
-merged, _   := json.MergeJson(json1, json2, json.MergeIntersection) // 交集
+equal, _    := json.CompareJSON(json1, json2)
+merged, _   := json.MergeJSON(json1, json2)                    // 并集（默认）
+merged, _   := json.MergeJSON(json1, json2, json.MergeIntersection) // 交集
 deepCopy, _ := json.DeepCopy(data)
 ```
 
 ---
 
-## ⚙️ 配置
+## 配置
 
 ### 自定义配置
 
@@ -249,7 +249,7 @@ defer processor.Close()
 
 ---
 
-## 📁 高级功能
+## 高级功能
 
 ### 数据迭代
 
@@ -316,7 +316,7 @@ errors, err := json.ValidateSchema(jsonStr, schema)
 
 ---
 
-## 🎯 常见用例
+## 常见用例
 
 ### API 响应处理
 
@@ -351,9 +351,9 @@ config := `{
 }`
 
 // 类型安全带默认值
-dbHost := json.GetDefault(config, "database.host", "localhost")
-dbPort := json.GetDefault(config, "database.port", 5432)
-cacheEnabled := json.GetDefault(config, "cache.enabled", false)
+dbHost := json.GetStringOr(config, "database.host", "localhost")
+dbPort := json.GetIntOr(config, "database.port", 5432)
+cacheEnabled := json.GetBoolOr(config, "cache.enabled", false)
 
 // 动态更新
 updated, _ := json.SetMultiple(config, map[string]any{
@@ -385,7 +385,7 @@ result, _ := json.WarmupCache(jsonStr, paths)
 
 ---
 
-## 🔄 从 encoding/json 迁移
+## 从 encoding/json 迁移
 
 只需修改导入：
 
@@ -398,24 +398,24 @@ import "github.com/cybergodev/json"
 ```
 
 所有标准函数完全兼容：
-- ✅ `json.Marshal()` / `json.Unmarshal()`
-- ✅ `json.MarshalIndent()`
-- ✅ `json.Valid()`
-- ✅ `json.Compact()` / `json.Indent()` / `json.HTMLEscape()`
+- `json.Marshal()` / `json.Unmarshal()`
+- `json.MarshalIndent()`
+- `json.Valid()`
+- `json.Compact()` / `json.Indent()` / `json.HTMLEscape()`
 
 ---
 
-## 🛡️ 安全配置
+## 安全配置
 
 ```go
 // 用于处理不受信任的 JSON 输入
 secureConfig := json.SecurityConfig()
 // 特性:
-// ✓ 启用完整安全扫描
-// ✓ 保守的大小限制（最大10MB）
-// ✓ 严格模式验证
-// ✓ 原型污染防护
-// ✓ 路径遍历防护
+// - 启用完整安全扫描
+// - 保守的大小限制（最大10MB）
+// - 严格模式验证
+// - 原型污染防护
+// - 路径遍历防护
 
 processor, _ := json.New(secureConfig)
 defer processor.Close()
@@ -423,10 +423,10 @@ defer processor.Close()
 
 ---
 
-## 📚 示例代码
+## 示例代码
 
 | 文件 | 描述 |
-|--------|--------|
+|------|------|
 | [1_basic_usage.go](examples/1_basic_usage.go) | 核心操作 |
 | [2_advanced_features.go](examples/2_advanced_features.go) | 复杂路径、嵌套提取 |
 | [3_production_ready.go](examples/3_production_ready.go) | 线程安全模式 |
@@ -449,18 +449,18 @@ go run -tags=example examples/1_basic_usage.go
 
 ---
 
-## 📖 文档
+## 文档
 
-- **[API 参考](docs/API_REFERENCE.md)** — 完整 API 文档
-- **[安全指南](docs/SECURITY.md)** — 安全最佳实践
-- **[pkg.go.dev](https://pkg.go.dev/github.com/cybergodev/json)** — GoDoc
-
----
-
-## 📄 许可证
-
-MIT License — 详见 [LICENSE](LICENSE) 文件。
+- **[API 参考](docs/API_REFERENCE.md)** - 完整 API 文档
+- **[安全指南](docs/SECURITY.md)** - 安全最佳实践
+- **[pkg.go.dev](https://pkg.go.dev/github.com/cybergodev/json)** - GoDoc
 
 ---
 
-如果这个项目对你有帮助，请给一个 ⭐！
+## 许可证
+
+MIT License - 详见 [LICENSE](LICENSE) 文件。
+
+---
+
+如果这个项目对你有帮助，请给一个 star！

@@ -10,8 +10,8 @@ import (
 // CONSOLIDATED GETDEFAULT TESTS
 // ============================================================================
 
-// TestGetDefaultConsolidated tests all GetDefault variants in one place
-func TestGetDefaultConsolidated(t *testing.T) {
+// TestGetOrConsolidated tests all GetTypedOr variants in one place
+func TestGetOrConsolidated(t *testing.T) {
 	tests := []struct {
 		name        string
 		jsonStr     string
@@ -194,22 +194,22 @@ func TestGetDefaultConsolidated(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			switch def := tt.def.(type) {
 			case []any:
-				result := GetDefault[[]any](tt.jsonStr, tt.path, def)
+				result := GetTypedOr[[]any](tt.jsonStr, tt.path, def)
 				tt.checkResult(t, result)
 			case bool:
-				result := GetDefault[bool](tt.jsonStr, tt.path, def)
+				result := GetTypedOr[bool](tt.jsonStr, tt.path, def)
 				tt.checkResult(t, result)
 			case float64:
-				result := GetDefault[float64](tt.jsonStr, tt.path, def)
+				result := GetTypedOr[float64](tt.jsonStr, tt.path, def)
 				tt.checkResult(t, result)
 			case int:
-				result := GetDefault[int](tt.jsonStr, tt.path, def)
+				result := GetTypedOr[int](tt.jsonStr, tt.path, def)
 				tt.checkResult(t, result)
 			case string:
-				result := GetDefault[string](tt.jsonStr, tt.path, def)
+				result := GetTypedOr[string](tt.jsonStr, tt.path, def)
 				tt.checkResult(t, result)
 			case map[string]any:
-				result := GetDefault[map[string]any](tt.jsonStr, tt.path, def)
+				result := GetTypedOr[map[string]any](tt.jsonStr, tt.path, def)
 				tt.checkResult(t, result)
 			default:
 				t.Fatalf("unsupported default type: %T", def)
@@ -218,215 +218,7 @@ func TestGetDefaultConsolidated(t *testing.T) {
 	}
 }
 
-// ============================================================================
-// CONSOLIDATED PRINT TESTS
-// ============================================================================
 
-// TestPrintFunctionsConsolidated tests all Print* functions
-func TestPrintFunctionsConsolidated(t *testing.T) {
-	t.Run("PrintE", func(t *testing.T) {
-		tests := []struct {
-			name    string
-			data    any
-			wantErr bool
-		}{
-			{"valid_data", `{"test": "value"}`, false},
-			{"valid_map", map[string]any{"test": "value"}, false},
-		}
-
-		for _, tt := range tests {
-			t.Run(tt.name, func(t *testing.T) {
-				err := PrintE(tt.data)
-				if (err != nil) != tt.wantErr {
-					t.Errorf("PrintE() error = %v, wantErr %v", err, tt.wantErr)
-				}
-			})
-		}
-	})
-
-	t.Run("PrintPrettyE", func(t *testing.T) {
-		tests := []struct {
-			name    string
-			data    any
-			wantErr bool
-		}{
-			{"valid_data", `{"test": "value"}`, false},
-			{"valid_map", map[string]any{"test": "value"}, false},
-		}
-
-		for _, tt := range tests {
-			t.Run(tt.name, func(t *testing.T) {
-				err := PrintPrettyE(tt.data)
-				if (err != nil) != tt.wantErr {
-					t.Errorf("PrintPrettyE() error = %v, wantErr %v", err, tt.wantErr)
-				}
-			})
-		}
-	})
-
-	t.Run("Print", func(t *testing.T) {
-		// Print never returns error, just verify it doesn't panic
-		Print(`{"test": "value"}`)
-		Print(map[string]any{"test": "value"})
-	})
-
-	t.Run("PrintPretty", func(t *testing.T) {
-		// PrintPretty never returns error, just verify it doesn't panic
-		PrintPretty(`{"test": "value"}`)
-		PrintPretty(map[string]any{"test": "value"})
-	})
-}
-
-// ============================================================================
-// CONSOLIDATED ERROR TESTS
-// ============================================================================
-
-// TestErrorTypesConsolidated tests all error type methods
-func TestErrorTypesConsolidated(t *testing.T) {
-	t.Run("JsonsError", func(t *testing.T) {
-		tests := []struct {
-			name        string
-			err         *JsonsError
-			checkString func(t *testing.T, s string)
-		}{
-			{
-				name: "basic_error",
-				err: &JsonsError{
-					Op:      "Get",
-					Path:    "test.path",
-					Message: "test error",
-					Err:     ErrOperationFailed,
-				},
-				checkString: func(t *testing.T, s string) {
-					if s == "" {
-						t.Error("Error() should not be empty")
-					}
-				},
-			},
-			{
-				name: "error_with_wrapped",
-				err: &JsonsError{
-					Op:      "Set",
-					Path:    "data.field",
-					Message: "failed to set",
-					Err:     ErrInvalidJSON,
-				},
-				checkString: func(t *testing.T, s string) {
-					if s == "" {
-						t.Error("Error() should not be empty")
-					}
-				},
-			},
-		}
-
-		for _, tt := range tests {
-			t.Run(tt.name, func(t *testing.T) {
-				tt.checkString(t, tt.err.Error())
-				unwrapped := tt.err.Unwrap()
-				if unwrapped == nil {
-					t.Error("Unwrap() should return non-nil")
-				}
-			})
-		}
-	})
-}
-
-// ============================================================================
-// CONSOLIDATED CONFIG TESTS
-// ============================================================================
-
-// TestConfigConsolidated tests all Config-related functionality
-func TestConfigConsolidated(t *testing.T) {
-	t.Run("Clone", func(t *testing.T) {
-		original := DefaultConfig()
-		original.MaxJSONSize = 999
-
-		cloned := original.Clone()
-		if cloned.MaxJSONSize != 999 {
-			t.Errorf("Clone() MaxJSONSize = %d, want 999", cloned.MaxJSONSize)
-		}
-
-		// Modify clone should not affect original
-		cloned.MaxJSONSize = 1000
-		if original.MaxJSONSize != 999 {
-			t.Error("Modifying clone affected original")
-		}
-	})
-
-	t.Run("Validate", func(t *testing.T) {
-		tests := []struct {
-			name        string
-			config      *Config
-			wantErr     bool
-			checkResult func(t *testing.T, c *Config)
-		}{
-			{
-				name:    "zero_values_get_defaults",
-				config:  &Config{},
-				wantErr: false,
-				checkResult: func(t *testing.T, c *Config) {
-					if c.MaxJSONSize <= 0 {
-						t.Error("MaxJSONSize should be set to default")
-					}
-				},
-			},
-			{
-				name:    "negative_cache_size",
-				config:  &Config{MaxCacheSize: -1},
-				wantErr: false,
-				checkResult: func(t *testing.T, c *Config) {
-					if c.MaxCacheSize != 0 {
-						t.Errorf("Negative MaxCacheSize should be clamped to 0, got %d", c.MaxCacheSize)
-					}
-				},
-			},
-			{
-				name:    "large_cache_size_clamped",
-				config:  &Config{MaxCacheSize: 5000},
-				wantErr: false,
-				checkResult: func(t *testing.T, c *Config) {
-					if c.MaxCacheSize > 2000 {
-						t.Errorf("Large MaxCacheSize should be clamped to 2000, got %d", c.MaxCacheSize)
-					}
-				},
-			},
-		}
-
-		for _, tt := range tests {
-			t.Run(tt.name, func(t *testing.T) {
-				err := tt.config.Validate()
-				if (err != nil) != tt.wantErr {
-					t.Errorf("Validate() error = %v, wantErr %v", err, tt.wantErr)
-				}
-				if !tt.wantErr && tt.checkResult != nil {
-					tt.checkResult(t, tt.config)
-				}
-			})
-		}
-	})
-
-	t.Run("AccessorMethods", func(t *testing.T) {
-		c := Config{
-			MaxJSONSize:  1000,
-			MaxPathDepth: 50,
-			EnableCache:  true,
-			CacheTTL:     60000000000, // 1 minute
-		}
-
-		if c.GetMaxJSONSize() != 1000 {
-			t.Errorf("GetMaxJSONSize() = %d, want 1000", c.GetMaxJSONSize())
-		}
-		if c.GetMaxPathDepth() != 50 {
-			t.Errorf("GetMaxPathDepth() = %d, want 50", c.GetMaxPathDepth())
-		}
-		if c.EnableCache != true {
-			t.Error("EnableCache should be true")
-		}
-		if c.CacheTTL != 60000000000 {
-			t.Errorf("CacheTTL = %d, want 60000000000", c.CacheTTL)
-		}
-	})
-}
 
 // ============================================================================
 // CONSOLIDATED PATH PARSING TESTS

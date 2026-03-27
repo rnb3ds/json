@@ -143,84 +143,84 @@ Retrieves a string value from JSON at the specified path.
 
 ---
 
-### GetInt
+### GetAsInt
 
 ```go
-func GetInt(jsonStr, path string, cfg ...*Config) (int, error)
+func GetAsInt(jsonStr, path string, cfg ...*Config) (int, error)
 ```
 
 Retrieves an integer value from JSON at the specified path.
 
 ---
 
-### GetFloat64
+### GetAsFloat
 
 ```go
-func GetFloat64(jsonStr, path string, cfg ...*Config) (float64, error)
+func GetAsFloat(jsonStr, path string, cfg ...*Config) (float64, error)
 ```
 
 Retrieves a float64 value from JSON at the specified path.
 
 ---
 
-### GetBool
+### GetAsBool
 
 ```go
-func GetBool(jsonStr, path string, cfg ...*Config) (bool, error)
+func GetAsBool(jsonStr, path string, cfg ...*Config) (bool, error)
 ```
 
 Retrieves a boolean value from JSON at the specified path.
 
 ---
 
-### GetArray
+### GetAsArray
 
 ```go
-func GetArray(jsonStr, path string, cfg ...*Config) ([]any, error)
+func GetAsArray(jsonStr, path string, cfg ...*Config) ([]any, error)
 ```
 
 Retrieves an array value from JSON at the specified path.
 
 ---
 
-### GetObject
+### GetAsObject
 
 ```go
-func GetObject(jsonStr, path string, cfg ...*Config) (map[string]any, error)
+func GetAsObject(jsonStr, path string, cfg ...*Config) (map[string]any, error)
 ```
 
 Retrieves an object value from JSON at the specified path.
 
 ---
 
-### GetTyped[T]
+### GetAs[T]
 
 ```go
-func GetTyped[T any](jsonStr, path string, cfg ...*Config) (T, error)
+func GetAs[T any](jsonStr, path string, cfg ...*Config) (T, error)
 ```
 
 Retrieves a typed value from JSON at the specified path using generics.
 
 **Example:**
 ```go
-name, err := json.GetTyped[string](data, "user.name")
-numbers, err := json.GetTyped[[]int](data, "scores")
+name, err := json.GetAs[string](data, "user.name")
+numbers, err := json.GetAs[[]int](data, "scores")
 ```
 
 ---
 
-### GetDefault[T]
+### GetOr[T]
 
 ```go
-func GetDefault[T any](jsonStr, path string, defaultValue T, cfg ...*Config) T
+func GetOr[T any](jsonStr, path string, defaultValue T, cfg ...*Config) T
 ```
 
 Retrieves a typed value with a default fallback if path not found or error occurs.
 
 **Example:**
 ```go
-name := json.GetDefault[string](data, "user.name", "Anonymous")
-age := json.GetDefault[int](data, "user.age", 0)
+name := json.GetOr[string](data, "user.name", "Anonymous")
+age := json.GetOr[int](data, "user.age", 0)
 ```
 
 ---
@@ -301,7 +301,7 @@ result, err := json.Set(data, "numbers[+]", moreItems)
 **Comparison with old approach:**
 ```go
 // OLD WAY: 3 operations
-members, _ := json.GetArray(data, "users")           // Step 1: Get
+members, _ := json.GetAsArray(data, "users")           // Step 1: Get
 members = append(members, newUser)                   // Step 2: Append
 result, _ := json.Set(data, "users", members)        // Step 3: Set back
 
@@ -390,10 +390,10 @@ result, err := json.EncodeWithConfig(data, cfg)
 
 ---
 
-### FormatPretty
+### Prettify
 
 ```go
-func FormatPretty(jsonStr string, cfg ...*Config) (string, error)
+func Prettify(jsonStr string, cfg ...*Config) (string, error)
 ```
 
 Formats JSON string with pretty indentation.
@@ -1059,19 +1059,19 @@ func (iv *IterableValue) IsEmpty(key string) bool
 
 ---
 
-## TypeSafeResult[T] Type
+## Result[T] Type
 
 ```go
-type TypeSafeResult[T any] struct {
+type Result[T any] struct {
     Value  T
     Exists bool
     Error  error
 }
 
-func (r TypeSafeResult[T]) Ok() bool
-func (r TypeSafeResult[T]) Unwrap() T
-func (r TypeSafeResult[T]) UnwrapOr(defaultValue T) T
-func (r TypeSafeResult[T]) UnwrapOrPanic() T
+func (r Result[T]) Ok() bool
+func (r Result[T]) Unwrap() T
+func (r Result[T]) UnwrapOr(defaultValue T) T
+func (r Result[T]) Must() T
 ```
 
 ---

@@ -135,7 +135,7 @@ if syntaxErr, ok := err.(*json.SyntaxError); ok {
 Beyond 100% compatibility, our library also provides:
 
 - **Advanced Path Operations**: `json.Get()`, `json.Set()`, `json.Delete()`
-- **Type-Safe Generics**: `json.GetTyped[T]()`, `json.TypeSafeConvert[T]()`
+- **Type-Safe Generics**: `json.GetAs[T]()`, `json.TypeSafeConvert[T]()`
 - **Performance Optimizations**: Caching, memory pools, string interning
 - **Thread Safety**: Concurrent-safe operations with atomic operations
 - **Rich Query Syntax**: Dot notation, array slicing, JSON Pointer

@@ -642,22 +642,6 @@ func StreamArraySkip(reader io.Reader, n int) ([]any, error) {
 // PERFORMANCE: Defer JSON parsing until data is actually needed
 // ============================================================================
 
-// LazyJSON is an alias for LazyParser.
-//
-// Deprecated: Use LazyParser instead.
-// Migration: json.LazyJSON -> json.LazyParser
-// Will be removed in v2.0.0.
-type LazyJSON = LazyParser
-
-// NewLazyJSON creates a new LazyParser.
-//
-// Deprecated: Use NewLazyParser instead.
-// Migration: json.NewLazyJSON(data) -> json.NewLazyParser(data)
-// Will be removed in v2.0.0.
-func NewLazyJSON(data []byte) *LazyParser {
-	return NewLazyParser(data)
-}
-
 // GetFromParsedData retrieves a value from already-parsed data
 // Uses the processor's path navigation without re-parsing
 func (p *Processor) GetFromParsedData(data any, path string) (any, error) {

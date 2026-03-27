@@ -25,7 +25,7 @@
 // Type-safe operations:
 //
 //	name, err := json.GetString(jsonStr, "user.name")
-//	age, err := json.GetInt(jsonStr, "user.age")
+//	age, err := json.GetAsInt(jsonStr, "user.age")
 //
 // Advanced processor for complex operations:
 //
@@ -67,7 +67,6 @@
 // The package is organized with all public API in the root package:
 //
 //   - Core types: Processor, Config, ProcessorOptions, EncodeConfig
-//   - Path types: PathSegment, PathInfo
 //   - Error types: JsonsError, various error constructors
 //   - Encoding types: Number
 //
@@ -82,7 +81,7 @@
 //
 // Core types are organized in the following files:
 //
-//   - types.go: All type definitions (Config, ProcessorOptions, Stats, PathSegment, etc.)
+//   - types.go: All type definitions (Config, ProcessorOptions, Stats, etc.)
 //   - processor.go: Processor struct and all methods
 //   - ops.go: Internal operation implementations
 //   - path.go: Path parsing and navigation

@@ -102,6 +102,25 @@ func (p *Processor) Parse(jsonStr string, target any, opts ...Config) error {
 	return nil
 }
 
+// ParseAny parses a JSON string and returns the result as any.
+// This method provides the same behavior as the package-level Parse function.
+// Use Parse when you need to unmarshal into a specific target type.
+//
+// Example:
+//
+//	data, err := processor.ParseAny(`{"name": "Alice"}`)
+func (p *Processor) ParseAny(jsonStr string, opts ...Config) (any, error) {
+	if err := p.checkClosed(); err != nil {
+		return nil, err
+	}
+
+	var data any
+	if err := p.Parse(jsonStr, &data, opts...); err != nil {
+		return nil, err
+	}
+	return data, nil
+}
+
 // Valid validates JSON format without parsing the entire structure
 func (p *Processor) Valid(jsonStr string, opts ...Config) (bool, error) {
 	if err := p.checkClosed(); err != nil {
@@ -159,7 +178,7 @@ func stringToBytes(s string) []byte {
 	return internal.StringToBytes(s)
 }
 
-func (p *Processor) splitPath(path string, segments []PathSegment) []PathSegment {
+func (p *Processor) splitPath(path string, segments []internal.PathSegment) []internal.PathSegment {
 	segments = segments[:0]
 
 	// Direct call to internal package - reduces method call overhead
@@ -205,30 +224,31 @@ func (p *Processor) isDistributedOperationPath(path string) bool {
 	return internal.IsExtractionPath(path)
 }
 
-func (p *Processor) isDistributedOperationSegment(segment PathSegment) bool {
+func (p *Processor) isDistributedOperationSegment(segment internal.PathSegment) bool {
 	return internal.IsExtractionSegment(segment)
 }
 
-func (p *Processor) handleDistributedOperation(data any, segments []PathSegment) (any, error) {
+func (p *Processor) handleDistributedOperation(data any, segments []internal.PathSegment) (any, error) {
 	return p.getValueWithDistributedOperation(data, p.reconstructPath(segments))
 }
 
-func (p *Processor) reconstructPath(segments []PathSegment) string {
+func (p *Processor) reconstructPath(segments []internal.PathSegment) string {
 	return internal.ReconstructPath(segments)
 }
 
 // parseArraySegment parses array access segments like [0], [1:3], etc.
-func (p *Processor) parseArraySegment(part string, segments []PathSegment) []PathSegment {
+func (p *Processor) parseArraySegment(part string, segments []internal.PathSegment) []internal.PathSegment {
 	return internal.ParseArraySegment(part, segments)
 }
 
 // parseExtractionSegment parses extraction segments like {key}, {flat:key}, etc.
-func (p *Processor) parseExtractionSegment(part string, segments []PathSegment) []PathSegment {
+func (p *Processor) parseExtractionSegment(part string, segments []internal.PathSegment) []internal.PathSegment {
 	return internal.ParseExtractionSegment(part, segments)
 }
 
-// FormatPretty formats JSON string with indentation
-func (p *Processor) FormatPretty(jsonStr string, opts ...Config) (string, error) {
+// Prettify formats JSON string with indentation.
+// This is the recommended method for formatting JSON strings.
+func (p *Processor) Prettify(jsonStr string, opts ...Config) (string, error) {
 	if err := p.checkClosed(); err != nil {
 		return "", err
 	}
@@ -344,6 +364,12 @@ func (p *Processor) Compact(jsonStr string, opts ...Config) (string, error) {
 
 // FormatCompact removes whitespace from JSON string (alias for Compact)
 func (p *Processor) FormatCompact(jsonStr string, opts ...Config) (string, error) {
+	return p.Compact(jsonStr, opts...)
+}
+
+// CompactString removes whitespace from JSON string.
+// This is an alias for Compact for consistency with the package-level CompactString function.
+func (p *Processor) CompactString(jsonStr string, opts ...Config) (string, error) {
 	return p.Compact(jsonStr, opts...)
 }
 
