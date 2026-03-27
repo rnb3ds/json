@@ -6,6 +6,45 @@ import (
 	"strings"
 )
 
+// fastParseInt parses a string as an integer without allocation.
+// Returns the parsed integer and true if successful, 0 and false otherwise.
+// PERFORMANCE: Avoids strconv.Atoi's error allocation for invalid inputs.
+func fastParseInt(s string) (int, bool) {
+	if len(s) == 0 {
+		return 0, false
+	}
+
+	neg := false
+	i := 0
+	if s[0] == '-' {
+		neg = true
+		i = 1
+		if len(s) == 1 {
+			return 0, false
+		}
+	}
+
+	// Fast path for overflow check and parsing
+	var n int
+	for ; i < len(s); i++ {
+		c := s[i]
+		if c < '0' || c > '9' {
+			return 0, false
+		}
+		// Check overflow before multiplying
+		if n > (1<<31-1)/10 {
+			return 0, false
+		}
+		n = n*10 + int(c-'0')
+	}
+
+	if neg {
+		n = -n
+	}
+
+	return n, true
+}
+
 // EscapeJSONPointer escapes special characters for JSON Pointer
 // Uses single-pass algorithm to avoid multiple allocations
 func EscapeJSONPointer(s string) string {
@@ -257,7 +296,7 @@ func ParseComplexSegment(part string) ([]PathSegment, error) {
 
 // parseDotNotation parses dot notation paths like "user.name" or "users[0].name"
 // PERFORMANCE: Pre-calculates segment count to avoid slice growth allocations
-// SECURITY: Enforces maxPathDepth limit to prevent stack overflow attacks
+// SECURITY: Enforces MaxPathParseDepth limit to prevent stack overflow attacks
 func parseDotNotation(path string) ([]PathSegment, error) {
 	// Pre-calculate segment count for better allocation
 	// Count dots outside brackets and add 1 for the initial segment
@@ -331,7 +370,8 @@ func parseDotNotation(path string) ([]PathSegment, error) {
 			}
 			segments = append(segments, propSegments...)
 		} else {
-			if index, err := strconv.Atoi(part); err == nil {
+			// Use fast parser to avoid strconv.Atoi error allocations
+			if index, ok := fastParseInt(part); ok {
 				var flags uint8
 				if index < 0 {
 					flags |= FlagIsNegative
@@ -369,7 +409,7 @@ func smartSplitPath(path string) []string {
 	hasBrackets := false
 	hasBraces := false
 
-	for i := 0; i < pathLen; i++ {
+	for i := range pathLen {
 		c := path[i]
 		switch c {
 		case '{':
@@ -406,7 +446,7 @@ func smartSplitPath(path string) []string {
 	braceDepth = 0
 	bracketDepth = 0
 
-	for i := 0; i < pathLen; i++ {
+	for i := range pathLen {
 		c := path[i]
 		switch c {
 		case '{':
@@ -619,10 +659,10 @@ func parseArrayAccess(arrayPart string) (PathSegment, error) {
 		}, nil
 	}
 
-	// Simple index access
-	index, err := strconv.Atoi(arrayPart)
-	if err != nil {
-		return PathSegment{}, fmt.Errorf("invalid array index '%s': %w", arrayPart, err)
+	// Simple index access - use fast parser to avoid strconv error allocations
+	index, ok := fastParseInt(arrayPart)
+	if !ok {
+		return PathSegment{}, fmt.Errorf("invalid array index '%s'", arrayPart)
 	}
 
 	var flags uint8
@@ -667,36 +707,36 @@ func parseSliceAccess(slicePart string) (PathSegment, error) {
 	var start, end, step int
 	var flags uint8
 
-	// Parse start (before first colon)
+	// Parse start (before first colon) - use fast parser to avoid strconv error allocations
 	if colon1 > 0 {
-		startVal, err := strconv.Atoi(slicePart[:colon1])
-		if err != nil {
-			return PathSegment{}, fmt.Errorf("invalid slice start '%s': %w", slicePart[:colon1], err)
+		startVal, ok := fastParseInt(slicePart[:colon1])
+		if !ok {
+			return PathSegment{}, fmt.Errorf("invalid slice start '%s'", slicePart[:colon1])
 		}
 		start = startVal
 		flags |= FlagHasStart
 	}
 
-	// Parse end (between colons)
+	// Parse end (between colons) - use fast parser
 	if colon2 > colon1+1 {
 		// There's content between colons
 		endStr := slicePart[colon1+1 : colon2]
-		endVal, err := strconv.Atoi(endStr)
-		if err != nil {
-			return PathSegment{}, fmt.Errorf("invalid slice end '%s': %w", endStr, err)
+		endVal, ok := fastParseInt(endStr)
+		if !ok {
+			return PathSegment{}, fmt.Errorf("invalid slice end '%s'", endStr)
 		}
 		end = endVal
 		flags |= FlagHasEnd
 	}
 
-	// Parse step (after second colon, if exists)
+	// Parse step (after second colon, if exists) - use fast parser
 	if colon2 < len(slicePart) && colon2 > colon1 {
 		// We have a second colon, check for step
 		stepStr := slicePart[colon2+1:]
 		if stepStr != "" {
-			stepVal, err := strconv.Atoi(stepStr)
-			if err != nil {
-				return PathSegment{}, fmt.Errorf("invalid slice step '%s': %w", stepStr, err)
+			stepVal, ok := fastParseInt(stepStr)
+			if !ok {
+				return PathSegment{}, fmt.Errorf("invalid slice step '%s'", stepStr)
 			}
 			if stepVal == 0 {
 				return PathSegment{}, fmt.Errorf("slice step cannot be zero")
@@ -729,8 +769,8 @@ func parseJSONPointer(path string) ([]PathSegment, error) {
 		// Unescape JSON Pointer special characters using helper
 		part = UnescapeJSONPointer(part)
 
-		// Try to parse as numeric index
-		if index, err := strconv.Atoi(part); err == nil {
+		// Try to parse as numeric index using fast parser
+		if index, ok := fastParseInt(part); ok {
 			var flags uint8
 			if index < 0 {
 				flags |= FlagIsNegative
@@ -753,30 +793,20 @@ func parseJSONPointer(path string) ([]PathSegment, error) {
 	return segments, nil
 }
 
-// ValidatePath validates a path string for security and correctness
-// Uses single-pass validation for optimal performance (no regex)
-// PERFORMANCE: Added fast path for simple property paths
+// ValidatePath validates a path string for syntax correctness.
+// FOCUSED: Only validates syntax (brackets, depth, array indices).
+// SECURITY: Security validation (injection, traversal) should be done by caller.
+// PERFORMANCE: Uses single-pass validation with fast path for simple paths.
 func ValidatePath(path string) error {
-	const (
-		maxPathLength = 1000
-		maxPathDepth  = 100
-		maxArrayIndex = 1000000 // SECURITY FIX: Increased from 10000 to 1M for large array support
-	)
+	const maxArrayIndex = 1000000 // SECURITY: support for large array indices
 
 	pathLen := len(path)
-	if pathLen > maxPathLength {
-		return fmt.Errorf("path too long: %d characters (max %d)", pathLen, maxPathLength)
-	}
-
-	if pathLen == 0 {
-		return nil
-	}
 
 	// FAST PATH: Simple property path (alphanumeric + dots + underscores only)
 	// This handles the vast majority of cases without complex validation
 	isSimple := true
 	depth := 1 // Start with 1 for the first segment
-	for i := 0; i < pathLen; i++ {
+	for i := range pathLen {
 		c := path[i]
 		// Check for simple characters only
 		if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
@@ -791,26 +821,20 @@ func ValidatePath(path string) error {
 
 	if isSimple {
 		// Simple validation passed - just check depth
-		if depth > maxPathDepth {
-			return fmt.Errorf("path too deep: %d segments (max %d)", depth, maxPathDepth)
+		if depth > MaxPathParseDepth {
+			return fmt.Errorf("path too deep: %d segments (max %d)", depth, MaxPathParseDepth)
 		}
 		return nil
 	}
 
 	// SLOW PATH: Complex path with brackets, braces, etc.
-	// Single-pass validation for all checks
-	var prevChar byte
+	// Single-pass validation for syntax only
 	depth = 0
 	inBracket := false
 	bracketStart := 0
 
-	for i := 0; i < pathLen; i++ {
+	for i := range pathLen {
 		c := path[i]
-
-		// Check for null bytes and control characters
-		if c == 0 || c < 32 {
-			return fmt.Errorf("path contains invalid control characters at position %d", i)
-		}
 
 		// Track depth and validate brackets/array indices
 		switch c {
@@ -834,39 +858,10 @@ func ValidatePath(path string) error {
 				inBracket = false
 			}
 		}
-
-		// Check for path traversal patterns
-		if c == '.' && i+1 < pathLen && path[i+1] == '.' {
-			if i+2 < pathLen && path[i+2] == '/' {
-				return fmt.Errorf("path contains traversal patterns at position %d", i)
-			}
-		}
-
-		// Check for double slashes
-		if c == '/' && prevChar == '/' {
-			return fmt.Errorf("path contains traversal patterns at position %d", i)
-		}
-
-		// Check for backslashes
-		if c == '\\' {
-			return fmt.Errorf("path contains traversal patterns at position %d", i)
-		}
-
-		// Check for template injection patterns
-		if c == '$' || c == '#' {
-			if i+1 < pathLen && path[i+1] == '{' {
-				return fmt.Errorf("path contains template injection patterns at position %d", i)
-			}
-		}
-		if c == '{' && prevChar == '{' {
-			return fmt.Errorf("path contains template injection patterns at position %d", i)
-		}
-
-		prevChar = c
 	}
 
-	if depth > maxPathDepth {
-		return fmt.Errorf("path too deep: %d segments (max %d)", depth, maxPathDepth)
+	if depth > MaxPathParseDepth {
+		return fmt.Errorf("path too deep: %d segments (max %d)", depth, MaxPathParseDepth)
 	}
 
 	return nil

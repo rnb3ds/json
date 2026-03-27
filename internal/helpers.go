@@ -3,6 +3,8 @@ package internal
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
+	"math"
 	"reflect"
 	"strconv"
 	"strings"
@@ -93,9 +95,7 @@ func mergeObjectsUnion(baseMap, overrideMap map[string]any, mode MergeMode, dept
 	result := make(map[string]any, len(baseMap)+len(overrideMap))
 
 	// Copy all keys from base
-	for key, value := range baseMap {
-		result[key] = value
-	}
+	maps.Copy(result, baseMap)
 
 	// Merge override keys
 	for key, overrideValue := range overrideMap {
@@ -115,10 +115,7 @@ func mergeObjectsUnion(baseMap, overrideMap map[string]any, mode MergeMode, dept
 // PERFORMANCE: Pre-allocates result map with capacity hint
 func mergeObjectsIntersection(baseMap, overrideMap map[string]any, mode MergeMode, depth int, visited map[uintptr]bool) map[string]any {
 	// PERFORMANCE: Pre-allocate with min size hint
-	minLen := len(baseMap)
-	if len(overrideMap) < minLen {
-		minLen = len(overrideMap)
-	}
+	minLen := min(len(baseMap), len(overrideMap))
 	result := make(map[string]any, minLen)
 
 	// Only include keys that exist in both
@@ -212,19 +209,37 @@ func mergeArrays(baseArray, overrideArray []any, mode MergeMode, visited map[uin
 	return []any{}
 }
 
+// arrayMergeContext holds shared state for array merge operations
+type arrayMergeContext struct {
+	overrideSet map[string]bool
+	seen        map[string]bool
+	totalLen   int
+}
+
+// prepareArrayMergeContext creates a shared context for array merge operations
+func prepareArrayMergeContext(baseArray, overrideArray []any) *arrayMergeContext {
+	overrideSet := make(map[string]bool, len(overrideArray))
+	for _, item := range overrideArray {
+		overrideSet[ArrayItemKey(item)] = true
+	}
+	return &arrayMergeContext{
+		overrideSet: overrideSet,
+		seen:        make(map[string]bool, min(len(baseArray), len(overrideArray))),
+		totalLen:   len(baseArray) + len(overrideArray),
+	}
+}
+
 // mergeArraysUnion performs union merge - combines all elements with deduplication
 // PERFORMANCE: Pre-allocates result and seen map with capacity hints
 func mergeArraysUnion(baseArray, overrideArray []any) []any {
-	// PERFORMANCE: Pre-allocate with combined size hint
-	result := make([]any, 0, len(baseArray)+len(overrideArray))
-	// PERFORMANCE: Pre-allocate seen map
-	seen := make(map[string]bool, len(baseArray)+len(overrideArray))
+	ctx := prepareArrayMergeContext(baseArray, overrideArray)
+	result := make([]any, 0, ctx.totalLen)
 
 	// Add elements from base array
 	for _, item := range baseArray {
 		key := ArrayItemKey(item)
-		if !seen[key] {
-			seen[key] = true
+		if !ctx.seen[key] {
+			ctx.seen[key] = true
 			result = append(result, item)
 		}
 	}
@@ -232,8 +247,8 @@ func mergeArraysUnion(baseArray, overrideArray []any) []any {
 	// Add elements from override array
 	for _, item := range overrideArray {
 		key := ArrayItemKey(item)
-		if !seen[key] {
-			seen[key] = true
+		if !ctx.seen[key] {
+			ctx.seen[key] = true
 			result = append(result, item)
 		}
 	}
@@ -244,24 +259,13 @@ func mergeArraysUnion(baseArray, overrideArray []any) []any {
 // mergeArraysIntersection performs intersection merge - only elements in both arrays
 // PERFORMANCE: Pre-allocates result and sets with capacity hints
 func mergeArraysIntersection(baseArray, overrideArray []any) []any {
-	// PERFORMANCE: Pre-allocate sets
-	overrideSet := make(map[string]bool, len(overrideArray))
-	for _, item := range overrideArray {
-		overrideSet[ArrayItemKey(item)] = true
-	}
-
-	// PERFORMANCE: Pre-allocate result with min size hint
-	minLen := len(baseArray)
-	if len(overrideArray) < minLen {
-		minLen = len(overrideArray)
-	}
-	result := make([]any, 0, minLen)
-	seen := make(map[string]bool, minLen)
+	ctx := prepareArrayMergeContext(baseArray, overrideArray)
+	result := make([]any, 0, min(len(baseArray), len(overrideArray)))
 
 	for _, item := range baseArray {
 		key := ArrayItemKey(item)
-		if overrideSet[key] && !seen[key] {
-			seen[key] = true
+		if ctx.overrideSet[key] && !ctx.seen[key] {
+			ctx.seen[key] = true
 			result = append(result, item)
 		}
 	}
@@ -272,20 +276,13 @@ func mergeArraysIntersection(baseArray, overrideArray []any) []any {
 // mergeArraysDifference performs difference merge - elements only in base (A - B)
 // PERFORMANCE: Pre-allocates result and sets with capacity hints
 func mergeArraysDifference(baseArray, overrideArray []any) []any {
-	// PERFORMANCE: Pre-allocate sets
-	overrideSet := make(map[string]bool, len(overrideArray))
-	for _, item := range overrideArray {
-		overrideSet[ArrayItemKey(item)] = true
-	}
-
-	// PERFORMANCE: Pre-allocate result with base size hint
+	ctx := prepareArrayMergeContext(baseArray, overrideArray)
 	result := make([]any, 0, len(baseArray))
-	seen := make(map[string]bool, len(baseArray))
 
 	for _, item := range baseArray {
 		key := ArrayItemKey(item)
-		if !overrideSet[key] && !seen[key] {
-			seen[key] = true
+		if !ctx.overrideSet[key] && !ctx.seen[key] {
+			ctx.seen[key] = true
 			result = append(result, item)
 		}
 	}
@@ -328,10 +325,10 @@ func ArrayItemKey(item any) string {
 	}
 }
 
-// FormatNumberForDedup formats a number for deduplication key generation
+// FormatNumberForDedup formats a number for deduplication key generation.
+// Handles edge cases: NaN, Inf, and values outside int64 range.
 func FormatNumberForDedup(f float64) string {
-	// Check if it's an integer
-	if f == float64(int64(f)) {
+	if !math.IsInf(f, 0) && !math.IsNaN(f) && f >= math.MinInt64 && f <= math.MaxInt64 && f == float64(int64(f)) {
 		return fmt.Sprintf("%d", int64(f))
 	}
 	return fmt.Sprintf("%g", f)
@@ -355,11 +352,6 @@ func IsArrayPath(path string) bool {
 // IsSlicePath checks if a path contains slice notation
 func IsSlicePath(path string) bool {
 	return strings.Contains(path, "[") && strings.Contains(path, ":") && strings.Contains(path, "]")
-}
-
-// IsExtractionPath checks if a path contains extraction syntax
-func IsExtractionPath(path string) bool {
-	return strings.Contains(path, "{") && strings.Contains(path, "}")
 }
 
 // IsJSONObject checks if data is a JSON object (map[string]any)
@@ -415,6 +407,9 @@ func TryConvertToArray(m map[string]any) ([]any, bool) {
 // This is a shared utility function used by multiple packages for security pattern matching
 func IndexIgnoreCase(s, pattern string) int {
 	plen := len(pattern)
+	if plen == 0 {
+		return -1
+	}
 	slen := len(s)
 	if plen > slen {
 		return -1
@@ -474,7 +469,7 @@ func CleanupNullValues(data any, compactArrays bool) any {
 		for key, value := range v {
 			if value != nil {
 				cleanedValue := CleanupNullValues(value, compactArrays)
-				if cleanedValue != nil && !isEmptyContainer(cleanedValue) {
+				if cleanedValue != nil && !IsNilOrEmpty(cleanedValue) {
 					result[key] = cleanedValue
 				}
 			}
@@ -507,26 +502,12 @@ func cleanupArrayCompact(arr []any, compactArrays bool) []any {
 	for _, item := range arr {
 		if item != nil {
 			cleanedItem := CleanupNullValues(item, compactArrays)
-			if cleanedItem != nil && !isEmptyContainer(cleanedItem) {
+			if cleanedItem != nil && !IsNilOrEmpty(cleanedItem) {
 				result = append(result, cleanedItem)
 			}
 		}
 	}
 	return result
-}
-
-// isEmptyContainer checks if a value is an empty map, array, or string
-func isEmptyContainer(data any) bool {
-	switch v := data.(type) {
-	case map[string]any:
-		return len(v) == 0
-	case []any:
-		return len(v) == 0
-	case string:
-		return v == ""
-	default:
-		return false
-	}
 }
 
 // ConvertNumbersToFloat recursively converts json.Number and Number types to float64

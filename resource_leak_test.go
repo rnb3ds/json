@@ -259,18 +259,6 @@ func TestCacheManagerCloseCleanup(t *testing.T) {
 }
 
 // ============================================================================
-// WORKER POOL TESTS
-// ============================================================================
-
-// TestWorkerPoolStopCleanup verifies that WorkerPool.Stop() properly
-// terminates all workers
-func TestWorkerPoolStopCleanup(t *testing.T) {
-	// Import from internal package would be needed
-	// This is a placeholder for internal worker pool testing
-	t.Skip("WorkerPool is in internal package - tested separately")
-}
-
-// ============================================================================
 // CHANNEL LEAK TESTS
 // ============================================================================
 

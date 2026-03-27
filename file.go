@@ -409,8 +409,8 @@ func (p *Processor) UnmarshalFromFile(path string, v any, opts ...Config) error 
 	return nil
 }
 
-// validateFilePath provides enhanced security validation for file paths
-// REFACTORED: Uses smaller helper functions for better maintainability and testability
+// validateFilePath provides enhanced security validation for file paths.
+// Uses smaller helper functions for better maintainability and testability.
 func (p *Processor) validateFilePath(filePath string) error {
 	// Step 1: Basic validation
 	if err := validatePathBasic(filePath); err != nil {
@@ -543,64 +543,40 @@ func (p *Processor) validatePathFileSize(absPath string) error {
 	return nil
 }
 
-// containsPathTraversal checks for path traversal patterns comprehensively
-// Uses case-insensitive matching without allocation for better performance
-// Includes Unicode normalization and recursive URL decoding for enhanced security
-// REFACTORED: Split into smaller helper functions for better maintainability
+// containsPathTraversal checks for path traversal patterns comprehensively.
+// Uses case-insensitive matching with Unicode normalization and recursive URL decoding.
 func containsPathTraversal(path string) bool {
-	// SECURITY: First apply Unicode NFC normalization to detect homograph attacks
+	// SECURITY: Apply Unicode NFC normalization to detect homograph attacks
 	normalized := norm.NFC.String(path)
-
 	// SECURITY: Recursively decode URL encoding to catch multi-layered obfuscation
 	decoded := recursiveURLDecode(normalized)
 
-	// Fast path: check for standard traversal patterns
-	if containsBasicTraversal(decoded, path) {
-		return true
+	// Check both decoded and original for all pattern types
+	for _, s := range []string{decoded, path} {
+		if containsBasicTraversalPattern(s) || containsEncodedPattern(s) || containsUnicodeLookalike(s) {
+			return true
+		}
 	}
-
-	// Check for encoded traversal patterns
-	if containsEncodedTraversal(decoded, path) {
-		return true
-	}
-
-	// Check for encoded null bytes and control characters
-	if containsEncodedControlChars(decoded, path) {
-		return true
-	}
-
-	// Check for partial double encoding bypass attempts
-	if containsPartialDoubleEncodingIgnoreCase(decoded) ||
-		containsPartialDoubleEncodingIgnoreCase(path) {
-		return true
-	}
-
-	// SECURITY: Check for Unicode lookalike characters
-	if containsUnicodeLookalikes(decoded) {
-		return true
-	}
-
 	return false
 }
 
-// containsBasicTraversal checks for standard path traversal patterns
-func containsBasicTraversal(decoded, original string) bool {
-	// Check for standard traversal (most common case)
-	if strings.Contains(decoded, "..") || strings.Contains(original, "..") {
-		return true
+// containsBasicTraversalPattern checks for standalone ".." path components.
+func containsBasicTraversalPattern(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] == '.' && i+1 < len(s) && s[i+1] == '.' {
+			beforeOK := i == 0 || s[i-1] == '/' || s[i-1] == '\\'
+			afterOK := i+2 >= len(s) || s[i+2] == '/' || s[i+2] == '\\'
+			if beforeOK && afterOK {
+				return true
+			}
+			i++ // Skip past ".." to avoid false matches
+		}
 	}
-
-	// Check for consecutive dots (3 or more)
-	if containsConsecutiveDots(decoded, 3) || containsConsecutiveDots(original, 3) {
-		return true
-	}
-
-	return false
+	return containsConsecutiveDots(s, 3)
 }
 
-// pathTraversalPatterns contains known traversal attack patterns
-// REFACTORED: Extracted to package-level variable for maintainability
-var pathTraversalPatterns = []string{
+// traversalPatterns contains all known traversal attack patterns (encoded, control chars, partial encoding).
+var traversalPatterns = []string{
 	// URL encoded patterns
 	"%2e%2e", "%252e%252e", "%25252e%25252e",
 	// Mixed encoding patterns
@@ -609,8 +585,9 @@ var pathTraversalPatterns = []string{
 	".%2e", "%2e.", "%2e%2e%2f", "%2e%2e%5c",
 	// Windows patterns
 	"..\\", "..\\/",
-	// Injection patterns
+	// Injection patterns (control chars)
 	"..%00", "..%0a", "..%0d", "..%09", "..%20",
+	"%00", "%0a", "%0d", "%09", "%20",
 	// Double patterns
 	"....//", "....\\\\", ".....", "......",
 	// Mixed case patterns
@@ -619,37 +596,24 @@ var pathTraversalPatterns = []string{
 	"%c0%ae", "%c1%1c", "%c1%9c", "..%255c",
 	// Fullwidth encoding
 	"%uff0e%uff0e", "..%ef%bc%8f",
+	// Partial double encoding
+	"%2e%2", "%25%2e", "%2f%2", "%5c%2",
 }
 
-// containsEncodedTraversal checks for encoded path traversal patterns
-func containsEncodedTraversal(decoded, original string) bool {
-	for _, pattern := range pathTraversalPatterns {
-		if fastIndexIgnoreCase(decoded, pattern) != -1 ||
-			fastIndexIgnoreCase(original, pattern) != -1 {
+// containsEncodedPattern checks for encoded path traversal patterns.
+func containsEncodedPattern(s string) bool {
+	for _, pattern := range traversalPatterns {
+		if fastIndexIgnoreCase(s, pattern) != -1 {
 			return true
 		}
 	}
 	return false
 }
 
-// encodedControlCharPatterns contains encoded control character patterns
-var encodedControlCharPatterns = []string{"%00", "%0a", "%0d", "%09", "%20"}
-
-// containsEncodedControlChars checks for encoded null bytes and control characters
-func containsEncodedControlChars(decoded, original string) bool {
-	for _, encoded := range encodedControlCharPatterns {
-		if fastIndexIgnoreCase(decoded, encoded) != -1 ||
-			fastIndexIgnoreCase(original, encoded) != -1 {
-			return true
-		}
-	}
-	return false
-}
-
-// recursiveURLDecode recursively decodes URL-encoded strings to catch multi-layered obfuscation
+// recursiveURLDecode recursively decodes URL-encoded strings (max 3 levels).
 func recursiveURLDecode(s string) string {
 	decoded := s
-	for i := 0; i < 3; i++ { // Maximum 3 levels of decoding
+	for i := 0; i < 3; i++ {
 		newDecoded, err := url.PathUnescape(decoded)
 		if err != nil || newDecoded == decoded {
 			break
@@ -659,53 +623,18 @@ func recursiveURLDecode(s string) string {
 	return decoded
 }
 
-// containsUnicodeLookalikes checks for Unicode characters that look like path traversal characters
-// SECURITY: Comprehensive detection of Unicode lookalike variants for defense in depth
-func containsUnicodeLookalikes(s string) bool {
+// containsUnicodeLookalike checks for Unicode characters that resemble path separators or dots.
+func containsUnicodeLookalike(s string) bool {
 	for _, r := range s {
-		// Check for fullwidth dots and slashes (common bypass technique)
 		switch r {
-		// Fullwidth dot variants
-		case '\uFF0E', // Fullwidth full stop (looks like .)
-			'\u2024', // One dot leader (looks like .)
-			'\u2025', // Two dot leader (looks like ..)
-			'\u2026': // Horizontal ellipsis (looks like ...)
+		// Dot lookalikes
+		case '\uFF0E', '\u2024', '\u2025', '\u2026':
 			return true
-
-		// Fullwidth slash variants
-		case '\uFF0F', // Fullwidth solidus (looks like /)
-			'\uFF3C', // Fullwidth reverse solidus (looks like \)
-			'\u2044', // Fraction slash
-			'\u2215', // Division slash
-			'\u29F8', // Big solidus
-			'\uFE68': // Small reverse solidus
+		// Slash lookalikes
+		case '\uFF0F', '\uFF3C', '\u2044', '\u2215', '\u29F8', '\uFE68':
 			return true
-
-		// Additional potentially dangerous Unicode characters
-		case '\uFF04', // Fullwidth dollar sign (template injection)
-			'\uFEFF', // Byte order mark
-			'\u2060', // Word joiner
-			'\u200B', // Zero-width space
-			'\u200C', // Zero-width non-joiner
-			'\u200D', // Zero-width joiner
-			'\u3000', // Ideographic space
-			'\u00AD', // Soft hyphen
-			'\u034F', // Combining grapheme joiner
-			'\u061C', // Arabic letter mark
-			'\u115F', // Korean jamo filler (choseong)
-			'\u1160', // Korean jamo filler (jungseong)
-			'\u180E': // Mongolian vowel separator
-			return true
-		}
-	}
-	return false
-}
-
-// containsPartialDoubleEncodingIgnoreCase checks for partial double encoding bypass attempts (case-insensitive)
-func containsPartialDoubleEncodingIgnoreCase(path string) bool {
-	patterns := []string{"%2e%2", "%25%2e", "%2f%2", "%5c%2"}
-	for _, pattern := range patterns {
-		if fastIndexIgnoreCase(path, pattern) != -1 {
+		// Dangerous invisible/formatting characters
+		case '\uFEFF', '\u2060', '\u200B', '\u200C', '\u200D', '\u3000', '\u00AD', '\u034F', '\u061C', '\u115F', '\u1160', '\u180E':
 			return true
 		}
 	}
@@ -722,6 +651,9 @@ func hasPrefixIgnoreCase(s, prefix string) bool {
 		c2 := prefix[i]
 		if c1 >= 'A' && c1 <= 'Z' {
 			c1 += 32
+		}
+		if c2 >= 'A' && c2 <= 'Z' {
+			c2 += 32
 		}
 		if c1 != c2 {
 			return false
@@ -1074,13 +1006,11 @@ func (lp *LazyParser) Get(path string) (any, error) {
 		return lp.parsed, nil
 	}
 
-	// Use processor for path navigation
 	processor := getDefaultProcessor()
-	jsonBytes, err := processor.Marshal(lp.parsed)
-	if err != nil {
-		return nil, err
+	if processor == nil {
+		return nil, ErrInternalError
 	}
-	return processor.Get(string(jsonBytes), path)
+	return processor.GetFromParsedData(lp.parsed, path)
 }
 
 // GetObject returns the parsed data as a map (only for JSON objects).
@@ -1132,6 +1062,24 @@ func (lp *LazyParser) IsArray() bool {
 	lp.parse()
 	_, ok := lp.parsed.([]any)
 	return ok
+}
+
+// Parse forces parsing and returns the parsed data
+func (lp *LazyParser) Parse() (any, error) {
+	lp.parse()
+	return lp.parsed, lp.parseErr
+}
+
+// Parsed returns the parsed data without forcing parsing.
+// Returns nil if not yet parsed.
+func (lp *LazyParser) Parsed() any {
+	return lp.parsed
+}
+
+// Error returns any parsing error, triggering parse if needed
+func (lp *LazyParser) Error() error {
+	lp.parse()
+	return lp.parseErr
 }
 
 // ============================================================================
@@ -1357,7 +1305,8 @@ func (sr *SamplingReader) Sample(fn func(index int, item any) bool) error {
 		if err := sr.decoder.Decode(&value); err != nil {
 			return err
 		}
-		fn(0, value)
+		// Honor the callback's return value for consistency
+		_ = fn(0, value)
 		return nil
 	}
 

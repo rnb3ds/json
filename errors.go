@@ -13,6 +13,7 @@ var (
 	ErrOperationFailed = errors.New("operation failed")
 	ErrInvalidPath     = errors.New("invalid path format")
 	ErrProcessorClosed = errors.New("processor is closed")
+	ErrInternalError   = errors.New("internal error")
 
 	// Limit-related errors.
 	ErrSizeLimit        = errors.New("size limit exceeded")
@@ -28,9 +29,6 @@ var (
 	ErrCacheDisabled     = errors.New("cache is disabled")
 	ErrOperationTimeout  = errors.New("operation timeout")
 	ErrResourceExhausted = errors.New("system resources exhausted")
-
-	// Control flow errors (internal use).
-	ErrIteratorControl = errors.New("iterator control signal")
 )
 
 // JsonsError represents a JSON processing error with essential context
@@ -62,6 +60,8 @@ func (e *JsonsError) Unwrap() error {
 }
 
 // Is implements error matching for Go 1.13+ error handling
+// Compares Op, Path, and Err fields for complete equality.
+// Note: Message is intentionally excluded as it's derived from other fields.
 func (e *JsonsError) Is(target error) bool {
 	if target == nil {
 		return false
@@ -70,7 +70,7 @@ func (e *JsonsError) Is(target error) bool {
 	// Check if target is the same type
 	var targetErr *JsonsError
 	if errors.As(target, &targetErr) {
-		return e.Op == targetErr.Op && e.Err == targetErr.Err
+		return e.Op == targetErr.Op && e.Path == targetErr.Path && e.Err == targetErr.Err
 	}
 
 	// Check underlying error

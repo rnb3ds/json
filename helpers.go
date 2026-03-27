@@ -3,131 +3,18 @@ package json
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
+	"math"
 	"reflect"
 	"strconv"
 	"strings"
-	"sync"
 
 	"github.com/cybergodev/json/internal"
 )
 
-// arrayHelper provides centralized array operation utilities
-type arrayHelper struct{}
-
-// parseArrayIndex parses an array index from a string
-// Delegates to internal implementation for consistency
-func (ah *arrayHelper) parseArrayIndex(indexStr string) int {
-	indexStr = strings.Trim(indexStr, "[] \t")
-	if indexStr == "" {
-		return InvalidArrayIndex
-	}
-
-	if index, ok := internal.ParseArrayIndex(indexStr); ok {
-		return index
-	}
-	return InvalidArrayIndex
-}
-
-// normalizeIndex converts negative indices to positive indices
-// Delegates to internal implementation for consistency
-func (ah *arrayHelper) normalizeIndex(index, length int) int {
-	return internal.NormalizeIndex(index, length)
-}
-
-// validateBounds checks if an index is within valid bounds [0, length)
-// Note: This does NOT support negative indices (unlike IsValidIndex in internal)
-func (ah *arrayHelper) validateBounds(index, length int) bool {
-	return index >= 0 && index < length
-}
-
-// clampIndex clamps an index to valid bounds [0, length]
-func (ah *arrayHelper) clampIndex(index, length int) int {
-	if index < 0 {
-		return 0
-	}
-	if index > length {
-		return length
-	}
-	return index
-}
-
-// compactArray removes nil values and deletion markers from an array
-// Optimized: first pass counts removable elements, avoiding allocation if none found
-func (ah *arrayHelper) compactArray(arr []any) []any {
-	if len(arr) == 0 {
-		return arr
-	}
-
-	// First pass: count elements to remove
-	removeCount := 0
-	for _, item := range arr {
-		if item == nil || item == deletedMarker {
-			removeCount++
-		}
-	}
-
-	// Fast path: no elements to remove, return original array
-	if removeCount == 0 {
-		return arr
-	}
-
-	// Second pass: build result with exact capacity
-	result := make([]any, 0, len(arr)-removeCount)
-	for _, item := range arr {
-		if item != nil && item != deletedMarker {
-			result = append(result, item)
-		}
-	}
-	return result
-}
-
-// extendArray extends an array to the specified length, filling with nil values
-func (ah *arrayHelper) extendArray(arr []any, targetLength int) []any {
-	if len(arr) >= targetLength {
-		return arr
-	}
-
-	extended := make([]any, targetLength)
-	copy(extended, arr)
-	return extended
-}
-
-// getElement safely gets an element from an array with bounds checking
-// Delegates to internal implementation for consistency
-func (ah *arrayHelper) getElement(arr []any, index int) (any, bool) {
-	return internal.GetSafeArrayElement(arr, index)
-}
-
-// setElement safely sets an element in an array with bounds checking
-// Note: This does NOT support negative indices for bounds checking
-func (ah *arrayHelper) setElement(arr []any, index int, value any) bool {
-	normalizedIndex := ah.normalizeIndex(index, len(arr))
-	// Check bounds on normalized index
-	if normalizedIndex < 0 || normalizedIndex >= len(arr) {
-		return false
-	}
-	arr[normalizedIndex] = value
-	return true
-}
-
-// performSlice performs array slicing with step support
-// Delegates to internal implementation for consistency
-func (ah *arrayHelper) performSlice(arr []any, start, end, step int) []any {
-	if len(arr) == 0 || step == 0 {
-		return []any{}
-	}
-
-	// Convert to pointers for internal API
-	startPtr := &start
-	endPtr := &end
-	stepPtr := &step
-
-	return internal.PerformArraySlice(arr, startPtr, endPtr, stepPtr)
-}
-
 // ============================================================================
 // TYPE CONVERSION HELPERS
-// PERFORMANCE: Internal helpers to reduce code duplication while maintaining
+// Internal helpers to reduce code duplication while maintaining
 // zero-allocation type switches for performance-critical paths.
 // ============================================================================
 
@@ -137,8 +24,8 @@ type int64Result struct {
 	ok    bool
 }
 
-// convertToInt64Core is the internal core function for integer conversion
-// PERFORMANCE: Single type switch with all integer types to minimize branching
+// convertToInt64Core is the internal core function for integer conversion.
+// Uses a single type switch with all integer types to minimize branching.
 func convertToInt64Core(value any) int64Result {
 	switch v := value.(type) {
 	case int:
@@ -152,7 +39,11 @@ func convertToInt64Core(value any) int64Result {
 	case int64:
 		return int64Result{v, true}
 	case uint:
-		return int64Result{int64(v), true}
+		u64 := uint64(v)
+		if u64 > uint64(math.MaxInt64) {
+			return int64Result{0, false}
+		}
+		return int64Result{int64(u64), true}
 	case uint8:
 		return int64Result{int64(v), true}
 	case uint16:
@@ -169,7 +60,7 @@ func convertToInt64Core(value any) int64Result {
 }
 
 // ConvertToInt converts any value to int with comprehensive type support
-// REFACTORED: Uses internal core function to reduce code duplication
+// Delegates to internal core function to reduce code duplication
 func ConvertToInt(value any) (int, bool) {
 	// Fast path: use core integer conversion
 	if result := convertToInt64Core(value); result.ok {
@@ -207,7 +98,7 @@ func ConvertToInt(value any) (int, bool) {
 }
 
 // ConvertToInt64 converts any value to int64
-// REFACTORED: Uses internal core function to reduce code duplication
+// Delegates to internal core function to reduce code duplication
 func ConvertToInt64(value any) (int64, bool) {
 	// Fast path: use core integer conversion
 	if result := convertToInt64Core(value); result.ok {
@@ -242,7 +133,7 @@ func ConvertToInt64(value any) (int64, bool) {
 }
 
 // ConvertToUint64 converts any value to uint64
-// REFACTORED: Uses internal core function to reduce code duplication
+// Delegates to internal core function to reduce code duplication
 func ConvertToUint64(value any) (uint64, bool) {
 	// Special case: uint64 needs direct handling for values > int64 max
 	switch v := value.(type) {
@@ -285,7 +176,7 @@ func ConvertToUint64(value any) (uint64, bool) {
 }
 
 // ConvertToFloat64 converts any value to float64
-// REFACTORED: Uses internal core function to reduce code duplication
+// Delegates to internal core function to reduce code duplication
 func ConvertToFloat64(value any) (float64, bool) {
 	// Fast path: use core integer conversion
 	if result := convertToInt64Core(value); result.ok {
@@ -319,7 +210,7 @@ func ConvertToFloat64(value any) (float64, bool) {
 // String conversion supports both standard formats and user-friendly formats:
 // Standard: "1", "t", "T", "TRUE", "true", "True", "0", "f", "F", "FALSE", "false", "False"
 // Extended: "yes", "on" -> true, "no", "off", "" -> false
-// REFACTORED: Uses internal core function to reduce code duplication
+// Delegates to internal core function to reduce code duplication
 func ConvertToBool(value any) (bool, bool) {
 	// Fast path: use core integer conversion for numeric types
 	if result := convertToInt64Core(value); result.ok {
@@ -375,7 +266,7 @@ func UnifiedTypeConversion[T any](value any) (T, bool) {
 	}
 
 	// Handle pointer types
-	if targetType.Kind() == reflect.Ptr {
+	if targetType.Kind() == reflect.Pointer {
 		elemType := targetType.Elem()
 		elemValue := reflect.New(elemType).Interface()
 		if converted, ok := convertValue(value, elemValue); ok {
@@ -564,6 +455,9 @@ func IsValidPath(path string) bool {
 		return true
 	}
 	processor := getDefaultProcessor()
+	if processor == nil {
+		return false
+	}
 	err := processor.validatePath(path)
 	return err == nil
 }
@@ -582,6 +476,14 @@ func ValidatePath(path string) error {
 		return nil
 	}
 	processor := getDefaultProcessor()
+	if processor == nil {
+		return &JsonsError{
+			Op:      "validate_path",
+			Path:    path,
+			Message: "processor not available",
+			Err:     ErrInternalError,
+		}
+	}
 	return processor.validatePath(path)
 }
 
@@ -652,9 +554,7 @@ func deepCopyValueWithDepth(data any, depth int) (any, error) {
 	case map[string]string:
 		// Fast path for map[string]string - no recursion needed
 		result := make(map[string]string, len(v))
-		for key, val := range v {
-			result[key] = val
-		}
+		maps.Copy(result, v)
 		return result, nil
 	case []string:
 		// Fast path for []string - no recursion needed
@@ -718,8 +618,14 @@ func deepCopySliceWithDepth(s []any, depth int) ([]any, error) {
 	return result, nil
 }
 
-// CompareJson compares two JSON strings for equality
-func CompareJson(json1, json2 string) (bool, error) {
+// CompareJSON compares two JSON strings for equality by parsing and normalizing them.
+// This function handles numeric precision differences and key ordering.
+//
+// Example:
+//
+//	equal, err := json.CompareJSON(`{"a":1}`, `{"a":1.0}`)
+//	// equal == true
+func CompareJSON(json1, json2 string) (bool, error) {
 	decoder := newNumberPreservingDecoder(true)
 
 	data1, err := decoder.DecodeToAny(json1)
@@ -745,7 +651,16 @@ func CompareJson(json1, json2 string) (bool, error) {
 	return string(bytes1) == string(bytes2), nil
 }
 
-// MergeJson merges two JSON objects using deep merge strategy.
+// CompareJson compares two JSON strings for equality.
+//
+// Deprecated: Use CompareJSON instead for consistent naming with Go conventions.
+// Migration: json.CompareJson(a, b) -> json.CompareJSON(a, b)
+// Will be removed in v2.0.0.
+func CompareJson(json1, json2 string) (bool, error) {
+	return CompareJSON(json1, json2)
+}
+
+// MergeJSON merges two JSON objects using deep merge strategy.
 // For nested objects, it recursively merges keys according to the specified mode.
 // For primitive values and arrays, the value from json2 takes precedence.
 //
@@ -757,14 +672,14 @@ func CompareJson(json1, json2 string) (bool, error) {
 // Example:
 //
 //	// Union merge (default)
-//	result, err := json.MergeJson(a, b)
+//	result, err := json.MergeJSON(a, b)
 //
 //	// Intersection merge
-//	result, err := json.MergeJson(a, b, json.MergeIntersection)
+//	result, err := json.MergeJSON(a, b, json.MergeIntersection)
 //
 //	// Difference merge
-//	result, err := json.MergeJson(a, b, json.MergeDifference)
-func MergeJson(json1, json2 string, mode ...MergeMode) (string, error) {
+//	result, err := json.MergeJSON(a, b, json.MergeDifference)
+func MergeJSON(json1, json2 string, mode ...MergeMode) (string, error) {
 	m := MergeUnion
 	if len(mode) > 0 {
 		m = mode[0]
@@ -801,6 +716,15 @@ func MergeJson(json1, json2 string, mode ...MergeMode) (string, error) {
 	return Encode(converted)
 }
 
+// MergeJson merges two JSON objects using deep merge strategy.
+//
+// Deprecated: Use MergeJSON instead for consistent naming with Go conventions.
+// Migration: json.MergeJson(a, b) -> json.MergeJSON(a, b)
+// Will be removed in v2.0.0.
+func MergeJson(json1, json2 string, mode ...MergeMode) (string, error) {
+	return MergeJSON(json1, json2, mode...)
+}
+
 // convertLibraryNumbers recursively converts the library's Number type to float64
 // This is needed because the library's NumberPreservingDecoder returns Number (not json.Number)
 func convertLibraryNumbers(data any) any {
@@ -828,27 +752,36 @@ func convertLibraryNumbers(data any) any {
 	}
 }
 
-// MergeJsonMany merges multiple JSON objects with specified merge mode
-// Returns error if less than 2 JSON strings are provided
+// MergeJSONMany merges multiple JSON objects with specified merge mode.
+// Returns error if less than 2 JSON strings are provided.
 //
 // Example:
 //
-//	result, err := json.MergeJsonMany(json.MergeUnion, config1, config2, config3)
-func MergeJsonMany(mode MergeMode, jsons ...string) (string, error) {
+//	result, err := json.MergeJSONMany(json.MergeUnion, config1, config2, config3)
+func MergeJSONMany(mode MergeMode, jsons ...string) (string, error) {
 	if len(jsons) < 2 {
-		return "", fmt.Errorf("MergeJsonMany requires at least 2 JSON strings, got %d", len(jsons))
+		return "", fmt.Errorf("MergeJSONMany requires at least 2 JSON strings, got %d", len(jsons))
 	}
 
 	result := jsons[0]
 	for i := 1; i < len(jsons); i++ {
 		var err error
-		result, err = MergeJson(result, jsons[i], mode)
+		result, err = MergeJSON(result, jsons[i], mode)
 		if err != nil {
 			return "", fmt.Errorf("merge failed at index %d: %w", i, err)
 		}
 	}
 
 	return result, nil
+}
+
+// MergeJsonMany merges multiple JSON objects with specified merge mode.
+//
+// Deprecated: Use MergeJSONMany instead for consistent naming with Go conventions.
+// Migration: json.MergeJsonMany(mode, jsons...) -> json.MergeJSONMany(mode, jsons...)
+// Will be removed in v2.0.0.
+func MergeJsonMany(mode MergeMode, jsons ...string) (string, error) {
+	return MergeJSONMany(mode, jsons...)
 }
 
 // GetTypedWithProcessor retrieves a typed value from JSON using a specific processor
@@ -861,7 +794,7 @@ func GetTypedWithProcessor[T any](processor *Processor, jsonStr, path string, op
 	}
 
 	if value == nil {
-		return handleNullValue[T](path)
+		return handleNullValue[T]()
 	}
 
 	if converted, ok := UnifiedTypeConversion[T](value); ok {
@@ -892,7 +825,7 @@ func GetTypedWithProcessor[T any](processor *Processor, jsonStr, path string, op
 }
 
 // handleNullValue handles null values for different target types using direct type checking
-func handleNullValue[T any](path string) (T, error) {
+func handleNullValue[T any]() (T, error) {
 	var zero T
 
 	// Use direct type checking instead of string reflection for better performance
@@ -910,16 +843,11 @@ func handleNullValue[T any](path string) (T, error) {
 		uint, uint8, uint16, uint32, uint64,
 		float32, float64, bool:
 		return zero, nil
-	default:
-		return zero, nil
 	}
 
-	return zero, &JsonsError{
-		Op:      "get_typed",
-		Path:    path,
-		Message: fmt.Sprintf("cannot convert null to type %T", zero),
-		Err:     ErrTypeMismatch,
-	}
+	// For all other types (including unhandled cases), return zero value
+	// This provides consistent behavior without error for null values
+	return zero, nil
 }
 
 // TypeSafeConvert attempts to convert a value to the target type safely
@@ -938,48 +866,54 @@ func TypeSafeConvert[T any](value any) (T, error) {
 func convertWithTypeInfo[T any](value any, targetType string) (T, error) {
 	var zero T
 
-	convResult, handled := handleLargeNumberConversion[T](value, "type_conversion")
+	convResult, handled := handleLargeNumberConversion[T](value)
 	if handled {
 		return convResult.value, convResult.err
 	}
 
 	if str, ok := value.(string); ok {
-		return convertStringToType[T](str, targetType)
+		return convertStringToType[T](str)
 	}
 
 	return zero, fmt.Errorf("cannot convert %T to %s", value, targetType)
 }
 
 // convertStringToType converts string values to target types safely
-func convertStringToType[T any](str, targetType string) (T, error) {
+func convertStringToType[T any](str string) (T, error) {
 	var zero T
 
-	switch targetType {
-	case "int", "int64":
+	switch any(zero).(type) {
+	case int:
+		if val, err := strconv.ParseInt(str, 10, 64); err == nil {
+			if result, ok := any(int(val)).(T); ok {
+				return result, nil
+			}
+		}
+	case int64:
 		if val, err := strconv.ParseInt(str, 10, 64); err == nil {
 			if result, ok := any(val).(T); ok {
 				return result, nil
 			}
 		}
-	case "float64":
+	case float64:
 		if val, err := strconv.ParseFloat(str, 64); err == nil {
 			if result, ok := any(val).(T); ok {
 				return result, nil
 			}
 		}
-	case "bool":
+	case bool:
 		if val, err := strconv.ParseBool(str); err == nil {
 			if result, ok := any(val).(T); ok {
 				return result, nil
 			}
 		}
-	case "string":
+	case string:
 		if result, ok := any(str).(T); ok {
 			return result, nil
 		}
 	}
 
-	return zero, fmt.Errorf("cannot convert string %q to %s", str, targetType)
+	return zero, fmt.Errorf("cannot convert string %q to %T", str, zero)
 }
 
 // conversionResult holds the result of a type conversion attempt
@@ -989,12 +923,11 @@ type conversionResult[T any] struct {
 }
 
 // handleLargeNumberConversion handles conversion of large numbers to specific types
-func handleLargeNumberConversion[T any](value any, path string) (conversionResult[T], bool) {
+func handleLargeNumberConversion[T any](value any) (conversionResult[T], bool) {
 	var zero T
-	targetType := fmt.Sprintf("%T", zero)
 
-	switch targetType {
-	case "int64":
+	switch any(zero).(type) {
+	case int64:
 		if converted, err := SafeConvertToInt64(value); err == nil {
 			if typedResult, ok := any(converted).(T); ok {
 				return conversionResult[T]{value: typedResult, err: nil}, true
@@ -1004,14 +937,14 @@ func handleLargeNumberConversion[T any](value any, path string) (conversionResul
 				value: zero,
 				err: &JsonsError{
 					Op:      "get_typed",
-					Path:    path,
+					Path:    "type_conversion",
 					Message: fmt.Sprintf("large number conversion failed: %v", err),
 					Err:     ErrTypeMismatch,
 				},
 			}, true
 		}
 
-	case "uint64":
+	case uint64:
 		if converted, err := SafeConvertToUint64(value); err == nil {
 			if typedResult, ok := any(converted).(T); ok {
 				return conversionResult[T]{value: typedResult, err: nil}, true
@@ -1021,14 +954,14 @@ func handleLargeNumberConversion[T any](value any, path string) (conversionResul
 				value: zero,
 				err: &JsonsError{
 					Op:      "get_typed",
-					Path:    path,
+					Path:    "type_conversion",
 					Message: fmt.Sprintf("large number conversion failed: %v", err),
 					Err:     ErrTypeMismatch,
 				},
 			}, true
 		}
 
-	case "string":
+	case string:
 		if strResult, ok := any(FormatNumber(value)).(T); ok {
 			return conversionResult[T]{value: strResult, err: nil}, true
 		}
@@ -1047,163 +980,86 @@ const (
 )
 
 // ============================================================================
-// HOT PATH OPTIMIZATIONS
-// PERFORMANCE: Fast paths for common operations without allocations
-// ============================================================================
-
-// fastTypeSwitch converts a value to a specific type using optimized type switches
-// PERFORMANCE: Single type switch instead of multiple type assertions
-func fastTypeSwitch[T any](value any) (T, bool) {
-	var zero T
-
-	// Fast path using type switch
-	switch v := value.(type) {
-	case T:
-		return v, true
-	case string:
-		if result, ok := any(v).(T); ok {
-			return result, true
-		}
-	case int:
-		if result, ok := any(v).(T); ok {
-			return result, true
-		}
-	case int64:
-		if result, ok := any(v).(T); ok {
-			return result, true
-		}
-	case float64:
-		if result, ok := any(v).(T); ok {
-			return result, true
-		}
-	case bool:
-		if result, ok := any(v).(T); ok {
-			return result, true
-		}
-	case nil:
-		return zero, false
-	}
-
-	return zero, false
-}
-
-// fastToString converts any value to string using optimized type switch
-// PERFORMANCE: Avoids reflection for common types
-func fastToString(value any) (string, bool) {
-	switch v := value.(type) {
-	case string:
-		return v, true
-	case int:
-		return strconv.Itoa(v), true
-	case int64:
-		return strconv.FormatInt(v, 10), true
-	case float64:
-		return strconv.FormatFloat(v, 'f', -1, 64), true
-	case bool:
-		if v {
-			return "true", true
-		}
-		return "false", true
-	case json.Number:
-		return string(v), true
-	case nil:
-		return "", false
-	default:
-		return "", false
-	}
-}
-
-// fastToInt converts any value to int using optimized type switch
-// PERFORMANCE: Avoids reflection for common types
-func fastToInt(value any) (int, bool) {
-	switch v := value.(type) {
-	case int:
-		return v, true
-	case int64:
-		return int(v), true
-	case float64:
-		return int(v), true
-	case json.Number:
-		if i, err := strconv.Atoi(string(v)); err == nil {
-			return i, true
-		}
-		return 0, false
-	case string:
-		if i, err := strconv.Atoi(v); err == nil {
-			return i, true
-		}
-		return 0, false
-	case nil:
-		return 0, false
-	default:
-		return 0, false
-	}
-}
-
-// fastToFloat64 converts any value to float64 using optimized type switch
-// PERFORMANCE: Avoids reflection for common types
-func fastToFloat64(value any) (float64, bool) {
-	switch v := value.(type) {
-	case float64:
-		return v, true
-	case int:
-		return float64(v), true
-	case int64:
-		return float64(v), true
-	case json.Number:
-		if f, err := strconv.ParseFloat(string(v), 64); err == nil {
-			return f, true
-		}
-		return 0, false
-	case string:
-		if f, err := strconv.ParseFloat(v, 64); err == nil {
-			return f, true
-		}
-		return 0, false
-	case nil:
-		return 0, false
-	default:
-		return 0, false
-	}
-}
-
-// fastToBool converts any value to bool using optimized type switch
-// PERFORMANCE: Avoids reflection for common types
-func fastToBool(value any) (bool, bool) {
-	switch v := value.(type) {
-	case bool:
-		return v, true
-	case string:
-		return strings.ToLower(v) == "true", true
-	case int:
-		return v != 0, true
-	case float64:
-		return v != 0, true
-	case nil:
-		return false, false
-	default:
-		return false, false
-	}
-}
-
-// ============================================================================
 // JSON KEY INTERNING
-// PERFORMANCE: Intern frequently used JSON keys to reduce memory allocations
+// Delegates to internal.KeyIntern (64-shard with hot cache) for concurrent performance.
 // ============================================================================
 
-var globalKeyInternMap = &keyInternMap{
-	keys: make(map[string]string, 256),
+// InternKey interns a string key for memory efficiency.
+// Returns an interned version of the key that can be reused across operations.
+//
+// Example:
+//
+//	key := json.InternKey("user_id") // Returns interned string
+func InternKey(key string) string {
+	return internal.GlobalKeyIntern.Intern(key)
 }
 
-type keyInternMap struct {
-	keys map[string]string
-	mu   sync.RWMutex
+// ClearKeyInternCache clears the global key interning cache.
+func ClearKeyInternCache() {
+	internal.GlobalKeyIntern.Clear()
 }
 
-// keyInternCacheSize returns the number of interned keys
-func keyInternCacheSize() int {
-	globalKeyInternMap.mu.RLock()
-	n := len(globalKeyInternMap.keys)
-	globalKeyInternMap.mu.RUnlock()
-	return n
+// GetKeyInternCacheSize returns the number of interned keys in the cache.
+func GetKeyInternCacheSize() int {
+	return internal.GlobalKeyIntern.Size()
+}
+
+// ============================================================================
+// VALUE UTILITIES
+// ============================================================================
+
+// IsEmptyOrZero checks if a value is empty or its zero value.
+// Supports all standard numeric types, bool, string, slices, maps, and json.Number.
+// For slices and maps, returns true if nil or empty (len == 0).
+//
+// Example:
+//
+//	if json.IsEmptyOrZero(value) {
+//	    // Handle empty or zero value
+//	}
+func IsEmptyOrZero(v any) bool {
+	if v == nil {
+		return true
+	}
+	switch val := v.(type) {
+	case string:
+		return val == ""
+	case int:
+		return val == 0
+	case int8:
+		return val == 0
+	case int16:
+		return val == 0
+	case int32:
+		return val == 0
+	case int64:
+		return val == 0
+	case uint:
+		return val == 0
+	case uint8:
+		return val == 0
+	case uint16:
+		return val == 0
+	case uint32:
+		return val == 0
+	case uint64:
+		return val == 0
+	case float32:
+		return val == 0
+	case float64:
+		return val == 0
+	case bool:
+		return !val
+	case Number:
+		n, err := val.Int64()
+		return err == nil && n == 0
+	case []any:
+		return len(val) == 0
+	case map[string]any:
+		return len(val) == 0
+	case map[any]any:
+		return len(val) == 0
+	default:
+		return false
+	}
 }

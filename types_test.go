@@ -18,7 +18,7 @@ import (
 // Merged from: types_test.go, json_test.go, error_test.go
 
 func BenchmarkBufferPool(b *testing.B) {
-	rm := NewUnifiedResourceManager()
+	rm := newUnifiedResourceManager()
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -29,7 +29,7 @@ func BenchmarkBufferPool(b *testing.B) {
 }
 
 func BenchmarkConcurrentPools(b *testing.B) {
-	rm := NewUnifiedResourceManager()
+	rm := newUnifiedResourceManager()
 
 	b.ResetTimer()
 	b.RunParallel(func(pb *testing.PB) {
@@ -68,7 +68,7 @@ func BenchmarkConvertToInt64(b *testing.B) {
 }
 
 func BenchmarkPathSegmentPool(b *testing.B) {
-	rm := NewUnifiedResourceManager()
+	rm := newUnifiedResourceManager()
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -78,7 +78,7 @@ func BenchmarkPathSegmentPool(b *testing.B) {
 }
 
 func BenchmarkResourceMonitor(b *testing.B) {
-	rm := NewResourceMonitor()
+	rm := newResourceMonitor()
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -88,7 +88,7 @@ func BenchmarkResourceMonitor(b *testing.B) {
 }
 
 func BenchmarkStringBuilderPool(b *testing.B) {
-	rm := NewUnifiedResourceManager()
+	rm := newUnifiedResourceManager()
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -1634,29 +1634,30 @@ func TestOperation_String(t *testing.T) {
 	}
 }
 
-// TestPathInfo tests the PathInfo type
+// TestPathInfo tests the pathInfo type (internal)
+// Note: PathInfo is deprecated, this tests the internal pathInfo struct
 func TestPathInfo(t *testing.T) {
 	segments := []PathSegment{
 		{Type: internal.PropertySegment, Key: "user"},
 		{Type: internal.ArrayIndexSegment, Index: 0},
 	}
 
-	pathInfo := PathInfo{
-		Segments:     segments,
-		IsPointer:    false,
-		OriginalPath: "user[0]",
+	pathInfo := pathInfo{
+		segments:     segments,
+		isPointer:    false,
+		originalPath: "user[0]",
 	}
 
-	if len(pathInfo.Segments) != 2 {
-		t.Errorf("Segments length = %d, want 2", len(pathInfo.Segments))
+	if len(pathInfo.segments) != 2 {
+		t.Errorf("segments length = %d, want 2", len(pathInfo.segments))
 	}
 
-	if pathInfo.IsPointer {
-		t.Errorf("IsPointer = true, want false")
+	if pathInfo.isPointer {
+		t.Errorf("isPointer = true, want false")
 	}
 
-	if pathInfo.OriginalPath != "user[0]" {
-		t.Errorf("OriginalPath = %q, want %q", pathInfo.OriginalPath, "user[0]")
+	if pathInfo.originalPath != "user[0]" {
+		t.Errorf("originalPath = %q, want %q", pathInfo.originalPath, "user[0]")
 	}
 }
 
@@ -2320,20 +2321,20 @@ func TestResourceManager(t *testing.T) {
 // TestResourceMonitor tests the ResourceMonitor functionality
 func TestResourceMonitor(t *testing.T) {
 	t.Run("Creation", func(t *testing.T) {
-		rm := NewResourceMonitor()
+		rm := newResourceMonitor()
 		if rm == nil {
-			t.Fatal("NewResourceMonitor returned nil")
+			t.Fatal("newResourceMonitor returned nil")
 		}
 	})
 
 	t.Run("RecordAllocation", func(t *testing.T) {
-		rm := NewResourceMonitor()
+		rm := newResourceMonitor()
 
 		rm.RecordAllocation(1024)
 		rm.RecordAllocation(2048)
 		rm.RecordDeallocation(512)
 
-		stats := rm.GetStats()
+		stats := rm.getStats()
 		// Note: AllocatedBytes should be positive (at least the sum of allocations minus deallocations)
 		if stats.AllocatedBytes <= 0 {
 			t.Errorf("Expected positive allocated bytes, got %d", stats.AllocatedBytes)
@@ -2345,13 +2346,13 @@ func TestResourceMonitor(t *testing.T) {
 	})
 
 	t.Run("RecordPooloperations", func(t *testing.T) {
-		rm := NewResourceMonitor()
+		rm := newResourceMonitor()
 
 		rm.RecordPoolHit()
 		rm.RecordPoolMiss()
 		rm.RecordPoolEviction()
 
-		stats := rm.GetStats()
+		stats := rm.getStats()
 		if stats.PoolHits != 1 {
 			t.Errorf("Expected 1 pool hit, got %d", stats.PoolHits)
 		}
@@ -2364,12 +2365,12 @@ func TestResourceMonitor(t *testing.T) {
 	})
 
 	t.Run("RecordOperation", func(t *testing.T) {
-		rm := NewResourceMonitor()
+		rm := newResourceMonitor()
 
 		rm.RecordOperation(100 * time.Millisecond)
 		rm.RecordOperation(200 * time.Millisecond)
 
-		stats := rm.GetStats()
+		stats := rm.getStats()
 		if stats.TotalOperations != 2 {
 			t.Errorf("Expected 2 operations, got %d", stats.TotalOperations)
 		}
@@ -2379,24 +2380,24 @@ func TestResourceMonitor(t *testing.T) {
 	})
 
 	t.Run("PeakMemoryTracking", func(t *testing.T) {
-		rm := NewResourceMonitor()
+		rm := newResourceMonitor()
 
 		// Record increasing allocations to test peak tracking
 		rm.RecordAllocation(1000)
-		stats1 := rm.GetStats()
+		stats1 := rm.getStats()
 		if stats1.PeakMemoryUsage < 1000 {
 			t.Errorf("Expected peak >= 1000, got %d", stats1.PeakMemoryUsage)
 		}
 
 		rm.RecordAllocation(2000)
-		stats2 := rm.GetStats()
+		stats2 := rm.getStats()
 		// Peak should be at least 3000 (1000 + 2000)
 		if stats2.PeakMemoryUsage < 3000 {
 			t.Errorf("Expected peak >= 3000, got %d", stats2.PeakMemoryUsage)
 		}
 
 		rm.RecordDeallocation(500)
-		stats3 := rm.GetStats()
+		stats3 := rm.getStats()
 		// Peak should remain at maximum (not decrease with deallocations)
 		if stats3.PeakMemoryUsage < stats2.PeakMemoryUsage {
 			t.Errorf("Peak should not decrease with deallocations, went from %d to %d",
@@ -2405,13 +2406,13 @@ func TestResourceMonitor(t *testing.T) {
 	})
 
 	t.Run("Reset", func(t *testing.T) {
-		rm := NewResourceMonitor()
+		rm := newResourceMonitor()
 
 		rm.RecordAllocation(1000)
 		rm.RecordPoolHit()
 		rm.Reset()
 
-		stats := rm.GetStats()
+		stats := rm.getStats()
 		if stats.AllocatedBytes != 0 {
 			t.Errorf("Expected 0 allocated bytes after reset, got %d", stats.AllocatedBytes)
 		}
@@ -2423,7 +2424,7 @@ func TestResourceMonitor(t *testing.T) {
 
 // TestResourceMonitor_CheckForLeaks tests CheckForLeaks method
 func TestResourceMonitor_CheckForLeaks(t *testing.T) {
-	rm := NewResourceMonitor()
+	rm := newResourceMonitor()
 	rm.leakCheckInterval = 0 // Force immediate check
 
 	issues := rm.CheckForLeaks()
@@ -2435,7 +2436,7 @@ func TestResourceMonitor_CheckForLeaks(t *testing.T) {
 // TestResourceMonitor_EfficiencyMethods tests GetMemoryEfficiency and GetPoolEfficiency
 func TestResourceMonitor_EfficiencyMethods(t *testing.T) {
 	t.Run("GetMemoryEfficiency", func(t *testing.T) {
-		rm := NewResourceMonitor()
+		rm := newResourceMonitor()
 		// Initially 100% (no allocations)
 		if eff := rm.GetMemoryEfficiency(); eff != 100.0 {
 			t.Errorf("GetMemoryEfficiency() = %v, want 100.0", eff)
@@ -2450,7 +2451,7 @@ func TestResourceMonitor_EfficiencyMethods(t *testing.T) {
 	})
 
 	t.Run("GetPoolEfficiency", func(t *testing.T) {
-		rm := NewResourceMonitor()
+		rm := newResourceMonitor()
 		// Initially 100% (no operations)
 		if eff := rm.GetPoolEfficiency(); eff != 100.0 {
 			t.Errorf("GetPoolEfficiency() = %v, want 100.0", eff)
@@ -3215,14 +3216,14 @@ func TestTypeSafeResult_UnwrapOrPanic(t *testing.T) {
 // TestUnifiedResourceManager tests the unified resource manager functionality
 func TestUnifiedResourceManager(t *testing.T) {
 	t.Run("Creation", func(t *testing.T) {
-		rm := NewUnifiedResourceManager()
+		rm := newUnifiedResourceManager()
 		if rm == nil {
-			t.Fatal("NewUnifiedResourceManager returned nil")
+			t.Fatal("newUnifiedResourceManager returned nil")
 		}
 	})
 
 	t.Run("StringBuilderPool", func(t *testing.T) {
-		rm := NewUnifiedResourceManager()
+		rm := newUnifiedResourceManager()
 
 		// Test Get and Put cycle
 		sb1 := rm.GetStringBuilder()
@@ -3249,7 +3250,7 @@ func TestUnifiedResourceManager(t *testing.T) {
 	})
 
 	t.Run("PathSegmentPool", func(t *testing.T) {
-		rm := NewUnifiedResourceManager()
+		rm := newUnifiedResourceManager()
 
 		// Test Get and Put cycle
 		seg1 := rm.GetPathSegments()
@@ -3274,7 +3275,7 @@ func TestUnifiedResourceManager(t *testing.T) {
 	})
 
 	t.Run("BufferPool", func(t *testing.T) {
-		rm := NewUnifiedResourceManager()
+		rm := newUnifiedResourceManager()
 
 		// Test Get and Put cycle
 		buf1 := rm.GetBuffer()
@@ -3297,7 +3298,7 @@ func TestUnifiedResourceManager(t *testing.T) {
 	})
 
 	t.Run("ConcurrentAccess", func(t *testing.T) {
-		rm := NewUnifiedResourceManager()
+		rm := newUnifiedResourceManager()
 		const goroutines = 100
 		const opsPerGoroutine = 100
 
@@ -3343,7 +3344,7 @@ func TestUnifiedResourceManager(t *testing.T) {
 	})
 
 	t.Run("Stats", func(t *testing.T) {
-		rm := NewUnifiedResourceManager()
+		rm := newUnifiedResourceManager()
 
 		// Perform some operations
 		sb := rm.GetStringBuilder()
@@ -3359,13 +3360,13 @@ func TestUnifiedResourceManager(t *testing.T) {
 		rm.PutBuffer(buf)
 
 		// Get stats - verify no crashes
-		_ = rm.GetStats()
+		_ = rm.getStats()
 		// Note: Allocated counts are tracked atomically and should be positive
 		// The specific counts may vary due to internal implementation details
 	})
 
 	t.Run("SizeLimits", func(t *testing.T) {
-		rm := NewUnifiedResourceManager()
+		rm := newUnifiedResourceManager()
 
 		// Test oversized builder is discarded
 		oversizedSb := &strings.Builder{}
@@ -3381,7 +3382,7 @@ func TestUnifiedResourceManager(t *testing.T) {
 	})
 
 	t.Run("PerformMaintenance", func(t *testing.T) {
-		rm := NewUnifiedResourceManager()
+		rm := newUnifiedResourceManager()
 
 		// Should not panic
 		rm.PerformMaintenance()

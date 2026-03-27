@@ -7,25 +7,6 @@ import (
 	"github.com/cybergodev/json/internal"
 )
 
-// ConfigInterface defines the interface for configuration objects
-type ConfigInterface interface {
-	IsCacheEnabled() bool
-	GetMaxCacheSize() int
-	GetCacheTTL() time.Duration
-	GetMaxJSONSize() int64
-	GetMaxPathDepth() int
-	GetMaxConcurrency() int
-	IsMetricsEnabled() bool
-	IsStrictMode() bool
-	IsCommentsAllowed() bool
-	ShouldPreserveNumbers() bool
-	ShouldCreatePaths() bool
-	ShouldCleanupNulls() bool
-	ShouldCompactArrays() bool
-	ShouldValidateInput() bool
-	GetMaxNestingDepth() int
-}
-
 // Configuration constants with optimized defaults for production workloads.
 const (
 	// Buffer and Pool Sizes - Optimized for production workloads
@@ -33,109 +14,85 @@ const (
 	MaxPoolBufferSize = 32768 // 32KB max for better buffer reuse
 	MinPoolBufferSize = 256   // 256B min for efficiency
 
-	// Internal buffer/pool sizes (not exported)
-	defaultPathSegmentCap    = 8
-	maxPathSegmentCap        = 32 // Reduced from 128
-	defaultStringBuilderSize = 256
-
 	// Cache Sizes - Balanced for performance and memory
 	DefaultCacheSize = 128
 
-	// Internal cache sizes (not exported)
-	maxCacheEntries      = 512
-	cacheCleanupKeepSize = 256
-
 	// Operation Limits - Secure defaults with reasonable headroom
-	// InvalidArrayIndex is a sentinel value indicating an invalid or out-of-bounds array index.
-	// This value is returned by array parsing functions when the index cannot be determined
-	// (e.g., invalid format, overflow, or empty string).
-	// IMPORTANT: Do not use this value as a valid array index. Always check if the returned
-	// value equals InvalidArrayIndex before using it.
-	// Example:
-	//
-	//	index := helper.ParseArrayIndex(str)
-	//	if index == json.InvalidArrayIndex {
-	//	    // Handle invalid index
-	//	}
-	InvalidArrayIndex      = -999999
 	DefaultMaxJSONSize     = 100 * 1024 * 1024 // 100MB
 	DefaultMaxNestingDepth = 200
 	DefaultMaxPathDepth    = 50
 	DefaultMaxConcurrency  = 50
 
-	// Internal operation limits (not exported)
-	defaultMaxSecuritySize   = 10 * 1024 * 1024
-	defaultMaxObjectKeys     = 100000
-	defaultMaxArrayElements  = 100000
-	defaultMaxBatchSize      = 2000
-	defaultParallelThreshold = 10
+	// Internal operation limits
+	DefaultMaxSecuritySize   = 10 * 1024 * 1024
+	DefaultMaxObjectKeys     = 100000
+	DefaultMaxArrayElements  = 100000
+	DefaultMaxBatchSize      = 2000
+	DefaultParallelThreshold = 10
 
 	// Timing and Intervals - Optimized for responsiveness
-	// Internal timing constants (not exported)
-	memoryPressureCheckInterval = 30 * time.Second
-	poolResetInterval           = 60 * time.Second
-	poolResetIntervalPressure   = 30 * time.Second
-	cacheCleanupInterval        = 30 * time.Second
-	deadlockCheckInterval       = 30 * time.Second
-	deadlockThreshold           = 30 * time.Second
-	SlowOperationThreshold      = 100 * time.Millisecond
+	SlowOperationThreshold = 100 * time.Millisecond
 
 	// Retry and Timeout - Production-ready settings
-	// Internal retry constants (not exported)
-	maxRetries              = 3
-	baseRetryDelay          = 10 * time.Millisecond
 	DefaultOperationTimeout = 30 * time.Second
-	acquireSlotRetryDelay   = 1 * time.Millisecond
 
 	// Processor lifecycle timeouts
-	CloseOperationTimeout    = 5 * time.Second // Timeout waiting for active operations during Close()
-	SemaphoreDrainTimeout    = 1 * time.Second // Timeout for draining concurrency semaphore
-	LargeStringHashThreshold = 4096            // Byte threshold for using sampling-based hash
+	CloseOperationTimeout = 5 * time.Second // Timeout waiting for active operations during Close()
+	SemaphoreDrainTimeout = 1 * time.Second // Timeout for draining concurrency semaphore
+
+	// LargeStringHashThreshold is the byte threshold for using sampling-based hash.
+	// Re-exported from internal package for public API access.
+	LargeStringHashThreshold = internal.LargeStringHashThreshold
 
 	// Path Validation - Secure but flexible
 	// MaxPathLength is the maximum allowed path length for security.
 	// Re-exported from internal package for public API access.
 	MaxPathLength = internal.MaxPathLength
 
-	// Internal path validation (not exported)
-	maxSegmentLength = 1024
-
 	// Cache TTL
 	DefaultCacheTTL = 5 * time.Minute
 
-	// Cache key constants - OPTIMIZED: Increased limits for better cache hit rate
-	// Internal cache key constants (not exported)
-	cacheKeyHashLength   = 32      // Length for cache key hash
-	smallJSONCacheLimit  = 2048    // Limit for caching small JSON strings (fast path)
-	mediumJSONCacheLimit = 51200   // Limit for caching medium JSON strings (50KB)
-	largeJSONCacheLimit  = 1048576 // Limit for caching large JSON strings (1MB) - OPTIMIZED: increased for better performance
-	estimatedKeyOverhead = 32      // Estimated overhead for cache key generation
-	largeJSONKeyOverhead = 64      // Overhead for large JSON cache keys
-	MaxCacheKeyLength    = 500     // Maximum allowed cache key length
+	// Cache key constants
+	// MaxCacheKeyLength is the maximum allowed cache key length.
+	// Re-exported from internal package for public API access.
+	MaxCacheKeyLength = internal.MaxCacheKeyLength
 
 	// Validation constants
 	ValidationBOMPrefix = "\uFEFF" // UTF-8 BOM prefix to detect and remove
 )
 
-// Error codes for machine-readable error identification.
-// Internal use only - users should use errors.Is() with error variables.
-const (
-	errCodeInvalidJSON       = "ERR_INVALID_JSON"
-	errCodePathNotFound      = "ERR_PATH_NOT_FOUND"
-	errCodeTypeMismatch      = "ERR_TYPE_MISMATCH"
-	errCodeSizeLimit         = "ERR_SIZE_LIMIT"
-	errCodeDepthLimit        = "ERR_DEPTH_LIMIT"
-	errCodeSecurityViolation = "ERR_SECURITY_VIOLATION"
-	errCodeOperationFailed   = "ERR_OPERATION_FAILED"
-	errCodeTimeout           = "ERR_TIMEOUT"
-	errCodeConcurrencyLimit  = "ERR_CONCURRENCY_LIMIT"
-	errCodeProcessorClosed   = "ERR_PROCESSOR_CLOSED"
-	errCodeRateLimit         = "ERR_RATE_LIMIT"
-)
+// InvalidArrayIndex is a sentinel value indicating an invalid or out-of-bounds array index.
+// Returned by array parsing functions when the index cannot be determined
+// (e.g., invalid format, overflow, or empty string).
+//
+//	index := processor.ParseArrayIndex(str)
+//	if index == InvalidArrayIndex {
+//	    // Handle invalid index
+//	}
+const InvalidArrayIndex = internal.ArrayIndexInvalid
+
+// clampInt64 clamps an int64 value to the specified range.
+// If value is <= 0, it is set to min. If value > max, it is set to max.
+func clampInt64(value *int64, min, max int64) {
+	if *value <= 0 {
+		*value = min
+	} else if *value > max {
+		*value = max
+	}
+}
+
+// clampInt clamps an int value to the specified range.
+// If value is <= 0, it is set to min. If value > max, it is set to max.
+func clampInt(value *int, min, max int) {
+	if *value <= 0 {
+		*value = min
+	} else if *value > max {
+		*value = max
+	}
+}
 
 // DefaultConfig returns the default configuration.
 // Creates a new instance each time to allow modifications without affecting other callers.
-// PERFORMANCE NOTE: For read-only access in hot paths, cache the result.
 func DefaultConfig() Config {
 	return Config{
 		// Cache Settings
@@ -147,18 +104,18 @@ func DefaultConfig() Config {
 		// Size Limits
 		MaxJSONSize:  DefaultMaxJSONSize,
 		MaxPathDepth: DefaultMaxPathDepth,
-		MaxBatchSize: defaultMaxBatchSize,
+		MaxBatchSize: DefaultMaxBatchSize,
 
 		// Security Limits
 		MaxNestingDepthSecurity:   DefaultMaxNestingDepth,
-		MaxSecurityValidationSize: defaultMaxSecuritySize,
-		MaxObjectKeys:             defaultMaxObjectKeys,
-		MaxArrayElements:          defaultMaxArrayElements,
+		MaxSecurityValidationSize: DefaultMaxSecuritySize,
+		MaxObjectKeys:             DefaultMaxObjectKeys,
+		MaxArrayElements:          DefaultMaxArrayElements,
 		FullSecurityScan:          false,
 
 		// Concurrency
 		MaxConcurrency:    DefaultMaxConcurrency,
-		ParallelThreshold: defaultParallelThreshold,
+		ParallelThreshold: DefaultParallelThreshold,
 
 		// Processing Options
 		EnableValidation: true,
@@ -203,39 +160,6 @@ func DefaultConfig() Config {
 	}
 }
 
-// validateConfig validates configuration values and applies corrections
-func validateConfig(config *Config) error {
-	if config == nil {
-		return newOperationError("validate_config", "config cannot be nil", ErrOperationFailed)
-	}
-
-	if config.MaxCacheSize < 0 {
-		return newOperationError("validate_config", "MaxCacheSize cannot be negative", ErrOperationFailed)
-	}
-
-	// Apply defaults for invalid values
-	if config.MaxJSONSize <= 0 {
-		config.MaxJSONSize = DefaultMaxJSONSize
-	}
-	if config.MaxPathDepth <= 0 {
-		config.MaxPathDepth = DefaultMaxPathDepth
-	}
-	if config.MaxConcurrency <= 0 {
-		config.MaxConcurrency = DefaultMaxConcurrency
-	}
-	if config.MaxNestingDepthSecurity <= 0 {
-		config.MaxNestingDepthSecurity = DefaultMaxNestingDepth
-	}
-	if config.MaxObjectKeys <= 0 {
-		config.MaxObjectKeys = defaultMaxObjectKeys
-	}
-	if config.MaxArrayElements <= 0 {
-		config.MaxArrayElements = defaultMaxArrayElements
-	}
-
-	return nil
-}
-
 // Clone creates a copy of the configuration.
 // Performs a deep copy of reference types (maps, slices).
 func (c Config) Clone() Config {
@@ -252,36 +176,26 @@ func (c Config) Clone() Config {
 	return clone
 }
 
-// Validate validates the configuration and applies corrections
+// Validate validates the configuration and applies corrections.
+// This is the single source of truth for config validation.
 func (c *Config) Validate() error {
 	if c == nil {
 		return errors.New("config cannot be nil")
 	}
 
-	// Clamp int64 values
-	clampInt64 := func(value *int64, min, max int64) {
-		if *value <= 0 {
-			*value = min
-		} else if *value > max {
-			*value = max
-		}
-	}
-
-	// Clamp int values
-	clampInt := func(value *int, min, max int) {
-		if *value <= 0 {
-			*value = min
-		} else if *value > max {
-			*value = max
-		}
-	}
-
+	// Size and depth limits
 	clampInt64(&c.MaxJSONSize, 1024*1024, 100*1024*1024)
 	clampInt(&c.MaxPathDepth, 10, 200)
 	clampInt(&c.MaxNestingDepthSecurity, 10, 200)
 	clampInt(&c.MaxConcurrency, 1, 200)
 	clampInt(&c.ParallelThreshold, 1, 50)
 
+	// Security limits
+	clampInt(&c.MaxObjectKeys, 100, 100000)
+	clampInt(&c.MaxArrayElements, 100, 100000)
+	clampInt64(&c.MaxSecurityValidationSize, 1024*1024, 100*1024*1024)
+
+	// Cache settings
 	if c.MaxCacheSize < 0 {
 		c.MaxCacheSize = 0
 		c.EnableCache = false
@@ -293,7 +207,7 @@ func (c *Config) Validate() error {
 		c.CacheTTL = DefaultCacheTTL
 	}
 
-	// Validate new encoding fields
+	// Encoding options
 	if c.MaxDepth < 0 || c.MaxDepth > 1000 {
 		c.MaxDepth = 100
 	}
@@ -301,13 +215,28 @@ func (c *Config) Validate() error {
 		c.FloatPrecision = -1
 	}
 
+	// Batch size limits
+	clampInt(&c.MaxBatchSize, 10, 10000)
+
 	return nil
 }
 
-// ConfigInterface implementation methods
-func (c *Config) IsCacheEnabled() bool         { return c.EnableCache }
-func (c *Config) GetMaxCacheSize() int         { return c.MaxCacheSize }
-func (c *Config) GetCacheTTL() time.Duration   { return c.CacheTTL }
+// Config accessor methods.
+// These methods implement the CacheConfig interface used by internal/cache.go
+// and provide consistent API for testing and interface-based programming.
+
+// Required by CacheConfig interface - do not remove.
+func (c *Config) IsCacheEnabled() bool       { return c.EnableCache }
+func (c *Config) GetMaxCacheSize() int       { return c.MaxCacheSize }
+func (c *Config) GetCacheTTL() time.Duration { return c.CacheTTL }
+
+// Convenience accessor methods for testing and interface-based usage.
+// Note: For direct configuration access in application code, prefer field access:
+//
+//	cfg.MaxJSONSize instead of cfg.GetMaxJSONSize()
+//	cfg.StrictMode instead of cfg.IsStrictMode()
+//
+// These methods are primarily for testing and future interface compatibility.
 func (c *Config) GetMaxJSONSize() int64        { return c.MaxJSONSize }
 func (c *Config) GetMaxPathDepth() int         { return c.MaxPathDepth }
 func (c *Config) GetMaxConcurrency() int       { return c.MaxConcurrency }
@@ -322,21 +251,6 @@ func (c *Config) ShouldCompactArrays() bool    { return c.CompactArrays }
 func (c *Config) ShouldValidateInput() bool    { return c.ValidateInput }
 func (c *Config) GetMaxNestingDepth() int      { return c.MaxNestingDepthSecurity }
 func (c *Config) ShouldValidateFilePath() bool { return c.ValidateFilePath }
-
-// Additional accessor methods for new Config fields
-func (c *Config) ShouldCacheResults() bool     { return c.CacheResults }
-func (c *Config) ShouldContinueOnError() bool  { return c.ContinueOnError }
-func (c *Config) ShouldSkipValidation() bool   { return c.SkipValidation }
-func (c *Config) GetEncodingMaxDepth() int     { return c.MaxDepth }
-func (c *Config) ShouldEscapeHTML() bool       { return c.EscapeHTML }
-func (c *Config) ShouldPrettyPrint() bool      { return c.Pretty }
-func (c *Config) GetIndent() string            { return c.Indent }
-func (c *Config) GetPrefix() string            { return c.Prefix }
-func (c *Config) ShouldSortKeys() bool         { return c.SortKeys }
-func (c *Config) ShouldValidateUTF8() bool     { return c.ValidateUTF8 }
-func (c *Config) ShouldIncludeNulls() bool     { return c.IncludeNulls }
-func (c *Config) GetFloatPrecision() int       { return c.FloatPrecision }
-func (c *Config) ShouldFullSecurityScan() bool { return c.FullSecurityScan }
 
 // =============================================================================
 // API Unification - Config presets for common scenarios

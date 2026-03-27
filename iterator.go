@@ -50,11 +50,7 @@ func init() {
 
 // getPathTypeShard returns the shard for a path using FNV-1a hash
 func getPathTypeShard(path string) *pathTypeCacheShard {
-	h := uint64(14695981039346656037)
-	for i := 0; i < len(path); i++ {
-		h ^= uint64(path[i])
-		h *= 1099511628211
-	}
+	h := internal.HashStringFNV1a(path)
 	return &pathTypeCacheShards[h&15]
 }
 
@@ -142,7 +138,7 @@ type Iterator struct {
 	data     any
 	position int
 	keys     []string // Cached keys for map iteration
-	keysInit bool     // Flag for lazy initialization
+	keysOnce sync.Once
 }
 
 // NewIterator creates a new Iterator
@@ -154,25 +150,22 @@ func NewIterator(data any, opts ...Config) *Iterator {
 	}
 }
 
-// initKeysOnce lazily initializes cached keys for map iteration
-// PERFORMANCE: Avoids allocating a new slice on every Next() call
-// Uses key interning to reduce memory for repeated keys
+// initKeysOnce lazily initializes cached keys for map iteration.
+// Thread-safe via sync.Once; avoids allocating a new slice on every Next() call.
 func (it *Iterator) initKeysOnce() {
-	if it.keysInit {
-		return
-	}
-	if obj, ok := it.data.(map[string]any); ok {
-		// Reuse existing slice if capacity is sufficient
-		if cap(it.keys) < len(obj) {
-			it.keys = make([]string, 0, len(obj))
-		} else {
-			it.keys = it.keys[:0]
+	it.keysOnce.Do(func() {
+		if obj, ok := it.data.(map[string]any); ok {
+			// Reuse existing slice if capacity is sufficient
+			if cap(it.keys) < len(obj) {
+				it.keys = make([]string, 0, len(obj))
+			} else {
+				it.keys = it.keys[:0]
+			}
+			for k := range obj {
+				it.keys = append(it.keys, internal.InternKey(k))
+			}
 		}
-		for k := range obj {
-			it.keys = append(it.keys, internal.InternKey(k))
-		}
-	}
-	it.keysInit = true
+	})
 }
 
 // iterableValuePool pools IterableValue objects to reduce allocations
@@ -760,6 +753,9 @@ func (iv *IterableValue) ForeachNested(path string, fn func(key any, item *Itera
 // This is the 3-parameter version used by most code
 func ForeachWithPathAndControl(jsonStr, path string, fn func(key any, value any) IteratorControl) error {
 	processor := getDefaultProcessor()
+	if processor == nil {
+		return ErrInternalError
+	}
 
 	data, err := processor.Get(jsonStr, path)
 	if err != nil {
@@ -772,6 +768,9 @@ func ForeachWithPathAndControl(jsonStr, path string, fn func(key any, value any)
 // Foreach iterates over JSON arrays or objects with simplified signature (for test compatibility)
 func Foreach(jsonStr string, fn func(key any, item *IterableValue)) {
 	processor := getDefaultProcessor()
+	if processor == nil {
+		return
+	}
 
 	data, err := processor.Get(jsonStr, ".")
 	if err != nil {
@@ -807,6 +806,9 @@ func foreachWithIterableValue(data any, fn func(key any, item *IterableValue)) {
 // ForeachWithPath iterates over JSON arrays or objects with simplified signature (for test compatibility)
 func ForeachWithPath(jsonStr, path string, fn func(key any, item *IterableValue)) error {
 	processor := getDefaultProcessor()
+	if processor == nil {
+		return ErrInternalError
+	}
 
 	data, err := processor.Get(jsonStr, path)
 	if err != nil {
@@ -855,6 +857,9 @@ func foreachWithPathIterableValue(data any, currentPath string, fn func(key any,
 // ForeachReturn is a variant that returns error (for compatibility with test expectations)
 func ForeachReturn(jsonStr string, fn func(key any, item *IterableValue)) (string, error) {
 	processor := getDefaultProcessor()
+	if processor == nil {
+		return "", ErrInternalError
+	}
 
 	data, err := processor.Get(jsonStr, ".")
 	if err != nil {
@@ -893,6 +898,9 @@ func foreachOnValue(data any, fn func(key any, value any) IteratorControl) error
 // ForeachNested iterates over nested JSON structures
 func ForeachNested(jsonStr string, fn func(key any, item *IterableValue)) {
 	processor := getDefaultProcessor()
+	if processor == nil {
+		return
+	}
 
 	data, err := processor.Get(jsonStr, ".")
 	if err != nil {
@@ -1340,6 +1348,9 @@ func (l *lazyJSONDecoder) GetPath(path string) (any, error) {
 
 	// Use processor for path navigation
 	p := getDefaultProcessor()
+	if p == nil {
+		return nil, ErrInternalError
+	}
 	return p.Get(string(l.raw), path)
 }
 

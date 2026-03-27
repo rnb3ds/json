@@ -2,7 +2,6 @@ package json
 
 import (
 	"bytes"
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -22,9 +21,9 @@ func TestAPI_UnmarshalFromFile(t *testing.T) {
 		name        string
 		setupFile   bool
 		fileContent string
-		target      interface{}
+		target      any
 		wantErr     bool
-		checkResult func(t *testing.T, result interface{})
+		checkResult func(t *testing.T, result any)
 	}{
 		{
 			name:        "UnmarshalFromFileValid",
@@ -35,7 +34,7 @@ func TestAPI_UnmarshalFromFile(t *testing.T) {
 				Value int
 			}{},
 			wantErr: false,
-			checkResult: func(t *testing.T, result interface{}) {
+			checkResult: func(t *testing.T, result any) {
 				r := result.(*struct {
 					Name  string
 					Value int
@@ -48,7 +47,7 @@ func TestAPI_UnmarshalFromFile(t *testing.T) {
 		{
 			name:      "UnmarshalFromFileNonExistent",
 			setupFile: false,
-			target:    &map[string]interface{}{},
+			target:    &map[string]any{},
 			wantErr:   true,
 		},
 		{
@@ -82,50 +81,19 @@ func TestAPI_UnmarshalFromFile(t *testing.T) {
 	}
 }
 
-// ============================================================================
-// PATH FUNCTIONS TESTS - Coverage for intToStringFast, isMapType, isSliceType
-// ============================================================================
-
-// TestIntToStringFast tests the intToStringFast function
-func TestIntToStringFast(t *testing.T) {
-	tests := []struct {
-		input    int
-		expected string
-	}{
-		{0, "0"},
-		{1, "1"},
-		{9, "9"},
-		{10, "10"},
-		{50, "50"},
-		{99, "99"},
-		{100, "100"}, // Outside fast path
-		{-1, "-1"},   // Negative
-		{1000, "1000"},
-	}
-
-	for _, tt := range tests {
-		t.Run("", func(t *testing.T) {
-			result := intToStringFast(tt.input)
-			if result != tt.expected {
-				t.Errorf("intToStringFast(%d) = %q, want %q", tt.input, result, tt.expected)
-			}
-		})
-	}
-}
-
 // TestIsMapType tests the internal IsMapType function
 // Note: IsMapType only returns true for map[string]any and map[any]any
 func TestIsMapType(t *testing.T) {
 	tests := []struct {
 		name     string
-		input    interface{}
+		input    any
 		expected bool
 	}{
-		{"map[string]any", map[string]interface{}{"key": "value"}, true},
-		{"map[any]any", map[interface{}]interface{}{"key": "value"}, true},
+		{"map[string]any", map[string]any{"key": "value"}, true},
+		{"map[any]any", map[any]any{"key": "value"}, true},
 		{"map[string]string", map[string]string{"key": "value"}, false}, // Not map[string]any
 		{"map[int]string", map[int]string{1: "one"}, false},             // Not supported type
-		{"slice", []interface{}{1, 2, 3}, false},
+		{"slice", []any{1, 2, 3}, false},
 		{"string", "string", false},
 		{"nil", nil, false},
 		{"int", 42, false},
@@ -145,13 +113,13 @@ func TestIsMapType(t *testing.T) {
 // TestIsSliceType tests the internal IsSliceType function
 func TestIsSliceType(t *testing.T) {
 	tests := []struct {
-		input    interface{}
+		input    any
 		expected bool
 	}{
-		{[]interface{}{1, 2, 3}, true},
+		{[]any{1, 2, 3}, true},
 		{[]string{"a", "b"}, true},
 		{[]int{1, 2, 3}, true},
-		{map[string]interface{}{"key": "value"}, false},
+		{map[string]any{"key": "value"}, false},
 		{"string", false},
 		{nil, false},
 		{42, false},
@@ -262,7 +230,7 @@ func TestConfigValidateEdgeCases(t *testing.T) {
 }
 
 // ============================================================================
-// ENCODING TESTS - Coverage for printData, assignResult branches
+// ENCODING TESTS - Coverage for printData branches
 // ============================================================================
 
 // TestPrintData tests the printData function
@@ -310,7 +278,7 @@ func TestPrintData(t *testing.T) {
 	})
 
 	t.Run("MapData", func(t *testing.T) {
-		data := map[string]interface{}{"name": "test"}
+		data := map[string]any{"name": "test"}
 		result, err := printData(data, false)
 		if err != nil {
 			t.Errorf("printData with map failed: %v", err)
@@ -321,7 +289,7 @@ func TestPrintData(t *testing.T) {
 	})
 
 	t.Run("PrettyFormatting", func(t *testing.T) {
-		data := map[string]interface{}{"name": "test"}
+		data := map[string]any{"name": "test"}
 		result, err := printData(data, true)
 		if err != nil {
 			t.Errorf("printData with pretty failed: %v", err)
@@ -356,7 +324,7 @@ func TestEncodeWithConfig(t *testing.T) {
 		opts := DefaultConfig()
 		opts.Pretty = true
 
-		result, err := EncodeWithConfig(map[string]interface{}{"key": "value"}, opts)
+		result, err := EncodeWithConfig(map[string]any{"key": "value"}, opts)
 		if err != nil {
 			t.Errorf("EncodeWithConfig failed: %v", err)
 		}
@@ -369,7 +337,7 @@ func TestEncodeWithConfig(t *testing.T) {
 		opts := DefaultConfig()
 		opts.Pretty = false
 
-		result, err := EncodeWithConfig(map[string]interface{}{"key": "value"}, opts)
+		result, err := EncodeWithConfig(map[string]any{"key": "value"}, opts)
 		if err != nil {
 			t.Errorf("EncodeWithConfig failed: %v", err)
 		}
@@ -385,7 +353,7 @@ func TestEncode(t *testing.T) {
 		config := DefaultConfig()
 		config.EscapeHTML = true
 
-		result, err := Encode(map[string]interface{}{"html": "<script>"}, config)
+		result, err := Encode(map[string]any{"html": "<script>"}, config)
 		if err != nil {
 			t.Errorf("Encode failed: %v", err)
 		}
@@ -395,7 +363,7 @@ func TestEncode(t *testing.T) {
 	})
 
 	t.Run("WithoutConfig", func(t *testing.T) {
-		result, err := Encode(map[string]interface{}{"key": "value"})
+		result, err := Encode(map[string]any{"key": "value"})
 		if err != nil {
 			t.Errorf("Encode failed: %v", err)
 		}
@@ -413,23 +381,23 @@ func TestEncode(t *testing.T) {
 func TestPrintFunctions(t *testing.T) {
 	t.Run("Print", func(t *testing.T) {
 		// Just verify it doesn't panic
-		Print(map[string]interface{}{"test": "value"})
+		Print(map[string]any{"test": "value"})
 	})
 
 	t.Run("PrintPretty", func(t *testing.T) {
 		// Just verify it doesn't panic
-		PrintPretty(map[string]interface{}{"test": "value"})
+		PrintPretty(map[string]any{"test": "value"})
 	})
 
 	t.Run("PrintE", func(t *testing.T) {
-		err := PrintE(map[string]interface{}{"test": "value"})
+		err := PrintE(map[string]any{"test": "value"})
 		if err != nil {
 			t.Errorf("PrintE failed: %v", err)
 		}
 	})
 
 	t.Run("PrintPrettyE", func(t *testing.T) {
-		err := PrintPrettyE(map[string]interface{}{"test": "value"})
+		err := PrintPrettyE(map[string]any{"test": "value"})
 		if err != nil {
 			t.Errorf("PrintPrettyE failed: %v", err)
 		}
@@ -467,12 +435,12 @@ func TestProcessorClosedState(t *testing.T) {
 			t.Error("Delete should fail on closed processor")
 		}
 
-		_, err = processor.Marshal(map[string]interface{}{"key": "value"})
+		_, err = processor.Marshal(map[string]any{"key": "value"})
 		if err == nil {
 			t.Error("Marshal should fail on closed processor")
 		}
 
-		err = processor.Unmarshal([]byte(`{"key":"value"}`), &map[string]interface{}{})
+		err = processor.Unmarshal([]byte(`{"key":"value"}`), &map[string]any{})
 		if err == nil {
 			t.Error("Unmarshal should fail on closed processor")
 		}
@@ -510,7 +478,7 @@ func TestProcessorParse(t *testing.T) {
 	defer processor.Close()
 
 	t.Run("ParseToMap", func(t *testing.T) {
-		var result map[string]interface{}
+		var result map[string]any
 		err := processor.Parse(`{"key":"value"}`, &result)
 		if err != nil {
 			t.Errorf("Parse failed: %v", err)
@@ -521,7 +489,7 @@ func TestProcessorParse(t *testing.T) {
 	})
 
 	t.Run("ParseToSlice", func(t *testing.T) {
-		var result []interface{}
+		var result []any
 		err := processor.Parse(`[1, 2, 3]`, &result)
 		if err != nil {
 			t.Errorf("Parse failed: %v", err)
@@ -539,7 +507,7 @@ func TestProcessorParse(t *testing.T) {
 	})
 
 	t.Run("ParseInvalidJSON", func(t *testing.T) {
-		var result map[string]interface{}
+		var result map[string]any
 		err := processor.Parse(`{invalid}`, &result)
 		if err == nil {
 			t.Error("Parse with invalid JSON should return error")
@@ -548,7 +516,7 @@ func TestProcessorParse(t *testing.T) {
 
 	t.Run("ParseWithPreserveNumbers", func(t *testing.T) {
 		opts := Config{PreserveNumbers: true}
-		var result map[string]interface{}
+		var result map[string]any
 		err := processor.Parse(`{"num":123}`, &result, opts)
 		if err != nil {
 			t.Errorf("Parse with PreserveNumbers failed: %v", err)
@@ -616,9 +584,9 @@ func TestRecursiveProcessor(t *testing.T) {
 	rp := NewRecursiveProcessor(processor)
 
 	t.Run("GetNestedValue", func(t *testing.T) {
-		data := map[string]interface{}{
-			"level1": map[string]interface{}{
-				"level2": map[string]interface{}{
+		data := map[string]any{
+			"level1": map[string]any{
+				"level2": map[string]any{
 					"value": "nested",
 				},
 			},
@@ -634,8 +602,8 @@ func TestRecursiveProcessor(t *testing.T) {
 	})
 
 	t.Run("SetNestedValue", func(t *testing.T) {
-		data := map[string]interface{}{
-			"level1": map[string]interface{}{
+		data := map[string]any{
+			"level1": map[string]any{
 				"level2": "old",
 			},
 		}
@@ -650,8 +618,8 @@ func TestRecursiveProcessor(t *testing.T) {
 	})
 
 	t.Run("DeleteNestedValue", func(t *testing.T) {
-		data := map[string]interface{}{
-			"level1": map[string]interface{}{
+		data := map[string]any{
+			"level1": map[string]any{
 				"level2": "value",
 			},
 		}
@@ -666,14 +634,14 @@ func TestRecursiveProcessor(t *testing.T) {
 	})
 
 	t.Run("EmptyPath", func(t *testing.T) {
-		data := map[string]interface{}{"key": "value"}
+		data := map[string]any{"key": "value"}
 
 		result, err := rp.ProcessRecursively(data, "", opGet, nil)
 		if err != nil {
 			t.Errorf("ProcessRecursively with empty path failed: %v", err)
 		}
 		// Verify result contains the expected data
-		resultMap, ok := result.(map[string]interface{})
+		resultMap, ok := result.(map[string]any)
 		if !ok {
 			t.Fatal("Result should be a map")
 		}
@@ -683,7 +651,7 @@ func TestRecursiveProcessor(t *testing.T) {
 	})
 
 	t.Run("CreatePaths", func(t *testing.T) {
-		data := map[string]interface{}{}
+		data := map[string]any{}
 
 		result, err := rp.ProcessRecursivelyWithOptions(data, "new.path.value", opSet, "created", true)
 		if err != nil {
@@ -731,53 +699,59 @@ func TestDeepCopy(t *testing.T) {
 	defer processor.Close()
 
 	t.Run("DeepCopyMap", func(t *testing.T) {
-		original := map[string]interface{}{
+		original := map[string]any{
 			"key": "value",
-			"nested": map[string]interface{}{
+			"nested": map[string]any{
 				"inner": "data",
 			},
 		}
 
-		copy := processor.deepCopyData(original)
+		copy, err := DeepCopy(original)
+		if err != nil {
+			t.Fatalf("DeepCopy() error: %v", err)
+		}
 
 		// Modify original
 		original["key"] = "modified"
-		original["nested"].(map[string]interface{})["inner"] = "changed"
+		original["nested"].(map[string]any)["inner"] = "changed"
 
 		// Copy should be unaffected
-		copyMap := copy.(map[string]interface{})
+		copyMap := copy.(map[string]any)
 		if copyMap["key"] != "value" {
 			t.Error("Deep copy should not be affected by original modifications")
 		}
-		if copyMap["nested"].(map[string]interface{})["inner"] != "data" {
+		if copyMap["nested"].(map[string]any)["inner"] != "data" {
 			t.Error("Deep copy nested map should not be affected")
 		}
 	})
 
 	t.Run("DeepCopyArray", func(t *testing.T) {
-		original := []interface{}{
+		original := []any{
 			1,
-			map[string]interface{}{"key": "value"},
+			map[string]any{"key": "value"},
 		}
 
-		copy := processor.deepCopyData(original)
+		copy, err := DeepCopy(original)
+		if err != nil {
+			t.Fatalf("DeepCopy() error: %v", err)
+		}
 
 		// Modify original
 		original[0] = 999
-		original[1].(map[string]interface{})["key"] = "modified"
+		original[1].(map[string]any)["key"] = "modified"
 
 		// Copy should be unaffected
-		copyArr := copy.([]interface{})
+		copyArr := copy.([]any)
 		if copyArr[0] != 1 {
 			t.Error("Deep copy array should not be affected by original modifications")
 		}
-		if copyArr[1].(map[string]interface{})["key"] != "value" {
+		if copyArr[1].(map[string]any)["key"] != "value" {
 			t.Error("Deep copy array element should not be affected")
 		}
 	})
 
 	t.Run("DeepCopyPrimitives", func(t *testing.T) {
-		tests := []interface{}{
+		tests := []any{
 			"string",
 			42,
 			int64(123456789),
@@ -786,7 +760,10 @@ func TestDeepCopy(t *testing.T) {
 		}
 
 		for _, original := range tests {
-			copy := processor.deepCopyData(original)
+			copy, err := DeepCopy(original)
+			if err != nil {
+				t.Fatalf("DeepCopy() error: %v", err)
+			}
 			if copy != original {
 				t.Errorf("Deep copy of primitive %v should return same value", original)
 			}
@@ -819,7 +796,7 @@ func TestBatchOperationsAdditional(t *testing.T) {
 
 	t.Run("BatchSetOptimized", func(t *testing.T) {
 		jsonStr := `{"a":1,"b":2}`
-		updates := map[string]interface{}{
+		updates := map[string]any{
 			"a": 10,
 			"b": 20,
 			"c": 30,
@@ -848,97 +825,6 @@ func TestBatchOperationsAdditional(t *testing.T) {
 			t.Error("Result should not contain deleted key a")
 		}
 	})
-}
-
-// ============================================================================
-// TYPE CONVERSION TESTS
-// ============================================================================
-
-// TestSmartNumberConversion tests smartNumberConversion function
-func TestSmartNumberConversion(t *testing.T) {
-	tests := []struct {
-		input interface{}
-		check func(interface{}) bool
-	}{
-		{json.Number("42"), func(v interface{}) bool { return v == 42 }},
-		{json.Number("3.14"), func(v interface{}) bool {
-			f, ok := v.(float64)
-			return ok && f > 3.13 && f < 3.15
-		}},
-		{"42", func(v interface{}) bool { return v == 42 || v == "42" }},
-		{"not a number", func(v interface{}) bool { return v == "not a number" }},
-	}
-
-	for i, tt := range tests {
-		result := smartNumberConversion(tt.input)
-		if !tt.check(result) {
-			t.Errorf("Test %d: smartNumberConversion(%v) = %v, check failed", i, tt.input, result)
-		}
-	}
-}
-
-// TestIsLargeNumber tests isLargeNumber function
-func TestIsLargeNumber(t *testing.T) {
-	tests := []struct {
-		input    string
-		expected bool
-	}{
-		{"42", false},
-		{"9999999999999999999999999999999999999999", true},
-		{"not a number", false},
-		{"1e100", false}, // Scientific notation
-		{"", false},
-	}
-
-	for _, tt := range tests {
-		result := isLargeNumber(tt.input)
-		if result != tt.expected {
-			t.Errorf("isLargeNumber(%q) = %v, want %v", tt.input, result, tt.expected)
-		}
-	}
-}
-
-// TestIsScientificNotation tests isScientificNotation function
-func TestIsScientificNotation(t *testing.T) {
-	tests := []struct {
-		input    string
-		expected bool
-	}{
-		{"1e10", true},
-		{"1E10", true},
-		{"1.5e-10", true},
-		{"100", false},
-		{"", false},
-	}
-
-	for _, tt := range tests {
-		result := isScientificNotation(tt.input)
-		if result != tt.expected {
-			t.Errorf("isScientificNotation(%q) = %v, want %v", tt.input, result, tt.expected)
-		}
-	}
-}
-
-// TestConvertFromScientific tests convertFromScientific function
-func TestConvertFromScientific(t *testing.T) {
-	tests := []struct {
-		input string
-		check func(string) bool
-	}{
-		{"1e3", func(s string) bool { return strings.Contains(s, "1000") }},
-		{"1.5e2", func(s string) bool { return strings.Contains(s, "150") }},
-		{"100", func(s string) bool { return s == "100" }},
-	}
-
-	for _, tt := range tests {
-		result, err := convertFromScientific(tt.input)
-		if err != nil {
-			t.Errorf("convertFromScientific(%q) error: %v", tt.input, err)
-		}
-		if !tt.check(result) {
-			t.Errorf("convertFromScientific(%q) = %q, check failed", tt.input, result)
-		}
-	}
 }
 
 // TestFormatNumberBoost tests FormatNumber function
@@ -991,7 +877,7 @@ func TestNumberPreservingDecoder(t *testing.T) {
 		if err != nil {
 			t.Errorf("DecodeToAny failed: %v", err)
 		}
-		m, ok := result.(map[string]interface{})
+		m, ok := result.(map[string]any)
 		if !ok {
 			t.Fatalf("Result should be map, got %T", result)
 		}
@@ -1006,7 +892,7 @@ func TestNumberPreservingDecoder(t *testing.T) {
 		if err != nil {
 			t.Errorf("DecodeToAny failed: %v", err)
 		}
-		arr, ok := result.([]interface{})
+		arr, ok := result.([]any)
 		if !ok {
 			t.Fatalf("Result should be array, got %T", result)
 		}
@@ -1026,7 +912,7 @@ func TestNumberPreservingDecoder(t *testing.T) {
 // TestPreservingUnmarshal tests preservingUnmarshal function
 func TestPreservingUnmarshal(t *testing.T) {
 	t.Run("PreserveNumbersTrue", func(t *testing.T) {
-		var result map[string]interface{}
+		var result map[string]any
 		err := preservingUnmarshal([]byte(`{"num":123}`), &result, true)
 		if err != nil {
 			t.Errorf("preservingUnmarshal failed: %v", err)
@@ -1034,7 +920,7 @@ func TestPreservingUnmarshal(t *testing.T) {
 	})
 
 	t.Run("PreserveNumbersFalse", func(t *testing.T) {
-		var result map[string]interface{}
+		var result map[string]any
 		err := preservingUnmarshal([]byte(`{"num":123}`), &result, false)
 		if err != nil {
 			t.Errorf("preservingUnmarshal failed: %v", err)
@@ -1116,7 +1002,7 @@ func TestProcessBatchBoost(t *testing.T) {
 
 // TestEncodeStreamBoost tests EncodeStream function
 func TestEncodeStreamBoost(t *testing.T) {
-	data := []map[string]interface{}{
+	data := []map[string]any{
 		{"id": 1, "name": "Item 1"},
 		{"id": 2, "name": "Item 2"},
 	}
@@ -1135,7 +1021,7 @@ func TestEncodeStreamBoost(t *testing.T) {
 
 // TestEncodeBatchBoost tests EncodeBatch function
 func TestEncodeBatchBoost(t *testing.T) {
-	pairs := map[string]interface{}{
+	pairs := map[string]any{
 		"name":  "Alice",
 		"age":   30,
 		"admin": true,
@@ -1223,14 +1109,14 @@ func TestEncodeStringSpecialChars(t *testing.T) {
 
 	tests := []struct {
 		name  string
-		input interface{}
+		input any
 	}{
-		{"StringWithNewline", map[string]interface{}{"text": "line1\nline2"}},
-		{"StringWithTab", map[string]interface{}{"text": "col1\tcol2"}},
-		{"StringWithQuotes", map[string]interface{}{"text": `say "hello"`}},
-		{"StringWithBackslash", map[string]interface{}{"text": `path\to\file`}},
-		{"StringWithUnicode", map[string]interface{}{"text": "Hello 世界"}},
-		{"StringWithControlChars", map[string]interface{}{"text": string([]byte{0x01, 0x02})}},
+		{"StringWithNewline", map[string]any{"text": "line1\nline2"}},
+		{"StringWithTab", map[string]any{"text": "col1\tcol2"}},
+		{"StringWithQuotes", map[string]any{"text": `say "hello"`}},
+		{"StringWithBackslash", map[string]any{"text": `path\to\file`}},
+		{"StringWithUnicode", map[string]any{"text": "Hello 世界"}},
+		{"StringWithControlChars", map[string]any{"text": string([]byte{0x01, 0x02})}},
 	}
 
 	for _, tt := range tests {
@@ -1240,7 +1126,7 @@ func TestEncodeStringSpecialChars(t *testing.T) {
 				t.Errorf("EncodeWithConfig failed: %v", err)
 			}
 			// Verify it can be decoded back
-			var decoded map[string]interface{}
+			var decoded map[string]any
 			err = processor.Unmarshal([]byte(result), &decoded)
 			if err != nil {
 				t.Errorf("Failed to decode result: %v", err)
@@ -1396,7 +1282,7 @@ func TestIsEmptyFunction(t *testing.T) {
 	defer processor.Close()
 
 	t.Run("EmptySlice", func(t *testing.T) {
-		data := map[string]interface{}{"items": []interface{}{}}
+		data := map[string]any{"items": []any{}}
 		result, err := processor.EncodeWithConfig(data, DefaultConfig())
 		if err != nil {
 			t.Errorf("EncodeWithConfig failed: %v", err)
@@ -1405,7 +1291,7 @@ func TestIsEmptyFunction(t *testing.T) {
 	})
 
 	t.Run("EmptyMap", func(t *testing.T) {
-		data := map[string]interface{}{"obj": map[string]interface{}{}}
+		data := map[string]any{"obj": map[string]any{}}
 		result, err := processor.EncodeWithConfig(data, DefaultConfig())
 		if err != nil {
 			t.Errorf("EncodeWithConfig failed: %v", err)
@@ -1414,7 +1300,7 @@ func TestIsEmptyFunction(t *testing.T) {
 	})
 
 	t.Run("NilValue", func(t *testing.T) {
-		data := map[string]interface{}{"value": nil}
+		data := map[string]any{"value": nil}
 		result, err := processor.EncodeWithConfig(data, DefaultConfig())
 		if err != nil {
 			t.Errorf("EncodeWithConfig failed: %v", err)
@@ -1536,7 +1422,7 @@ func TestMoreMethod(t *testing.T) {
 		decoder := NewDecoder(strings.NewReader(`{"a":1}{"b":2}`))
 
 		// First decode
-		var v1 map[string]interface{}
+		var v1 map[string]any
 		err := decoder.Decode(&v1)
 		if err != nil {
 			t.Errorf("First Decode failed: %v", err)
@@ -1548,7 +1434,7 @@ func TestMoreMethod(t *testing.T) {
 		}
 
 		// Second decode
-		var v2 map[string]interface{}
+		var v2 map[string]any
 		err = decoder.Decode(&v2)
 		if err != nil {
 			t.Errorf("Second Decode failed: %v", err)
@@ -1701,14 +1587,14 @@ func TestEncodeStringEdgeCases(t *testing.T) {
 
 	tests := []struct {
 		name  string
-		input map[string]interface{}
+		input map[string]any
 	}{
-		{"StringWithHighUnicode", map[string]interface{}{"text": "\U0001F600"}}, // Emoji
-		{"StringWithNull", map[string]interface{}{"text": string([]byte{0})}},
-		{"StringWithBell", map[string]interface{}{"text": string([]byte{7})}},
-		{"StringWithFormFeed", map[string]interface{}{"text": string([]byte{12})}},
-		{"EmptyString", map[string]interface{}{"text": ""}},
-		{"VeryLongString", map[string]interface{}{"text": strings.Repeat("a", 10000)}},
+		{"StringWithHighUnicode", map[string]any{"text": "\U0001F600"}}, // Emoji
+		{"StringWithNull", map[string]any{"text": string([]byte{0})}},
+		{"StringWithBell", map[string]any{"text": string([]byte{7})}},
+		{"StringWithFormFeed", map[string]any{"text": string([]byte{12})}},
+		{"EmptyString", map[string]any{"text": ""}},
+		{"VeryLongString", map[string]any{"text": strings.Repeat("a", 10000)}},
 	}
 
 	for _, tt := range tests {
@@ -1718,7 +1604,7 @@ func TestEncodeStringEdgeCases(t *testing.T) {
 				t.Errorf("EncodeWithConfig failed: %v", err)
 			}
 			// Verify it can be decoded back
-			var decoded map[string]interface{}
+			var decoded map[string]any
 			err = processor.Unmarshal([]byte(result), &decoded)
 			if err != nil {
 				t.Errorf("Failed to decode: %v", err)
@@ -1733,7 +1619,7 @@ func TestEncodeArrayEdgeCases(t *testing.T) {
 	defer processor.Close()
 
 	t.Run("EmptyArray", func(t *testing.T) {
-		data := map[string]interface{}{"items": []interface{}{}}
+		data := map[string]any{"items": []any{}}
 		result, err := processor.EncodeWithConfig(data, DefaultConfig())
 		if err != nil {
 			t.Errorf("EncodeWithConfig failed: %v", err)
@@ -1744,8 +1630,8 @@ func TestEncodeArrayEdgeCases(t *testing.T) {
 	})
 
 	t.Run("NestedArrays", func(t *testing.T) {
-		data := map[string]interface{}{
-			"matrix": [][]interface{}{
+		data := map[string]any{
+			"matrix": [][]any{
 				{1, 2, 3},
 				{4, 5, 6},
 			},
@@ -1760,8 +1646,8 @@ func TestEncodeArrayEdgeCases(t *testing.T) {
 	})
 
 	t.Run("MixedArray", func(t *testing.T) {
-		data := map[string]interface{}{
-			"mixed": []interface{}{1, "two", 3.0, true, nil, map[string]interface{}{"key": "value"}},
+		data := map[string]any{
+			"mixed": []any{1, "two", 3.0, true, nil, map[string]any{"key": "value"}},
 		}
 		result, err := processor.EncodeWithConfig(data, DefaultConfig())
 		if err != nil {
@@ -1777,7 +1663,7 @@ func TestEncodeMapEdgeCases(t *testing.T) {
 	defer processor.Close()
 
 	t.Run("EmptyMap", func(t *testing.T) {
-		data := map[string]interface{}{"obj": map[string]interface{}{}}
+		data := map[string]any{"obj": map[string]any{}}
 		result, err := processor.EncodeWithConfig(data, DefaultConfig())
 		if err != nil {
 			t.Errorf("EncodeWithConfig failed: %v", err)
@@ -1788,9 +1674,9 @@ func TestEncodeMapEdgeCases(t *testing.T) {
 	})
 
 	t.Run("NestedMaps", func(t *testing.T) {
-		data := map[string]interface{}{
-			"level1": map[string]interface{}{
-				"level2": map[string]interface{}{
+		data := map[string]any{
+			"level1": map[string]any{
+				"level2": map[string]any{
 					"level3": "deep",
 				},
 			},
@@ -1905,13 +1791,13 @@ func TestDecodeEdgeCases(t *testing.T) {
 	t.Run("DecodeIntoInterface", func(t *testing.T) {
 		decoder := NewDecoder(strings.NewReader(`{"key": "value"}`))
 
-		var result interface{}
+		var result any
 		err := decoder.Decode(&result)
 		if err != nil {
 			t.Errorf("Decode failed: %v", err)
 		}
 
-		m, ok := result.(map[string]interface{})
+		m, ok := result.(map[string]any)
 		if !ok {
 			t.Fatal("Result should be a map")
 		}
@@ -1923,9 +1809,9 @@ func TestDecodeEdgeCases(t *testing.T) {
 	t.Run("MultipleDecodes", func(t *testing.T) {
 		decoder := NewDecoder(strings.NewReader(`1 "two" 3.0`))
 
-		var results []interface{}
+		var results []any
 		for decoder.More() {
-			var v interface{}
+			var v any
 			err := decoder.Decode(&v)
 			if err != nil {
 				break
@@ -1948,7 +1834,7 @@ func TestEncodeWithOptions(t *testing.T) {
 	config.Pretty = true
 	config.Indent = "    "
 
-	data := map[string]interface{}{"key": "value"}
+	data := map[string]any{"key": "value"}
 	result, err := processor.EncodeWithOptions(data, config)
 	if err != nil {
 		t.Errorf("EncodeWithOptions failed: %v", err)
@@ -1965,7 +1851,7 @@ func TestEncodeStreamWithOptions(t *testing.T) {
 	defer processor.Close()
 
 	config := DefaultConfig()
-	data := []map[string]interface{}{
+	data := []map[string]any{
 		{"id": 1},
 		{"id": 2},
 	}
@@ -2042,7 +1928,7 @@ func TestParseBoolean(t *testing.T) {
 func TestParseNull(t *testing.T) {
 	t.Run("ParseNullValue", func(t *testing.T) {
 		decoder := NewDecoder(strings.NewReader(`null`))
-		var result interface{}
+		var result any
 		err := decoder.Decode(&result)
 		if err != nil {
 			t.Errorf("Decode failed: %v", err)
@@ -2198,10 +2084,10 @@ func TestIsEmptyComprehensive(t *testing.T) {
 
 	tests := []struct {
 		name  string
-		input interface{}
+		input any
 	}{
-		{"EmptySlice", []interface{}{}},
-		{"EmptyMap", map[string]interface{}{}},
+		{"EmptySlice", []any{}},
+		{"EmptyMap", map[string]any{}},
 		{"EmptyString", ""},
 		{"ZeroInt", 0},
 		{"ZeroFloat", 0.0},
@@ -2211,7 +2097,7 @@ func TestIsEmptyComprehensive(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			data := map[string]interface{}{"value": tt.input}
+			data := map[string]any{"value": tt.input}
 			result, err := processor.EncodeWithConfig(data, DefaultConfig())
 			if err != nil {
 				t.Errorf("EncodeWithConfig failed: %v", err)
@@ -2262,14 +2148,14 @@ func TestEncodeNumberEdgeCases(t *testing.T) {
 
 	tests := []struct {
 		name  string
-		input interface{}
+		input any
 	}{
-		{"LargeInt", map[string]interface{}{"value": 9223372036854775807}},
-		{"SmallInt", map[string]interface{}{"value": -9223372036854775808}},
-		{"LargeFloat", map[string]interface{}{"value": 1.7976931348623157e+308}},
-		{"SmallFloat", map[string]interface{}{"value": -1.7976931348623157e+308}},
-		{"NegativeZero", map[string]interface{}{"value": -0.0}},
-		{"VerySmallFloat", map[string]interface{}{"value": 1e-300}},
+		{"LargeInt", map[string]any{"value": 9223372036854775807}},
+		{"SmallInt", map[string]any{"value": -9223372036854775808}},
+		{"LargeFloat", map[string]any{"value": 1.7976931348623157e+308}},
+		{"SmallFloat", map[string]any{"value": -1.7976931348623157e+308}},
+		{"NegativeZero", map[string]any{"value": -0.0}},
+		{"VerySmallFloat", map[string]any{"value": 1e-300}},
 	}
 
 	for _, tt := range tests {
@@ -2299,7 +2185,7 @@ func TestCustomEncoderEdgeCases(t *testing.T) {
 		}
 
 		encoder := newCustomEncoder(config)
-		data := map[string]interface{}{
+		data := map[string]any{
 			"html": "<script>",
 			"num":  42,
 		}

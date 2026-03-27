@@ -23,21 +23,6 @@ import (
 // Test Helper Functions
 // ============================================================================
 
-// contains checks if a string contains a substring
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(s) > len(substr) && indexOf(s, substr) >= 0)
-}
-
-// indexOf finds the index of a substring
-func indexOf(s, substr string) int {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return i
-		}
-	}
-	return -1
-}
-
 // captureStdout captures output written to stdout
 func captureStdout(f func()) string {
 	old := os.Stdout
@@ -144,38 +129,6 @@ func generateArrayItems(count int) string {
 // ============================================================================
 // Benchmark Tests
 // ============================================================================
-
-// Benchmark_ArrayHelper_CompactArray benchmarks the compactArray method
-func Benchmark_ArrayHelper_CompactArray(b *testing.B) {
-	ah := &arrayHelper{}
-	arr := make([]any, 1000)
-	for i := 0; i < 1000; i++ {
-		if i%3 == 0 {
-			arr[i] = nil
-		} else {
-			arr[i] = i
-		}
-	}
-
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		ah.compactArray(arr)
-	}
-}
-
-// Benchmark_ArrayHelper_PerformSlice benchmarks the performSlice method
-func Benchmark_ArrayHelper_PerformSlice(b *testing.B) {
-	ah := &arrayHelper{}
-	arr := make([]any, 1000)
-	for i := 0; i < 1000; i++ {
-		arr[i] = i
-	}
-
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		ah.performSlice(arr, 100, 900, 1)
-	}
-}
 
 func BenchmarkDelete(b *testing.B) {
 	jsonStr := `{"user": {"name": "Alice", "age": 30, "email": "alice@example.com"}}`
@@ -366,302 +319,6 @@ func TestArrayExtensionNeededError(t *testing.T) {
 	expected := "array extension needed: current length 5, required length 10 for slice [0:10]"
 	if err.Error() != expected {
 		t.Errorf("Error() = %q, want %q", err.Error(), expected)
-	}
-}
-
-// TestarrayHelper_ClampIndex tests the clampIndex method
-func Test_ArrayHelper_ClampIndex(t *testing.T) {
-	ah := &arrayHelper{}
-
-	tests := []struct {
-		name     string
-		index    int
-		length   int
-		expected int
-	}{
-		{"Within bounds", 2, 5, 2},
-		{"At lower bound", 0, 5, 0},
-		{"At upper bound", 5, 5, 5},
-		{"Below lower bound", -1, 5, 0},
-		{"Above upper bound", 10, 5, 5},
-		{"Large negative", -100, 5, 0},
-		{"Large positive", 1000, 5, 5},
-		{"Zero length", 0, 0, 0},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := ah.clampIndex(tt.index, tt.length)
-			if result != tt.expected {
-				t.Errorf("clampIndex(%d, %d) = %d, want %d", tt.index, tt.length, result, tt.expected)
-			}
-		})
-	}
-}
-
-// TestarrayHelper_CompactArray tests the compactArray method
-func Test_ArrayHelper_CompactArray(t *testing.T) {
-	ah := &arrayHelper{}
-
-	tests := []struct {
-		name     string
-		input    []any
-		expected int
-	}{
-		{"Empty array", []any{}, 0},
-		{"No nil values", []any{1, 2, 3}, 3},
-		{"With nil values", []any{1, nil, 3, nil}, 2},
-		{"All nil", []any{nil, nil, nil}, 0},
-		{"Nil at start", []any{nil, 1, 2}, 2},
-		{"Nil at end", []any{1, 2, nil}, 2},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := ah.compactArray(tt.input)
-			if len(result) != tt.expected {
-				t.Errorf("compactArray() returned length %d, want %d", len(result), tt.expected)
-			}
-			for _, item := range result {
-				if item == nil || IsDeletedMarker(item) {
-					t.Errorf("compactArray() result contains nil or deleted marker")
-				}
-			}
-		})
-	}
-}
-
-// TestarrayHelper_ExtendArray tests the extendArray method
-func Test_ArrayHelper_ExtendArray(t *testing.T) {
-	ah := &arrayHelper{}
-
-	tests := []struct {
-		name           string
-		input          []any
-		targetLength   int
-		expectExtend   bool
-		expectedLength int
-	}{
-		{"Already longer", []any{1, 2, 3}, 2, false, 3},
-		{"Same length", []any{1, 2, 3}, 3, false, 3},
-		{"Need extension", []any{1, 2}, 5, true, 5},
-		{"Empty to non-empty", []any{}, 3, true, 3},
-		{"Single to multiple", []any{1}, 5, true, 5},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := ah.extendArray(tt.input, tt.targetLength)
-			if len(result) != tt.expectedLength {
-				t.Errorf("extendArray() returned length %d, want %d", len(result), tt.expectedLength)
-			}
-			if tt.expectExtend && len(result) <= len(tt.input) {
-				t.Errorf("extendArray() should have extended array")
-			}
-		})
-	}
-}
-
-// TestarrayHelper_GetElement tests the getElement method
-func Test_ArrayHelper_GetElement(t *testing.T) {
-	ah := &arrayHelper{}
-	arr := []any{"a", "b", "c", "d", "e"}
-
-	tests := []struct {
-		name        string
-		index       int
-		expected    any
-		expectFound bool
-	}{
-		{"Valid positive index", 1, "b", true},
-		{"First element", 0, "a", true},
-		{"Last element", 4, "e", true},
-		{"Negative index (last)", -1, "e", true},
-		{"Negative index (first)", -5, "a", true},
-		{"Out of bounds", 10, nil, false},
-		{"Out of bounds (negative)", -10, nil, false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result, found := ah.getElement(arr, tt.index)
-			if found != tt.expectFound {
-				t.Errorf("getElement() found = %v, want %v", found, tt.expectFound)
-			}
-			if found && result != tt.expected {
-				t.Errorf("getElement() = %v, want %v", result, tt.expected)
-			}
-		})
-	}
-}
-
-// TestarrayHelper_NormalizeIndex tests the normalizeIndex method
-func Test_ArrayHelper_NormalizeIndex(t *testing.T) {
-	ah := &arrayHelper{}
-
-	tests := []struct {
-		name     string
-		index    int
-		length   int
-		expected int
-	}{
-		{"Positive index", 2, 5, 2},
-		{"Negative index (last)", -1, 5, 4},
-		{"Negative index (second to last)", -2, 5, 3},
-		{"Zero index", 0, 5, 0},
-		{"First element", -5, 5, 0},
-		{"Large positive index", 100, 5, 100},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := ah.normalizeIndex(tt.index, tt.length)
-			if result != tt.expected {
-				t.Errorf("normalizeIndex(%d, %d) = %d, want %d", tt.index, tt.length, result, tt.expected)
-			}
-		})
-	}
-}
-
-// TestarrayHelper_ParseArrayIndex tests the parseArrayIndex method
-func Test_ArrayHelper_ParseArrayIndex(t *testing.T) {
-	ah := &arrayHelper{}
-
-	tests := []struct {
-		name     string
-		input    string
-		expected int
-	}{
-		{"Valid positive index", "[5]", 5},
-		{"Valid negative index", "[-3]", -3},
-		{"Index without brackets", "10", 10},
-		{"Empty string", "", -999999},
-		{"Invalid index", "abc", -999999},
-		{"Index with spaces", "[ 7 ]", 7},
-		{"Index with tabs", "[\t8\t]", 8},
-		{"Negative index without brackets", "-2", -2},
-		{"Zero index", "[0]", 0},
-		{"Large positive index", "[999999]", 999999},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := ah.parseArrayIndex(tt.input)
-			if result != tt.expected {
-				t.Errorf("parseArrayIndex(%q) = %d, want %d", tt.input, result, tt.expected)
-			}
-		})
-	}
-}
-
-// TestarrayHelper_PerformSlice tests the performSlice method
-func Test_ArrayHelper_PerformSlice(t *testing.T) {
-	ah := &arrayHelper{}
-	arr := []any{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}
-
-	tests := []struct {
-		name     string
-		start    int
-		end      int
-		step     int
-		expected []any
-	}{
-		{"Simple slice", 2, 5, 1, []any{2, 3, 4}},
-		{"From beginning", 0, 3, 1, []any{0, 1, 2}},
-		{"To end", 7, 10, 1, []any{7, 8, 9}},
-		{"Full slice", 0, 10, 1, []any{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}},
-		{"Empty slice", 5, 5, 1, []any{}},
-		{"Step of 2", 0, 10, 2, []any{0, 2, 4, 6, 8}},
-		{"Step of 3", 0, 9, 3, []any{0, 3, 6}},
-		{"Negative start (normalized)", -3, 10, 1, []any{7, 8, 9}},
-		{"Negative end (normalized)", 0, -3, 1, []any{0, 1, 2, 3, 4, 5, 6}},
-		{"Zero step (empty)", 0, 5, 0, []any{}},
-		{"Reverse step partial", 8, 2, -2, []any{8, 6, 4}},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := ah.performSlice(arr, tt.start, tt.end, tt.step)
-			if !slicesEqual(result, tt.expected) {
-				t.Errorf("performSlice(%d, %d, %d) = %v, want %v", tt.start, tt.end, tt.step, result, tt.expected)
-			}
-		})
-	}
-}
-
-// TestarrayHelper_PerformSlice_EmptyArray tests performSlice with empty array
-func Test_ArrayHelper_PerformSlice_EmptyArray(t *testing.T) {
-	ah := &arrayHelper{}
-	emptyArr := []any{}
-
-	result := ah.performSlice(emptyArr, 0, 5, 1)
-	if len(result) != 0 {
-		t.Errorf("performSlice on empty array should return empty, got %v", result)
-	}
-}
-
-// TestarrayHelper_SetElement tests the setElement method
-func Test_ArrayHelper_SetElement(t *testing.T) {
-	ah := &arrayHelper{}
-
-	tests := []struct {
-		name        string
-		arr         []any
-		index       int
-		value       any
-		expectOK    bool
-		expectIndex int
-	}{
-		{"Valid index", []any{1, 2, 3}, 1, "x", true, 1},
-		{"First element", []any{1, 2, 3}, 0, "x", true, 0},
-		{"Last element", []any{1, 2, 3}, 2, "x", true, 2},
-		{"Negative index", []any{1, 2, 3}, -1, "x", true, 2},
-		{"Out of bounds", []any{1, 2, 3}, 10, "x", false, -1},
-		{"Negative out of bounds", []any{1, 2, 3}, -10, "x", false, -1},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			arrCopy := make([]any, len(tt.arr))
-			copy(arrCopy, tt.arr)
-
-			result := ah.setElement(arrCopy, tt.index, tt.value)
-			if result != tt.expectOK {
-				t.Errorf("setElement() = %v, want %v", result, tt.expectOK)
-			}
-			if tt.expectOK && arrCopy[tt.expectIndex] != tt.value {
-				t.Errorf("setElement() did not set value at index %d", tt.expectIndex)
-			}
-		})
-	}
-}
-
-// TestarrayHelper_ValidateBounds tests the validateBounds method
-func Test_ArrayHelper_ValidateBounds(t *testing.T) {
-	ah := &arrayHelper{}
-
-	tests := []struct {
-		name     string
-		index    int
-		length   int
-		expected bool
-	}{
-		{"Valid index", 2, 5, true},
-		{"First index", 0, 5, true},
-		{"Last index", 4, 5, true},
-		{"Out of bounds (positive)", 5, 5, false},
-		{"Out of bounds (large positive)", 100, 5, false},
-		{"Negative index", -1, 5, false},
-		{"Empty array", 0, 0, false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := ah.validateBounds(tt.index, tt.length)
-			if result != tt.expected {
-				t.Errorf("validateBounds(%d, %d) = %v, want %v", tt.index, tt.length, result, tt.expected)
-			}
-		})
 	}
 }
 
@@ -1247,7 +904,7 @@ func TestBufferCompatibility(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Indent failed: %v", err)
 	}
-	if !contains(indentBuf.String(), "\n") {
+	if !strings.Contains(indentBuf.String(), "\n") {
 		t.Error("Expected indented output")
 	}
 
@@ -1259,10 +916,10 @@ func TestBufferCompatibility(t *testing.T) {
 	escaped := escapeBuf.String()
 	// HTML entities should be escaped
 	// Standard library escapes < to \u003c, > to \u003e, & to \u0026
-	if !contains(escaped, "\\u003c") && !contains(escaped, "\\u003e") && !contains(escaped, "\\u0026") {
+	if !strings.Contains(escaped, "\\u003c") && !strings.Contains(escaped, "\\u003e") && !strings.Contains(escaped, "\\u0026") {
 		t.Logf("Actual escaped output: %s", escaped)
 		// Check that raw HTML characters are not present
-		if contains(escaped, "<div>") {
+		if strings.Contains(escaped, "<div>") {
 			t.Error("Expected HTML to be escaped but found raw <div>")
 		}
 	}
@@ -1295,10 +952,10 @@ func TestCompactBuffer(t *testing.T) {
 	}
 
 	result := buf.String()
-	if contains(result, "\n") || contains(result, "  ") {
+	if strings.Contains(result, "\n") || strings.Contains(result, "  ") {
 		t.Errorf("CompactBuffer should remove whitespace, got: %s", result)
 	}
-	if !contains(result, `"name"`) || !contains(result, `"Alice"`) {
+	if !strings.Contains(result, `"name"`) || !strings.Contains(result, `"Alice"`) {
 		t.Errorf("CompactBuffer lost data, got: %s", result)
 	}
 }
@@ -1404,7 +1061,7 @@ func TestConfig_Clone(t *testing.T) {
 
 	cloned := original.Clone()
 
-	// Values should be equal (	// Can't compare structs directly with !=, use reflect.DeepEqual for simple value comparison
+	// Values should be equal — use reflect.DeepEqual for struct comparison
 	if !reflect.DeepEqual(original, cloned) {
 		t.Error("Clone should return equal values")
 	}
@@ -1802,12 +1459,12 @@ func TestDeleteWithCleanupNullsOption(t *testing.T) {
 			}
 
 			for _, str := range tt.contains {
-				if !contains(result, str) {
+				if !strings.Contains(result, str) {
 					t.Errorf("Expected result to contain '%s'", str)
 				}
 			}
 			for _, str := range tt.excludes {
-				if contains(result, str) {
+				if strings.Contains(result, str) {
 					t.Errorf("Expected result to not contain '%s'", str)
 				}
 			}
@@ -1857,77 +1514,8 @@ func TestDelim_TypeMethods(t *testing.T) {
 	}
 }
 
-// TestDetectConsecutiveExtractions tests detection of consecutive extraction segments
-func TestDetectConsecutiveExtractions(t *testing.T) {
-	processor := MustNew()
-	defer processor.Close()
-
-	tests := []struct {
-		name                string
-		segments            []PathSegment
-		expectedGroupCount  int
-		expectedSegmentsIn0 int
-	}{
-		{
-			name: "single extraction",
-			segments: []PathSegment{
-				{Type: internal.PropertySegment, Key: "users"},
-				{Type: internal.ExtractSegment, Key: "name"},
-			},
-			expectedGroupCount:  1,
-			expectedSegmentsIn0: 1,
-		},
-		{
-			name: "consecutive extractions",
-			segments: []PathSegment{
-				{Type: internal.PropertySegment, Key: "data"},
-				{Type: internal.ExtractSegment, Key: "users"},
-				{Type: internal.ExtractSegment, Key: "name"},
-			},
-			expectedGroupCount:  1,
-			expectedSegmentsIn0: 2,
-		},
-		{
-			name: "separated extractions",
-			segments: []PathSegment{
-				{Type: internal.ExtractSegment, Key: "users"},
-				{Type: internal.PropertySegment, Key: "data"},
-				{Type: internal.ExtractSegment, Key: "name"},
-			},
-			expectedGroupCount:  2,
-			expectedSegmentsIn0: 1,
-		},
-		{
-			name:                "no extractions",
-			segments:            []PathSegment{{Type: internal.PropertySegment, Key: "user"}},
-			expectedGroupCount:  0,
-			expectedSegmentsIn0: 0,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			groups := processor.detectConsecutiveExtractions(tt.segments)
-			if len(groups) != tt.expectedGroupCount {
-				t.Errorf("detectConsecutiveExtractions() returned %d groups; want %d", len(groups), tt.expectedGroupCount)
-			}
-			if tt.expectedGroupCount > 0 && len(groups[0].Segments) != tt.expectedSegmentsIn0 {
-				t.Errorf("First group has %d segments; want %d", len(groups[0].Segments), tt.expectedSegmentsIn0)
-			}
-		})
-	}
-}
-
 // TestDistributedOperationPath tests distributed operation patterns
 func TestDistributedOperationPath(t *testing.T) {
-	_ = `{
-		"data": [
-			{"items": [1, 2, 3]},
-			{"items": [4, 5, 6]},
-			{"items": [7, 8, 9]}
-		]
-	}`
-
 	processor := MustNew()
 	defer processor.Close()
 
@@ -1982,10 +1570,10 @@ func TestEncodeBatch(t *testing.T) {
 	}
 
 	// Check that it's a JSON object
-	if !contains(result, "{") || !contains(result, "}") {
+	if !strings.Contains(result, "{") || !strings.Contains(result, "}") {
 		t.Error("Expected object wrapper")
 	}
-	if !contains(result, "user1") || !contains(result, "user2") {
+	if !strings.Contains(result, "user1") || !strings.Contains(result, "user2") {
 		t.Error("Expected keys to be present")
 	}
 }
@@ -2022,13 +1610,13 @@ func TestEncodeFields(t *testing.T) {
 	}
 
 	// Check that only specified fields are present
-	if !contains(result, "name") || !contains(result, "email") {
+	if !strings.Contains(result, "name") || !strings.Contains(result, "email") {
 		t.Error("Expected specified fields to be present")
 	}
-	if contains(result, "password") {
+	if strings.Contains(result, "password") {
 		t.Error("Expected password to be excluded")
 	}
-	if contains(result, "age") {
+	if strings.Contains(result, "age") {
 		t.Error("Expected age to be excluded")
 	}
 }
@@ -2052,7 +1640,7 @@ func TestEncodeStream(t *testing.T) {
 			pretty:      false,
 			expectError: false,
 			validate: func(t *testing.T, result string) {
-				if !contains(result, "[") || !contains(result, "]") {
+				if !strings.Contains(result, "[") || !strings.Contains(result, "]") {
 					t.Error("Expected array wrapper")
 				}
 			},
@@ -2062,7 +1650,7 @@ func TestEncodeStream(t *testing.T) {
 			pretty:      true,
 			expectError: false,
 			validate: func(t *testing.T, result string) {
-				if !contains(result, "\n") {
+				if !strings.Contains(result, "\n") {
 					t.Error("Expected pretty output with newlines")
 				}
 			},
@@ -2531,7 +2119,7 @@ func TestCompactString(t *testing.T) {
 	}
 
 	// Check that it's compact
-	if contains(result, "\n") {
+	if strings.Contains(result, "\n") {
 		t.Error("Expected compact output to not contain newlines")
 	}
 }
@@ -2546,10 +2134,10 @@ func TestFormatPretty(t *testing.T) {
 	}
 
 	// Check for indentation
-	if !contains(result, "\n") {
+	if !strings.Contains(result, "\n") {
 		t.Error("Expected formatted output to contain newlines")
 	}
-	if !contains(result, "  ") {
+	if !strings.Contains(result, "  ") {
 		t.Error("Expected formatted output to contain indentation")
 	}
 }
@@ -3262,7 +2850,7 @@ func TestHTMLEscapeBuffer(t *testing.T) {
 
 	result := buf.String()
 	// Check that HTML characters are escaped
-	if contains(result, "<script>") {
+	if strings.Contains(result, "<script>") {
 		t.Errorf("HTMLEscapeBuffer should escape HTML, got: %s", result)
 	}
 }
@@ -3613,10 +3201,10 @@ func TestIndentBuffer(t *testing.T) {
 	}
 
 	result := buf.String()
-	if !contains(result, "\n") {
+	if !strings.Contains(result, "\n") {
 		t.Errorf("IndentBuffer should add newlines, got: %s", result)
 	}
-	if !contains(result, "  ") {
+	if !strings.Contains(result, "  ") {
 		t.Errorf("IndentBuffer should add indentation, got: %s", result)
 	}
 }
@@ -3819,8 +3407,8 @@ func TestIsPrimitiveType(t *testing.T) {
 	}
 }
 
-// TestIsZeroValue tests the isZeroValue helper function
-func TestIsZeroValue(t *testing.T) {
+// TestIsEmptyOrZero tests the IsEmptyOrZero exported function
+func TestIsEmptyOrZero(t *testing.T) {
 	tests := []struct {
 		name     string
 		input    any
@@ -3846,9 +3434,9 @@ func TestIsZeroValue(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := isZeroValue(tt.input)
+			result := IsEmptyOrZero(tt.input)
 			if result != tt.expected {
-				t.Errorf("isZeroValue(%v) = %v; want %v", tt.input, result, tt.expected)
+				t.Errorf("IsEmptyOrZero(%v) = %v; want %v", tt.input, result, tt.expected)
 			}
 		})
 	}
@@ -4851,7 +4439,7 @@ func TestPrintE(t *testing.T) {
 				t.Errorf("PrintE returned unexpected error: %v", err)
 			}
 		})
-		if !contains(output, "test") || !contains(output, "value") {
+		if !strings.Contains(output, "test") || !strings.Contains(output, "value") {
 			t.Errorf("PrintE output = %s; should contain test and value", output)
 		}
 	})
@@ -4885,7 +4473,7 @@ func TestPrintPrettyE(t *testing.T) {
 				t.Errorf("PrintPrettyE returned unexpected error: %v", err)
 			}
 		})
-		if !contains(output, "\n") {
+		if !strings.Contains(output, "\n") {
 			t.Errorf("PrintPrettyE output should contain newlines, got: %s", output)
 		}
 	})
@@ -6244,7 +5832,7 @@ func TestSetMultiple(t *testing.T) {
 			},
 			expectError: false,
 			validate: func(t *testing.T, result string) {
-				if !contains(result, "Bob") {
+				if !strings.Contains(result, "Bob") {
 					t.Error("Expected name to be updated to Bob")
 				}
 			},
@@ -6254,7 +5842,7 @@ func TestSetMultiple(t *testing.T) {
 			updates:     map[string]any{},
 			expectError: false,
 			validate: func(t *testing.T, result string) {
-				if !contains(result, "Alice") {
+				if !strings.Contains(result, "Alice") {
 					t.Error("Expected original data to remain")
 				}
 			},
@@ -6266,7 +5854,7 @@ func TestSetMultiple(t *testing.T) {
 			},
 			expectError: false,
 			validate: func(t *testing.T, result string) {
-				if !contains(result, "Charlie") {
+				if !strings.Contains(result, "Charlie") {
 					t.Error("Expected name to be updated to Charlie")
 				}
 			},
@@ -6308,7 +5896,7 @@ func TestSetMultipleWithCreatePaths(t *testing.T) {
 	}
 
 	for _, str := range []string{"Alice", "alice@example.com", "dark"} {
-		if !contains(result, str) {
+		if !strings.Contains(result, str) {
 			t.Errorf("Expected result to contain '%s'", str)
 		}
 	}
@@ -6326,7 +5914,7 @@ func TestSetWithCreatePaths(t *testing.T) {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 
-	if !contains(result, "Alice") {
+	if !strings.Contains(result, "Alice") {
 		t.Error("Expected name to be set")
 	}
 
@@ -6336,7 +5924,7 @@ func TestSetWithCreatePaths(t *testing.T) {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 
-	if !contains(result, "age") {
+	if !strings.Contains(result, "age") {
 		t.Error("Expected nested age to be set")
 	}
 }
@@ -6466,7 +6054,7 @@ func TestStandardLibraryCompatibility(t *testing.T) {
 	if err != nil {
 		t.Fatalf("MarshalIndent failed: %v", err)
 	}
-	if !contains(string(indented), "\n") {
+	if !strings.Contains(string(indented), "\n") {
 		t.Error("Expected indented output to contain newlines")
 	}
 

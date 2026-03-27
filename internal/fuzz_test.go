@@ -25,19 +25,19 @@ func FuzzIsValidJSONNumber(f *testing.F) {
 		"1e-10",
 		"1.5e+10",
 		"-1.5e-10",
-		"",          // empty
-		"-",         // just minus
-		"01",        // leading zero
-		".5",        // no integer part
-		"1.",        // no decimal part
-		"1e",        // no exponent
-		"1e+",       // no exponent after sign
-		"1e-",       // no exponent after sign
-		"abc",       // not a number
-		"12.34.56",  // multiple decimals
-		"++123",     // double plus
-		"--123",     // double minus
-		"1.2.3e4",   // invalid structure
+		"",         // empty
+		"-",        // just minus
+		"01",       // leading zero
+		".5",       // no integer part
+		"1.",       // no decimal part
+		"1e",       // no exponent
+		"1e+",      // no exponent after sign
+		"1e-",      // no exponent after sign
+		"abc",      // not a number
+		"12.34.56", // multiple decimals
+		"++123",    // double plus
+		"--123",    // double minus
+		"1.2.3e4",  // invalid structure
 		"9999999999999999999999999999999999999999", // very long number
 	}
 
@@ -115,17 +115,17 @@ func FuzzParsePath(f *testing.F) {
 		"data{key}.sub",
 		"a.b.c.d.e",
 		"arr[0][1][2]",
-		"",           // empty
-		".",          // just dot
-		"..",         // double dot
-		"[]",         // empty brackets
-		"{}",         // empty braces
-		"[invalid]",  // invalid index
-		"{invalid",   // unclosed brace
-		"user[]",     // empty index
-		"a[b]c",      // mixed
+		"",                   // empty
+		".",                  // just dot
+		"..",                 // double dot
+		"[]",                 // empty brackets
+		"{}",                 // empty braces
+		"[invalid]",          // invalid index
+		"{invalid",           // unclosed brace
+		"user[]",             // empty index
+		"a[b]c",              // mixed
 		"/json/pointer/path", // JSON pointer style
-		"中文.路径",    // Unicode
+		"中文.路径",              // Unicode
 	}
 
 	for _, seed := range seeds {
@@ -313,15 +313,20 @@ func FuzzNormalizePathSeparators(f *testing.F) {
 // FUZZ TESTS FOR DATA OPERATIONS
 // ============================================================================
 
-// FuzzMergeObjects tests MergeObjects with nil handling
+// FuzzMergeObjects tests MergeObjects with fuzz-driven data.
 func FuzzMergeObjects(f *testing.F) {
-	// This is more of a unit test, but we can verify it handles edge cases
-	f.Fuzz(func(t *testing.T, _ byte) {
-		// Test various combinations
-		obj1 := map[string]any{"a": 1}
-		obj2 := map[string]any{"b": 2}
+	f.Fuzz(func(t *testing.T, data []byte) {
+		if len(data) < 2 {
+			return
+		}
 
-		// Should not panic
+		// Use fuzz input to construct test objects.
+		// Split data into two halves for obj1/obj2 values.
+		mid := len(data) / 2
+		obj1 := map[string]any{"key": string(data[:mid])}
+		obj2 := map[string]any{"key": string(data[mid:])}
+
+		// Should not panic on any input
 		_ = MergeObjects(obj1, obj2)
 		_ = MergeObjects(nil, obj2)
 		_ = MergeObjects(obj1, nil)

@@ -94,9 +94,18 @@ type Encoder struct {
 // NewEncoder returns a new encoder that writes to w.
 // This function is fully compatible with encoding/json.NewEncoder.
 func NewEncoder(w io.Writer) *Encoder {
+	p := getDefaultProcessor()
+	if p == nil {
+		// SAFETY: Return encoder with nil processor; Encode will return error
+		return &Encoder{
+			w:          w,
+			processor:  nil,
+			escapeHTML: true,
+		}
+	}
 	return &Encoder{
 		w:          w,
-		processor:  getDefaultProcessor(),
+		processor:  p,
 		escapeHTML: true, // Default behavior matches encoding/json
 	}
 }
@@ -111,9 +120,10 @@ func NewEncoder(w io.Writer) *Encoder {
 //	encoder := json.NewEncoderWithOpts(writer, cfg)
 //	err := encoder.Encode(data)
 func NewEncoderWithOpts(w io.Writer, opts *Config) *Encoder {
+	p := getDefaultProcessor()
 	enc := &Encoder{
 		w:          w,
-		processor:  getDefaultProcessor(),
+		processor:  p,
 		escapeHTML: true, // Default behavior matches encoding/json
 	}
 	if opts != nil {
@@ -131,6 +141,11 @@ func NewEncoderWithOpts(w io.Writer, opts *Config) *Encoder {
 // See the documentation for Marshal for details about the
 // conversion of Go values to JSON.
 func (enc *Encoder) Encode(v any) error {
+	// SAFETY: Check for nil processor
+	if enc.processor == nil {
+		return ErrInternalError
+	}
+
 	// Create encoding config based on encoder settings
 	config := DefaultConfig()
 	config.EscapeHTML = enc.escapeHTML
@@ -186,15 +201,21 @@ type Decoder struct {
 // NewDecoder returns a new decoder that reads from r.
 // This function is fully compatible with encoding/json.NewDecoder.
 func NewDecoder(r io.Reader) *Decoder {
+	p := getDefaultProcessor()
 	return &Decoder{
 		r:         r,
 		buf:       bufio.NewReader(r),
-		processor: getDefaultProcessor(),
+		processor: p,
 	}
 }
 
 // Decode reads the next JSON-encoded value from its input and stores it in v.
 func (dec *Decoder) Decode(v any) error {
+	// SAFETY: Check for nil processor
+	if dec.processor == nil {
+		return ErrInternalError
+	}
+
 	if v == nil {
 		return &InvalidUnmarshalError{Type: nil}
 	}
@@ -212,48 +233,29 @@ func (dec *Decoder) Decode(v any) error {
 
 	// Handle UseNumber directly for compatibility
 	if dec.useNumber {
-		// Use NumberPreservingDecoder for UseNumber functionality
-		decoder := newNumberPreservingDecoder(true)
-		result, err := decoder.DecodeToAny(string(data))
-		if err != nil {
-			return err
+		rv = rv.Elem()
+		switch rv.Kind() {
+		case reflect.Interface, reflect.Map, reflect.Slice:
+			// For interface{}, map[string]any, and []any targets,
+			// use NumberPreservingDecoder to convert json.Number → Number.
+			decoder := newNumberPreservingDecoder(true)
+			result, err := decoder.DecodeToAny(string(data))
+			if err != nil {
+				return err
+			}
+			rv.Set(reflect.ValueOf(result))
+			return nil
+		default:
+			// For concrete struct types, decode directly using UseNumber
+			// to avoid the intermediate any → marshal/unmarshal round-trip.
+			inner := json.NewDecoder(bytes.NewReader(data))
+			inner.UseNumber()
+			return inner.Decode(v)
 		}
-
-		// Use reflection to assign the result properly
-		return dec.assignResult(result, v)
 	}
 
 	// Use the processor's Unmarshal method for normal cases
 	return dec.processor.Unmarshal(data, v)
-}
-
-func (dec *Decoder) assignResult(result any, v any) error {
-	rv := reflect.ValueOf(v)
-	if rv.Kind() != reflect.Ptr || rv.IsNil() {
-		return fmt.Errorf("json: Unmarshal(non-pointer %T)", v)
-	}
-
-	rv = rv.Elem()
-	resultValue := reflect.ValueOf(result)
-
-	// If the target is any (interface{}), assign directly
-	if rv.Kind() == reflect.Interface {
-		rv.Set(resultValue)
-		return nil
-	}
-
-	// For other types, try to assign if compatible
-	if resultValue.Type().AssignableTo(rv.Type()) {
-		rv.Set(resultValue)
-		return nil
-	}
-
-	// If not directly assignable, fall back to marshal/unmarshal
-	jsonBytes, err := Marshal(result)
-	if err != nil {
-		return err
-	}
-	return json.Unmarshal(jsonBytes, v)
 }
 
 func (dec *Decoder) UseNumber() {

@@ -23,7 +23,7 @@ import (
 // - StreamArrayChunked for batch processing
 // - StreamArrayFilter, StreamArrayMap, StreamArrayReduce
 // - NDJSONProcessor for line-delimited JSON files
-// - LazyJSON for deferred parsing
+// - LazyParser for deferred parsing
 // - LargeFileProcessor for memory-efficient file handling
 //
 // Run: go run -tags=example examples/13_streaming_ndjson.go
@@ -305,10 +305,10 @@ func demonstrateLazyJSON() {
 	fmt.Println("\n5. Lazy JSON (Deferred Parsing)")
 	fmt.Println("--------------------------------")
 
-	// LazyJSON defers parsing until a value is accessed
+	// LazyParser defers parsing until a value is accessed
 	rawJSON := []byte(`{"user": {"name": "Alice", "age": 30}, "active": true}`)
 
-	lazy := json.NewLazyJSON(rawJSON)
+	lazy := json.NewLazyParser(rawJSON)
 
 	// Check if parsed (not yet)
 	fmt.Printf("   Is parsed (before access): %v\n", lazy.IsParsed())

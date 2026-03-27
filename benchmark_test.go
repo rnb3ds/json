@@ -392,17 +392,16 @@ func BenchmarkPathParsing_Extract(b *testing.B) {
 
 func BenchmarkPathParsing_WithCache(b *testing.B) {
 	path := "users.profile.settings.theme"
-	cache := getPathCache()
 
 	// Pre-populate cache
 	segments, _ := internal.ParsePath(path)
-	cache.Set(path, segments)
+	internal.GlobalPathIntern.Set(path, segments)
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if _, ok := cache.Get(path); !ok {
+		if _, ok := internal.GlobalPathIntern.Get(path); !ok {
 			segments, _ := internal.ParsePath(path)
-			cache.Set(path, segments)
+			internal.GlobalPathIntern.Set(path, segments)
 		}
 	}
 }
@@ -792,7 +791,7 @@ func BenchmarkIterableValue_GetTyped(b *testing.B) {
 }
 
 // ----------------------------------------------------------------------------
-// ADDITIONAL PERFORMANCE BENCHMARKS (from performance_test.go)
+// ADDITIONAL PERFORMANCE BENCHMARKS
 // ----------------------------------------------------------------------------
 
 // BenchmarkFastSet_Simple compares FastSet vs Set performance

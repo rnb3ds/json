@@ -398,11 +398,15 @@ func TestIsExtractionPath(t *testing.T) {
 	}{
 		{"", false},
 		{"users", false},
-		{"items{name}", true},
-		{"items[:]{name,age}", true},
-		{"{field}", true},
+		{"items{name}", false},        // single extraction, not multi-container
+		{"items[:]{name,age}", false}, // single extraction
+		{"{field}", false},            // single extraction
 		{"no.extraction", false},
-		{"only{bracket", false}, // needs both { and }
+		{"items{name}[0]", true},         // extraction followed by array access
+		{"items{name}:field", true},      // extraction followed by property
+		{"data{items}{other}", true},     // extraction followed by extraction
+		{"data{items}{flat:name}", true}, // flat extraction
+		{"only{bracket", false},
 		{"only}bracket", false},
 	}
 

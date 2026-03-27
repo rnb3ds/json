@@ -6,6 +6,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/cybergodev/json/internal"
 )
 
 // TestConcurrentSampling tests concurrent access to SamplingReader
@@ -80,7 +82,7 @@ func TestConcurrentPathTypeCache(t *testing.T) {
 	wg.Wait()
 }
 
-// TestConcurrentKeyInternMap tests concurrent access to globalKeyInternMap
+// TestConcurrentKeyInternMap tests concurrent access to key interning
 func TestConcurrentKeyInternMap(t *testing.T) {
 	var wg sync.WaitGroup
 	concurrency := 20
@@ -100,7 +102,7 @@ func TestConcurrentKeyInternMap(t *testing.T) {
 			defer wg.Done()
 			for j := 0; j < iterations; j++ {
 				for _, key := range keys {
-					_, _ = keyIntern(key)
+					InternKey(key)
 				}
 			}
 		}()
@@ -131,7 +133,7 @@ func TestConcurrentDefaultProcessor(t *testing.T) {
 	wg.Wait()
 }
 
-// TestConcurrentPathSegmentCache tests concurrent access to globalPathCache
+// TestConcurrentPathSegmentCache tests concurrent access to GlobalPathIntern
 func TestConcurrentPathSegmentCache(t *testing.T) {
 	var wg sync.WaitGroup
 	concurrency := 20
@@ -149,8 +151,7 @@ func TestConcurrentPathSegmentCache(t *testing.T) {
 			defer wg.Done()
 			for j := 0; j < iterations; j++ {
 				for _, path := range paths {
-					cache := getPathCache()
-					if segments, ok := cache.Get(path); ok {
+					if segments, ok := internal.GlobalPathIntern.Get(path); ok {
 						if len(segments) == 0 {
 							t.Errorf("Empty segments for path %s", path)
 						}
@@ -162,21 +163,9 @@ func TestConcurrentPathSegmentCache(t *testing.T) {
 	wg.Wait()
 }
 
-// keyIntern is a helper that uses globalKeyInternMap
-func keyIntern(key string) (string, error) {
-	globalKeyInternMap.mu.Lock()
-	defer globalKeyInternMap.mu.Unlock()
-
-	if interned, ok := globalKeyInternMap.keys[key]; ok {
-		return interned, nil
-	}
-
-	globalKeyInternMap.keys[key] = key
-	return key, nil
-}
-
 // TestConcurrentCompiledPathCache tests concurrent access to globalCompiledPathCache
 func TestConcurrentCompiledPathCache(t *testing.T) {
+	cache := internal.GetGlobalCompiledPathCache()
 	var wg sync.WaitGroup
 	concurrency := 20
 	iterations := 50
@@ -193,28 +182,20 @@ func TestConcurrentCompiledPathCache(t *testing.T) {
 			defer wg.Done()
 			for j := 0; j < iterations; j++ {
 				for _, path := range paths {
-					_, err := getGlobalCompiledPathCache().Get(path)
+					cp, err := cache.Get(path)
 					if err != nil {
 						t.Errorf("Get failed for path %s: %v", path, err)
+						continue
 					}
+					if cp == nil {
+						t.Errorf("expected non-nil CompiledPath for %s", path)
+					}
+					cp.Release()
 				}
 			}
 		}()
 	}
 	wg.Wait()
-}
-
-// getGlobalCompiledPathCache returns the global compiled path cache
-func getGlobalCompiledPathCache() interface {
-	Get(path string) (interface{}, error)
-} {
-	return &mockCompiledPathCache{}
-}
-
-type mockCompiledPathCache struct{}
-
-func (m *mockCompiledPathCache) Get(path string) (interface{}, error) {
-	return path, nil
 }
 
 // TestConcurrentValidationCache tests concurrent access to security validator cache

@@ -46,7 +46,7 @@ func CompactArrayOptimized(arr []any) []any {
 	result := *resultPtr
 
 	for _, item := range arr {
-		if !isNilOrEmptyFast(item) {
+		if !IsNilOrEmpty(item) {
 			result = append(result, item)
 		}
 	}
@@ -62,24 +62,6 @@ func CompactArrayOptimized(arr []any) []any {
 	PutPooledSlice(resultPtr)
 
 	return final
-}
-
-// isNilOrEmptyFast is a fast check for nil or empty values
-func isNilOrEmptyFast(item any) bool {
-	if item == nil {
-		return true
-	}
-
-	switch v := item.(type) {
-	case string:
-		return v == ""
-	case []any:
-		return len(v) == 0
-	case map[string]any:
-		return len(v) == 0
-	default:
-		return false
-	}
 }
 
 // FilterArrayOptimized filters array with a predicate function using pooling
@@ -123,10 +105,16 @@ func MapArrayOptimized(arr []any, transform func(any) any) []any {
 	return result
 }
 
-// UniqueArrayOptimized removes duplicates from array using map for O(n) lookup
+// UniqueArrayOptimized removes duplicates from array using map for O(n) lookup.
+// Always returns a new slice; the input is never modified or returned directly.
 func UniqueArrayOptimized(arr []any) []any {
-	if len(arr) <= 1 {
-		return arr
+	if len(arr) == 0 {
+		return []any{}
+	}
+	if len(arr) == 1 {
+		cp := make([]any, 1)
+		cp[0] = arr[0]
+		return cp
 	}
 
 	seen := make(map[any]struct{}, len(arr))
@@ -197,12 +185,9 @@ func ChunkArrayOptimized(arr []any, chunkSize int) [][]any {
 	numChunks := (len(arr) + chunkSize - 1) / chunkSize
 	result := make([][]any, numChunks)
 
-	for i := 0; i < numChunks; i++ {
+	for i := range numChunks {
 		start := i * chunkSize
-		end := start + chunkSize
-		if end > len(arr) {
-			end = len(arr)
-		}
+		end := min(start+chunkSize, len(arr))
 		result[i] = arr[start:end]
 	}
 
@@ -220,24 +205,30 @@ func ReverseArrayOptimized(arr []any) {
 	}
 }
 
-// TakeFirst returns first n elements
+// TakeFirst returns first n elements as a new slice.
+// The returned slice is independent of the input; modifications do not affect the original.
 func TakeFirst(arr []any, n int) []any {
 	if n <= 0 || len(arr) == 0 {
 		return nil
 	}
-	if n >= len(arr) {
-		return arr
+	if n > len(arr) {
+		n = len(arr)
 	}
-	return arr[:n]
+	result := make([]any, n)
+	copy(result, arr[:n])
+	return result
 }
 
-// TakeLast returns last n elements
+// TakeLast returns last n elements as a new slice.
+// The returned slice is independent of the input; modifications do not affect the original.
 func TakeLast(arr []any, n int) []any {
 	if n <= 0 || len(arr) == 0 {
 		return nil
 	}
-	if n >= len(arr) {
-		return arr
+	if n > len(arr) {
+		n = len(arr)
 	}
-	return arr[len(arr)-n:]
+	result := make([]any, n)
+	copy(result, arr[len(arr)-n:])
+	return result
 }

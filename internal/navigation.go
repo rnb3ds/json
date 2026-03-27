@@ -113,26 +113,28 @@ func HasComplexSegments(segments []PathSegment) bool {
 	return false
 }
 
-// IsDistributedOperationPath checks if a path contains distributed operation patterns
-func IsDistributedOperationPath(path string) bool {
-	distributedPatterns := []string{
+// IsExtractionPath checks if a path contains extraction patterns that trigger
+// multi-container (distributed) operations: }[, }:, }{, {flat:
+func IsExtractionPath(path string) bool {
+	extractionPatterns := []string{
 		"}[",
 		"}:",
 		"}{",
+		"{flat:",
 	}
 
-	for _, pattern := range distributedPatterns {
+	for _, pattern := range extractionPatterns {
 		if strings.Contains(path, pattern) {
 			return true
 		}
 	}
 
-	return strings.Contains(path, "{flat:")
+	return false
 }
 
-// IsDistributedOperationSegment checks if a segment triggers distributed operations
-func IsDistributedOperationSegment(segment PathSegment) bool {
-	return segment.Key != ""
+// IsExtractionSegment checks if a segment triggers extraction operations
+func IsExtractionSegment(segment PathSegment) bool {
+	return segment.Type == ExtractSegment
 }
 
 // ParsePathSegment parses a single path segment and appends to segments slice
@@ -295,9 +297,7 @@ func ParseExtractionSegment(part string, segments []PathSegment) []PathSegment {
 
 // SplitPathIntoSegments splits a path into segments by dots
 func SplitPathIntoSegments(path string, segments []PathSegment) []PathSegment {
-	parts := strings.Split(path, ".")
-
-	for _, part := range parts {
+	for part := range strings.SplitSeq(path, ".") {
 		if part == "" {
 			continue
 		}
@@ -428,14 +428,13 @@ func IsObjectType(data any) bool {
 	}
 }
 
-// IsMapType checks if data is a map type
+// IsMapType checks if data is a map type.
+//
+// Deprecated: Use IsObjectType instead; they are equivalent.
+// Migration: IsMapType(data) -> IsObjectType(data)
+// Will be removed in v2.0.0.
 func IsMapType(data any) bool {
-	switch data.(type) {
-	case map[string]any, map[any]any:
-		return true
-	default:
-		return false
-	}
+	return IsObjectType(data)
 }
 
 // IsSliceType checks if data is a slice type using reflection

@@ -5,6 +5,25 @@ func IsWordChar(c byte) bool {
 	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_'
 }
 
+// IsValidCacheKey validates that a cache key is valid for use.
+// Returns false if the key is empty, too long, or contains control characters.
+func IsValidCacheKey(key string) bool {
+	keyLen := len(key)
+	if keyLen == 0 || keyLen > MaxCacheKeyLength {
+		return false
+	}
+
+	// Check for control characters (0-31, 127)
+	for i := range keyLen {
+		c := key[i]
+		if c < 32 || c == 127 {
+			return false
+		}
+	}
+
+	return true
+}
+
 // IsValidJSONPrimitive checks if a string represents a valid JSON primitive (true, false, null, or number)
 func IsValidJSONPrimitive(s string) bool {
 	return s == "true" || s == "false" || s == "null" || IsValidJSONNumber(s)

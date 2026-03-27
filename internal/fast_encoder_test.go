@@ -1206,18 +1206,6 @@ func TestSplitTag(t *testing.T) {
 }
 
 // ============================================================================
-// BytesToString TESTS
-// ============================================================================
-
-func TestBytesToString(t *testing.T) {
-	input := []byte("hello world")
-	result := BytesToString(input)
-	if result != "hello world" {
-		t.Errorf("expected 'hello world', got %s", result)
-	}
-}
-
-// ============================================================================
 // IsValidUTF8 TESTS
 // ============================================================================
 

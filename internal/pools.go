@@ -17,7 +17,6 @@ const (
 
 	// Maximum capacity to pool (prevent memory bloat)
 	maxSliceCap = 256
-	// maxMapCap removed - maps are no longer pooled due to race condition risk
 )
 
 // ----------------------------------------------------------------------------
@@ -121,33 +120,6 @@ func PutErrorSlice(s *[]error) {
 }
 
 // ----------------------------------------------------------------------------
-// MAP POOL - For deep merge operations and intermediate results
-// SECURITY FIX: Removed map pooling due to race condition risk
-// Maps returned from pools could be shared between goroutines
-// ----------------------------------------------------------------------------
-
-// GetMergeMap creates a new map for merge operations
-// SECURITY: No longer uses pooling to prevent race conditions
-// PERFORMANCE: Slight increase in allocations, but eliminates data races
-func GetMergeMap(hint int) map[string]any {
-	if hint <= smallSliceSize {
-		return make(map[string]any, smallSliceSize)
-	}
-	if hint <= mediumSliceSize {
-		return make(map[string]any, mediumSliceSize)
-	}
-	return make(map[string]any, hint)
-}
-
-// PutMergeMap is a no-op for safety
-// Maps are no longer pooled to prevent race conditions
-// The map will be garbage collected naturally
-func PutMergeMap(m map[string]any) {
-	// No-op - let GC handle the map
-	// This eliminates race conditions from pool reuse
-}
-
-// ----------------------------------------------------------------------------
 // PATH SEGMENT SLICE POOL - For path parsing results
 // ----------------------------------------------------------------------------
 
@@ -206,23 +178,6 @@ func PutPathSegmentSlice(s *[]PathSegment) {
 	default:
 		largePathPool.Put(s)
 	}
-}
-
-// ----------------------------------------------------------------------------
-// STRING SET - For deduplication operations in merge
-// SECURITY: Maps are no longer pooled due to race condition risk
-// ----------------------------------------------------------------------------
-
-// GetStringSet creates a new map[string]bool for deduplication
-// SECURITY: No longer uses pooling to prevent race conditions
-func GetStringSet() map[string]bool {
-	return make(map[string]bool, mediumSliceSize)
-}
-
-// PutStringSet is a no-op for safety
-// Maps are no longer pooled to prevent race conditions
-func PutStringSet(s map[string]bool) {
-	// No-op - let GC handle the map
 }
 
 // ----------------------------------------------------------------------------

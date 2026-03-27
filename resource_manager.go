@@ -6,14 +6,13 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
-	"time"
 
 	"github.com/cybergodev/json/internal"
 )
 
-// UnifiedResourceManager consolidates all resource management for optimal performance
+// unifiedResourceManager consolidates all resource management for optimal performance
 // sync.Pool is inherently thread-safe, no additional locks needed for pool operations
-type UnifiedResourceManager struct {
+type unifiedResourceManager struct {
 	stringBuilderPool *sync.Pool
 	pathSegmentPool   *sync.Pool
 	bufferPool        *sync.Pool
@@ -26,14 +25,11 @@ type UnifiedResourceManager struct {
 	allocatedBuffers  int64
 	allocatedOptions  int64
 	allocatedMaps     int64
-
-	lastCleanup     int64
-	cleanupInterval int64
 }
 
-// NewUnifiedResourceManager creates a new unified resource manager
-func NewUnifiedResourceManager() *UnifiedResourceManager {
-	return &UnifiedResourceManager{
+// newUnifiedResourceManager creates a new unified resource manager
+func newUnifiedResourceManager() *unifiedResourceManager {
+	return &unifiedResourceManager{
 		stringBuilderPool: &sync.Pool{
 			New: func() any {
 				sb := &strings.Builder{}
@@ -54,7 +50,7 @@ func NewUnifiedResourceManager() *UnifiedResourceManager {
 		optionsPool: &sync.Pool{
 			New: func() any {
 				opts := DefaultConfig()
-				return opts
+				return &opts
 			},
 		},
 		mapPool: &sync.Pool{
@@ -62,12 +58,10 @@ func NewUnifiedResourceManager() *UnifiedResourceManager {
 				return make(map[string]any, 8)
 			},
 		},
-		cleanupInterval: 300,
-		lastCleanup:     time.Now().Unix(),
 	}
 }
 
-func (urm *UnifiedResourceManager) GetStringBuilder() *strings.Builder {
+func (urm *unifiedResourceManager) GetStringBuilder() *strings.Builder {
 	obj := urm.stringBuilderPool.Get()
 	sb, ok := obj.(*strings.Builder)
 	if !ok {
@@ -83,9 +77,9 @@ func (urm *UnifiedResourceManager) GetStringBuilder() *strings.Builder {
 	return sb
 }
 
-func (urm *UnifiedResourceManager) PutStringBuilder(sb *strings.Builder) {
+func (urm *unifiedResourceManager) PutStringBuilder(sb *strings.Builder) {
 	// Use consistent size limits from constants.go
-	const maxBuilderCap = MaxPoolBufferSize // 8192 - consistent with constants
+	const maxBuilderCap = MaxPoolBufferSize // 32768 - consistent with constants
 	const minBuilderCap = MinPoolBufferSize // 256 - consistent with constants
 
 	if sb == nil {
@@ -103,7 +97,7 @@ func (urm *UnifiedResourceManager) PutStringBuilder(sb *strings.Builder) {
 	atomic.AddInt64(&urm.allocatedBuilders, -1)
 }
 
-func (urm *UnifiedResourceManager) GetPathSegments() []internal.PathSegment {
+func (urm *unifiedResourceManager) GetPathSegments() []internal.PathSegment {
 	obj := urm.pathSegmentPool.Get()
 	segments, ok := obj.([]internal.PathSegment)
 	if !ok {
@@ -118,7 +112,7 @@ func (urm *UnifiedResourceManager) GetPathSegments() []internal.PathSegment {
 	return segments
 }
 
-func (urm *UnifiedResourceManager) PutPathSegments(segments []internal.PathSegment) {
+func (urm *unifiedResourceManager) PutPathSegments(segments []internal.PathSegment) {
 	// Stricter segment pool limits
 	const maxSegmentCap = 32 // Reduced from 64
 	const minSegmentCap = 4  // Keep minimum
@@ -137,7 +131,7 @@ func (urm *UnifiedResourceManager) PutPathSegments(segments []internal.PathSegme
 	atomic.AddInt64(&urm.allocatedSegments, -1)
 }
 
-func (urm *UnifiedResourceManager) GetBuffer() []byte {
+func (urm *unifiedResourceManager) GetBuffer() []byte {
 	obj := urm.bufferPool.Get()
 	buf, ok := obj.([]byte)
 	if !ok {
@@ -152,9 +146,9 @@ func (urm *UnifiedResourceManager) GetBuffer() []byte {
 	return buf
 }
 
-func (urm *UnifiedResourceManager) PutBuffer(buf []byte) {
+func (urm *unifiedResourceManager) PutBuffer(buf []byte) {
 	// Use consistent size limits from constants.go
-	const maxBufferCap = MaxPoolBufferSize // 8192 - consistent with constants
+	const maxBufferCap = MaxPoolBufferSize // 32768 - consistent with constants
 	const minBufferCap = MinPoolBufferSize // 256 - consistent with constants
 
 	if buf == nil {
@@ -172,7 +166,7 @@ func (urm *UnifiedResourceManager) PutBuffer(buf []byte) {
 }
 
 // GetOptions gets a Config from the pool
-func (urm *UnifiedResourceManager) GetOptions() *Config {
+func (urm *unifiedResourceManager) GetOptions() *Config {
 	obj := urm.optionsPool.Get()
 	opts, ok := obj.(*Config)
 	if !ok {
@@ -183,24 +177,14 @@ func (urm *UnifiedResourceManager) GetOptions() *Config {
 		cfg := DefaultConfig()
 		opts = &cfg
 	}
-	// Reset to default values
-	*opts = Config{
-		CacheResults:    true,
-		StrictMode:      false,
-		MaxDepth:        50,
-		AllowComments:   false,
-		PreserveNumbers: false,
-		CreatePaths:     false,
-		CleanupNulls:    false,
-		CompactArrays:   false,
-		ContinueOnError: false,
-	}
+	// Reset to default configuration
+	*opts = DefaultConfig()
 	atomic.AddInt64(&urm.allocatedOptions, 1)
 	return opts
 }
 
 // PutOptions returns a Config to the pool
-func (urm *UnifiedResourceManager) PutOptions(opts *Config) {
+func (urm *unifiedResourceManager) PutOptions(opts *Config) {
 	if opts != nil {
 		defer atomic.AddInt64(&urm.allocatedOptions, -1)
 		// Clear context to prevent memory leaks
@@ -211,7 +195,7 @@ func (urm *UnifiedResourceManager) PutOptions(opts *Config) {
 
 // GetMap gets a map from the pool
 // PERFORMANCE: Reusable maps for JSON object operations
-func (urm *UnifiedResourceManager) GetMap() map[string]any {
+func (urm *unifiedResourceManager) GetMap() map[string]any {
 	obj := urm.mapPool.Get()
 	m, ok := obj.(map[string]any)
 	if !ok {
@@ -225,7 +209,7 @@ func (urm *UnifiedResourceManager) GetMap() map[string]any {
 }
 
 // PutMap returns a map to the pool
-func (urm *UnifiedResourceManager) PutMap(m map[string]any) {
+func (urm *unifiedResourceManager) PutMap(m map[string]any) {
 	if m == nil {
 		return
 	}
@@ -237,51 +221,40 @@ func (urm *UnifiedResourceManager) PutMap(m map[string]any) {
 	atomic.AddInt64(&urm.allocatedMaps, -1)
 }
 
-// PerformMaintenance performs periodic cleanup
-// sync.Pool automatically handles cleanup via GC
-func (urm *UnifiedResourceManager) PerformMaintenance() {
-	now := time.Now().Unix()
-	lastCleanup := atomic.LoadInt64(&urm.lastCleanup)
+// PerformMaintenance is a no-op placeholder retained for API compatibility.
+// sync.Pool automatically handles cleanup via GC.
+//
+// Deprecated: This method does nothing and can be safely removed from callers.
+// sync.Pool handles resource management automatically.
+// Will be removed in v2.0.0.
+func (urm *unifiedResourceManager) PerformMaintenance() {}
 
-	if now-lastCleanup < urm.cleanupInterval {
-		return
-	}
-
-	if !atomic.CompareAndSwapInt64(&urm.lastCleanup, lastCleanup, now) {
-		return
-	}
-
-	atomic.StoreInt64(&urm.lastCleanup, now)
-}
-
-func (urm *UnifiedResourceManager) GetStats() ResourceManagerStats {
-	return ResourceManagerStats{
-		AllocatedBuilders: atomic.LoadInt64(&urm.allocatedBuilders),
-		AllocatedSegments: atomic.LoadInt64(&urm.allocatedSegments),
-		AllocatedBuffers:  atomic.LoadInt64(&urm.allocatedBuffers),
-		AllocatedOptions:  atomic.LoadInt64(&urm.allocatedOptions),
-		AllocatedMaps:     atomic.LoadInt64(&urm.allocatedMaps),
-		LastCleanup:       atomic.LoadInt64(&urm.lastCleanup),
+func (urm *unifiedResourceManager) getStats() resourceManagerStats {
+	return resourceManagerStats{
+		allocatedBuilders: atomic.LoadInt64(&urm.allocatedBuilders),
+		allocatedSegments: atomic.LoadInt64(&urm.allocatedSegments),
+		allocatedBuffers:  atomic.LoadInt64(&urm.allocatedBuffers),
+		allocatedOptions:  atomic.LoadInt64(&urm.allocatedOptions),
+		allocatedMaps:     atomic.LoadInt64(&urm.allocatedMaps),
 	}
 }
 
-type ResourceManagerStats struct {
-	AllocatedBuilders int64 `json:"allocated_builders"`
-	AllocatedSegments int64 `json:"allocated_segments"`
-	AllocatedBuffers  int64 `json:"allocated_buffers"`
-	AllocatedOptions  int64 `json:"allocated_options"`
-	AllocatedMaps     int64 `json:"allocated_maps"`
-	LastCleanup       int64 `json:"last_cleanup"`
+type resourceManagerStats struct {
+	allocatedBuilders int64
+	allocatedSegments int64
+	allocatedBuffers  int64
+	allocatedOptions  int64
+	allocatedMaps     int64
 }
 
 var (
-	globalResourceManager     *UnifiedResourceManager
+	globalResourceManager     *unifiedResourceManager
 	globalResourceManagerOnce sync.Once
 )
 
-func getGlobalResourceManager() *UnifiedResourceManager {
+func getGlobalResourceManager() *unifiedResourceManager {
 	globalResourceManagerOnce.Do(func() {
-		globalResourceManager = NewUnifiedResourceManager()
+		globalResourceManager = newUnifiedResourceManager()
 	})
 	return globalResourceManager
 }

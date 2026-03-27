@@ -3,7 +3,6 @@ package json
 import (
 	"context"
 	"fmt"
-	"math"
 	"reflect"
 	"runtime"
 	"strconv"
@@ -147,29 +146,6 @@ type Stats struct {
 	MemoryEfficiency float64       `json:"memory_efficiency"`
 	OperationCount   int64         `json:"operation_count"`
 	ErrorCount       int64         `json:"error_count"`
-}
-
-// detailedStats provides comprehensive processor statistics for debugging
-type detailedStats struct {
-	Stats Stats `json:"stats"`
-}
-
-// cacheStats provides comprehensive cache statistics
-type cacheStats struct {
-	HitCount         int64        `json:"hit_count"`
-	MissCount        int64        `json:"miss_count"`
-	TotalMemory      int64        `json:"total_memory"`
-	HitRatio         float64      `json:"hit_ratio"`
-	MemoryEfficiency float64      `json:"memory_efficiency"`
-	Evictions        int64        `json:"evictions"`
-	ShardCount       int          `json:"shard_count"`
-	ShardStats       []shardStats `json:"shard_stats"`
-}
-
-// shardStats provides statistics for a single cache shard
-type shardStats struct {
-	Size   int64 `json:"size"`
-	Memory int64 `json:"memory"`
 }
 
 // HealthStatus represents the health status of the processor
@@ -332,36 +308,16 @@ func (e *MarshalerError) Error() string {
 
 func (e *MarshalerError) Unwrap() error { return e.Err }
 
-// operation represents the type of operation being performed
-type operation int
-
-const (
-	opGet operation = iota
-	opSet
-	opDelete
-	opValidate
-)
-
-// String returns the string representation of the operation
-func (op operation) String() string {
-	switch op {
-	case opGet:
-		return "get"
-	case opSet:
-		return "set"
-	case opDelete:
-		return "delete"
-	case opValidate:
-		return "validate"
-	default:
-		return "unknown"
-	}
-}
-
 // deletedMarker is a special sentinel value used to mark array elements
 // for deletion. It is compared by pointer identity (using ==).
+//
 // SECURITY: This is an unexported struct pointer to prevent external modification.
 // The zero-size struct{}{} is used because we only need unique pointer identity.
+//
+// Naming Convention: Uses camelCase (unexported) to prevent external packages from
+// accessing this internal implementation detail. The "Marker" suffix indicates this
+// is a sentinel value for marking items, not a data container.
+//
 // IMPORTANT: Do not reassign this variable. Use IsDeletedMarker() for comparisons.
 var deletedMarker = &struct{}{} // deleted marker - empty struct for pointer identity
 
@@ -371,39 +327,17 @@ func IsDeletedMarker(v any) bool {
 	return v == deletedMarker
 }
 
-// validateOptions validates processor options with enhanced checks
-func validateOptions(options *Config) error {
-	if options == nil {
-		return &JsonsError{
-			Op:      "validate_options",
-			Message: "options cannot be nil",
-			Err:     ErrOperationFailed,
-		}
-	}
-
-	if options.MaxDepth < 0 {
-		return &JsonsError{
-			Op:      "validate_options",
-			Message: fmt.Sprintf("MaxDepth cannot be negative: %d", options.MaxDepth),
-			Err:     ErrOperationFailed,
-		}
-	}
-	if options.MaxDepth > 1000 {
-		return &JsonsError{
-			Op:      "validate_options",
-			Message: fmt.Sprintf("MaxDepth too large (max 1000): %d", options.MaxDepth),
-			Err:     ErrDepthLimit,
-		}
-	}
-
-	return nil
-}
-
 // propertyAccessResult represents the result of a property access operation
 type propertyAccessResult struct {
 	value  any
 	exists bool
 }
+
+// ============================================================================
+// INTERNAL ERROR TYPES
+// These are unexported types used internally for control flow during operations.
+// They should not be used directly by external code.
+// ============================================================================
 
 // rootDataTypeConversionError signals that root data type conversion is needed
 type rootDataTypeConversionError struct {
@@ -434,21 +368,30 @@ func (e *arrayExtensionError) Error() string {
 		e.currentLength, e.requiredLength, e.targetIndex)
 }
 
-// PathSegment represents a parsed path segment with its type and value
-type PathSegment = internal.PathSegment
+// pathSegment represents a parsed path segment with its type and value.
+// This is an internal type alias - users should not need to access path segments directly.
+type pathSegment = internal.PathSegment
 
-// ExtractionGroup represents a group of consecutive extraction segments
-type ExtractionGroup = internal.ExtractionGroup
-
-// PathInfo contains parsed path information
-type PathInfo struct {
-	Segments     []PathSegment `json:"segments"`
-	IsPointer    bool          `json:"is_pointer"`
-	OriginalPath string        `json:"original_path"`
+// pathInfo contains parsed path information.
+// This is an internal type used for path parsing.
+type pathInfo struct {
+	segments     []pathSegment
+	isPointer    bool
+	originalPath string
 }
 
-// ResourceMonitor provides resource monitoring and leak detection
-type ResourceMonitor struct {
+// PathSegment is an alias for internal path segment type.
+// Deprecated: This is an internal implementation detail. Do not use.
+// Will be removed in v2.0.0.
+type PathSegment = internal.PathSegment
+
+// PathInfo contains parsed path information.
+// Deprecated: This is an internal implementation detail. Do not use.
+// Will be removed in v2.0.0.
+type PathInfo = pathInfo
+
+// resourceMonitor provides resource monitoring and leak detection
+type resourceMonitor struct {
 	allocatedBytes    int64
 	freedBytes        int64
 	peakMemoryUsage   int64
@@ -463,19 +406,35 @@ type ResourceMonitor struct {
 	totalOperations   int64
 }
 
-// NewResourceMonitor creates a new resource monitor
-func NewResourceMonitor() *ResourceMonitor {
-	return &ResourceMonitor{
+// resourceStats represents resource usage statistics
+type resourceStats struct {
+	AllocatedBytes    int64         `json:"allocated_bytes"`
+	FreedBytes        int64         `json:"freed_bytes"`
+	PeakMemoryUsage   int64         `json:"peak_memory_usage"`
+	PoolHits          int64         `json:"pool_hits"`
+	PoolMisses        int64         `json:"pool_misses"`
+	PoolEvictions     int64         `json:"pool_evictions"`
+	MaxGoroutines     int64         `json:"max_goroutines"`
+	CurrentGoroutines int64         `json:"current_goroutines"`
+	AvgResponseTime   time.Duration `json:"avg_response_time"`
+	TotalOperations   int64         `json:"total_operations"`
+}
+
+// newResourceMonitor creates a new resource monitor
+func newResourceMonitor() *resourceMonitor {
+	return &resourceMonitor{
 		leakCheckInterval: 300, // 5 minutes
 		lastLeakCheck:     time.Now().Unix(),
 	}
 }
 
-// RecordAllocation records an allocation of the specified size
-func (rm *ResourceMonitor) RecordAllocation(bytes int64) {
-	atomic.AddInt64(&rm.allocatedBytes, bytes)
-
-	current := atomic.LoadInt64(&rm.allocatedBytes) - atomic.LoadInt64(&rm.freedBytes)
+// RecordAllocation records an allocation of the specified size.
+// Note: the peak memory calculation uses a snapshot of allocated/freed counters,
+// so it is approximate under high concurrency. This is acceptable for monitoring.
+func (rm *resourceMonitor) RecordAllocation(bytes int64) {
+	allocated := atomic.AddInt64(&rm.allocatedBytes, bytes)
+	freed := atomic.LoadInt64(&rm.freedBytes)
+	current := allocated - freed
 	for {
 		peak := atomic.LoadInt64(&rm.peakMemoryUsage)
 		if current <= peak || atomic.CompareAndSwapInt64(&rm.peakMemoryUsage, peak, current) {
@@ -485,27 +444,27 @@ func (rm *ResourceMonitor) RecordAllocation(bytes int64) {
 }
 
 // RecordDeallocation records a deallocation of the specified size
-func (rm *ResourceMonitor) RecordDeallocation(bytes int64) {
+func (rm *resourceMonitor) RecordDeallocation(bytes int64) {
 	atomic.AddInt64(&rm.freedBytes, bytes)
 }
 
 // RecordPoolHit records a pool cache hit
-func (rm *ResourceMonitor) RecordPoolHit() {
+func (rm *resourceMonitor) RecordPoolHit() {
 	atomic.AddInt64(&rm.poolHits, 1)
 }
 
 // RecordPoolMiss records a pool cache miss
-func (rm *ResourceMonitor) RecordPoolMiss() {
+func (rm *resourceMonitor) RecordPoolMiss() {
 	atomic.AddInt64(&rm.poolMisses, 1)
 }
 
 // RecordPoolEviction records a pool eviction
-func (rm *ResourceMonitor) RecordPoolEviction() {
+func (rm *resourceMonitor) RecordPoolEviction() {
 	atomic.AddInt64(&rm.poolEvictions, 1)
 }
 
 // RecordOperation records an operation with its duration
-func (rm *ResourceMonitor) RecordOperation(duration time.Duration) {
+func (rm *resourceMonitor) RecordOperation(duration time.Duration) {
 	atomic.AddInt64(&rm.totalOperations, 1)
 
 	newTime := duration.Nanoseconds()
@@ -519,7 +478,7 @@ func (rm *ResourceMonitor) RecordOperation(duration time.Duration) {
 }
 
 // CheckForLeaks checks for potential resource leaks
-func (rm *ResourceMonitor) CheckForLeaks() []string {
+func (rm *resourceMonitor) CheckForLeaks() []string {
 	for {
 		now := time.Now().Unix()
 		lastCheck := atomic.LoadInt64(&rm.lastLeakCheck)
@@ -565,9 +524,9 @@ func (rm *ResourceMonitor) CheckForLeaks() []string {
 	return issues
 }
 
-// GetStats returns current resource statistics
-func (rm *ResourceMonitor) GetStats() ResourceStats {
-	return ResourceStats{
+// getStats returns current resource statistics
+func (rm *resourceMonitor) getStats() resourceStats {
+	return resourceStats{
 		AllocatedBytes:    atomic.LoadInt64(&rm.allocatedBytes),
 		FreedBytes:        atomic.LoadInt64(&rm.freedBytes),
 		PeakMemoryUsage:   atomic.LoadInt64(&rm.peakMemoryUsage),
@@ -581,22 +540,8 @@ func (rm *ResourceMonitor) GetStats() ResourceStats {
 	}
 }
 
-// ResourceStats represents resource usage statistics
-type ResourceStats struct {
-	AllocatedBytes    int64         `json:"allocated_bytes"`
-	FreedBytes        int64         `json:"freed_bytes"`
-	PeakMemoryUsage   int64         `json:"peak_memory_usage"`
-	PoolHits          int64         `json:"pool_hits"`
-	PoolMisses        int64         `json:"pool_misses"`
-	PoolEvictions     int64         `json:"pool_evictions"`
-	MaxGoroutines     int64         `json:"max_goroutines"`
-	CurrentGoroutines int64         `json:"current_goroutines"`
-	AvgResponseTime   time.Duration `json:"avg_response_time"`
-	TotalOperations   int64         `json:"total_operations"`
-}
-
 // Reset resets all resource statistics
-func (rm *ResourceMonitor) Reset() {
+func (rm *resourceMonitor) Reset() {
 	atomic.StoreInt64(&rm.allocatedBytes, 0)
 	atomic.StoreInt64(&rm.freedBytes, 0)
 	atomic.StoreInt64(&rm.peakMemoryUsage, 0)
@@ -610,8 +555,9 @@ func (rm *ResourceMonitor) Reset() {
 	atomic.StoreInt64(&rm.lastLeakCheck, time.Now().Unix())
 }
 
-// GetMemoryEfficiency returns the memory efficiency percentage
-func (rm *ResourceMonitor) GetMemoryEfficiency() float64 {
+// GetDeallocationRatio returns the ratio of freed bytes to allocated bytes as a percentage.
+// Values > 100% indicate the same memory was reused multiple times via pooling.
+func (rm *resourceMonitor) GetDeallocationRatio() float64 {
 	allocated := atomic.LoadInt64(&rm.allocatedBytes)
 	freed := atomic.LoadInt64(&rm.freedBytes)
 
@@ -622,8 +568,24 @@ func (rm *ResourceMonitor) GetMemoryEfficiency() float64 {
 	return float64(freed) / float64(allocated) * 100.0
 }
 
+// GetMemoryEfficiency returns the deallocation ratio.
+//
+// Deprecated: Use GetDeallocationRatio for clarity on what this metric represents.
+// Migration: rm.GetMemoryEfficiency() -> rm.GetDeallocationRatio()
+// Will be removed in v2.0.0.
+func (rm *resourceMonitor) GetMemoryEfficiency() float64 {
+	return rm.GetDeallocationRatio()
+}
+
 // GetPoolEfficiency returns the pool efficiency percentage
-func (rm *ResourceMonitor) GetPoolEfficiency() float64 {
+// This is the hit ratio of the pool cache
+func (rm *resourceMonitor) GetPoolEfficiency() float64 {
+	return rm.GetPoolHitRatio()
+}
+
+// GetPoolHitRatio returns the pool cache hit ratio as a percentage.
+// This is an alias for GetPoolEfficiency with consistent naming.
+func (rm *resourceMonitor) GetPoolHitRatio() float64 {
 	hits := atomic.LoadInt64(&rm.poolHits)
 	misses := atomic.LoadInt64(&rm.poolMisses)
 	total := hits + misses
@@ -757,156 +719,51 @@ func (r TypeSafeAccessResult) AsStringConverted() (string, error) {
 	return fmt.Sprintf("%v", r.Value), nil
 }
 
-// AsInt safely converts the result to int with overflow and precision checks
+// AsInt safely converts the result to int with overflow and precision checks.
+// Unlike ConvertToInt, this method is stricter and does NOT convert bool to int.
+// Use ConvertToInt directly if you need more permissive conversion.
 func (r TypeSafeAccessResult) AsInt() (int, error) {
 	if !r.Exists {
 		return 0, ErrPathNotFound
 	}
 
-	switch v := r.Value.(type) {
-	case int:
-		return v, nil
-	case int8:
-		return int(v), nil
-	case int16:
-		return int(v), nil
-	case int32:
-		return int(v), nil
-	case int64:
-		// SECURITY: Check for overflow when converting int64 to int
-		if v > int64(1<<(strconv.IntSize-1)-1) || v < int64(-1<<(strconv.IntSize-1)) {
-			return 0, fmt.Errorf("value %d overflows int on %d-bit system", v, strconv.IntSize)
-		}
-		return int(v), nil
-	case uint:
-		// SECURITY: Check for overflow when converting uint to int
-		if v > uint(1<<(strconv.IntSize-1)-1) {
-			return 0, fmt.Errorf("value %d overflows int on %d-bit system", v, strconv.IntSize)
-		}
-		return int(v), nil
-	case uint8:
-		return int(v), nil
-	case uint16:
-		return int(v), nil
-	case uint32:
-		// SECURITY: Check for overflow when converting uint32 to int
-		// On 32-bit systems, MaxInt32 = 2147483647, on 64-bit systems it's much larger
-		// uint32 max is 4294967295, so on 32-bit systems we need to check
-		if strconv.IntSize == 32 && v > math.MaxInt32 {
-			return 0, fmt.Errorf("value %d overflows int on %d-bit system", v, strconv.IntSize)
-		}
-		return int(v), nil
-	case uint64:
-		// SECURITY: Check for overflow when converting uint64 to int
-		// uint64 can hold values larger than MaxInt64
-		if v > uint64(math.MaxInt64) {
-			return 0, fmt.Errorf("value %d overflows int on %d-bit system", v, strconv.IntSize)
-		}
-		// Additional check for 32-bit systems
-		if strconv.IntSize == 32 && v > math.MaxInt32 {
-			return 0, fmt.Errorf("value %d overflows int on %d-bit system", v, strconv.IntSize)
-		}
-		return int(v), nil
-	case float32:
-		// SECURITY: Check for overflow and precision loss
-		if v > float32(1<<(strconv.IntSize-1)-1) || v < float32(-1<<(strconv.IntSize-1)) {
-			return 0, fmt.Errorf("value %v overflows int", v)
-		}
-		if v != float32(int32(v)) {
-			return 0, fmt.Errorf("value %v is not an integer", v)
-		}
-		return int(v), nil
-	case float64:
-		// SECURITY: Check for overflow and precision loss
-		maxInt := float64(1<<(strconv.IntSize-1) - 1)
-		minInt := float64(-1 << (strconv.IntSize - 1))
-		if v > maxInt || v < minInt {
-			return 0, fmt.Errorf("value %v overflows int on %d-bit system", v, strconv.IntSize)
-		}
-		if v != float64(int64(v)) {
-			return 0, fmt.Errorf("value %v is not an integer", v)
-		}
-		return int(v), nil
-	case string:
-		// Try parsing as integer first
-		if i, err := strconv.ParseInt(v, 10, 64); err == nil {
-			// Check for overflow
-			if i > int64(1<<(strconv.IntSize-1)-1) || i < int64(-1<<(strconv.IntSize-1)) {
-				return 0, fmt.Errorf("value %s overflows int on %d-bit system", v, strconv.IntSize)
-			}
-			return int(i), nil
-		}
-		// Try parsing as float (e.g., "123.0")
-		if f, err := strconv.ParseFloat(v, 64); err == nil {
-			if f != float64(int64(f)) {
-				return 0, fmt.Errorf("value %s is not an integer", v)
-			}
-			return int(f), nil
-		}
-		return 0, fmt.Errorf("cannot convert %q to int", v)
-	case Number:
-		// Handle Number type (defined in encoding.go)
-		if i, err := v.Int64(); err == nil {
-			if i > int64(1<<(strconv.IntSize-1)-1) || i < int64(-1<<(strconv.IntSize-1)) {
-				return 0, fmt.Errorf("value %s overflows int on %d-bit system", v, strconv.IntSize)
-			}
-			return int(i), nil
-		}
-		return 0, fmt.Errorf("cannot convert Number %s to int", v)
-	default:
-		return 0, fmt.Errorf("cannot convert %T to int", v)
+	// Strict type check: bool should not convert to int
+	switch r.Value.(type) {
+	case bool:
+		return 0, fmt.Errorf("cannot convert bool to int")
 	}
+
+	result, ok := ConvertToInt(r.Value)
+	if !ok {
+		return 0, fmt.Errorf("cannot convert %T to int", r.Value)
+	}
+	return result, nil
 }
 
-// AsFloat64 safely converts the result to float64 with precision checks
+// AsFloat64 safely converts the result to float64 with precision checks.
+// Unlike ConvertToFloat64, this method is stricter and does NOT convert bool to float64.
+// Use ConvertToFloat64 directly if you need more permissive conversion.
 func (r TypeSafeAccessResult) AsFloat64() (float64, error) {
 	if !r.Exists {
 		return 0, ErrPathNotFound
 	}
 
-	switch v := r.Value.(type) {
-	case float64:
-		return v, nil
-	case float32:
-		return float64(v), nil
-	case int:
-		return float64(v), nil
-	case int8:
-		return float64(v), nil
-	case int16:
-		return float64(v), nil
-	case int32:
-		return float64(v), nil
-	case int64:
-		return float64(v), nil
-	case uint:
-		return float64(v), nil
-	case uint8:
-		return float64(v), nil
-	case uint16:
-		return float64(v), nil
-	case uint32:
-		return float64(v), nil
-	case uint64:
-		return float64(v), nil
-	case string:
-		f, err := strconv.ParseFloat(v, 64)
-		if err != nil {
-			return 0, fmt.Errorf("cannot convert %q to float64: %w", v, err)
-		}
-		return f, nil
-	case Number:
-		f, err := v.Float64()
-		if err != nil {
-			return 0, fmt.Errorf("cannot convert Number %s to float64: %w", v, err)
-		}
-		return f, nil
-	default:
-		return 0, fmt.Errorf("cannot convert %T to float64", v)
+	// Strict type check: bool should not convert to float64
+	switch r.Value.(type) {
+	case bool:
+		return 0, fmt.Errorf("cannot convert bool to float64")
 	}
+
+	result, ok := ConvertToFloat64(r.Value)
+	if !ok {
+		return 0, fmt.Errorf("cannot convert %T to float64", r.Value)
+	}
+	return result, nil
 }
 
-// AsBool safely converts the result to bool
+// AsBool safely converts the result to bool.
+// Unlike ConvertToBool, this method is stricter and only accepts bool and string types.
+// Use ConvertToBool directly if you need more permissive conversion (e.g., int to bool).
 func (r TypeSafeAccessResult) AsBool() (bool, error) {
 	if !r.Exists {
 		return false, ErrPathNotFound
@@ -916,9 +773,13 @@ func (r TypeSafeAccessResult) AsBool() (bool, error) {
 	case bool:
 		return v, nil
 	case string:
-		return strconv.ParseBool(v)
+		result, err := strconv.ParseBool(v)
+		if err != nil {
+			return false, fmt.Errorf("cannot convert %q to bool: %w", v, err)
+		}
+		return result, nil
 	default:
-		return false, fmt.Errorf("cannot convert %T to bool", v)
+		return false, fmt.Errorf("cannot convert %T to bool", r.Value)
 	}
 }
 
@@ -1073,22 +934,24 @@ func (s *Schema) HasMaxItems() bool {
 // Configuration types for JSON merge operations with union/intersection/difference modes.
 // ============================================================================
 
-// MergeMode defines the merge strategy for combining JSON objects and arrays
-type MergeMode int
+// MergeMode defines the merge strategy for combining JSON objects and arrays.
+// This is a type alias to internal.MergeMode to ensure consistency across the codebase.
+type MergeMode = internal.MergeMode
 
+// Merge mode constants - re-exported from internal package for public API
 const (
 	// MergeUnion performs union merge - combines all keys/elements (default)
 	// For objects: all keys from both, conflicts resolved by override value
 	// For arrays: all elements from both with deduplication
-	MergeUnion MergeMode = iota
+	MergeUnion = internal.MergeUnion
 
 	// MergeIntersection performs intersection merge - only common keys/elements
 	// For objects: only keys present in both, values from override
 	// For arrays: only elements present in both arrays
-	MergeIntersection
+	MergeIntersection = internal.MergeIntersection
 
 	// MergeDifference performs difference merge - keys/elements only in base
 	// For objects: keys in base but not in override
 	// For arrays: elements in base but not in override
-	MergeDifference
+	MergeDifference = internal.MergeDifference
 )

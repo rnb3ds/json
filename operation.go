@@ -11,6 +11,41 @@ import (
 	"github.com/cybergodev/json/internal"
 )
 
+// ============================================================================
+// INTERNAL OPERATION TYPES
+// These types are used internally for tracking operation types during processing.
+// ============================================================================
+
+// operation represents the type of operation being performed
+type operation int
+
+const (
+	opGet operation = iota
+	opSet
+	opDelete
+	opValidate
+)
+
+// String returns the string representation of the operation
+func (op operation) String() string {
+	switch op {
+	case opGet:
+		return "get"
+	case opSet:
+		return "set"
+	case opDelete:
+		return "delete"
+	case opValidate:
+		return "validate"
+	default:
+		return "unknown"
+	}
+}
+
+// ============================================================================
+// INTERNAL ERROR TYPES
+// ============================================================================
+
 // arrayExtensionNeededError signals that array extension is needed
 type arrayExtensionNeededError struct {
 	requiredLength int
@@ -169,11 +204,6 @@ func (p *Processor) assignValueToSlice(arr []any, start, end, step int, value an
 	return nil
 }
 
-// detectConsecutiveExtractions identifies groups of consecutive extraction segments
-func (p *Processor) detectConsecutiveExtractions(segments []PathSegment) []ExtractionGroup {
-	return internal.DetectConsecutiveExtractions(segments)
-}
-
 func (p *Processor) cleanupNullValuesWithReconstruction(data any, compactArrays bool) any {
 	return internal.CleanupNullValues(data, compactArrays)
 }
@@ -241,6 +271,13 @@ func (p *Processor) deleteValueDotNotation(data any, path string) error {
 			} else {
 				return fmt.Errorf("path not found: %s", segment)
 			}
+		case map[any]any:
+			// Handle map[any]any for robustness with non-JSON map types
+			if next, exists := v[segment]; exists {
+				current = next
+			} else {
+				return fmt.Errorf("path not found: %s", segment)
+			}
 		case []any:
 			if index, ok := internal.ParseAndValidateArrayIndex(segment, len(v)); ok {
 				current = v[index]
@@ -278,6 +315,13 @@ func (p *Processor) deleteValueJSONPointer(data any, path string) error {
 
 		switch v := current.(type) {
 		case map[string]any:
+			if next, exists := v[segment]; exists {
+				current = next
+			} else {
+				return fmt.Errorf("path not found: %s", segment)
+			}
+		case map[any]any:
+			// Handle map[any]any for robustness with non-JSON map types
 			if next, exists := v[segment]; exists {
 				current = next
 			} else {
