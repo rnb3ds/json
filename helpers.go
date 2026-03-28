@@ -59,8 +59,9 @@ func convertToInt64Core(value any) int64Result {
 	return int64Result{0, false}
 }
 
-// ConvertToInt converts any value to int with comprehensive type support
-// Delegates to internal core function to reduce code duplication
+// ConvertToInt converts any value to int with comprehensive type support.
+// Delegates to internal core function to reduce code duplication.
+// MAINTENANCE: Keep type switch cases in sync with ConvertToInt64, ConvertToUint64, ConvertToFloat64.
 func ConvertToInt(value any) (int, bool) {
 	// Fast path: use core integer conversion
 	if result := convertToInt64Core(value); result.ok {
@@ -97,8 +98,9 @@ func ConvertToInt(value any) (int, bool) {
 	return 0, false
 }
 
-// ConvertToInt64 converts any value to int64
-// Delegates to internal core function to reduce code duplication
+// ConvertToInt64 converts any value to int64.
+// Delegates to internal core function to reduce code duplication.
+// MAINTENANCE: Keep type switch cases in sync with ConvertToInt, ConvertToUint64, ConvertToFloat64.
 func ConvertToInt64(value any) (int64, bool) {
 	// Fast path: use core integer conversion
 	if result := convertToInt64Core(value); result.ok {
@@ -132,8 +134,9 @@ func ConvertToInt64(value any) (int64, bool) {
 	return 0, false
 }
 
-// ConvertToUint64 converts any value to uint64
-// Delegates to internal core function to reduce code duplication
+// ConvertToUint64 converts any value to uint64.
+// Delegates to internal core function to reduce code duplication.
+// MAINTENANCE: Keep type switch cases in sync with ConvertToInt, ConvertToInt64, ConvertToFloat64.
 func ConvertToUint64(value any) (uint64, bool) {
 	// Special case: uint64 needs direct handling for values > int64 max
 	switch v := value.(type) {
@@ -175,8 +178,9 @@ func ConvertToUint64(value any) (uint64, bool) {
 	return 0, false
 }
 
-// ConvertToFloat64 converts any value to float64
-// Delegates to internal core function to reduce code duplication
+// ConvertToFloat64 converts any value to float64.
+// Delegates to internal core function to reduce code duplication.
+// MAINTENANCE: Keep type switch cases in sync with ConvertToInt, ConvertToInt64, ConvertToUint64.
 func ConvertToFloat64(value any) (float64, bool) {
 	// Fast path: use core integer conversion
 	if result := convertToInt64Core(value); result.ok {
@@ -243,6 +247,48 @@ func ConvertToBool(value any) (bool, bool) {
 		}
 	}
 	return false, false
+}
+
+// GetTypedWithProcessor retrieves a typed value from JSON using a specific processor.
+// This is the core implementation used by GetTyped and GetTypedOr.
+func GetTypedWithProcessor[T any](processor *Processor, jsonStr, path string, cfg ...Config) (T, error) {
+	var zero T
+
+	value, err := processor.Get(jsonStr, path, cfg...)
+	if err != nil {
+		return zero, err
+	}
+
+	if value == nil {
+		return handleNullValue[T]()
+	}
+
+	if converted, ok := UnifiedTypeConversion[T](value); ok {
+		return converted, nil
+	}
+
+	// Fallback: re-marshal and unmarshal for complex types
+	jsonBytes, err := json.Marshal(value)
+	if err != nil {
+		return zero, &JsonsError{
+			Op:      "get_typed",
+			Path:    path,
+			Message: fmt.Sprintf("failed to marshal value for type conversion: %v", err),
+			Err:     ErrTypeMismatch,
+		}
+	}
+
+	var finalResult T
+	if err := json.Unmarshal(jsonBytes, &finalResult); err != nil {
+		return zero, &JsonsError{
+			Op:      "get_typed",
+			Path:    path,
+			Message: fmt.Sprintf("failed to convert value to type %T: %v", finalResult, err),
+			Err:     ErrTypeMismatch,
+		}
+	}
+
+	return finalResult, nil
 }
 
 // UnifiedTypeConversion provides optimized type conversion with comprehensive support
@@ -757,8 +803,8 @@ func MergeJSONMany(mode MergeMode, jsons ...string) (string, error) {
 	return result, nil
 }
 
-// GetTypedWithProcessor retrieves a typed value from JSON using a specific processor
-func GetTypedWithProcessor[T any](processor *Processor, jsonStr, path string, opts ...Config) (T, error) {
+// getTypedWithProcessor retrieves a typed value from JSON using a specific processor
+func getTypedWithProcessor[T any](processor *Processor, jsonStr, path string, opts ...Config) (T, error) {
 	var zero T
 
 	value, err := processor.Get(jsonStr, path, opts...)
@@ -774,6 +820,43 @@ func GetTypedWithProcessor[T any](processor *Processor, jsonStr, path string, op
 		return converted, nil
 	}
 
+	jsonBytes, err := json.Marshal(value)
+	if err != nil {
+		return zero, &JsonsError{
+			Op:      "get_typed",
+			Path:    path,
+			Message: fmt.Sprintf("failed to marshal value for type conversion: %v", err),
+			Err:     ErrTypeMismatch,
+		}
+	}
+
+	var finalResult T
+	if err := json.Unmarshal(jsonBytes, &finalResult); err != nil {
+		return zero, &JsonsError{
+			Op:      "get_typed",
+			Path:    path,
+			Message: fmt.Sprintf("failed to convert value to type %T: %v", finalResult, err),
+			Err:     ErrTypeMismatch,
+		}
+	}
+
+	return finalResult, nil
+}
+
+// convertValueToType converts a pre-parsed value to the target type T.
+// Used by GetTypedOr to avoid re-parsing when the raw value is already available.
+func convertValueToType[T any](value any, path string) (T, error) {
+	var zero T
+
+	if value == nil {
+		return zero, ErrPathNotFound
+	}
+
+	if converted, ok := UnifiedTypeConversion[T](value); ok {
+		return converted, nil
+	}
+
+	// Fallback: re-marshal and unmarshal for complex types
 	jsonBytes, err := json.Marshal(value)
 	if err != nil {
 		return zero, &JsonsError{

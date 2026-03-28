@@ -88,7 +88,7 @@ func BenchmarkSafeTypeAssert(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, _ = SafeTypeAssert[int](input)
+		_, _ = safeTypeAssert[int](input)
 	}
 }
 
@@ -183,21 +183,21 @@ func TestDefaultValues(t *testing.T) {
 
 // TestEncodeBuffer tests encode buffer pooling
 func TestEncodeBuffer(t *testing.T) {
-	buf := GetEncodeBuffer()
+	buf := getEncodeBuffer()
 	if buf == nil {
-		t.Fatal("GetEncodeBuffer returned nil")
+		t.Fatal("getEncodeBuffer returned nil")
 	}
 
 	// Use the buffer
 	buf = append(buf, "test data"...)
 
 	// Return to pool
-	PutEncodeBuffer(buf)
+	putEncodeBuffer(buf)
 
 	// Get another buffer
-	buf2 := GetEncodeBuffer()
+	buf2 := getEncodeBuffer()
 	if buf2 == nil {
-		t.Fatal("GetEncodeBuffer returned nil on second call")
+		t.Fatal("getEncodeBuffer returned nil on second call")
 	}
 
 	// Buffer should be reset
@@ -205,7 +205,7 @@ func TestEncodeBuffer(t *testing.T) {
 		t.Errorf("Buffer length = %d, want 0", len(buf2))
 	}
 
-	PutEncodeBuffer(buf2)
+	putEncodeBuffer(buf2)
 }
 
 // TestIsSimplePropertyAccess tests simple property access detection
@@ -1646,25 +1646,25 @@ func TestSafeTypeAssert(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			switch tt.targetType {
 			case "int":
-				result, ok := SafeTypeAssert[int](tt.input)
+				result, ok := safeTypeAssert[int](tt.input)
 				if ok != tt.shouldSucceed {
-					t.Errorf("SafeTypeAssert[int](%v) success = %v; want %v", tt.input, ok, tt.shouldSucceed)
+					t.Errorf("safeTypeAssert[int](%v) success = %v; want %v", tt.input, ok, tt.shouldSucceed)
 				}
 				if tt.validate != nil {
 					tt.validate(t, result)
 				}
 			case "string":
-				result, ok := SafeTypeAssert[string](tt.input)
+				result, ok := safeTypeAssert[string](tt.input)
 				if ok != tt.shouldSucceed {
-					t.Errorf("SafeTypeAssert[string](%v) success = %v; want %v", tt.input, ok, tt.shouldSucceed)
+					t.Errorf("safeTypeAssert[string](%v) success = %v; want %v", tt.input, ok, tt.shouldSucceed)
 				}
 				if tt.validate != nil {
 					tt.validate(t, result)
 				}
 			case "float64":
-				result, ok := SafeTypeAssert[float64](tt.input)
+				result, ok := safeTypeAssert[float64](tt.input)
 				if ok != tt.shouldSucceed {
-					t.Errorf("SafeTypeAssert[float64](%v) success = %v; want %v", tt.input, ok, tt.shouldSucceed)
+					t.Errorf("safeTypeAssert[float64](%v) success = %v; want %v", tt.input, ok, tt.shouldSucceed)
 				}
 				if tt.validate != nil {
 					tt.validate(t, result)

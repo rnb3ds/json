@@ -934,6 +934,10 @@ func (sv *securityValidator) isDangerousContextIgnoreCase(s string, idx, pattern
 	return before && after
 }
 
+// validatePathSecurity validates JSON paths for security issues.
+// NOTE: For file path validation, see file.go:containsPathTraversal which provides
+// more comprehensive checks including recursive URL decoding and Unicode lookalikes.
+// This function focuses on JSON path-specific security concerns.
 func (sv *securityValidator) validatePathSecurity(path string) error {
 	// Normalize the path using Unicode NFC to detect homograph attacks
 	// This ensures that visually similar characters are normalized

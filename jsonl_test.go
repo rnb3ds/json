@@ -119,9 +119,9 @@ func TestNewJSONLProcessorWithOptions(t *testing.T) {
 		SkipComments: true,
 	}
 
-	processor := NewJSONLProcessorWithOptions(
+	processor := NewJSONLProcessorWithConfig(
 		strings.NewReader(input),
-		WithJSONLConfig(customConfig),
+		customConfig,
 	)
 	defer processor.Release()
 
@@ -130,23 +130,6 @@ func TestNewJSONLProcessorWithOptions(t *testing.T) {
 	}
 	if processor.config.BufferSize != 32*1024 {
 		t.Errorf("BufferSize = %d, want %d", processor.config.BufferSize, 32*1024)
-	}
-}
-
-func TestNewJSONLProcessorWithConfig(t *testing.T) {
-	input := `{"a":1}`
-
-	config := JSONLConfig{
-		BufferSize:  16 * 1024,
-		MaxLineSize: 256 * 1024,
-	}
-
-	// Test deprecated function still works
-	processor := NewJSONLProcessorWithConfig(strings.NewReader(input), config)
-	defer processor.Release()
-
-	if processor == nil {
-		t.Fatal("NewJSONLProcessorWithConfig returned nil")
 	}
 }
 
@@ -211,9 +194,9 @@ func TestJSONLProcessor_StreamLines(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			processor := NewJSONLProcessorWithOptions(
+			processor := NewJSONLProcessorWithConfig(
 				strings.NewReader(tt.input),
-				WithJSONLConfig(tt.config),
+				tt.config,
 			)
 			defer processor.Release()
 
@@ -726,10 +709,10 @@ func TestStreamLinesIntoWithConfig(t *testing.T) {
 	input := "# comment\n{\"key\":\"value1\"}\n\n{\"key\":\"value2\"}"
 
 	config := JSONLConfig{
-		BufferSize:    64 * 1024,
-		MaxLineSize:   1024 * 1024,
-		SkipEmpty:     true,
-		SkipComments:  true,
+		BufferSize:   64 * 1024,
+		MaxLineSize:  1024 * 1024,
+		SkipEmpty:    true,
+		SkipComments: true,
 	}
 
 	results, err := StreamLinesIntoWithConfig[Record](strings.NewReader(input), config, nil)
@@ -762,10 +745,10 @@ func TestStreamLinesInto_CallbackError(t *testing.T) {
 }
 
 // ============================================================================
-// WITH PROCESSOR OPTION TEST
+// WITH PROCESSOR CONFIG TEST
 // ============================================================================
 
-func TestWithProcessor(t *testing.T) {
+func TestJSONLProcessorWithCustomProcessor(t *testing.T) {
 	input := `{"a":1}`
 
 	customProcessor, err := New(DefaultConfig())
@@ -774,23 +757,29 @@ func TestWithProcessor(t *testing.T) {
 	}
 	defer customProcessor.Close()
 
-	processor := NewJSONLProcessorWithOptions(
+	config := DefaultJSONLConfig()
+	config.Processor = customProcessor
+
+	processor := NewJSONLProcessorWithConfig(
 		strings.NewReader(input),
-		WithProcessor(customProcessor),
+		config,
 	)
 	defer processor.Release()
 
 	if processor.processor != customProcessor {
-		t.Error("WithProcessor did not set the processor")
+		t.Error("Config.Processor was not set correctly")
 	}
 }
 
-func TestWithProcessor_Nil(t *testing.T) {
+func TestJSONLProcessorWithNilProcessor(t *testing.T) {
 	input := `{"a":1}`
 
-	processor := NewJSONLProcessorWithOptions(
+	config := DefaultJSONLConfig()
+	config.Processor = nil
+
+	processor := NewJSONLProcessorWithConfig(
 		strings.NewReader(input),
-		WithProcessor(nil),
+		config,
 	)
 	defer processor.Release()
 

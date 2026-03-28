@@ -10,7 +10,7 @@ import (
 
 // TestEncodingAdvanced tests advanced encoding features
 func TestEncodingAdvanced(t *testing.T) {
-	helper := NewTestHelper(t)
+	helper := newTestHelper(t)
 
 	t.Run("EncodeWithConfig", func(t *testing.T) {
 		processor := MustNew(DefaultConfig())
@@ -265,7 +265,7 @@ func TestEncodingAdvanced(t *testing.T) {
 
 // TestEncodingTypes tests encoding of various Go types
 func TestEncodingTypes(t *testing.T) {
-	helper := NewTestHelper(t)
+	helper := newTestHelper(t)
 
 	processor := MustNew(DefaultConfig())
 	defer processor.Close()
@@ -378,7 +378,7 @@ func TestEncodingTypes(t *testing.T) {
 
 // TestEncodingStreams tests stream encoding
 func TestEncodingStreams(t *testing.T) {
-	helper := NewTestHelper(t)
+	helper := newTestHelper(t)
 
 	processor := MustNew(DefaultConfig())
 	defer processor.Close()
@@ -458,7 +458,7 @@ func TestEncodingStreams(t *testing.T) {
 
 // TestEncodingCompatibility tests compatibility with encoding/json
 func TestEncodingCompatibility(t *testing.T) {
-	helper := NewTestHelper(t)
+	helper := newTestHelper(t)
 
 	t.Run("MarshalUnmarshal", func(t *testing.T) {
 		type User struct {
@@ -516,7 +516,7 @@ func TestEncodingCompatibility(t *testing.T) {
 
 // TestEncodingErrors tests encoding error conditions
 func TestEncodingErrors(t *testing.T) {
-	helper := NewTestHelper(t)
+	helper := newTestHelper(t)
 
 	processor := MustNew(DefaultConfig())
 	defer processor.Close()
@@ -558,7 +558,7 @@ func TestEncodingErrors(t *testing.T) {
 
 // TestEncodeDecodeIntegration tests encode/decode integration
 func TestEncodeDecodeIntegration(t *testing.T) {
-	helper := NewTestHelper(t)
+	helper := newTestHelper(t)
 
 	processor := MustNew(DefaultConfig())
 	defer processor.Close()

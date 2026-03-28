@@ -561,7 +561,7 @@ func TestBatchSetOptimized(t *testing.T) {
 
 // TestBoundaryConditions tests edge cases and boundary conditions
 func TestBoundaryConditions(t *testing.T) {
-	helper := NewTestHelper(t)
+	helper := newTestHelper(t)
 
 	t.Run("EmptyValues", func(t *testing.T) {
 		t.Run("EmptyString", func(t *testing.T) {
@@ -1081,7 +1081,7 @@ func TestConfig_Clone(t *testing.T) {
 
 // TestConfiguration tests configuration creation, validation, and cloning
 func TestConfiguration(t *testing.T) {
-	helper := NewTestHelper(t)
+	helper := newTestHelper(t)
 
 	t.Run("DefaultConfig", func(t *testing.T) {
 		config := DefaultConfig()
@@ -1213,7 +1213,7 @@ func TestConfiguration(t *testing.T) {
 
 // TestConfigurationEdgeCases tests configuration edge cases
 func TestConfigurationEdgeCases(t *testing.T) {
-	helper := NewTestHelper(t)
+	helper := newTestHelper(t)
 
 	t.Run("ExtremeCacheSizes", func(t *testing.T) {
 		config := DefaultConfig()
@@ -1308,7 +1308,7 @@ func TestConfigurationEdgeCases(t *testing.T) {
 
 // TestConfigurationIntegration tests configuration with processor
 func TestConfigurationIntegration(t *testing.T) {
-	helper := NewTestHelper(t)
+	helper := newTestHelper(t)
 
 	t.Run("ProcessorWithConfig", func(t *testing.T) {
 		config := DefaultConfig()
@@ -1826,7 +1826,7 @@ func TestEncoderDecoder(t *testing.T) {
 
 // TestEncodingConfiguration tests encoding configuration
 func TestEncodingConfiguration(t *testing.T) {
-	helper := NewTestHelper(t)
+	helper := newTestHelper(t)
 
 	t.Run("DefaultEncodeConfig", func(t *testing.T) {
 		config := DefaultConfig()
@@ -3551,7 +3551,7 @@ func TestPrettyEncodeConfig(t *testing.T) {
 
 // TestNullAndMissingFields tests null value handling and missing fields
 func TestNullAndMissingFields(t *testing.T) {
-	helper := NewTestHelper(t)
+	helper := newTestHelper(t)
 
 	testData := `{
 		"null_field": null,
@@ -5392,7 +5392,7 @@ func TestRecursiveProcessor_ComplexArrays(t *testing.T) {
 	processor := MustNew()
 	defer processor.Close()
 
-	rp := NewRecursiveProcessor(processor)
+	rp := newRecursiveProcessor(processor)
 
 	t.Run("NestedArrayGet", func(t *testing.T) {
 		data := map[string]any{
@@ -5436,7 +5436,7 @@ func TestRecursiveProcessor_Creation(t *testing.T) {
 	processor := MustNew()
 	defer processor.Close()
 
-	rp := NewRecursiveProcessor(processor)
+	rp := newRecursiveProcessor(processor)
 	if rp == nil {
 		t.Fatal("NewRecursiveProcessor returned nil")
 	}
@@ -5447,7 +5447,7 @@ func TestRecursiveProcessor_DataIntegrity(t *testing.T) {
 	processor := MustNew()
 	defer processor.Close()
 
-	rp := NewRecursiveProcessor(processor)
+	rp := newRecursiveProcessor(processor)
 
 	t.Run("GetDoesNotModifyOriginal", func(t *testing.T) {
 		originalData := map[string]any{
@@ -5473,7 +5473,7 @@ func TestRecursiveProcessor_DeepNesting(t *testing.T) {
 	processor := MustNew()
 	defer processor.Close()
 
-	rp := NewRecursiveProcessor(processor)
+	rp := newRecursiveProcessor(processor)
 
 	t.Run("DeepGet", func(t *testing.T) {
 		data := map[string]any{
@@ -5503,7 +5503,7 @@ func TestRecursiveProcessor_EdgeCases(t *testing.T) {
 	processor := MustNew()
 	defer processor.Close()
 
-	rp := NewRecursiveProcessor(processor)
+	rp := newRecursiveProcessor(processor)
 
 	t.Run("NilData", func(t *testing.T) {
 		_, err := rp.ProcessRecursively(nil, "path", opGet, nil)
@@ -5569,7 +5569,7 @@ func TestRecursiveProcessor_ExtractOperations(t *testing.T) {
 	processor := MustNew()
 	defer processor.Close()
 
-	rp := NewRecursiveProcessor(processor)
+	rp := newRecursiveProcessor(processor)
 
 	t.Run("SimpleExtract", func(t *testing.T) {
 		data := map[string]any{
@@ -5597,7 +5597,7 @@ func TestRecursiveProcessor_GetOperation(t *testing.T) {
 	processor := MustNew()
 	defer processor.Close()
 
-	rp := NewRecursiveProcessor(processor)
+	rp := newRecursiveProcessor(processor)
 
 	t.Run("SimpleProperty", func(t *testing.T) {
 		data := map[string]any{"name": "test", "value": 123}

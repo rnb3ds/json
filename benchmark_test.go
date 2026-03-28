@@ -956,9 +956,9 @@ func BenchmarkLargeBufferPool(b *testing.B) {
 func BenchmarkEncodeBufferPool(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		buf := GetEncodeBuffer()
+		buf := getEncodeBuffer()
 		buf = append(buf, make([]byte, 512)...)
-		PutEncodeBuffer(buf)
+		putEncodeBuffer(buf)
 	}
 }
 

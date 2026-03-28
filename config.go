@@ -257,8 +257,8 @@ func (c *Config) Validate() error {
 	return nil
 }
 
-// ConfigWarning represents a configuration modification made during validation.
-type ConfigWarning struct {
+// configWarning represents a configuration modification made during validation.
+type configWarning struct {
 	Field    string // The field that was modified
 	OldValue any    // The original value (may be nil for invalid values)
 	NewValue any    // The corrected value
@@ -277,19 +277,19 @@ type ConfigWarning struct {
 //	for _, w := range warnings {
 //	    fmt.Printf("%s: %s\n", w.Field, w.Reason)
 //	}
-func (c *Config) ValidateWithWarnings() []ConfigWarning {
+func (c *Config) ValidateWithWarnings() []configWarning {
 	if c == nil {
-		return []ConfigWarning{{Field: "Config", Reason: "config cannot be nil"}}
+		return []configWarning{{Field: "Config", Reason: "config cannot be nil"}}
 	}
 
-	var warnings []ConfigWarning
+	var warnings []configWarning
 
 	// Helper to record clamped int64 values
 	checkInt64Clamp := func(ptr *int64, min, max int64, fieldName string) {
 		original := *ptr
 		if original <= 0 {
 			*ptr = min
-			warnings = append(warnings, ConfigWarning{
+			warnings = append(warnings, configWarning{
 				Field:    fieldName,
 				OldValue: original,
 				NewValue: min,
@@ -297,7 +297,7 @@ func (c *Config) ValidateWithWarnings() []ConfigWarning {
 			})
 		} else if original > max {
 			*ptr = max
-			warnings = append(warnings, ConfigWarning{
+			warnings = append(warnings, configWarning{
 				Field:    fieldName,
 				OldValue: original,
 				NewValue: max,
@@ -311,7 +311,7 @@ func (c *Config) ValidateWithWarnings() []ConfigWarning {
 		original := *ptr
 		if original <= 0 {
 			*ptr = min
-			warnings = append(warnings, ConfigWarning{
+			warnings = append(warnings, configWarning{
 				Field:    fieldName,
 				OldValue: original,
 				NewValue: min,
@@ -319,7 +319,7 @@ func (c *Config) ValidateWithWarnings() []ConfigWarning {
 			})
 		} else if original > max {
 			*ptr = max
-			warnings = append(warnings, ConfigWarning{
+			warnings = append(warnings, configWarning{
 				Field:    fieldName,
 				OldValue: original,
 				NewValue: max,
@@ -342,7 +342,7 @@ func (c *Config) ValidateWithWarnings() []ConfigWarning {
 
 	// Cache settings
 	if c.MaxCacheSize < 0 {
-		warnings = append(warnings, ConfigWarning{
+		warnings = append(warnings, configWarning{
 			Field:    "MaxCacheSize",
 			OldValue: c.MaxCacheSize,
 			NewValue: 0,
@@ -351,7 +351,7 @@ func (c *Config) ValidateWithWarnings() []ConfigWarning {
 		c.MaxCacheSize = 0
 		c.EnableCache = false
 	} else if c.MaxCacheSize > 2000 {
-		warnings = append(warnings, ConfigWarning{
+		warnings = append(warnings, configWarning{
 			Field:    "MaxCacheSize",
 			OldValue: c.MaxCacheSize,
 			NewValue: 2000,
@@ -361,7 +361,7 @@ func (c *Config) ValidateWithWarnings() []ConfigWarning {
 	}
 
 	if c.CacheTTL <= 0 {
-		warnings = append(warnings, ConfigWarning{
+		warnings = append(warnings, configWarning{
 			Field:    "CacheTTL",
 			OldValue: c.CacheTTL,
 			NewValue: DefaultCacheTTL,
@@ -372,7 +372,7 @@ func (c *Config) ValidateWithWarnings() []ConfigWarning {
 
 	// Encoding options
 	if c.MaxDepth < 0 || c.MaxDepth > 1000 {
-		warnings = append(warnings, ConfigWarning{
+		warnings = append(warnings, configWarning{
 			Field:    "MaxDepth",
 			OldValue: c.MaxDepth,
 			NewValue: 100,
@@ -381,7 +381,7 @@ func (c *Config) ValidateWithWarnings() []ConfigWarning {
 		c.MaxDepth = 100
 	}
 	if c.FloatPrecision < -1 || c.FloatPrecision > 15 {
-		warnings = append(warnings, ConfigWarning{
+		warnings = append(warnings, configWarning{
 			Field:    "FloatPrecision",
 			OldValue: c.FloatPrecision,
 			NewValue: -1,
@@ -429,21 +429,21 @@ func (c *Config) ShouldValidateFilePath() bool { return c.ValidateFilePath }
 
 // EncoderConfig interface methods for custom encoders.
 // These provide read-only access to encoding configuration.
-func (c *Config) IsHTMLEscapeEnabled() bool    { return c.EscapeHTML }
-func (c *Config) IsPrettyEnabled() bool        { return c.Pretty }
-func (c *Config) GetIndent() string            { return c.Indent }
-func (c *Config) GetPrefix() string            { return c.Prefix }
-func (c *Config) IsSortKeysEnabled() bool      { return c.SortKeys }
-func (c *Config) GetFloatPrecision() int       { return c.FloatPrecision }
-func (c *Config) IsTruncateFloatEnabled() bool { return c.FloatTruncate }
-func (c *Config) GetMaxDepth() int             { return c.MaxDepth }
-func (c *Config) ShouldIncludeNulls() bool     { return c.IncludeNulls }
-func (c *Config) ShouldValidateUTF8() bool     { return c.ValidateUTF8 }
+func (c *Config) IsHTMLEscapeEnabled() bool      { return c.EscapeHTML }
+func (c *Config) IsPrettyEnabled() bool          { return c.Pretty }
+func (c *Config) GetIndent() string              { return c.Indent }
+func (c *Config) GetPrefix() string              { return c.Prefix }
+func (c *Config) IsSortKeysEnabled() bool        { return c.SortKeys }
+func (c *Config) GetFloatPrecision() int         { return c.FloatPrecision }
+func (c *Config) IsTruncateFloatEnabled() bool   { return c.FloatTruncate }
+func (c *Config) GetMaxDepth() int               { return c.MaxDepth }
+func (c *Config) ShouldIncludeNulls() bool       { return c.IncludeNulls }
+func (c *Config) ShouldValidateUTF8() bool       { return c.ValidateUTF8 }
 func (c *Config) IsDisallowUnknownEnabled() bool { return c.DisallowUnknown }
-func (c *Config) ShouldEscapeUnicode() bool    { return c.EscapeUnicode }
-func (c *Config) ShouldEscapeSlash() bool      { return c.EscapeSlash }
-func (c *Config) ShouldEscapeNewlines() bool   { return c.EscapeNewlines }
-func (c *Config) ShouldEscapeTabs() bool       { return c.EscapeTabs }
+func (c *Config) ShouldEscapeUnicode() bool      { return c.EscapeUnicode }
+func (c *Config) ShouldEscapeSlash() bool        { return c.EscapeSlash }
+func (c *Config) ShouldEscapeNewlines() bool     { return c.EscapeNewlines }
+func (c *Config) ShouldEscapeTabs() bool         { return c.EscapeTabs }
 
 // =============================================================================
 // API Unification - Config presets for common scenarios

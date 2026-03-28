@@ -34,8 +34,8 @@ type Processor struct {
 	resourceMonitor   *resourceMonitor
 	logger            atomic.Value // *slog.Logger - thread-safe logger storage
 	securityValidator *securityValidator
-	// Cached RecursiveProcessor for reuse across operations (performance optimization)
-	recursiveProcessor *RecursiveProcessor
+	// Cached recursiveProcessor for reuse across operations (performance optimization)
+	recursiveProcessor *recursiveProcessor
 	// Wait group for tracking active operations during Close()
 	activeOps sync.WaitGroup
 	// OPTIMIZED: Hash cache for large JSON strings to avoid repeated hash calculations
@@ -132,8 +132,8 @@ func New(cfg ...Config) (*Processor, error) {
 		p.metrics.collector = internal.NewMetricsCollector()
 	}
 
-	// Initialize cached RecursiveProcessor for reuse
-	p.recursiveProcessor = NewRecursiveProcessor(p)
+	// Initialize cached recursiveProcessor for reuse
+	p.recursiveProcessor = newRecursiveProcessor(p)
 
 	return p, nil
 }
@@ -769,6 +769,7 @@ func (p *Processor) checkClosed() error {
 
 // prepareOptions prepares and validates processor options
 // Accepts Config values and returns a pointer for internal use
+// PERFORMANCE: Uses stack allocation for small configs (no pooling to avoid memory leaks)
 func (p *Processor) prepareOptions(opts ...Config) (*Config, error) {
 	var options Config
 	if len(opts) > 0 {
@@ -1021,38 +1022,6 @@ func (p *Processor) SafeGet(jsonStr, path string) AccessResult {
 		Value:  value,
 		Exists: true,
 		Type:   valueType,
-	}
-}
-
-// SafeGetTypedWithProcessor performs a type-safe get operation with generic type constraints
-func SafeGetTypedWithProcessor[T any](p *Processor, jsonStr, path string) Result[T] {
-	var zero T
-
-	// Validate inputs
-	if jsonStr == "" || path == "" {
-		return Result[T]{Value: zero, Exists: false, Error: ErrPathNotFound}
-	}
-
-	// Perform the get operation
-	value, err := p.Get(jsonStr, path)
-	if err != nil {
-		return Result[T]{Value: zero, Exists: false, Error: err}
-	}
-
-	// Type assertion with safety
-	if typedValue, ok := value.(T); ok {
-		return Result[T]{Value: typedValue, Exists: true, Error: nil}
-	}
-
-	// Attempt type conversion
-	if converted, err := TypeSafeConvert[T](value); err == nil {
-		return Result[T]{Value: converted, Exists: true, Error: nil}
-	}
-
-	return Result[T]{
-		Value:  zero,
-		Exists: true,
-		Error:  fmt.Errorf("type mismatch: expected %T, got %T", zero, value),
 	}
 }
 
@@ -1349,32 +1318,32 @@ func (p *Processor) SetFromParsed(parsed *ParsedJSON, path string, value any, op
 
 // GetString retrieves a string value from JSON at the specified path
 func (p *Processor) GetString(jsonStr, path string, opts ...Config) (string, error) {
-	return GetTypedWithProcessor[string](p, jsonStr, path, opts...)
+	return getTypedWithProcessor[string](p, jsonStr, path, opts...)
 }
 
 // GetInt retrieves an int value from JSON at the specified path
 func (p *Processor) GetInt(jsonStr, path string, opts ...Config) (int, error) {
-	return GetTypedWithProcessor[int](p, jsonStr, path, opts...)
+	return getTypedWithProcessor[int](p, jsonStr, path, opts...)
 }
 
 // GetFloat retrieves a float64 value from JSON at the specified path
 func (p *Processor) GetFloat(jsonStr, path string, opts ...Config) (float64, error) {
-	return GetTypedWithProcessor[float64](p, jsonStr, path, opts...)
+	return getTypedWithProcessor[float64](p, jsonStr, path, opts...)
 }
 
 // GetBool retrieves a bool value from JSON at the specified path
 func (p *Processor) GetBool(jsonStr, path string, opts ...Config) (bool, error) {
-	return GetTypedWithProcessor[bool](p, jsonStr, path, opts...)
+	return getTypedWithProcessor[bool](p, jsonStr, path, opts...)
 }
 
 // GetArray retrieves an array value from JSON at the specified path
 func (p *Processor) GetArray(jsonStr, path string, opts ...Config) ([]any, error) {
-	return GetTypedWithProcessor[[]any](p, jsonStr, path, opts...)
+	return getTypedWithProcessor[[]any](p, jsonStr, path, opts...)
 }
 
 // GetObject retrieves an object value from JSON at the specified path
 func (p *Processor) GetObject(jsonStr, path string, opts ...Config) (map[string]any, error) {
-	return GetTypedWithProcessor[map[string]any](p, jsonStr, path, opts...)
+	return getTypedWithProcessor[map[string]any](p, jsonStr, path, opts...)
 }
 
 // GetMultiple retrieves multiple values from JSON using multiple path expressions
@@ -1779,11 +1748,8 @@ func (p *Processor) SetMultiple(jsonStr string, updates map[string]any, opts ...
 		}
 	}
 
-	// If some updates failed but we're continuing on error, log the failures
-	if len(failedPaths) > 0 && options.ContinueOnError {
-		// Could log warnings here if logger is available
-		// For now, we continue silently as requested
-	}
+	// Note: If some updates failed but ContinueOnError is true,
+	// the partial results are still returned with failedPaths populated.
 
 	// Convert modified data back to JSON string
 	resultBytes, err := json.Marshal(dataCopy)

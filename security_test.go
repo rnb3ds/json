@@ -17,7 +17,7 @@ import (
 // - Resource limits
 // - Security configuration validation
 func TestSecurityValidation(t *testing.T) {
-	helper := NewTestHelper(t)
+	helper := newTestHelper(t)
 
 	t.Run("PathTraversal", func(t *testing.T) {
 		processor := MustNew(SecurityConfig())
@@ -262,7 +262,7 @@ func TestSecurityValidation(t *testing.T) {
 
 // TestSecurityEdgeCases covers security-related edge cases
 func TestSecurityEdgeCases(t *testing.T) {
-	helper := NewTestHelper(t)
+	helper := newTestHelper(t)
 
 	t.Run("NullBytesInStrings", func(t *testing.T) {
 		processor := MustNew(SecurityConfig())

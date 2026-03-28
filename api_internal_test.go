@@ -214,7 +214,7 @@ func TestHashConfig(t *testing.T) {
 func TestProcessRecursivelyWithOptions_Comprehensive(t *testing.T) {
 	processor := MustNew()
 	defer processor.Close()
-	rp := NewRecursiveProcessor(processor)
+	rp := newRecursiveProcessor(processor)
 
 	t.Run("Get with createPaths false", func(t *testing.T) {
 		data := map[string]any{"existing": "value"}

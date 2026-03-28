@@ -83,14 +83,14 @@ func main() {
 
 | Syntax | Description | Example |
 |--------|-------------|---------|
-| `.property` | Access property | `user.name` -> "Alice" |
-| `[n]` | Array index | `items[0]` -> first element |
-| `[-n]` | Negative index (from end) | `items[-1]` -> last element |
-| `[start:end]` | Array slice | `items[1:3]` -> elements 1-2 |
-| `[start:end:step]` | Slice with step | `items[::2]` -> every other element |
-| `[+]` | Append to array | `items[+]` -> append position |
-| `{field}` | Extract field from all elements | `users{name}` -> ["Alice", "Bob"] |
-| `{flat:field}` | Flatten nested arrays | `users{flat:tags}` -> merge all tags |
+| `.property` | Access property | `user.name` → "Alice" |
+| `[n]` | Array index | `items[0]` → first element |
+| `[-n]` | Negative index (from end) | `items[-1]` → last element |
+| `[start:end]` | Array slice | `items[1:3]` → elements 1-2 |
+| `[start:end:step]` | Slice with step | `items[::2]` → every other element |
+| `[+]` | Append to array | `items[+]` → append position |
+| `{field}` | Extract field from all elements | `users{name}` → ["Alice", "Bob"] |
+| `{flat:field}` | Flatten nested arrays | `users{flat:tags}` → merge all tags |
 
 ---
 
@@ -196,7 +196,7 @@ result, err := json.TypeSafeConvert[string](value)
 
 // JSON utilities
 equal, _    := json.CompareJSON(json1, json2)
-merged, _   := json.MergeJSON(json1, json2)                    // union (default)
+merged, _   := json.MergeJSON(json1, json2)                       // union (default)
 merged, _   := json.MergeJSON(json1, json2, json.MergeIntersection) // intersection
 deepCopy, _ := json.DeepCopy(data)
 ```
@@ -272,10 +272,12 @@ json.ForeachWithPathAndControl(data, "users", func(key any, value any) json.Iter
 ### Batch Operations
 
 ```go
+data := `{"user": {"name": "Alice", "age": 28, "temp": "value"}}`
+
 operations := []json.BatchOperation{
-    {Type: "get", Path: "user.name"},
-    {Type: "set", Path: "user.age", Value: 25},
-    {Type: "delete", Path: "user.temp"},
+    {Type: "get", JSONStr: data, Path: "user.name"},
+    {Type: "set", JSONStr: data, Path: "user.age", Value: 25},
+    {Type: "delete", JSONStr: data, Path: "user.temp"},
 }
 results, err := json.ProcessBatch(operations)
 ```
@@ -283,7 +285,10 @@ results, err := json.ProcessBatch(operations)
 ### Streaming (Large Files)
 
 ```go
+import "strings"
+
 // Stream array elements
+reader := strings.NewReader(largeJSONArray)
 processor := json.NewStreamingProcessor(reader, 64*1024)
 err := processor.StreamArray(func(index int, item any) bool {
     // process each element
@@ -292,7 +297,7 @@ err := processor.StreamArray(func(index int, item any) bool {
 
 // JSONL/NDJSON processing
 jsonlProcessor := json.NewNDJSONProcessor(64 * 1024)
-err := jsonlProcessor.ProcessReader(func(lineNum int, obj map[string]any) error {
+err := jsonlProcessor.ProcessReader(reader, func(lineNum int, obj map[string]any) error {
     // process each line
     return nil
 })

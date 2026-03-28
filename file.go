@@ -5,29 +5,52 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"math/rand"
+	"math/rand/v2"
 	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/text/unicode/norm"
 )
 
-// globalRand is a random source for sampling operations
-// Initialized with current time for different seeds across runs
-// SECURITY FIX: Protected by globalRandMu for concurrent access
-var globalRand = rand.New(rand.NewSource(time.Now().UnixNano()))
-var globalRandMu sync.Mutex
+// randSource is a sharded random source for concurrent access.
+// PERFORMANCE: Sharding eliminates lock contention by using per-shard locks.
+type randSource struct {
+	mu   sync.Mutex
+	rand *rand.Rand
+}
 
-// randIntn returns a random integer in [0, n) in a thread-safe manner
+// randShards is a pool of random sources sharded for concurrent access.
+// Using 8 shards provides good distribution with minimal memory overhead.
+var randShards [8]randSource
+
+// randCounter is used for round-robin shard selection
+var randCounter atomic.Uint64
+
+// init initializes the random source shards
+func init() {
+	seed := uint64(time.Now().UnixNano())
+	for i := range randShards {
+		// Each shard gets a unique seed derived from the base seed
+		randShards[i].rand = rand.New(rand.NewPCG(seed+uint64(i), seed+uint64(i*7)))
+	}
+}
+
+// randIntn returns a random integer in [0, n) in a thread-safe manner.
+// PERFORMANCE: Uses sharded random sources to minimize lock contention.
+// Note: math/rand/v2 uses IntN (capital N) instead of Intn.
 func randIntn(n int) int {
-	globalRandMu.Lock()
-	defer globalRandMu.Unlock()
-	return globalRand.Intn(n)
+	// Select shard using round-robin for load balancing
+	idx := randCounter.Add(1) % uint64(len(randShards))
+	shard := &randShards[idx]
+	shard.mu.Lock()
+	defer shard.mu.Unlock()
+	return shard.rand.IntN(n)
 }
 
 // LoadFromFile loads JSON data from a file and returns the raw JSON string.
@@ -545,6 +568,8 @@ func (p *Processor) validatePathFileSize(absPath string) error {
 
 // containsPathTraversal checks for path traversal patterns comprehensively.
 // Uses case-insensitive matching with Unicode normalization and recursive URL decoding.
+// NOTE: For JSON path validation, see security.go:validatePathSecurity which provides
+// JSON-specific security checks. This function is for file system path validation.
 func containsPathTraversal(path string) bool {
 	// SECURITY: Apply Unicode NFC normalization to detect homograph attacks
 	normalized := norm.NFC.String(path)
@@ -826,6 +851,7 @@ func (lfp *LargeFileProcessor) ProcessFile(filename string, fn func(item any) er
 
 	// Create streaming processor
 	sp := NewStreamingProcessor(reader, int(lfp.config.ChunkSize))
+	defer sp.Close() // Ensure cleanup for API consistency
 
 	// Stream array elements
 	return sp.StreamArray(func(index int, item any) bool {
@@ -846,6 +872,7 @@ func (lfp *LargeFileProcessor) ProcessFileChunked(filename string, chunkSize int
 
 	reader := bufio.NewReaderSize(file, lfp.config.BufferSize)
 	sp := NewStreamingProcessor(reader, int(lfp.config.ChunkSize))
+	defer sp.Close() // Ensure cleanup for API consistency
 
 	chunk := make([]any, 0, chunkSize)
 

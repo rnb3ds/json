@@ -440,7 +440,8 @@ func (p *Processor) navigateDotNotation(data any, path string) (any, error) {
 
 	segments = p.splitPath(path, segments)
 
-	for i, segment := range segments {
+	for i := 0; i < len(segments); i++ {
+		segment := segments[i]
 		if p.isDistributedOperationSegment(segment) {
 			return p.handleDistributedOperation(current, segments[i:])
 		}
@@ -492,7 +493,7 @@ func (p *Processor) navigateDotNotation(data any, path string) (any, error) {
 					} else {
 						current = p.handlePostExtractionArrayAccess(current, nextSegment)
 					}
-					i++
+					i++ // Skip the next segment since we just processed it
 				}
 			}
 

@@ -108,8 +108,8 @@ func getPathType(path string) pathType {
 	return pt
 }
 
-// SafeTypeAssert performs a safe type assertion with generics
-func SafeTypeAssert[T any](value any) (T, bool) {
+// safeTypeAssert performs a safe type assertion with generics
+func safeTypeAssert[T any](value any) (T, bool) {
 	var zero T
 
 	if value == nil {
@@ -141,8 +141,9 @@ type Iterator struct {
 	keysOnce sync.Once
 }
 
-// NewIterator creates a new Iterator
-// Simplified API: processor parameter removed, uses default processor internally when needed
+// NewIterator creates a new Iterator over the provided data.
+// Simplified API: creates an iterator for traversing arrays and objects.
+// Note: The opts parameter is reserved for future use and currently ignored.
 func NewIterator(data any, opts ...Config) *Iterator {
 	return &Iterator{
 		data:     data,

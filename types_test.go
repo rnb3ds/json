@@ -108,7 +108,7 @@ func BenchmarkUnifiedTypeConversion(b *testing.B) {
 
 // TestAdvancedPathoperations tests advanced path features
 func TestAdvancedPathoperations(t *testing.T) {
-	helper := NewTestHelper(t)
+	helper := newTestHelper(t)
 
 	t.Run("WildcardAccess", func(t *testing.T) {
 		testData := `{
@@ -172,7 +172,7 @@ func TestAdvancedPathoperations(t *testing.T) {
 // TestConfigConstantsComprehensive consolidates configuration and constants tests
 // This replaces: config_constants_test.go
 func TestConfigConstantsComprehensive(t *testing.T) {
-	helper := NewTestHelper(t)
+	helper := newTestHelper(t)
 
 	t.Run("ConfigGetters", func(t *testing.T) {
 		config := DefaultConfig()
@@ -922,7 +922,7 @@ func TestEncodeConfig_Clone_Zero(t *testing.T) {
 
 // TestErrorClassifier tests error classification functionality
 func TestErrorClassifier(t *testing.T) {
-	helper := NewTestHelper(t)
+	helper := newTestHelper(t)
 
 	t.Run("IsSecurityRelated", func(t *testing.T) {
 		tests := []struct {
@@ -1011,7 +1011,7 @@ func TestErrorClassifier(t *testing.T) {
 
 // TestErrorHandling comprehensive error handling tests
 func TestErrorHandling(t *testing.T) {
-	helper := NewTestHelper(t)
+	helper := newTestHelper(t)
 
 	t.Run("JsonsErrorStructure", func(t *testing.T) {
 		err := &JsonsError{
@@ -1081,7 +1081,7 @@ func TestErrorHandling(t *testing.T) {
 
 // TestErrorMessages verifies error messages are helpful
 func TestErrorMessages(t *testing.T) {
-	helper := NewTestHelper(t)
+	helper := newTestHelper(t)
 
 	t.Run("PathNotFoundMessage", func(t *testing.T) {
 		testData := `{"user": {"name": "John"}}`
@@ -1122,7 +1122,7 @@ func TestErrorMessages(t *testing.T) {
 
 // TestErrorRecovery tests error recovery scenarios
 func TestErrorRecovery(t *testing.T) {
-	helper := NewTestHelper(t)
+	helper := newTestHelper(t)
 
 	t.Run("RetryAfterTimeout", func(t *testing.T) {
 		retryableErrors := []error{
@@ -1176,7 +1176,7 @@ func TestErrorRecovery(t *testing.T) {
 
 // TestErrorScenarios tests various error scenarios
 func TestErrorScenarios(t *testing.T) {
-	helper := NewTestHelper(t)
+	helper := newTestHelper(t)
 
 	t.Run("InvalidJSON", func(t *testing.T) {
 		invalidJSON := []string{
@@ -1424,7 +1424,7 @@ func TestGlobalResourceManager(t *testing.T) {
 
 // TestHealthCheckSystem tests health check functionality
 func TestHealthCheckSystem(t *testing.T) {
-	helper := NewTestHelper(t)
+	helper := newTestHelper(t)
 
 	t.Run("BasicHealthCheck", func(t *testing.T) {
 		processor := MustNew()
@@ -1485,7 +1485,7 @@ func TestInvalidUnmarshalError(t *testing.T) {
 
 // TestIteratorAdvancedFeatures tests advanced iterator functionality
 func TestIteratorAdvancedFeatures(t *testing.T) {
-	helper := NewTestHelper(t)
+	helper := newTestHelper(t)
 
 	t.Run("IteratorControlBreak", func(t *testing.T) {
 		testData := `{"items": [1, 2, 3, 4, 5]}`
@@ -1624,8 +1624,8 @@ func TestPathInfo(t *testing.T) {
 // TestProcessorConcurrencyComprehensive consolidates processor and concurrency tests
 // This replaces: processor_concurrency_test.go, concurrency_test.go
 func TestProcessorConcurrencyComprehensive(t *testing.T) {
-	helper := NewTestHelper(t)
-	generator := NewTestDataGenerator()
+	helper := newTestHelper(t)
+	generator := newTestDataGenerator()
 
 	t.Run("Processoroperations", func(t *testing.T) {
 		processor := MustNew()
@@ -1690,7 +1690,7 @@ func TestProcessorConcurrencyComprehensive(t *testing.T) {
 	t.Run("Concurrentoperations", func(t *testing.T) {
 		t.Run("ConcurrentReads", func(t *testing.T) {
 			jsonStr := generator.GenerateComplexJSON()
-			concurrencyTester := NewConcurrencyTester(t, 20, 100)
+			concurrencyTester := newConcurrencyTester(t, 20, 100)
 
 			concurrencyTester.Run(func(workerID, iteration int) error {
 				paths := []string{
@@ -1709,7 +1709,7 @@ func TestProcessorConcurrencyComprehensive(t *testing.T) {
 			var results []string
 			var resultsMutex sync.Mutex
 
-			concurrencyTester := NewConcurrencyTester(t, 10, 50)
+			concurrencyTester := newConcurrencyTester(t, 10, 50)
 			concurrencyTester.Run(func(workerID, iteration int) error {
 				counterKey := fmt.Sprintf("counters.%c", 'a'+workerID%2)
 				result, err := Set(originalJSON, counterKey, workerID*1000+iteration)
@@ -1729,7 +1729,7 @@ func TestProcessorConcurrencyComprehensive(t *testing.T) {
 			baseJSON := `{"data": {"counter": 0}, "array": [1, 2, 3]}`
 			var operations int64
 
-			concurrencyTester := NewConcurrencyTester(t, 15, 100)
+			concurrencyTester := newConcurrencyTester(t, 15, 100)
 			concurrencyTester.Run(func(workerID, iteration int) error {
 				atomic.AddInt64(&operations, 1)
 				switch iteration % 3 {
@@ -1754,7 +1754,7 @@ func TestProcessorConcurrencyComprehensive(t *testing.T) {
 			defer processor.Close()
 
 			jsonStr := generator.GenerateComplexJSON()
-			concurrencyTester := NewConcurrencyTester(t, 25, 200)
+			concurrencyTester := newConcurrencyTester(t, 25, 200)
 
 			concurrencyTester.Run(func(workerID, iteration int) error {
 				switch iteration % 2 {
@@ -2133,12 +2133,12 @@ func TestProcessorConcurrencyComprehensive(t *testing.T) {
 			proc := MustNew(DefaultConfig())
 			defer proc.Close()
 
-			testData := NewTestDataGenerator().GenerateComplexJSON()
+			testData := newTestDataGenerator().GenerateComplexJSON()
 
 			concurrency := 50
 			operations := 1000
 
-			ct := NewConcurrencyTester(t, concurrency, operations)
+			ct := newConcurrencyTester(t, concurrency, operations)
 			ct.Run(func(workerID, iteration int) error {
 				switch iteration % 4 {
 				case 0:
@@ -2250,13 +2250,13 @@ func TestPropertyAccessResult(t *testing.T) {
 
 // TestResourceManager tests resource management functionality
 func TestResourceManager(t *testing.T) {
-	helper := NewTestHelper(t)
+	helper := newTestHelper(t)
 
 	t.Run("StringBuilderPool", func(t *testing.T) {
 		processor := MustNew()
 		defer processor.Close()
 
-		success := TestProcessorResourcePools(processor)
+		success := testProcessorResourcePools(processor)
 		helper.AssertTrue(success, "Resource pools should be functional")
 	})
 

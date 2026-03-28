@@ -196,7 +196,7 @@ result, err := json.TypeSafeConvert[string](value)
 
 // JSON 工具
 equal, _    := json.CompareJSON(json1, json2)
-merged, _   := json.MergeJSON(json1, json2)                    // 并集（默认）
+merged, _   := json.MergeJSON(json1, json2)                       // 并集（默认）
 merged, _   := json.MergeJSON(json1, json2, json.MergeIntersection) // 交集
 deepCopy, _ := json.DeepCopy(data)
 ```
@@ -272,10 +272,12 @@ json.ForeachWithPathAndControl(data, "users", func(key any, value any) json.Iter
 ### 批量操作
 
 ```go
+data := `{"user": {"name": "Alice", "age": 28, "temp": "value"}}`
+
 operations := []json.BatchOperation{
-    {Type: "get", Path: "user.name"},
-    {Type: "set", Path: "user.age", Value: 25},
-    {Type: "delete", Path: "user.temp"},
+    {Type: "get", JSONStr: data, Path: "user.name"},
+    {Type: "set", JSONStr: data, Path: "user.age", Value: 25},
+    {Type: "delete", JSONStr: data, Path: "user.temp"},
 }
 results, err := json.ProcessBatch(operations)
 ```
@@ -283,7 +285,10 @@ results, err := json.ProcessBatch(operations)
 ### 流式处理（大文件）
 
 ```go
+import "strings"
+
 // 流式处理数组元素
+reader := strings.NewReader(largeJSONArray)
 processor := json.NewStreamingProcessor(reader, 64*1024)
 err := processor.StreamArray(func(index int, item any) bool {
     // 处理每个元素
@@ -292,7 +297,7 @@ err := processor.StreamArray(func(index int, item any) bool {
 
 // JSONL/NDJSON 处理
 jsonlProcessor := json.NewNDJSONProcessor(64 * 1024)
-err := jsonlProcessor.ProcessReader(func(lineNum int, obj map[string]any) error {
+err := jsonlProcessor.ProcessReader(reader, func(lineNum int, obj map[string]any) error {
     // 处理每一行
     return nil
 })

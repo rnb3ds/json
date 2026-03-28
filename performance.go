@@ -268,6 +268,15 @@ func (sp *StreamingProcessor) GetStats() StreamingStats {
 	return sp.stats
 }
 
+// Close releases any resources held by the streaming processor.
+// Note: This does NOT close the underlying reader - the caller owns it.
+// Provided for API consistency and future extensibility.
+func (sp *StreamingProcessor) Close() error {
+	// Reset internal state for potential reuse
+	sp.stats = StreamingStats{}
+	return nil
+}
+
 // ============================================================================
 // BULK OPERATION OPTIMIZATIONS
 // ============================================================================
@@ -373,13 +382,13 @@ var encodeBufferPool = sync.Pool{
 	},
 }
 
-// GetEncodeBuffer gets a buffer for encoding operations
-func GetEncodeBuffer() []byte {
+// getEncodeBuffer gets a buffer for encoding operations
+func getEncodeBuffer() []byte {
 	return encodeBufferPool.Get().([]byte)[:0]
 }
 
-// PutEncodeBuffer returns a buffer to the pool
-func PutEncodeBuffer(buf []byte) {
+// putEncodeBuffer returns a buffer to the pool
+func putEncodeBuffer(buf []byte) {
 	if cap(buf) <= 16*1024 { // Don't pool buffers larger than 16KB
 		encodeBufferPool.Put(buf)
 	}

@@ -35,6 +35,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"sync"
 	"sync/atomic"
 
@@ -52,8 +53,11 @@ var (
 func init() {
 	p, err := New()
 	if err != nil {
-		// This should never happen with DefaultConfig
-		// If it does, fallback remains nil and operations may fail gracefully
+		// This should never happen with DefaultConfig.
+		// Log to stderr as a last resort since logger may not be available.
+		// Note: We don't panic to allow the program to continue if
+		// the fallback processor isn't actually needed.
+		fmt.Fprintf(os.Stderr, "json: warning: failed to create fallback processor: %v\n", err)
 		return
 	}
 	fallbackProcessor.Store(p)
@@ -141,11 +145,12 @@ func ShutdownGlobalProcessor() {
 
 // JSONLConfig holds configuration for JSONL processing
 type JSONLConfig struct {
-	BufferSize    int  // Buffer size for reading (default: 64KB)
-	MaxLineSize   int  // Maximum line size (default: 1MB)
-	SkipEmpty     bool // Skip empty lines (default: true)
-	SkipComments  bool // Skip lines starting with # or // (default: false)
-	ContinueOnErr bool // Continue processing on parse errors (default: false)
+	BufferSize    int        // Buffer size for reading (default: 64KB)
+	MaxLineSize   int        // Maximum line size (default: 1MB)
+	SkipEmpty     bool       // Skip empty lines (default: true)
+	SkipComments  bool       // Skip lines starting with # or // (default: false)
+	ContinueOnErr bool       // Continue processing on parse errors (default: false)
+	Processor     *Processor // Optional custom processor (default: global processor)
 }
 
 // DefaultJSONLConfig returns the default JSONL configuration
@@ -156,6 +161,7 @@ func DefaultJSONLConfig() JSONLConfig {
 		SkipEmpty:     true,
 		SkipComments:  false,
 		ContinueOnErr: false,
+		Processor:     nil, // Use global processor
 	}
 }
 
@@ -190,57 +196,36 @@ type JSONLProcessor struct {
 	linesCount int64
 }
 
-// JSONLOption configures a JSONLProcessor during construction.
-type JSONLOption func(*JSONLProcessor)
-
-// WithProcessor sets a custom Processor for JSONL operations.
-// Use this for dependency injection or when you need a specific processor configuration.
-func WithProcessor(p *Processor) JSONLOption {
-	return func(j *JSONLProcessor) {
-		if p != nil {
-			j.processor = p
-		}
-	}
-}
-
-// WithJSONLConfig sets a custom JSONL configuration.
-func WithJSONLConfig(config JSONLConfig) JSONLOption {
-	return func(j *JSONLProcessor) {
-		j.config = config
-	}
-}
-
 // NewJSONLProcessor creates a new JSONL processor with default configuration.
 func NewJSONLProcessor(reader io.Reader) *JSONLProcessor {
-	return NewJSONLProcessorWithOptions(reader)
+	return NewJSONLProcessorWithConfig(reader, DefaultJSONLConfig())
 }
 
-// NewJSONLProcessorWithOptions creates a new JSONL processor with functional options.
-// Options are applied in order, allowing flexible configuration.
+// NewJSONLProcessorWithConfig creates a new JSONL processor with the specified configuration.
 //
 // Example:
 //
-//	proc := json.NewJSONLProcessorWithOptions(reader,
-//	    json.WithProcessor(customProcessor),
-//	    json.WithJSONLConfig(json.JSONLConfig{SkipEmpty: false}))
-func NewJSONLProcessorWithOptions(reader io.Reader, opts ...JSONLOption) *JSONLProcessor {
-	config := DefaultJSONLConfig()
+//	cfg := json.DefaultJSONLConfig()
+//	cfg.SkipEmpty = false
+//	cfg.Processor = customProcessor
+//	proc := json.NewJSONLProcessorWithConfig(reader, cfg)
+func NewJSONLProcessorWithConfig(reader io.Reader, config JSONLConfig) *JSONLProcessor {
+	// Apply config defaults
+	if config.BufferSize <= 0 {
+		config.BufferSize = 64 * 1024
+	}
+	if config.MaxLineSize <= 0 {
+		config.MaxLineSize = 1024 * 1024
+	}
+
+	processor := config.Processor
+	if processor == nil {
+		processor = getDefaultProcessor()
+	}
+
 	j := &JSONLProcessor{
 		config:    config,
-		processor: getDefaultProcessor(),
-	}
-
-	// Apply options
-	for _, opt := range opts {
-		opt(j)
-	}
-
-	// Apply config defaults
-	if j.config.BufferSize <= 0 {
-		j.config.BufferSize = 64 * 1024
-	}
-	if j.config.MaxLineSize <= 0 {
-		j.config.MaxLineSize = 1024 * 1024
+		processor: processor,
 	}
 
 	scanner := bufio.NewScanner(reader)
@@ -251,12 +236,6 @@ func NewJSONLProcessorWithOptions(reader io.Reader, opts ...JSONLOption) *JSONLP
 	j.stopped.Store(false)
 
 	return j
-}
-
-// NewJSONLProcessorWithConfig creates a new JSONL processor with custom configuration.
-// Deprecated: Use NewJSONLProcessorWithOptions(reader, WithJSONLConfig(config)) instead.
-func NewJSONLProcessorWithConfig(reader io.Reader, config JSONLConfig) *JSONLProcessor {
-	return NewJSONLProcessorWithOptions(reader, WithJSONLConfig(config))
 }
 
 // shouldSkipLine checks if a line should be skipped based on configuration.

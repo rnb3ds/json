@@ -118,6 +118,8 @@ func isDefaultConfig(cfg Config) bool {
 // configFieldsEqual compares all fields of two Config structs.
 // PERFORMANCE: Uses direct field comparison instead of reflect.DeepEqual
 // for ~10x faster execution in hot paths. New fields must be added explicitly.
+// MAINTENANCE: Must be kept in sync with hashConfigFields - both functions must
+// enumerate the same set of fields to ensure consistent behavior.
 func configFieldsEqual(a, b Config) bool {
 	// Context comparison (interface pointer comparison)
 	if a.Context != b.Context {
@@ -218,6 +220,8 @@ func configFieldsEqual(a, b Config) bool {
 
 // hashConfigFields hashes all Config fields explicitly.
 // More reliable than JSON serialization which ignores Context.
+// MAINTENANCE: Must be kept in sync with configFieldsEqual - both functions must
+// enumerate the same set of fields to ensure consistent cache key generation.
 func hashConfigFields(cfg Config) uint64 {
 	h := internal.FNVOffsetBasis
 
@@ -394,19 +398,20 @@ func GetObject(jsonStr, path string, cfg ...Config) (map[string]any, error) {
 //	name := json.GetOr[string](data, "user.name", "unknown")
 //	age := json.GetOr[int](data, "user.age", 0)
 func GetTypedOr[T any](jsonStr, path string, defaultValue T, cfg ...Config) T {
-	// First check if the raw value is nil (null or missing)
-	p := getDefaultProcessor()
-	if p == nil {
-		return defaultValue
-	}
-
-	rawValue, err := p.Get(jsonStr, path, cfg...)
-	if err != nil || rawValue == nil {
-		return defaultValue
-	}
-
-	// Convert to typed value
-	result, err := GetTyped[T](jsonStr, path, cfg...)
+	// PERFORMANCE: Single parse - get raw value once, then convert
+	result, err := withProcessor(func(p *Processor) (T, error) {
+		rawValue, err := p.Get(jsonStr, path, cfg...)
+		if err != nil {
+			var zero T
+			return zero, err
+		}
+		if rawValue == nil {
+			var zero T
+			return zero, ErrPathNotFound // Return error to trigger default
+		}
+		// Convert the already-parsed value
+		return convertValueToType[T](rawValue, path)
+	})
 	if err != nil {
 		return defaultValue
 	}

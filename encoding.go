@@ -117,7 +117,7 @@ func NewEncoder(w io.Writer) *Encoder {
 //
 //	cfg := json.DefaultConfig()
 //	cfg.Pretty = true
-//	encoder := json.NewEncoderWithOpts(writer, cfg)
+//	encoder := json.NewEncoderWithOpts(writer, &cfg)
 //	err := encoder.Encode(data)
 func NewEncoderWithOpts(w io.Writer, opts *Config) *Encoder {
 	p := getDefaultProcessor()
@@ -127,9 +127,15 @@ func NewEncoderWithOpts(w io.Writer, opts *Config) *Encoder {
 		escapeHTML: true, // Default behavior matches encoding/json
 	}
 	if opts != nil {
-		enc.indent = "  " // Default indent for pretty output
+		// Apply escape HTML setting
+		enc.escapeHTML = opts.EscapeHTML
+		// Apply pretty print settings
 		if opts.Pretty {
-			enc.prefix = ""
+			enc.prefix = opts.Prefix
+			enc.indent = opts.Indent
+			if enc.indent == "" {
+				enc.indent = "  " // Default indent
+			}
 		}
 	}
 	return enc
@@ -283,7 +289,9 @@ func (dec *Decoder) More() bool {
 
 	// Skip whitespace
 	for len(b) > 0 && isSpace(b[0]) {
-		dec.buf.ReadByte()
+		if _, err := dec.buf.ReadByte(); err != nil {
+			return false
+		}
 		b, err = dec.buf.Peek(1)
 		if err != nil {
 			return false
@@ -446,7 +454,9 @@ func (dec *Decoder) readPrimitiveValue(buf *bytes.Buffer) ([]byte, error) {
 
 		// Check for value terminators
 		if isSpace(b) || b == ',' || b == '}' || b == ']' {
-			dec.buf.UnreadByte()
+			if err := dec.buf.UnreadByte(); err != nil {
+				return nil, fmt.Errorf("unread failed: %w", err)
+			}
 			dec.offset--
 			break
 		}
@@ -1283,11 +1293,11 @@ func (e *customEncoder) escapeRune(r rune) error {
 		}
 	default:
 		if r < 0x20 {
-			e.buffer.WriteString(fmt.Sprintf(`\u%04x`, r))
+			fmt.Fprintf(e.buffer, `\u%04x`, r)
 		} else if e.config.EscapeHTML && (r == '<' || r == '>' || r == '&') {
-			e.buffer.WriteString(fmt.Sprintf(`\u%04x`, r))
+			fmt.Fprintf(e.buffer, `\u%04x`, r)
 		} else if e.config.EscapeUnicode && r > 0x7F {
-			e.buffer.WriteString(fmt.Sprintf(`\u%04x`, r))
+			fmt.Fprintf(e.buffer, `\u%04x`, r)
 		} else if !utf8.ValidRune(r) && e.config.ValidateUTF8 {
 			return &JsonsError{
 				Op:      "escape_rune",

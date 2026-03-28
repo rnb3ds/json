@@ -258,7 +258,6 @@ func TestEncode(t *testing.T) {
 // API PRINT FUNCTIONS TESTS
 // ============================================================================
 
-
 // ============================================================================
 // PROCESSOR METHODS TESTS - Additional coverage
 // ============================================================================
@@ -431,7 +430,7 @@ func TestProcessorBufferMethods(t *testing.T) {
 func TestRecursiveProcessor(t *testing.T) {
 	processor := MustNew()
 	defer processor.Close()
-	rp := NewRecursiveProcessor(processor)
+	rp := newRecursiveProcessor(processor)
 
 	t.Run("GetNestedValue", func(t *testing.T) {
 		data := map[string]any{
