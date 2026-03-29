@@ -53,21 +53,25 @@ func HashString(h uint64, s string) uint64 {
 
 // HashStringFNV1a computes FNV-1a hash for a string (full scan).
 // This is a fast, non-cryptographic hash function suitable for cache keys.
-// PERFORMANCE v2: Uses deferred multiplication pattern for ~40% improvement.
+// PERFORMANCE v3: Optimized with small-string fast path and improved loop structure.
 func HashStringFNV1a(s string) uint64 {
 	h := FNVOffsetBasis
 	n := len(s)
 
+	// Fast path for small strings (most common case)
+	if n < 16 {
+		for i := 0; i < n; i++ {
+			h ^= uint64(s[i])
+			h *= FNVPrime
+		}
+		return h
+	}
+
 	// Process 8 bytes at a time with deferred multiplication
+	// Use local variable to reduce register pressure
 	for i := 0; i < n-7; i += 8 {
-		h ^= uint64(s[i])
-		h ^= uint64(s[i+1])
-		h ^= uint64(s[i+2])
-		h ^= uint64(s[i+3])
-		h ^= uint64(s[i+4])
-		h ^= uint64(s[i+5])
-		h ^= uint64(s[i+6])
-		h ^= uint64(s[i+7])
+		h ^= uint64(s[i]) | uint64(s[i+1])<<8 | uint64(s[i+2])<<16 | uint64(s[i+3])<<24 |
+			uint64(s[i+4])<<32 | uint64(s[i+5])<<40 | uint64(s[i+6])<<48 | uint64(s[i+7])<<56
 		h *= FNVPrime
 	}
 
@@ -83,35 +87,37 @@ func HashStringFNV1a(s string) uint64 {
 // HashStringFNV1aSampled computes FNV-1a hash with sampling for large strings.
 // PERFORMANCE: For large strings (>4KB), samples first/middle/last sections
 // to avoid full scan overhead while maintaining good hash distribution.
-// PERFORMANCE v3: Uses deferred multiplication pattern for ~40% improvement over v2.
+// PERFORMANCE v4: Optimized with batch byte loading and reduced multiplications.
 func HashStringFNV1aSampled(s string) uint64 {
 	const (
 		sampleSize   = 512
 		middleSample = 256
 	)
 
-	h := FNVOffsetBasis
 	lenS := len(s)
 
+	// Fast path for small strings - use full hash
+	if lenS <= LargeStringHashThreshold {
+		return HashStringFNV1a(s)
+	}
+
+	h := FNVOffsetBasis
+
 	// Include length in hash to prevent prefix/suffix collisions
-	h ^= uint64(lenS)
-	h *= FNVPrime
-	h ^= uint64(lenS >> 8)
+	// Combine both length bytes into single hash step
+	h ^= uint64(lenS) | uint64(lenS>>8)<<32
 	h *= FNVPrime
 
-	// First sample - use deferred multiplication pattern
-	end := min(sampleSize, lenS)
+	// First sample - optimized batch loading
+	end := sampleSize
+	if end > lenS {
+		end = lenS
+	}
 
-	// Process 8 bytes with deferred multiplication (only multiply at end of each group)
+	// Process 8 bytes at a time with batch loading
 	for i := 0; i < end-7; i += 8 {
-		h ^= uint64(s[i])
-		h ^= uint64(s[i+1])
-		h ^= uint64(s[i+2])
-		h ^= uint64(s[i+3])
-		h ^= uint64(s[i+4])
-		h ^= uint64(s[i+5])
-		h ^= uint64(s[i+6])
-		h ^= uint64(s[i+7])
+		h ^= uint64(s[i]) | uint64(s[i+1])<<8 | uint64(s[i+2])<<16 | uint64(s[i+3])<<24 |
+			uint64(s[i+4])<<32 | uint64(s[i+5])<<40 | uint64(s[i+6])<<48 | uint64(s[i+7])<<56
 		h *= FNVPrime
 	}
 	// Handle remaining bytes
@@ -120,47 +126,36 @@ func HashStringFNV1aSampled(s string) uint64 {
 		h *= FNVPrime
 	}
 
-	// Middle sample - use deferred multiplication pattern
-	if lenS > sampleSize {
-		midStart := lenS/2 - middleSample/2
-		if midStart > end {
-			midEnd := min(midStart+middleSample, lenS)
-			// Process 8 bytes with deferred multiplication
-			for i := midStart; i < midEnd-7; i += 8 {
-				h ^= uint64(s[i])
-				h ^= uint64(s[i+1])
-				h ^= uint64(s[i+2])
-				h ^= uint64(s[i+3])
-				h ^= uint64(s[i+4])
-				h ^= uint64(s[i+5])
-				h ^= uint64(s[i+6])
-				h ^= uint64(s[i+7])
-				h *= FNVPrime
-			}
-			// Handle remaining bytes
-			processedBytes := ((midEnd - midStart) / 8) * 8
-			for i := midStart + processedBytes; i < midEnd; i++ {
-				h ^= uint64(s[i])
-				h *= FNVPrime
-			}
+	// Middle sample
+	midStart := lenS/2 - middleSample/2
+	if midStart > end {
+		midEnd := midStart + middleSample
+		if midEnd > lenS {
+			midEnd = lenS
+		}
+		// Process 8 bytes at a time
+		for i := midStart; i < midEnd-7; i += 8 {
+			h ^= uint64(s[i]) | uint64(s[i+1])<<8 | uint64(s[i+2])<<16 | uint64(s[i+3])<<24 |
+				uint64(s[i+4])<<32 | uint64(s[i+5])<<40 | uint64(s[i+6])<<48 | uint64(s[i+7])<<56
+			h *= FNVPrime
+		}
+		// Handle remaining bytes
+		for i := midStart + ((midEnd-midStart)/8)*8; i < midEnd; i++ {
+			h ^= uint64(s[i])
+			h *= FNVPrime
 		}
 	}
 
-	// Last sample - use deferred multiplication pattern
-	start := max(lenS-sampleSize, end)
-	// Process 8 bytes with deferred multiplication
+	// Last sample
+	start := lenS - sampleSize
+	if start < end {
+		start = end
+	}
 	for i := start; i < lenS-7; i += 8 {
-		h ^= uint64(s[i])
-		h ^= uint64(s[i+1])
-		h ^= uint64(s[i+2])
-		h ^= uint64(s[i+3])
-		h ^= uint64(s[i+4])
-		h ^= uint64(s[i+5])
-		h ^= uint64(s[i+6])
-		h ^= uint64(s[i+7])
+		h ^= uint64(s[i]) | uint64(s[i+1])<<8 | uint64(s[i+2])<<16 | uint64(s[i+3])<<24 |
+			uint64(s[i+4])<<32 | uint64(s[i+5])<<40 | uint64(s[i+6])<<48 | uint64(s[i+7])<<56
 		h *= FNVPrime
 	}
-	// Handle remaining bytes
 	for i := start + ((lenS-start)/8)*8; i < lenS; i++ {
 		h ^= uint64(s[i])
 		h *= FNVPrime

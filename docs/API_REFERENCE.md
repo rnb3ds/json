@@ -112,7 +112,7 @@ Reports whether data is valid JSON.
 ### Get
 
 ```go
-func Get(jsonStr, path string, cfg ...*Config) (any, error)
+func Get(jsonStr, path string, cfg ...Config) (any, error)
 ```
 
 Retrieves a value from JSON at the specified path.
@@ -136,91 +136,91 @@ value, err := json.Get(data, "users[0].name")
 ### GetString
 
 ```go
-func GetString(jsonStr, path string, cfg ...*Config) (string, error)
+func GetString(jsonStr, path string, cfg ...Config) (string, error)
 ```
 
 Retrieves a string value from JSON at the specified path.
 
 ---
 
-### GetAsInt
+### GetInt
 
 ```go
-func GetAsInt(jsonStr, path string, cfg ...*Config) (int, error)
+func GetInt(jsonStr, path string, cfg ...Config) (int, error)
 ```
 
 Retrieves an integer value from JSON at the specified path.
 
 ---
 
-### GetAsFloat
+### GetFloat
 
 ```go
-func GetAsFloat(jsonStr, path string, cfg ...*Config) (float64, error)
+func GetFloat(jsonStr, path string, cfg ...Config) (float64, error)
 ```
 
 Retrieves a float64 value from JSON at the specified path.
 
 ---
 
-### GetAsBool
+### GetBool
 
 ```go
-func GetAsBool(jsonStr, path string, cfg ...*Config) (bool, error)
+func GetBool(jsonStr, path string, cfg ...Config) (bool, error)
 ```
 
 Retrieves a boolean value from JSON at the specified path.
 
 ---
 
-### GetAsArray
+### GetArray
 
 ```go
-func GetAsArray(jsonStr, path string, cfg ...*Config) ([]any, error)
+func GetArray(jsonStr, path string, cfg ...Config) ([]any, error)
 ```
 
 Retrieves an array value from JSON at the specified path.
 
 ---
 
-### GetAsObject
+### GetObject
 
 ```go
-func GetAsObject(jsonStr, path string, cfg ...*Config) (map[string]any, error)
+func GetObject(jsonStr, path string, cfg ...Config) (map[string]any, error)
 ```
 
 Retrieves an object value from JSON at the specified path.
 
 ---
 
-### GetAs[T]
+### GetTyped[T]
 
 ```go
-func GetAs[T any](jsonStr, path string, cfg ...*Config) (T, error)
+func GetTyped[T any](jsonStr, path string, cfg ...Config) (T, error)
 ```
 
 Retrieves a typed value from JSON at the specified path using generics.
 
 **Example:**
 ```go
-name, err := json.GetAs[string](data, "user.name")
-numbers, err := json.GetAs[[]int](data, "scores")
+name, err := json.GetTyped[string](data, "user.name")
+numbers, err := json.GetTyped[[]int](data, "scores")
 ```
 
 ---
 
-### GetOr[T]
+### GetTypedOr[T]
 
 ```go
-func GetOr[T any](jsonStr, path string, defaultValue T, cfg ...*Config) T
+func GetTypedOr[T any](jsonStr, path string, defaultValue T, cfg ...Config) T
 ```
 
 Retrieves a typed value with a default fallback if path not found or error occurs.
 
 **Example:**
 ```go
-name := json.GetOr[string](data, "user.name", "Anonymous")
-age := json.GetOr[int](data, "user.age", 0)
+name := json.GetTypedOr[string](data, "user.name", "Anonymous")
+age := json.GetTypedOr[int](data, "user.age", 0)
 ```
 
 ---
@@ -228,7 +228,7 @@ age := json.GetOr[int](data, "user.age", 0)
 ### GetMultiple
 
 ```go
-func GetMultiple(jsonStr string, paths []string, cfg ...*Config) (map[string]any, error)
+func GetMultiple(jsonStr string, paths []string, cfg ...Config) (map[string]any, error)
 ```
 
 Retrieves multiple values from JSON at the specified paths in a single operation.
@@ -247,7 +247,7 @@ name := results["user.name"]
 ### Set
 
 ```go
-func Set(jsonStr, path string, value any, cfg ...*Config) (string, error)
+func Set(jsonStr, path string, value any, cfg ...Config) (string, error)
 ```
 
 Sets a value in JSON at the specified path.
@@ -314,7 +314,7 @@ result, _ := json.Set(data, "users[+]", newUser)     // Single operation!
 ### SetMultiple
 
 ```go
-func SetMultiple(jsonStr string, updates map[string]any, cfg ...*Config) (string, error)
+func SetMultiple(jsonStr string, updates map[string]any, cfg ...Config) (string, error)
 ```
 
 Sets multiple values in a single operation.
@@ -335,7 +335,7 @@ result, err := json.SetMultiple(data, updates)
 ### Delete
 
 ```go
-func Delete(jsonStr, path string, cfg ...*Config) (string, error)
+func Delete(jsonStr, path string, cfg ...Config) (string, error)
 ```
 
 Deletes a value from JSON at the specified path.
@@ -362,7 +362,7 @@ result, err := json.Delete(data, "user.temp", cfg)
 ### Encode
 
 ```go
-func Encode(value any, cfg ...*Config) (string, error)
+func Encode(value any, cfg ...Config) (string, error)
 ```
 
 Converts any Go value to JSON string.
@@ -377,7 +377,7 @@ result, err := json.Encode(data)
 ### EncodeWithConfig
 
 ```go
-func EncodeWithConfig(value any, cfg *Config) (string, error)
+func EncodeWithConfig(value any, cfg Config) (string, error)
 ```
 
 Converts any Go value to JSON string with custom configuration.
@@ -393,7 +393,7 @@ result, err := json.EncodeWithConfig(data, cfg)
 ### Prettify
 
 ```go
-func Prettify(jsonStr string, cfg ...*Config) (string, error)
+func Prettify(jsonStr string, cfg ...Config) (string, error)
 ```
 
 Formats JSON string with pretty indentation.
@@ -403,7 +403,7 @@ Formats JSON string with pretty indentation.
 ### CompactString
 
 ```go
-func CompactString(jsonStr string, cfg ...*Config) (string, error)
+func CompactString(jsonStr string, cfg ...Config) (string, error)
 ```
 
 Removes whitespace from JSON string.
@@ -415,7 +415,7 @@ Removes whitespace from JSON string.
 ### Parse
 
 ```go
-func Parse(jsonStr string, cfg ...*Config) (any, error)
+func Parse(jsonStr string, cfg ...Config) (any, error)
 ```
 
 Parses a JSON string into a Go value.
@@ -436,7 +436,7 @@ data, err := json.Parse(untrustedInput, cfg)
 ### LoadFromFile
 
 ```go
-func LoadFromFile(filePath string, cfg ...*Config) (string, error)
+func LoadFromFile(filePath string, cfg ...Config) (string, error)
 ```
 
 Loads JSON data from a file.
@@ -451,7 +451,7 @@ data, err := json.LoadFromFile("config.json")
 ### SaveToFile
 
 ```go
-func SaveToFile(filePath string, data any, cfg ...*Config) error
+func SaveToFile(filePath string, data any, cfg ...Config) error
 ```
 
 Saves JSON data to a file.
@@ -467,7 +467,7 @@ err := json.SaveToFile("output.json", data, cfg)
 ### MarshalToFile
 
 ```go
-func MarshalToFile(filePath string, data any, cfg ...*Config) error
+func MarshalToFile(filePath string, data any, cfg ...Config) error
 ```
 
 Marshals data to JSON and writes to a file.
@@ -477,7 +477,7 @@ Marshals data to JSON and writes to a file.
 ### UnmarshalFromFile
 
 ```go
-func UnmarshalFromFile(path string, v any, cfg ...*Config) error
+func UnmarshalFromFile(path string, v any, cfg ...Config) error
 ```
 
 Reads JSON from a file and unmarshals it into v.
@@ -664,7 +664,7 @@ Type-safe streaming of JSONL lines.
 ### ValidateSchema
 
 ```go
-func ValidateSchema(jsonStr string, schema *Schema, cfg ...*Config) ([]ValidationError, error)
+func ValidateSchema(jsonStr string, schema *Schema, cfg ...Config) ([]ValidationError, error)
 ```
 
 Validates JSON data against a schema.
@@ -746,29 +746,6 @@ Converts any value to string.
 
 ---
 
-### TypeSafeConvert[T]
-
-```go
-func TypeSafeConvert[T any](value any) (T, error)
-```
-
-Type-safe conversion with error handling.
-
----
-
-### FastToString / FastToInt / FastToFloat64 / FastToBool
-
-```go
-func FastToString(value any) (string, bool)
-func FastToInt(value any) (int, bool)
-func FastToFloat64(value any) (float64, bool)
-func FastToBool(value any) (bool, bool)
-```
-
-Optimized conversion functions for hot paths.
-
----
-
 ## Data Utilities
 
 ### DeepCopy
@@ -843,7 +820,7 @@ result, err := json.MergeJsonMany(json.MergeUnion, config1, config2, config3)
 ### DefaultConfig
 
 ```go
-func DefaultConfig() *Config
+func DefaultConfig() Config
 ```
 
 Returns the default configuration with balanced settings.
@@ -865,7 +842,7 @@ Returns the default configuration with balanced settings.
 ### SecurityConfig
 
 ```go
-func SecurityConfig() *Config
+func SecurityConfig() Config
 ```
 
 Returns a configuration with enhanced security settings for untrusted input.
@@ -886,7 +863,7 @@ Returns a configuration with enhanced security settings for untrusted input.
 ### PrettyConfig
 
 ```go
-func PrettyConfig() *Config
+func PrettyConfig() Config
 ```
 
 Returns a configuration for pretty-printed JSON output.
@@ -929,21 +906,21 @@ defer processor.Close()
 
 ```go
 // Core operations
-func (p *Processor) Get(jsonStr, path string, opts ...*Config) (any, error)
-func (p *Processor) Set(jsonStr, path string, value any, opts ...*Config) (string, error)
-func (p *Processor) Delete(jsonStr, path string, opts ...*Config) (string, error)
+func (p *Processor) Get(jsonStr, path string, opts ...Config) (any, error)
+func (p *Processor) Set(jsonStr, path string, value any, opts ...Config) (string, error)
+func (p *Processor) Delete(jsonStr, path string, opts ...Config) (string, error)
 
 // Encoding/Decoding
 func (p *Processor) Marshal(v any) ([]byte, error)
-func (p *Processor) Unmarshal(data []byte, v any, opts ...*Config) error
-func (p *Processor) EncodeWithConfig(value any, cfg *Config) (string, error)
+func (p *Processor) Unmarshal(data []byte, v any, opts ...Config) error
+func (p *Processor) EncodeWithConfig(value any, cfg Config) (string, error)
 
 // File operations
-func (p *Processor) LoadFromFile(filePath string, opts ...*Config) (string, error)
-func (p *Processor) SaveToFile(filePath string, data any, cfg ...*Config) error
+func (p *Processor) LoadFromFile(filePath string, opts ...Config) (string, error)
+func (p *Processor) SaveToFile(filePath string, data any, cfg ...Config) error
 
 // Schema validation
-func (p *Processor) ValidateSchema(jsonStr string, schema *Schema, opts ...*Config) ([]ValidationError, error)
+func (p *Processor) ValidateSchema(jsonStr string, schema *Schema, opts ...Config) ([]ValidationError, error)
 
 // Cache operations
 func (p *Processor) ClearCache()
@@ -981,22 +958,6 @@ type JsonsError struct {
     Path    string  // JSON path
     Message string  // Error message
     Err     error   // Underlying error
-}
-
-type PathError struct {
-    Path    string
-    Message string
-    Err     error
-}
-
-type SizeLimitError struct {
-    Size    int64
-    MaxSize int64
-}
-
-type SecurityError struct {
-    Op      string
-    Message string
 }
 ```
 

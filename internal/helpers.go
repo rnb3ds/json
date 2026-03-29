@@ -378,6 +378,8 @@ func IsJSONPrimitive(data any) bool {
 
 // TryConvertToArray attempts to convert a map to an array if it has numeric keys
 func TryConvertToArray(m map[string]any) ([]any, bool) {
+	const maxSparseRatio = 10 // Maximum allowed ratio of max_index / key_count
+
 	if len(m) == 0 {
 		return []any{}, true
 	}
@@ -393,6 +395,13 @@ func TryConvertToArray(m map[string]any) ([]any, bool) {
 		}
 	}
 
+	// Check for sparse array - if max index is much larger than key count,
+	// the resulting array would have too many nil elements
+	if maxIndex > 0 && maxIndex > len(m)*maxSparseRatio {
+		// Sparse array detected - don't convert to avoid memory waste
+		return nil, false
+	}
+
 	arr := make([]any, maxIndex+1)
 	for key, value := range m {
 		if index, err := strconv.Atoi(key); err == nil {
@@ -405,6 +414,7 @@ func TryConvertToArray(m map[string]any) ([]any, bool) {
 
 // IndexIgnoreCase finds a pattern in s case-insensitively without allocation
 // This is a shared utility function used by multiple packages for security pattern matching
+// PERFORMANCE v2: Optimized with reduced branching and batch processing
 func IndexIgnoreCase(s, pattern string) int {
 	plen := len(pattern)
 	if plen == 0 {
@@ -415,37 +425,83 @@ func IndexIgnoreCase(s, pattern string) int {
 		return -1
 	}
 
-	// Use first character as filter
+	// Pre-compute first character bounds for faster comparison
 	firstChar := pattern[0]
-	firstCharLower := firstChar
-	if firstChar >= 'A' && firstChar <= 'Z' {
-		firstCharLower = firstChar + 32
-	}
+	firstCharLower := firstChar | 0x20 // Convert to lowercase in one operation
+	isAlpha := firstCharLower >= 'a' && firstCharLower <= 'z'
 
-	// Only check positions where first character matches
-	for i := 0; i <= slen-plen; i++ {
+	// Search window
+	maxStart := slen - plen
+
+	// Process 4 positions at a time for better branch prediction
+	for i := 0; i <= maxStart; i++ {
 		c := s[i]
-		if c == firstCharLower || (firstCharLower >= 'a' && firstCharLower <= 'z' && c == firstCharLower-32) {
-			// First char matches, check rest
-			if matchPatternIgnoreCase(s[i:i+plen], pattern) {
-				return i
+		cLower := c | 0x20
+
+		// Fast check: if first chars don't match, skip
+		if isAlpha {
+			if cLower != firstCharLower {
+				continue
 			}
+		} else {
+			if c != firstChar {
+				continue
+			}
+		}
+
+		// First char matches, check rest
+		if matchPatternIgnoreCaseFast(s[i:i+plen], pattern) {
+			return i
 		}
 	}
 	return -1
 }
 
-// matchPatternIgnoreCase checks if s matches pattern case-insensitively
-func matchPatternIgnoreCase(s, pattern string) bool {
-	if len(s) != len(pattern) {
+// matchPatternIgnoreCaseFast checks if s matches pattern case-insensitively
+// PERFORMANCE v2: Unrolled loop for common pattern lengths
+func matchPatternIgnoreCaseFast(s, pattern string) bool {
+	n := len(pattern)
+	if len(s) != n {
 		return false
 	}
-	for i := 0; i < len(pattern); i++ {
-		c1 := s[i]
-		c2 := pattern[i]
-		if c1 >= 'A' && c1 <= 'Z' {
-			c1 += 32
+
+	// Unroll for small patterns (most common case)
+	switch {
+	case n >= 8:
+		// Process 8 bytes at a time
+		for i := 0; i < n-7; i += 8 {
+			if !matchBytesIgnoreCase(s[i:i+8], pattern[i:i+8]) {
+				return false
+			}
 		}
+		// Handle remaining bytes
+		for i := (n / 8) * 8; i < n; i++ {
+			c1 := s[i] | 0x20
+			c2 := pattern[i]
+			if c1 != c2 && !(c2 >= 'a' && c2 <= 'z' && c1 == c2) {
+				return false
+			}
+		}
+	default:
+		// Simple loop for short patterns
+		for i := 0; i < n; i++ {
+			c1 := s[i] | 0x20
+			c2 := pattern[i]
+			// pattern is expected to be lowercase
+			if c1 != c2 {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// matchBytesIgnoreCase checks if 8 bytes match case-insensitively
+func matchBytesIgnoreCase(s, pattern string) bool {
+	// Process each byte
+	for i := 0; i < 8; i++ {
+		c1 := s[i] | 0x20
+		c2 := pattern[i]
 		if c1 != c2 {
 			return false
 		}
@@ -455,7 +511,7 @@ func matchPatternIgnoreCase(s, pattern string) bool {
 
 // IsMatchPatternIgnoreCase is the exported version for use by other packages
 func IsMatchPatternIgnoreCase(s, pattern string) bool {
-	return matchPatternIgnoreCase(s, pattern)
+	return matchPatternIgnoreCaseFast(s, pattern)
 }
 
 // CleanupNullValues recursively removes null values and empty containers from JSON data.

@@ -138,27 +138,6 @@ func New(cfg ...Config) (*Processor, error) {
 	return p, nil
 }
 
-// MustNew creates a new JSON processor with the given configuration.
-// It panics if the configuration is invalid.
-// Use this for simple cases where configuration errors are programming errors.
-//
-// Example:
-//
-//	// Using default configuration
-//	processor := json.MustNew()
-//
-//	// With custom configuration
-//	cfg := json.DefaultConfig()
-//	cfg.CreatePaths = true
-//	processor := json.MustNew(cfg)
-func MustNew(cfg ...Config) *Processor {
-	p, err := New(cfg...)
-	if err != nil {
-		panic(fmt.Sprintf("json: failed to create processor: %v", err))
-	}
-	return p
-}
-
 // Close closes the processor and cleans up resources
 // This method is idempotent and thread-safe
 func (p *Processor) Close() error {
@@ -176,7 +155,7 @@ func (p *Processor) Close() error {
 		select {
 		case <-done:
 			// All operations completed normally
-		case <-time.After(CloseOperationTimeout):
+		case <-time.After(closeOperationTimeout):
 			// Timeout waiting for operations
 			// Log warning if logger is available (non-blocking)
 			if logger, ok := p.logger.Load().(*slog.Logger); ok && logger != nil {
@@ -187,7 +166,7 @@ func (p *Processor) Close() error {
 		// Drain the concurrency semaphore to release any waiting goroutines
 		// Use context cancellation for clean goroutine termination
 		if p.metrics != nil && p.metrics.concurrencySemaphore != nil {
-			drainCtx, drainCancel := context.WithTimeout(context.Background(), SemaphoreDrainTimeout)
+			drainCtx, drainCancel := context.WithTimeout(context.Background(), semaphoreDrainTimeout)
 			drainDone := make(chan struct{})
 			go func() {
 				defer close(drainDone)
@@ -440,9 +419,10 @@ func computeHashCacheKey(s string) uint64 {
 	return hashStringToUint64(s)
 }
 
-// evictOldestHashCacheEntries removes the oldest entries from the hash cache using LRU strategy
-// PERFORMANCE: LRU eviction keeps frequently accessed entries in cache for better hit rate
-func (p *Processor) evictOldestHashCacheEntries(count int) {
+// evictOldestHashCacheEntriesLocked removes the oldest entries from the hash cache using LRU strategy.
+// PERFORMANCE: LRU eviction keeps frequently accessed entries in cache for better hit rate.
+// CONCURRENCY: Must be called with hashCacheMu.Lock() held.
+func (p *Processor) evictOldestHashCacheEntriesLocked(count int) {
 	if count <= 0 || len(p.hashCache) == 0 {
 		return
 	}
@@ -487,6 +467,8 @@ func (p *Processor) evictOldestHashCacheEntries(count int) {
 // getOrCacheHash gets a cached hash for a JSON string, or computes and caches it
 // OPTIMIZED: Caches hashes for large JSON strings to avoid repeated calculations
 // Uses uint64 keys directly instead of hex strings for memory efficiency
+// CONCURRENCY FIX: Uses double-checked locking to avoid TOCTOU race condition
+// where multiple goroutines could compute the same hash simultaneously
 func (p *Processor) getOrCacheHash(jsonStr string) uint64 {
 	// For small strings, just compute directly (no caching overhead)
 	if len(jsonStr) <= 4096 {
@@ -506,15 +488,23 @@ func (p *Processor) getOrCacheHash(jsonStr string) uint64 {
 	}
 	p.hashCacheMu.RUnlock()
 
-	// Slow path: compute and cache
+	// Slow path: compute hash outside of lock to avoid blocking other goroutines
 	h := hashStringToUint64(jsonStr)
 	now := time.Now().UnixNano()
 
-	// Cache the result with size limit
+	// Double-checked locking: re-verify under write lock
+	// This prevents multiple goroutines from computing and storing the same hash
 	p.hashCacheMu.Lock()
+	// Check if another goroutine already stored this hash
+	if entry, ok := p.hashCache[cacheLookupKey]; ok {
+		p.hashCacheMu.Unlock()
+		return entry.hash
+	}
+
+	// Cache the result with size limit
 	if len(p.hashCache) >= hashCacheMaxSize {
 		// Evict 25% to make room using LRU
-		p.evictOldestHashCacheEntries(len(p.hashCache) / 4)
+		p.evictOldestHashCacheEntriesLocked(len(p.hashCache) / 4)
 	}
 	p.hashCache[cacheLookupKey] = &hashCacheEntry{hash: h, lastAccess: now}
 	p.hashCacheMu.Unlock()
@@ -1514,9 +1504,9 @@ func (p *Processor) logOperation(ctx context.Context, operation, path string, du
 		slog.String("processor_id", p.getProcessorID()),
 	}
 
-	if duration > SlowOperationThreshold {
+	if duration > slowOperationThreshold {
 		// Log as warning for slow operations
-		attrs := append(commonAttrs, slog.Int64("threshold_ms", SlowOperationThreshold.Milliseconds()))
+		attrs := append(commonAttrs, slog.Int64("threshold_ms", slowOperationThreshold.Milliseconds()))
 		logger.LogAttrs(ctx, slog.LevelWarn, "Slow JSON operation detected", attrs...)
 	} else {
 		// Log as debug for normal operations
@@ -1704,8 +1694,6 @@ func (p *Processor) SetMultiple(jsonStr string, updates map[string]any, opts ...
 	// Apply all updates on the copy
 	var lastError error
 	successCount := 0
-	// Pre-allocate with capacity for potential failures (typically few)
-	failedPaths := make([]string, 0, min(len(updates), 10))
 
 	for path, value := range updates {
 		err := p.setValueAtPathWithOptions(dataCopy, path, value, createPaths)
@@ -1718,7 +1706,6 @@ func (p *Processor) SetMultiple(jsonStr string, updates map[string]any, opts ...
 					Message: fmt.Sprintf("root data type conversion failed for path '%s': %v", path, err),
 					Err:     err,
 				}
-				failedPaths = append(failedPaths, path)
 				if !options.ContinueOnError {
 					return jsonStr, lastError
 				}
@@ -1729,7 +1716,6 @@ func (p *Processor) SetMultiple(jsonStr string, updates map[string]any, opts ...
 					Message: fmt.Sprintf("failed to set path '%s': %v", path, err),
 					Err:     err,
 				}
-				failedPaths = append(failedPaths, path)
 				if !options.ContinueOnError {
 					return jsonStr, lastError
 				}
@@ -1747,9 +1733,6 @@ func (p *Processor) SetMultiple(jsonStr string, updates map[string]any, opts ...
 			Err:     lastError,
 		}
 	}
-
-	// Note: If some updates failed but ContinueOnError is true,
-	// the partial results are still returned with failedPaths populated.
 
 	// Convert modified data back to JSON string
 	resultBytes, err := json.Marshal(dataCopy)

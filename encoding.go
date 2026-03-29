@@ -789,7 +789,21 @@ func (p *Processor) ToJsonStringStandard(value any, opts ...Config) (string, err
 }
 
 // Marshal converts any Go value to JSON bytes (similar to json.Marshal)
+// PERFORMANCE: Uses FastEncoder for simple types to avoid reflection overhead
 func (p *Processor) Marshal(value any, opts ...Config) ([]byte, error) {
+	if err := p.checkClosed(); err != nil {
+		return nil, err
+	}
+
+	// PERFORMANCE: Fast path for simple types - avoid config processing overhead
+	// Uses HTML escaping to match encoding/json behavior
+	if len(opts) == 0 {
+		if result, ok := fastEncodeSimpleWithHTMLEscape(value); ok {
+			return []byte(result), nil
+		}
+	}
+
+	// Fallback to full encoding path for complex types or custom options
 	jsonStr, err := p.ToJsonString(value, opts...)
 	if err != nil {
 		return nil, err
@@ -920,6 +934,7 @@ func (p *Processor) EncodeFields(value any, fields []string, cfg ...Config) (str
 }
 
 // EncodeWithConfig converts any Go value to JSON string with full configuration control
+// PERFORMANCE: Uses FastEncoder for simple types to avoid reflection overhead
 func (p *Processor) EncodeWithConfig(value any, config Config, opts ...Config) (string, error) {
 	if err := p.checkClosed(); err != nil {
 		return "", err
@@ -928,6 +943,30 @@ func (p *Processor) EncodeWithConfig(value any, config Config, opts ...Config) (
 	// Use default config if zero value
 	if config.MaxJSONSize == 0 {
 		config = DefaultConfig()
+	}
+
+	// PERFORMANCE: Fast path for simple types without special encoding needs
+	// This avoids the overhead of reflection-based encoding for common cases
+	if !config.Pretty && !needsCustomEncodingOpts(config) {
+		var result string
+		var ok bool
+		// Use HTML escaping version if EscapeHTML is enabled
+		if config.EscapeHTML {
+			result, ok = fastEncodeSimpleWithHTMLEscape(value)
+		} else {
+			result, ok = fastEncodeSimple(value)
+		}
+		if ok {
+			// Check size limit
+			if int64(len(result)) > p.config.MaxJSONSize {
+				return "", &JsonsError{
+					Op:      "encode_with_config",
+					Message: fmt.Sprintf("encoded JSON size %d exceeds maximum %d", len(result), p.config.MaxJSONSize),
+					Err:     ErrSizeLimit,
+				}
+			}
+			return result, nil
+		}
 	}
 
 	// Valid depth
@@ -971,6 +1010,47 @@ func (p *Processor) EncodeWithConfig(value any, config Config, opts ...Config) (
 	}
 
 	return result, nil
+}
+
+// fastEncodeSimple attempts to encode simple types using FastEncoder
+// Returns (result, true) if successful, ("", false) if type not supported
+// PERFORMANCE: Avoids reflection overhead for common types
+// NOTE: This does NOT escape HTML characters - use only when HTML escaping is not needed
+func fastEncodeSimple(value any) (string, bool) {
+	encoder := internal.GetEncoder()
+	defer internal.PutEncoder(encoder)
+
+	err := encoder.EncodeValue(value)
+	if err != nil {
+		return "", false
+	}
+
+	return string(encoder.Bytes()), true
+}
+
+// fastEncodeSimpleWithHTMLEscape encodes simple types with HTML escaping
+// Returns (result, true) if successful, ("", false) if type not supported
+// PERFORMANCE: Uses FastEncoder with post-processing for HTML escaping
+func fastEncodeSimpleWithHTMLEscape(value any) (string, bool) {
+	encoder := internal.GetEncoder()
+	defer internal.PutEncoder(encoder)
+
+	err := encoder.EncodeValue(value)
+	if err != nil {
+		return "", false
+	}
+
+	result := string(encoder.Bytes())
+	// Check if HTML escaping is needed
+	if internal.NeedsHTMLEscape(result) {
+		// Apply HTML escaping
+		var buf bytes.Buffer
+		buf.Grow(len(result) + 16)
+		internal.HTMLEscapeTo(&buf, result)
+		return buf.String(), true
+	}
+
+	return result, true
 }
 
 // Encode converts any Go value to JSON string

@@ -26,6 +26,7 @@ type int64Result struct {
 
 // convertToInt64Core is the internal core function for integer conversion.
 // Uses a single type switch with all integer types to minimize branching.
+// MAINTENANCE: Keep type cases in sync with convertToFloatCore for consistency.
 func convertToInt64Core(value any) int64Result {
 	switch v := value.(type) {
 	case int:
@@ -57,6 +58,18 @@ func convertToInt64Core(value any) int64Result {
 		return int64Result{0, false}
 	}
 	return int64Result{0, false}
+}
+
+// convertToFloatCore handles float-specific type conversion.
+// MAINTENANCE: Keep type cases in sync with convertToInt64Core for consistency.
+func convertToFloatCore(value any) (float64, bool) {
+	switch v := value.(type) {
+	case float32:
+		return float64(v), true
+	case float64:
+		return v, true
+	}
+	return 0, false
 }
 
 // ConvertToInt converts any value to int with comprehensive type support.
@@ -179,20 +192,21 @@ func ConvertToUint64(value any) (uint64, bool) {
 }
 
 // ConvertToFloat64 converts any value to float64.
-// Delegates to internal core function to reduce code duplication.
+// Delegates to internal core functions to reduce code duplication.
 // MAINTENANCE: Keep type switch cases in sync with ConvertToInt, ConvertToInt64, ConvertToUint64.
 func ConvertToFloat64(value any) (float64, bool) {
-	// Fast path: use core integer conversion
+	// Fast path 1: use core integer conversion
 	if result := convertToInt64Core(value); result.ok {
 		return float64(result.value), true
 	}
 
-	// Handle non-integer types
+	// Fast path 2: use core float conversion
+	if f, ok := convertToFloatCore(value); ok {
+		return f, true
+	}
+
+	// Handle non-numeric types
 	switch v := value.(type) {
-	case float32:
-		return float64(v), true
-	case float64:
-		return v, true
 	case string:
 		if f, err := strconv.ParseFloat(v, 64); err == nil {
 			return f, true
@@ -249,9 +263,9 @@ func ConvertToBool(value any) (bool, bool) {
 	return false, false
 }
 
-// GetTypedWithProcessor retrieves a typed value from JSON using a specific processor.
+// getTypedWithProcessor retrieves a typed value from JSON using a specific processor.
 // This is the core implementation used by GetTyped and GetTypedOr.
-func GetTypedWithProcessor[T any](processor *Processor, jsonStr, path string, cfg ...Config) (T, error) {
+func getTypedWithProcessor[T any](processor *Processor, jsonStr, path string, cfg ...Config) (T, error) {
 	var zero T
 
 	value, err := processor.Get(jsonStr, path, cfg...)
@@ -263,7 +277,7 @@ func GetTypedWithProcessor[T any](processor *Processor, jsonStr, path string, cf
 		return handleNullValue[T]()
 	}
 
-	if converted, ok := UnifiedTypeConversion[T](value); ok {
+	if converted, ok := unifiedTypeConversion[T](value); ok {
 		return converted, nil
 	}
 
@@ -291,8 +305,8 @@ func GetTypedWithProcessor[T any](processor *Processor, jsonStr, path string, cf
 	return finalResult, nil
 }
 
-// UnifiedTypeConversion provides optimized type conversion with comprehensive support
-func UnifiedTypeConversion[T any](value any) (T, bool) {
+// unifiedTypeConversion provides optimized type conversion with comprehensive support
+func unifiedTypeConversion[T any](value any) (T, bool) {
 	var zero T
 
 	// Handle nil values
@@ -803,46 +817,6 @@ func MergeJSONMany(mode MergeMode, jsons ...string) (string, error) {
 	return result, nil
 }
 
-// getTypedWithProcessor retrieves a typed value from JSON using a specific processor
-func getTypedWithProcessor[T any](processor *Processor, jsonStr, path string, opts ...Config) (T, error) {
-	var zero T
-
-	value, err := processor.Get(jsonStr, path, opts...)
-	if err != nil {
-		return zero, err
-	}
-
-	if value == nil {
-		return handleNullValue[T]()
-	}
-
-	if converted, ok := UnifiedTypeConversion[T](value); ok {
-		return converted, nil
-	}
-
-	jsonBytes, err := json.Marshal(value)
-	if err != nil {
-		return zero, &JsonsError{
-			Op:      "get_typed",
-			Path:    path,
-			Message: fmt.Sprintf("failed to marshal value for type conversion: %v", err),
-			Err:     ErrTypeMismatch,
-		}
-	}
-
-	var finalResult T
-	if err := json.Unmarshal(jsonBytes, &finalResult); err != nil {
-		return zero, &JsonsError{
-			Op:      "get_typed",
-			Path:    path,
-			Message: fmt.Sprintf("failed to convert value to type %T: %v", finalResult, err),
-			Err:     ErrTypeMismatch,
-		}
-	}
-
-	return finalResult, nil
-}
-
 // convertValueToType converts a pre-parsed value to the target type T.
 // Used by GetTypedOr to avoid re-parsing when the raw value is already available.
 func convertValueToType[T any](value any, path string) (T, error) {
@@ -852,7 +826,7 @@ func convertValueToType[T any](value any, path string) (T, error) {
 		return zero, ErrPathNotFound
 	}
 
-	if converted, ok := UnifiedTypeConversion[T](value); ok {
+	if converted, ok := unifiedTypeConversion[T](value); ok {
 		return converted, nil
 	}
 
@@ -905,135 +879,6 @@ func handleNullValue[T any]() (T, error) {
 	// This provides consistent behavior without error for null values
 	return zero, nil
 }
-
-// TypeSafeConvert attempts to convert a value to the target type safely
-func TypeSafeConvert[T any](value any) (T, error) {
-	var zero T
-
-	if result, ok := value.(T); ok {
-		return result, nil
-	}
-
-	targetType := fmt.Sprintf("%T", zero)
-	return convertWithTypeInfo[T](value, targetType)
-}
-
-// convertWithTypeInfo handles type conversion with type information
-func convertWithTypeInfo[T any](value any, targetType string) (T, error) {
-	var zero T
-
-	convResult, handled := handleLargeNumberConversion[T](value)
-	if handled {
-		return convResult.value, convResult.err
-	}
-
-	if str, ok := value.(string); ok {
-		return convertStringToType[T](str)
-	}
-
-	return zero, fmt.Errorf("cannot convert %T to %s", value, targetType)
-}
-
-// convertStringToType converts string values to target types safely
-func convertStringToType[T any](str string) (T, error) {
-	var zero T
-
-	switch any(zero).(type) {
-	case int:
-		if val, err := strconv.ParseInt(str, 10, 64); err == nil {
-			if result, ok := any(int(val)).(T); ok {
-				return result, nil
-			}
-		}
-	case int64:
-		if val, err := strconv.ParseInt(str, 10, 64); err == nil {
-			if result, ok := any(val).(T); ok {
-				return result, nil
-			}
-		}
-	case float64:
-		if val, err := strconv.ParseFloat(str, 64); err == nil {
-			if result, ok := any(val).(T); ok {
-				return result, nil
-			}
-		}
-	case bool:
-		if val, err := strconv.ParseBool(str); err == nil {
-			if result, ok := any(val).(T); ok {
-				return result, nil
-			}
-		}
-	case string:
-		if result, ok := any(str).(T); ok {
-			return result, nil
-		}
-	}
-
-	return zero, fmt.Errorf("cannot convert string %q to %T", str, zero)
-}
-
-// conversionResult holds the result of a type conversion attempt
-type conversionResult[T any] struct {
-	value T
-	err   error
-}
-
-// handleLargeNumberConversion handles conversion of large numbers to specific types
-func handleLargeNumberConversion[T any](value any) (conversionResult[T], bool) {
-	var zero T
-
-	switch any(zero).(type) {
-	case int64:
-		if converted, err := SafeConvertToInt64(value); err == nil {
-			if typedResult, ok := any(converted).(T); ok {
-				return conversionResult[T]{value: typedResult, err: nil}, true
-			}
-		} else {
-			return conversionResult[T]{
-				value: zero,
-				err: &JsonsError{
-					Op:      "get_typed",
-					Path:    "type_conversion",
-					Message: fmt.Sprintf("large number conversion failed: %v", err),
-					Err:     ErrTypeMismatch,
-				},
-			}, true
-		}
-
-	case uint64:
-		if converted, err := SafeConvertToUint64(value); err == nil {
-			if typedResult, ok := any(converted).(T); ok {
-				return conversionResult[T]{value: typedResult, err: nil}, true
-			}
-		} else {
-			return conversionResult[T]{
-				value: zero,
-				err: &JsonsError{
-					Op:      "get_typed",
-					Path:    "type_conversion",
-					Message: fmt.Sprintf("large number conversion failed: %v", err),
-					Err:     ErrTypeMismatch,
-				},
-			}, true
-		}
-
-	case string:
-		if strResult, ok := any(FormatNumber(value)).(T); ok {
-			return conversionResult[T]{value: strResult, err: nil}, true
-		}
-	}
-
-	return conversionResult[T]{value: zero, err: nil}, false
-}
-
-// IteratorControl represents control flags for iteration
-type IteratorControl int
-
-const (
-	IteratorNormal IteratorControl = iota
-	IteratorContinue
-	IteratorBreak
-)
 
 // ============================================================================
 // JSON KEY INTERNING

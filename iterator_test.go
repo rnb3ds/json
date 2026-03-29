@@ -94,7 +94,7 @@ func BenchmarkSafeTypeAssert(b *testing.B) {
 
 // TestBulkProcessor tests BulkProcessor functionality
 func TestBulkProcessor(t *testing.T) {
-	processor := MustNew()
+	processor, _ := New()
 	defer processor.Close()
 
 	bp := NewBulkProcessor(processor, 10)
@@ -1274,7 +1274,7 @@ func TestIterableValue_RealWorldScenario(t *testing.T) {
 
 // TestIteratorDataState tests iterator maintains correct state
 func TestIteratorDataState(t *testing.T) {
-	processor := MustNew()
+	processor, _ := New()
 	defer processor.Close()
 
 	data := []any{1, 2, 3, 4, 5}
@@ -1304,7 +1304,7 @@ func TestIteratorDataState(t *testing.T) {
 
 // TestIteratorHasNext tests Iterator.HasNext method
 func TestIteratorHasNext(t *testing.T) {
-	processor := MustNew()
+	processor, _ := New()
 	defer processor.Close()
 
 	t.Run("array iterator", func(t *testing.T) {
@@ -1349,7 +1349,7 @@ func TestIteratorHasNext(t *testing.T) {
 
 // TestIteratorNext tests Iterator.Next method
 func TestIteratorNext(t *testing.T) {
-	processor := MustNew()
+	processor, _ := New()
 	defer processor.Close()
 
 	t.Run("array elements", func(t *testing.T) {
@@ -2016,7 +2016,7 @@ func TestWarmupPathCache(t *testing.T) {
 
 // TestWarmupPathCacheWithProcessor tests path cache warmup with processor
 func TestWarmupPathCacheWithProcessor(t *testing.T) {
-	processor := MustNew()
+	processor, _ := New()
 	defer processor.Close()
 
 	paths := []string{

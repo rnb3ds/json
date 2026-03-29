@@ -7,10 +7,26 @@
 [![Security](https://img.shields.io/badge/Security-Hardened-red.svg)](docs/SECURITY.md)
 [![Zero Deps](https://img.shields.io/badge/deps-zero-brightgreen.svg)](go.mod)
 
-> 一个高性能、功能丰富的 Go JSON 处理库，100% 兼容 `encoding/json`。
+> 一个高性能、功能丰富的 Go JSON 处理库，100% 兼容 `encoding/json`。  
 > 强大的路径语法、类型安全、流式处理、生产级性能。
 
 **[English Documentation](README.md)**
+
+---
+
+## 为什么选择 cybergodev/json？
+
+| 功能 | encoding/json | cybergodev/json |
+|------|---------------|-----------------|
+| 路径访问 | ❌ 手动解析 | ✅ `json.Get(data, "users[0].name")` |
+| 负索引 | ❌ | ✅ `items[-1]` 获取最后一个元素 |
+| 扁平化嵌套数组 | ❌ | ✅ `users{flat:tags}` |
+| 类型安全默认值 | ❌ | ✅ `GetStringOr(data, "path", "default")` |
+| 大文件流式处理 | ❌ | ✅ 内置流式处理器 |
+| Schema 验证 | ❌ | ✅ JSON Schema 验证 |
+| 内存池 | ❌ | ✅ 热路径使用 `sync.Pool` |
+| 缓存 | ❌ | ✅ 智能 TTL 路径缓存 |
+| 100% 兼容性 | ✅ | ✅ 直接替换 |
 
 ---
 
@@ -22,7 +38,7 @@
 | **强大路径** | 直观语法：`users[0].name`、`items[-1]`、`data{flat:tags}` |
 | **高性能** | 智能缓存、内存池、优化的热路径 |
 | **类型安全** | 泛型支持，编译时类型检查 |
-| **功能丰富** | 批量操作、流式处理、文件I/O、模式验证、深度合并 |
+| **功能丰富** | 批量操作、流式处理、文件I/O、Schema验证、深度合并 |
 | **生产就绪** | 线程安全、完善的错误处理、安全加固 |
 
 ---
@@ -32,6 +48,8 @@
 ```bash
 go get github.com/cybergodev/json
 ```
+
+**要求**: Go 1.24 或更高版本
 
 ---
 
@@ -116,6 +134,8 @@ json.GetTyped[User](data, "user")      // 自定义结构体
 // 带默认值（路径不存在时不报错）
 json.GetStringOr(data, "user.name", "Anonymous")
 json.GetIntOr(data, "user.age", 0)
+json.GetBoolOr(data, "user.active", false)
+json.GetFloatOr(data, "user.score", 0.0)
 json.GetTypedOr[[]any](data, "user.tags", []any{})
 
 // 批量获取
@@ -191,9 +211,6 @@ floatVal, ok := json.ConvertToFloat64(value)
 boolVal, ok  := json.ConvertToBool(value)
 strVal       := json.ConvertToString(value)
 
-// 泛型转换
-result, err := json.TypeSafeConvert[string](value)
-
 // JSON 工具
 equal, _    := json.CompareJSON(json1, json2)
 merged, _   := json.MergeJSON(json1, json2)                       // 并集（默认）
@@ -238,13 +255,6 @@ processor.ClearCache()
 cfg := json.DefaultConfig()   // 平衡的默认配置
 cfg := json.SecurityConfig()  // 用于不受信任的输入
 cfg := json.PrettyConfig()    // 用于美化输出
-```
-
-### 使用 MustNew 快速开始
-
-```go
-processor := json.MustNew() // 配置错误时 panic（默认配置很少出错）
-defer processor.Close()
 ```
 
 ---
@@ -303,7 +313,7 @@ err := jsonlProcessor.ProcessReader(reader, func(lineNum int, obj map[string]any
 })
 ```
 
-### 模式验证
+### Schema 验证
 
 ```go
 schema := &json.Schema{
@@ -437,7 +447,7 @@ defer processor.Close()
 | [3_production_ready.go](examples/3_production_ready.go) | 线程安全模式 |
 | [4_error_handling.go](examples/4_error_handling.go) | 错误处理模式 |
 | [5_encoding_options.go](examples/5_encoding_options.go) | 编码配置 |
-| [6_validation.go](examples/6_validation.go) | 模式验证 |
+| [6_validation.go](examples/6_validation.go) | Schema 验证 |
 | [7_type_conversion.go](examples/7_type_conversion.go) | 类型转换 |
 | [8_helper_functions.go](examples/8_helper_functions.go) | 辅助工具 |
 | [9_iterator_functions.go](examples/9_iterator_functions.go) | 迭代模式 |
@@ -458,6 +468,8 @@ go run -tags=example examples/1_basic_usage.go
 
 - **[API 参考](docs/API_REFERENCE.md)** - 完整 API 文档
 - **[安全指南](docs/SECURITY.md)** - 安全最佳实践
+- **[快速参考](docs/QUICK_REFERENCE.md)** - 常用模式速查
+- **[兼容性](docs/COMPATIBILITY.md)** - encoding/json 兼容性详情
 - **[pkg.go.dev](https://pkg.go.dev/github.com/cybergodev/json)** - GoDoc
 
 ---
@@ -468,4 +480,4 @@ MIT License - 详见 [LICENSE](LICENSE) 文件。
 
 ---
 
-如果这个项目对你有帮助，请给一个 star！
+如果这个项目对你有帮助，请给一个 star！ ⭐

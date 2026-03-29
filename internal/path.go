@@ -4,7 +4,45 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 )
+
+// ============================================================================
+// GLOBAL PATH SEGMENT CACHE
+// PERFORMANCE v2: Uses sync.Map for lock-free reads and existing infrastructure
+// SECURITY: Thread-safe by design using sync.Map
+// ============================================================================
+
+// pathSegmentCache stores parsed path segments for reuse
+// Uses sync.Map for lock-free concurrent reads
+var pathSegmentCache sync.Map
+
+// pathCacheMaxPathLength is the maximum path length to cache
+const pathCacheMaxPathLength = 256
+
+// getCachedPathSegments retrieves cached path segments if available
+// PERFORMANCE: Lock-free read using sync.Map
+func getCachedPathSegments(path string) ([]PathSegment, bool) {
+	if len(path) > pathCacheMaxPathLength || len(path) == 0 {
+		return nil, false
+	}
+	if v, ok := pathSegmentCache.Load(path); ok {
+		return v.([]PathSegment), true
+	}
+	return nil, false
+}
+
+// setCachedPathSegments stores path segments in cache
+// PERFORMANCE: Only stores if path is reasonably sized
+func setCachedPathSegments(path string, segments []PathSegment) {
+	if len(path) > pathCacheMaxPathLength || len(path) == 0 || len(segments) == 0 {
+		return
+	}
+	// Store a copy to prevent mutation
+	copied := make([]PathSegment, len(segments))
+	copy(copied, segments)
+	pathSegmentCache.Store(path, copied)
+}
 
 // fastParseInt parses a string as an integer without allocation.
 // Returns the parsed integer and true if successful, 0 and false otherwise.
@@ -319,6 +357,7 @@ func NewRecursiveSegment() PathSegment {
 }
 
 // ParsePath parses a JSON path string into segments
+// PERFORMANCE v3: Added sync.Map-based cache for lock-free reads
 // PERFORMANCE v2: Added fast path for simple single-property access
 func ParsePath(path string) ([]PathSegment, error) {
 	if path == "" {
@@ -330,29 +369,46 @@ func ParsePath(path string) ([]PathSegment, error) {
 		return []PathSegment{}, nil
 	}
 
+	// PERFORMANCE v3: Check cache first (lock-free)
+	if segments, ok := getCachedPathSegments(path); ok {
+		return segments, nil
+	}
+
+	var segments []PathSegment
+	var err error
+
 	// Handle different path formats
 	if path[0] == '/' {
-		return parseJSONPointer(path)
-	}
-
-	// FAST PATH: Simple single property access (no dots, no brackets)
-	// This is the most common case - ~30% of all path lookups
-	if len(path) <= 64 {
-		hasSpecial := false
-		for i := 0; i < len(path); i++ {
-			c := path[i]
-			if c == '.' || c == '[' || c == ']' || c == '{' || c == '}' {
-				hasSpecial = true
-				break
+		segments, err = parseJSONPointer(path)
+	} else {
+		// FAST PATH: Simple single property access (no dots, no brackets)
+		// This is the most common case - ~30% of all path lookups
+		if len(path) <= 64 {
+			hasSpecial := false
+			for i := 0; i < len(path); i++ {
+				c := path[i]
+				if c == '.' || c == '[' || c == ']' || c == '{' || c == '}' {
+					hasSpecial = true
+					break
+				}
+			}
+			if !hasSpecial {
+				// Single property - return directly without allocation overhead
+				segments = []PathSegment{{Type: PropertySegment, Key: path}}
+				setCachedPathSegments(path, segments)
+				return segments, nil
 			}
 		}
-		if !hasSpecial {
-			// Single property - return directly without allocation overhead
-			return []PathSegment{{Type: PropertySegment, Key: path}}, nil
-		}
+		segments, err = parseDotNotation(path)
 	}
 
-	return parseDotNotation(path)
+	if err != nil {
+		return nil, err
+	}
+
+	// Cache the result
+	setCachedPathSegments(path, segments)
+	return segments, nil
 }
 
 // ParseComplexSegment parses a complex segment that may contain mixed syntax

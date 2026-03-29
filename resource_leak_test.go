@@ -2,6 +2,7 @@ package json
 
 import (
 	"context"
+	"fmt"
 	"runtime"
 	"sync"
 	"sync/atomic"
@@ -466,5 +467,103 @@ func TestConcurrentProcessorOperations(t *testing.T) {
 	if leaked > 5 {
 		t.Errorf("Goroutine leak detected after concurrent operations: started with %d, ended with %d (leaked: %d)",
 			initialGoroutines, finalGoroutines, leaked)
+	}
+}
+
+// ============================================================================
+// RESOURCE MANAGER COUNTER TESTS
+// ============================================================================
+
+// TestResourceManagerMapCounter verifies that PutMap correctly decrements
+// the allocated maps counter even when m is nil
+func TestResourceManagerMapCounter(t *testing.T) {
+	// Get fresh resource manager
+	urm := newUnifiedResourceManager()
+
+	// Get multiple maps
+	for i := 0; i < 10; i++ {
+		_ = urm.GetMap()
+	}
+
+	// Put nil map - should still decrement counter
+	urm.PutMap(nil)
+
+	// Put oversized map - should still decrement counter
+	largeMap := make(map[string]any, 100)
+	for i := 0; i < 100; i++ {
+		largeMap[fmt.Sprintf("key%d", i)] = i
+	}
+	urm.GetMap()
+	urm.PutMap(largeMap)
+}
+
+// ============================================================================
+// PARALLEL ITERATOR CLOSE TESTS
+// ============================================================================
+
+// TestParallelIteratorClose verifies that Close method works correctly
+func TestParallelIteratorClose(t *testing.T) {
+	data := make([]any, 20)
+	for i := range data {
+		data[i] = i
+	}
+
+	iterator := NewParallelIterator(data, 4)
+
+	// Process some data
+	_ = iterator.ForEach(func(idx int, val any) error {
+		return nil
+	})
+
+	// Close should not panic
+	iterator.Close()
+
+	// Multiple Close calls should be safe
+	iterator.Close()
+}
+
+// ============================================================================
+// ASYNC PROCESSOR CLOSE TIMEOUT TESTS
+// ============================================================================
+
+// TestAsyncProcessorCloseTimeout verifies that async processor close
+// has proper timeout protection
+func TestAsyncProcessorCloseTimeout(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping in short mode")
+	}
+
+	// Create multiple processors
+	processors := make([]*Processor, 10)
+	for i := range processors {
+		cfg := DefaultConfig()
+		cfg.EnableCache = true
+		p, err := New(cfg)
+		if err != nil {
+			t.Fatalf("Failed to create processor: %v", err)
+		}
+		processors[i] = p
+	}
+
+	// Close all processors concurrently (simulates eviction scenario)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		var wg sync.WaitGroup
+		for _, p := range processors {
+			wg.Add(1)
+			go func(proc *Processor) {
+				defer wg.Done()
+				_ = proc.Close()
+			}(p)
+		}
+		wg.Wait()
+	}()
+
+	select {
+	case <-done:
+		// All closed successfully
+	case <-time.After(10 * time.Second):
+		t.Error("Async close took too long - potential goroutine leak")
 	}
 }

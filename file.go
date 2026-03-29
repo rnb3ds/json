@@ -600,34 +600,38 @@ func containsBasicTraversalPattern(s string) bool {
 	return containsConsecutiveDots(s, 3)
 }
 
-// traversalPatterns contains all known traversal attack patterns (encoded, control chars, partial encoding).
-var traversalPatterns = []string{
-	// URL encoded patterns
-	"%2e%2e", "%252e%252e", "%25252e%25252e",
-	// Mixed encoding patterns
-	"..%2f", "..%5c", "..%c0%af", "..%c1%9c",
-	// Partial encoding patterns
-	".%2e", "%2e.", "%2e%2e%2f", "%2e%2e%5c",
-	// Windows patterns
-	"..\\", "..\\/",
-	// Injection patterns (control chars)
-	"..%00", "..%0a", "..%0d", "..%09", "..%20",
-	"%00", "%0a", "%0d", "%09", "%20",
-	// Double patterns
-	"....//", "....\\\\", ".....", "......",
-	// Mixed case patterns
-	"%2E%2E", "%2E%2e", "%2e%2E", "..%2F", "..%5C",
-	// UTF-8 overlong encoding
-	"%c0%ae", "%c1%1c", "%c1%9c", "..%255c",
-	// Fullwidth encoding
-	"%uff0e%uff0e", "..%ef%bc%8f",
-	// Partial double encoding
-	"%2e%2", "%25%2e", "%2f%2", "%5c%2",
-}
+// getTraversalPatterns returns the list of known traversal attack patterns.
+// Uses sync.OnceValue for lazy initialization to avoid allocating the slice at package init.
+var getTraversalPatterns = sync.OnceValue(func() []string {
+	return []string{
+		// URL encoded patterns
+		"%2e%2e", "%252e%252e", "%25252e%25252e",
+		// Mixed encoding patterns
+		"..%2f", "..%5c", "..%c0%af", "..%c1%9c",
+		// Partial encoding patterns
+		".%2e", "%2e.", "%2e%2e%2f", "%2e%2e%5c",
+		// Windows patterns
+		"..\\", "..\\/",
+		// Injection patterns (control chars)
+		"..%00", "..%0a", "..%0d", "..%09", "..%20",
+		"%00", "%0a", "%0d", "%09", "%20",
+		// Double patterns
+		"....//", "....\\\\", ".....", "......",
+		// Mixed case patterns
+		"%2E%2E", "%2E%2e", "%2e%2E", "..%2F", "..%5C",
+		// UTF-8 overlong encoding
+		"%c0%ae", "%c1%1c", "%c1%9c", "..%255c",
+		// Fullwidth encoding
+		"%uff0e%uff0e", "..%ef%bc%8f",
+		// Partial double encoding
+		"%2e%2", "%25%2e", "%2f%2", "%5c%2",
+	}
+})
 
 // containsEncodedPattern checks for encoded path traversal patterns.
 func containsEncodedPattern(s string) bool {
-	for _, pattern := range traversalPatterns {
+	patterns := getTraversalPatterns()
+	for _, pattern := range patterns {
 		if fastIndexIgnoreCase(s, pattern) != -1 {
 			return true
 		}
@@ -844,14 +848,14 @@ func (lfp *LargeFileProcessor) ProcessFile(filename string, fn func(item any) er
 	if err != nil {
 		return err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }() // best-effort cleanup; error ignored in defer
 
 	// Use buffered reader for efficiency
 	reader := bufio.NewReaderSize(file, lfp.config.BufferSize)
 
 	// Create streaming processor
 	sp := NewStreamingProcessor(reader, int(lfp.config.ChunkSize))
-	defer sp.Close() // Ensure cleanup for API consistency
+	defer func() { _ = sp.Close() }() // Ensure cleanup for API consistency
 
 	// Stream array elements
 	return sp.StreamArray(func(index int, item any) bool {
@@ -868,11 +872,11 @@ func (lfp *LargeFileProcessor) ProcessFileChunked(filename string, chunkSize int
 	if err != nil {
 		return err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }() // best-effort cleanup; error ignored in defer
 
 	reader := bufio.NewReaderSize(file, lfp.config.BufferSize)
 	sp := NewStreamingProcessor(reader, int(lfp.config.ChunkSize))
-	defer sp.Close() // Ensure cleanup for API consistency
+	defer func() { _ = sp.Close() }() // Ensure cleanup for API consistency
 
 	chunk := make([]any, 0, chunkSize)
 
@@ -1133,7 +1137,7 @@ func (np *NDJSONProcessor) ProcessFile(filename string, fn func(lineNum int, obj
 	if err != nil {
 		return err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }() // best-effort cleanup; error ignored in defer
 
 	scanner := bufio.NewScanner(file)
 	buf := make([]byte, 0, np.bufferSize)
@@ -1219,6 +1223,13 @@ func NewChunkedWriter(writer io.Writer, chunkSize int, isArray bool) *ChunkedWri
 
 // WriteItem writes a single item to the chunk
 func (cw *ChunkedWriter) WriteItem(item any) error {
+	// RESOURCE FIX: Encode item first before modifying buffer
+	// This prevents buffer corruption if encoding fails
+	data, err := json.Marshal(item)
+	if err != nil {
+		return err
+	}
+
 	// Start array/object if first item
 	if cw.first {
 		if cw.isArray {
@@ -1231,11 +1242,6 @@ func (cw *ChunkedWriter) WriteItem(item any) error {
 		cw.buffer = append(cw.buffer, ',')
 	}
 
-	// Encode item
-	data, err := json.Marshal(item)
-	if err != nil {
-		return err
-	}
 	cw.buffer = append(cw.buffer, data...)
 	cw.count++
 
@@ -1253,6 +1259,13 @@ func (cw *ChunkedWriter) WriteKeyValue(key string, value any) error {
 		return cw.WriteItem(value)
 	}
 
+	// RESOURCE FIX: Encode key-value pair first before modifying buffer
+	// This prevents buffer corruption if encoding fails
+	data, err := json.Marshal(map[string]any{key: value})
+	if err != nil {
+		return err
+	}
+
 	if cw.first {
 		cw.buffer = append(cw.buffer, '{')
 		cw.first = false
@@ -1260,12 +1273,7 @@ func (cw *ChunkedWriter) WriteKeyValue(key string, value any) error {
 		cw.buffer = append(cw.buffer, ',')
 	}
 
-	// Encode key-value pair
-	data, err := json.Marshal(map[string]any{key: value})
-	if err != nil {
-		return err
-	}
-	// Remove the outer braces
+	// Remove the outer braces and append
 	cw.buffer = append(cw.buffer, data[1:len(data)-1]...)
 	cw.count++
 

@@ -145,6 +145,7 @@ func putPooledDecoder(dec *Decoder) {
 
 // ============================================================================
 // STREAMING JSON PROCESSOR - For large JSON files
+// PERFORMANCE v2: Added pooled streaming processor for reduced allocations
 // ============================================================================
 
 // StreamingProcessor handles large JSON files efficiently
@@ -162,16 +163,32 @@ type StreamingStats struct {
 	Depth          int
 }
 
+// streamingProcessorPool for reusing streaming processors
+var streamingProcessorPool = sync.Pool{
+	New: func() any {
+		return &StreamingProcessor{
+			bufferSize: 64 * 1024,
+		}
+	},
+}
+
 // NewStreamingProcessor creates a streaming processor for large JSON
 func NewStreamingProcessor(reader io.Reader, bufferSize int) *StreamingProcessor {
+	sp := streamingProcessorPool.Get().(*StreamingProcessor)
 	if bufferSize <= 0 {
 		bufferSize = 64 * 1024 // 64KB default buffer
 	}
-	return &StreamingProcessor{
-		decoder:    json.NewDecoder(reader),
-		reader:     reader,
-		bufferSize: bufferSize,
-	}
+	sp.bufferSize = bufferSize
+	sp.reader = reader
+	sp.decoder = json.NewDecoder(reader)
+	sp.stats = StreamingStats{}
+	return sp
+}
+
+// Release returns the streaming processor to the pool
+// Deprecated: Use Close() instead, which now also returns to pool
+func (sp *StreamingProcessor) Release() {
+	sp.Close()
 }
 
 // StreamArray streams array elements one at a time
@@ -271,9 +288,14 @@ func (sp *StreamingProcessor) GetStats() StreamingStats {
 // Close releases any resources held by the streaming processor.
 // Note: This does NOT close the underlying reader - the caller owns it.
 // Provided for API consistency and future extensibility.
+// PERFORMANCE v2: Returns processor to pool for reuse
 func (sp *StreamingProcessor) Close() error {
 	// Reset internal state for potential reuse
 	sp.stats = StreamingStats{}
+	sp.reader = nil
+	sp.decoder = nil
+	// Return to pool
+	streamingProcessorPool.Put(sp)
 	return nil
 }
 

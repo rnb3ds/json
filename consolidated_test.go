@@ -224,7 +224,7 @@ func TestGetOrConsolidated(t *testing.T) {
 
 // TestPathParsingConsolidated tests path parsing edge cases
 func TestPathParsingConsolidated(t *testing.T) {
-	processor := MustNew()
+	processor, _ := New()
 	defer processor.Close()
 
 	tests := []struct {
@@ -314,7 +314,7 @@ func TestPathParsingConsolidated(t *testing.T) {
 
 // TestSliceOperationsConsolidated tests all slice operations
 func TestSliceOperationsConsolidated(t *testing.T) {
-	processor := MustNew()
+	processor, _ := New()
 	defer processor.Close()
 
 	jsonStr := `{"items": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]}`

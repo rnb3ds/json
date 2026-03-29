@@ -102,7 +102,7 @@ func BenchmarkUnifiedTypeConversion(b *testing.B) {
 	input := 42
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, _ = UnifiedTypeConversion[int64](input)
+		_, _ = unifiedTypeConversion[int64](input)
 	}
 }
 
@@ -227,13 +227,13 @@ func TestConfigConstantsComprehensive(t *testing.T) {
 	})
 
 	t.Run("Constants", func(t *testing.T) {
-		helper.AssertTrue(DefaultBufferSize > 0)
-		helper.AssertTrue(MaxPoolBufferSize > MinPoolBufferSize)
-		helper.AssertTrue(DefaultCacheSize > 0)
+		helper.AssertTrue(defaultBufferSize > 0)
+		helper.AssertTrue(maxPoolBufferSize > minPoolBufferSize)
+		helper.AssertTrue(defaultCacheSize > 0)
 		helper.AssertTrue(DefaultMaxJSONSize > 0)
 		helper.AssertTrue(DefaultMaxNestingDepth > 0)
 		helper.AssertTrue(MaxPathLength > 0)
-		helper.AssertTrue(DefaultOperationTimeout > 0)
+		helper.AssertTrue(defaultOperationTimeout > 0)
 	})
 
 	t.Run("GlobalProcessor", func(t *testing.T) {
@@ -1275,7 +1275,7 @@ func TestErrorScenarios(t *testing.T) {
 	})
 
 	t.Run("ProcessorClosed", func(t *testing.T) {
-		processor := MustNew(DefaultConfig())
+		processor, _ := New(DefaultConfig())
 		processor.Close()
 
 		testData := `{"test": "value"}`
@@ -1305,7 +1305,7 @@ func TestErrorScenarios(t *testing.T) {
 	})
 
 	t.Run("ConcurrentErrors", func(t *testing.T) {
-		processor := MustNew(DefaultConfig())
+		processor, _ := New(DefaultConfig())
 		defer processor.Close()
 
 		// Attempt to access after close from multiple goroutines
@@ -1380,7 +1380,7 @@ func TestFormatNumber(t *testing.T) {
 
 // TestGetStatsWithResourceManager tests processor GetStats functionality with resource manager
 func TestGetStatsWithResourceManager(t *testing.T) {
-	p := MustNew()
+	p, _ := New()
 	defer p.Close()
 
 	stats := p.GetStats()
@@ -1427,7 +1427,7 @@ func TestHealthCheckSystem(t *testing.T) {
 	helper := newTestHelper(t)
 
 	t.Run("BasicHealthCheck", func(t *testing.T) {
-		processor := MustNew()
+		processor, _ := New()
 		defer processor.Close()
 
 		health := processor.GetHealthStatus()
@@ -1437,7 +1437,7 @@ func TestHealthCheckSystem(t *testing.T) {
 	})
 
 	t.Run("HealthCheckWithLoad", func(t *testing.T) {
-		processor := MustNew()
+		processor, _ := New()
 		defer processor.Close()
 
 		testData := `{"test": "value"}`
@@ -1503,7 +1503,7 @@ func TestIteratorAdvancedFeatures(t *testing.T) {
 
 	t.Run("IterableValueGetPath", func(t *testing.T) {
 		testData := `{"user": {"name": "Alice", "profile": {"age": 25}}}`
-		processor := MustNew()
+		processor, _ := New()
 		defer processor.Close()
 
 		var data map[string]any
@@ -1628,7 +1628,7 @@ func TestProcessorConcurrencyComprehensive(t *testing.T) {
 	generator := newTestDataGenerator()
 
 	t.Run("Processoroperations", func(t *testing.T) {
-		processor := MustNew()
+		processor, _ := New()
 		defer processor.Close()
 
 		testData := `{
@@ -1677,7 +1677,7 @@ func TestProcessorConcurrencyComprehensive(t *testing.T) {
 		})
 
 		t.Run("Lifecycle", func(t *testing.T) {
-			p := MustNew()
+			p, _ := New()
 			helper.AssertFalse(p.IsClosed())
 			p.Close()
 			helper.AssertTrue(p.IsClosed())
@@ -1750,7 +1750,7 @@ func TestProcessorConcurrencyComprehensive(t *testing.T) {
 		})
 
 		t.Run("SharedProcessor", func(t *testing.T) {
-			processor := MustNew()
+			processor, _ := New()
 			defer processor.Close()
 
 			jsonStr := generator.GenerateComplexJSON()
@@ -1781,7 +1781,7 @@ func TestProcessorConcurrencyComprehensive(t *testing.T) {
 				wg.Add(1)
 				go func(processorID int) {
 					defer wg.Done()
-					processor := MustNew()
+					processor, _ := New()
 					defer processor.Close()
 
 					for j := 0; j < operationsPerProcessor; j++ {
@@ -1804,7 +1804,7 @@ func TestProcessorConcurrencyComprehensive(t *testing.T) {
 			config.EnableCache = true
 			config.MaxCacheSize = 100
 
-			processor := MustNew(config)
+			processor, _ := New(config)
 			defer processor.Close()
 
 			jsonStr := `{"cached": "value", "number": 123}`
@@ -1835,7 +1835,7 @@ func TestProcessorConcurrencyComprehensive(t *testing.T) {
 	// Additional concurrency tests from concurrency_test.go
 	t.Run("ConcurrentAccessDetailed", func(t *testing.T) {
 		t.Run("ConcurrentReadsWithProcessor", func(t *testing.T) {
-			proc := MustNew(DefaultConfig())
+			proc, _ := New(DefaultConfig())
 			defer proc.Close()
 
 			testData := `{"users": [` + generateUserJSON(100) + `]}`
@@ -1900,7 +1900,7 @@ func TestProcessorConcurrencyComprehensive(t *testing.T) {
 		})
 
 		t.Run("ConcurrentMixedReadWrite", func(t *testing.T) {
-			proc := MustNew(DefaultConfig())
+			proc, _ := New(DefaultConfig())
 			defer proc.Close()
 
 			testData := `{"data": {"value": 0}}`
@@ -1947,7 +1947,7 @@ func TestProcessorConcurrencyComprehensive(t *testing.T) {
 				go func(workerID int) {
 					defer wg.Done()
 
-					proc := MustNew(DefaultConfig())
+					proc, _ := New(DefaultConfig())
 					defer proc.Close()
 
 					for j := 0; j < iterations; j++ {
@@ -1966,7 +1966,7 @@ func TestProcessorConcurrencyComprehensive(t *testing.T) {
 			config.EnableCache = true
 			config.MaxCacheSize = 100
 
-			proc := MustNew(config)
+			proc, _ := New(config)
 			defer proc.Close()
 
 			testData := `{"user": {"name": "Alice", "age": 30}}`
@@ -2002,7 +2002,7 @@ func TestProcessorConcurrencyComprehensive(t *testing.T) {
 			config.EnableCache = true
 			config.CacheTTL = 100 * time.Millisecond
 
-			proc := MustNew(config)
+			proc, _ := New(config)
 			defer proc.Close()
 
 			testData := `{"value": "test"}`
@@ -2091,7 +2091,7 @@ func TestProcessorConcurrencyComprehensive(t *testing.T) {
 		})
 
 		t.Run("SharedProcessorStats", func(t *testing.T) {
-			proc := MustNew(DefaultConfig())
+			proc, _ := New(DefaultConfig())
 			defer proc.Close()
 
 			testData := `{"data": "value"}`
@@ -2130,7 +2130,7 @@ func TestProcessorConcurrencyComprehensive(t *testing.T) {
 		}
 
 		t.Run("HighConcurrency", func(t *testing.T) {
-			proc := MustNew(DefaultConfig())
+			proc, _ := New(DefaultConfig())
 			defer proc.Close()
 
 			testData := newTestDataGenerator().GenerateComplexJSON()
@@ -2159,7 +2159,7 @@ func TestProcessorConcurrencyComprehensive(t *testing.T) {
 
 		t.Run("RapidClose", func(t *testing.T) {
 			for i := 0; i < 20; i++ {
-				proc := MustNew(DefaultConfig())
+				proc, _ := New(DefaultConfig())
 				proc.Get(`{"test": "value"}`, "test")
 				proc.Close()
 			}
@@ -2168,7 +2168,7 @@ func TestProcessorConcurrencyComprehensive(t *testing.T) {
 
 	t.Run("ProcessorLifecycleConcurrency", func(t *testing.T) {
 		t.Run("CloseDuringoperations", func(t *testing.T) {
-			proc := MustNew(DefaultConfig())
+			proc, _ := New(DefaultConfig())
 
 			testData := `{"test": "value"}`
 
@@ -2253,7 +2253,7 @@ func TestResourceManager(t *testing.T) {
 	helper := newTestHelper(t)
 
 	t.Run("StringBuilderPool", func(t *testing.T) {
-		processor := MustNew()
+		processor, _ := New()
 		defer processor.Close()
 
 		success := testProcessorResourcePools(processor)
@@ -2261,7 +2261,7 @@ func TestResourceManager(t *testing.T) {
 	})
 
 	t.Run("MemoryEfficiency", func(t *testing.T) {
-		processor := MustNew()
+		processor, _ := New()
 		defer processor.Close()
 
 		testData := `{"data": {"nested": {"deep": "value"}}}`
@@ -3153,26 +3153,6 @@ func TestResult_UnwrapOr(t *testing.T) {
 	}
 }
 
-// TestResult_Must tests the Must method
-func TestResult_Must(t *testing.T) {
-	t.Run("valid result returns value", func(t *testing.T) {
-		result := Result[string]{Value: "hello", Exists: true, Error: nil}
-		if got := result.Must(); got != "hello" {
-			t.Errorf("Result.Must() = %v, want hello", got)
-		}
-	})
-
-	t.Run("result with error panics", func(t *testing.T) {
-		defer func() {
-			if r := recover(); r == nil {
-				t.Error("Result.Must() should panic on error")
-			}
-		}()
-		result := Result[int]{Value: 0, Exists: true, Error: fmt.Errorf("error")}
-		result.Must()
-	})
-}
-
 // TestUnifiedResourceManager tests the unified resource manager functionality
 func TestUnifiedResourceManager(t *testing.T) {
 	t.Run("Creation", func(t *testing.T) {
@@ -3330,12 +3310,12 @@ func TestUnifiedResourceManager(t *testing.T) {
 
 		// Test oversized builder is discarded
 		oversizedSb := &strings.Builder{}
-		oversizedSb.Grow(100000) // Way over MaxPoolBufferSize
+		oversizedSb.Grow(100000) // Way over maxPoolBufferSize
 		rm.PutStringBuilder(oversizedSb)
 
 		// Test undersized builder is discarded
 		undersizedSb := &strings.Builder{}
-		undersizedSb.Grow(10) // Under MinPoolBufferSize
+		undersizedSb.Grow(10) // Under minPoolBufferSize
 		rm.PutStringBuilder(undersizedSb)
 
 		// Note: Oversized/undersized builders are discarded automatically
@@ -3411,44 +3391,44 @@ func TestUnifiedTypeConversion(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			switch tt.expected.(type) {
 			case int:
-				result, ok := UnifiedTypeConversion[int](tt.input)
+				result, ok := unifiedTypeConversion[int](tt.input)
 				if ok != tt.shouldSucceed {
-					t.Errorf("UnifiedTypeConversion[int](%v) success = %v; want %v", tt.input, ok, tt.shouldSucceed)
+					t.Errorf("unifiedTypeConversion[int](%v) success = %v; want %v", tt.input, ok, tt.shouldSucceed)
 				}
 				if ok && result != tt.expected.(int) {
-					t.Errorf("UnifiedTypeConversion[int](%v) = %d; want %d", tt.input, result, tt.expected)
+					t.Errorf("unifiedTypeConversion[int](%v) = %d; want %d", tt.input, result, tt.expected)
 				}
 			case int64:
-				result, ok := UnifiedTypeConversion[int64](tt.input)
+				result, ok := unifiedTypeConversion[int64](tt.input)
 				if ok != tt.shouldSucceed {
-					t.Errorf("UnifiedTypeConversion[int64](%v) success = %v; want %v", tt.input, ok, tt.shouldSucceed)
+					t.Errorf("unifiedTypeConversion[int64](%v) success = %v; want %v", tt.input, ok, tt.shouldSucceed)
 				}
 				if ok && result != tt.expected.(int64) {
-					t.Errorf("UnifiedTypeConversion[int64](%v) = %d; want %d", tt.input, result, tt.expected)
+					t.Errorf("unifiedTypeConversion[int64](%v) = %d; want %d", tt.input, result, tt.expected)
 				}
 			case float64:
-				result, ok := UnifiedTypeConversion[float64](tt.input)
+				result, ok := unifiedTypeConversion[float64](tt.input)
 				if ok != tt.shouldSucceed {
-					t.Errorf("UnifiedTypeConversion[float64](%v) success = %v; want %v", tt.input, ok, tt.shouldSucceed)
+					t.Errorf("unifiedTypeConversion[float64](%v) success = %v; want %v", tt.input, ok, tt.shouldSucceed)
 				}
 				if ok && result != tt.expected.(float64) {
-					t.Errorf("UnifiedTypeConversion[float64](%v) = %f; want %f", tt.input, result, tt.expected)
+					t.Errorf("unifiedTypeConversion[float64](%v) = %f; want %f", tt.input, result, tt.expected)
 				}
 			case bool:
-				result, ok := UnifiedTypeConversion[bool](tt.input)
+				result, ok := unifiedTypeConversion[bool](tt.input)
 				if ok != tt.shouldSucceed {
-					t.Errorf("UnifiedTypeConversion[bool](%v) success = %v; want %v", tt.input, ok, tt.shouldSucceed)
+					t.Errorf("unifiedTypeConversion[bool](%v) success = %v; want %v", tt.input, ok, tt.shouldSucceed)
 				}
 				if ok && result != tt.expected.(bool) {
-					t.Errorf("UnifiedTypeConversion[bool](%v) = %v; want %v", tt.input, result, tt.expected)
+					t.Errorf("unifiedTypeConversion[bool](%v) = %v; want %v", tt.input, result, tt.expected)
 				}
 			case string:
-				result, ok := UnifiedTypeConversion[string](tt.input)
+				result, ok := unifiedTypeConversion[string](tt.input)
 				if ok != tt.shouldSucceed {
-					t.Errorf("UnifiedTypeConversion[string](%v) success = %v; want %v", tt.input, ok, tt.shouldSucceed)
+					t.Errorf("unifiedTypeConversion[string](%v) success = %v; want %v", tt.input, ok, tt.shouldSucceed)
 				}
 				if ok && result != tt.expected.(string) {
-					t.Errorf("UnifiedTypeConversion[string](%v) = %s; want %s", tt.input, result, tt.expected)
+					t.Errorf("unifiedTypeConversion[string](%v) = %s; want %s", tt.input, result, tt.expected)
 				}
 			}
 		})

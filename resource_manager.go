@@ -79,8 +79,8 @@ func (urm *unifiedResourceManager) GetStringBuilder() *strings.Builder {
 
 func (urm *unifiedResourceManager) PutStringBuilder(sb *strings.Builder) {
 	// Use consistent size limits from constants.go
-	const maxBuilderCap = MaxPoolBufferSize // 32768 - consistent with constants
-	const minBuilderCap = MinPoolBufferSize // 256 - consistent with constants
+	const maxBuilderCap = maxPoolBufferSize // 32768 - consistent with constants
+	const minBuilderCap = minPoolBufferSize // 256 - consistent with constants
 
 	if sb == nil {
 		return
@@ -148,8 +148,8 @@ func (urm *unifiedResourceManager) GetBuffer() []byte {
 
 func (urm *unifiedResourceManager) PutBuffer(buf []byte) {
 	// Use consistent size limits from constants.go
-	const maxBufferCap = MaxPoolBufferSize // 32768 - consistent with constants
-	const minBufferCap = MinPoolBufferSize // 256 - consistent with constants
+	const maxBufferCap = maxPoolBufferSize // 32768 - consistent with constants
+	const minBufferCap = minPoolBufferSize // 256 - consistent with constants
 
 	if buf == nil {
 		return
@@ -209,7 +209,11 @@ func (urm *unifiedResourceManager) GetMap() map[string]any {
 }
 
 // PutMap returns a map to the pool
+// RESOURCE FIX: Always decrement counter regardless of pooling decision
 func (urm *unifiedResourceManager) PutMap(m map[string]any) {
+	// Always decrement counter first to prevent counter leaks
+	defer atomic.AddInt64(&urm.allocatedMaps, -1)
+
 	if m == nil {
 		return
 	}
@@ -218,7 +222,6 @@ func (urm *unifiedResourceManager) PutMap(m map[string]any) {
 	if len(m) <= maxMapSize {
 		urm.mapPool.Put(m)
 	}
-	atomic.AddInt64(&urm.allocatedMaps, -1)
 }
 
 func (urm *unifiedResourceManager) getStats() resourceManagerStats {

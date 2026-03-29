@@ -7,10 +7,26 @@
 [![Security](https://img.shields.io/badge/Security-Hardened-red.svg)](docs/SECURITY.md)
 [![Zero Deps](https://img.shields.io/badge/deps-zero-brightgreen.svg)](go.mod)
 
-> A high-performance, feature-rich Go JSON processing library with 100% `encoding/json` compatibility.
+> A high-performance, feature-rich Go JSON processing library with 100% `encoding/json` compatibility.  
 > Powerful path syntax, type safety, streaming processing, production-grade performance.
 
 **[中文文档](README_zh-CN.md)**
+
+---
+
+## Why cybergodev/json?
+
+| Feature | encoding/json | cybergodev/json |
+|---------|---------------|-----------------|
+| Path-based access | ❌ Manual unmarshal | ✅ `json.Get(data, "users[0].name")` |
+| Negative indexing | ❌ | ✅ `items[-1]` gets last element |
+| Flatten nested arrays | ❌ | ✅ `users{flat:tags}` |
+| Type-safe defaults | ❌ | ✅ `GetStringOr(data, "path", "default")` |
+| Streaming large files | ❌ | ✅ Built-in streaming processors |
+| Schema validation | ❌ | ✅ JSON Schema validation |
+| Memory pooling | ❌ | ✅ `sync.Pool` for hot paths |
+| Caching | ❌ | ✅ Smart path cache with TTL |
+| 100% Compatibility | ✅ | ✅ Drop-in replacement |
 
 ---
 
@@ -32,6 +48,8 @@
 ```bash
 go get github.com/cybergodev/json
 ```
+
+**Requirements**: Go 1.24 or later
 
 ---
 
@@ -116,6 +134,8 @@ json.GetTyped[User](data, "user")      // custom struct
 // With defaults (no error when path doesn't exist)
 json.GetStringOr(data, "user.name", "Anonymous")
 json.GetIntOr(data, "user.age", 0)
+json.GetBoolOr(data, "user.active", false)
+json.GetFloatOr(data, "user.score", 0.0)
 json.GetTypedOr[[]any](data, "user.tags", []any{})
 
 // Batch retrieval
@@ -191,9 +211,6 @@ floatVal, ok := json.ConvertToFloat64(value)
 boolVal, ok  := json.ConvertToBool(value)
 strVal       := json.ConvertToString(value)
 
-// Generic conversion
-result, err := json.TypeSafeConvert[string](value)
-
 // JSON utilities
 equal, _    := json.CompareJSON(json1, json2)
 merged, _   := json.MergeJSON(json1, json2)                       // union (default)
@@ -238,13 +255,6 @@ processor.ClearCache()
 cfg := json.DefaultConfig()   // balanced defaults
 cfg := json.SecurityConfig()  // for untrusted input
 cfg := json.PrettyConfig()    // for pretty output
-```
-
-### Quick Start with MustNew
-
-```go
-processor := json.MustNew() // panics on config error (rare with defaults)
-defer processor.Close()
 ```
 
 ---
@@ -458,6 +468,8 @@ go run -tags=example examples/1_basic_usage.go
 
 - **[API Reference](docs/API_REFERENCE.md)** - Complete API documentation
 - **[Security Guide](docs/SECURITY.md)** - Security best practices
+- **[Quick Reference](docs/QUICK_REFERENCE.md)** - Common patterns at a glance
+- **[Compatibility](docs/COMPATIBILITY.md)** - encoding/json compatibility details
 - **[pkg.go.dev](https://pkg.go.dev/github.com/cybergodev/json)** - GoDoc
 
 ---
@@ -468,4 +480,4 @@ MIT License - See [LICENSE](LICENSE) file for details.
 
 ---
 
-If this project helps you, please give it a star!
+If this project helps you, please give it a star! ⭐

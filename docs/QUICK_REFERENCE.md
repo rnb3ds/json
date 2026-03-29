@@ -52,26 +52,26 @@ obj, err := json.GetAsObject(data, "user.profile")
 ### Retrieval with Default Values
 
 ```go
-// Recommended: Use GetOr[T] for type-safe defaults
-name := json.GetOr[string](data, "user.name", "Anonymous")
-age := json.GetOr[int](data, "user.age", 0)
-active := json.GetOr[bool](data, "user.active", false)
-price := json.GetOr[float64](data, "product.price", 0.0)
-tags := json.GetOr[[]any](data, "user.tags", []any{})
-settings := json.GetOr[map[string]any](data, "settings", map[string]any{})
+// Recommended: Use GetTypedOr[T] for type-safe defaults
+name := json.GetTypedOr[string](data, "user.name", "Anonymous")
+age := json.GetTypedOr[int](data, "user.age", 0)
+active := json.GetTypedOr[bool](data, "user.active", false)
+price := json.GetTypedOr[float64](data, "product.price", 0.0)
+tags := json.GetTypedOr[[]any](data, "user.tags", []any{})
+settings := json.GetTypedOr[map[string]any](data, "settings", map[string]any{})
 ```
 
 ### Type-Safe Retrieval (Generics)
 
 ```go
 // Get string
-name, err := json.GetAs[string](data, "user.name")
+name, err := json.GetTyped[string](data, "user.name")
 
 // Get integer slice
-numbers, err := json.GetAs[[]int](data, "scores")
+numbers, err := json.GetTyped[[]int](data, "scores")
 
 // Get custom type
-users, err := json.GetAs[[]User](data, "users")
+users, err := json.GetTyped[[]User](data, "users")
 ```
 
 ### Batch Retrieval
@@ -455,9 +455,9 @@ if err != nil {
     return err
 }
 
-// 2. Use default values (recommended: GetOr[T])
-name := json.GetOr[string](data, "user.name", "Anonymous")
-age := json.GetOr[int](data, "user.age", 0)
+// 2. Use default values (recommended: GetTypedOr[T])
+name := json.GetTypedOr[string](data, "user.name", "Anonymous")
+age := json.GetTypedOr[int](data, "user.age", 0)
 
 // 3. Type checking
 if errors.Is(err, json.ErrTypeMismatch) {
@@ -506,7 +506,7 @@ if err != nil {
 - ✅ Use `SkipValidation` option for trusted input only
 
 ### Best Practices
-- ✅ Use type-safe GetAs methods for compile-time checking
+- ✅ Use type-safe GetTyped methods for compile-time checking
 - ✅ Use default values for potentially missing fields
 - ✅ Enable validation in production (enabled by default)
 - ✅ Use defer processor.Close() to release resources
@@ -527,16 +527,6 @@ intVal, ok := json.ConvertToInt(value)
 floatVal, ok := json.ConvertToFloat64(value)
 boolVal, ok := json.ConvertToBool(value)
 strVal := json.ConvertToString(value)
-
-// Generic type conversion
-result, ok := json.UnifiedTypeConversion[int](value)
-result, err := json.TypeSafeConvert[string](value)
-
-// Fast conversion (for hot paths)
-strVal, ok := json.FastToString(value)
-intVal, ok := json.FastToInt(value)
-floatVal, ok := json.FastToFloat64(value)
-boolVal, ok := json.FastToBool(value)
 ```
 
 ---

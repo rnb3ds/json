@@ -53,12 +53,18 @@ var (
 func init() {
 	p, err := New()
 	if err != nil {
-		// This should never happen with DefaultConfig.
-		// Log to stderr as a last resort since logger may not be available.
-		// Note: We don't panic to allow the program to continue if
-		// the fallback processor isn't actually needed.
-		fmt.Fprintf(os.Stderr, "json: warning: failed to create fallback processor: %v\n", err)
-		return
+		// This should never happen with DefaultConfig, but handle gracefully.
+		// Create a minimal config with reduced limits as a last resort.
+		cfg := DefaultConfig()
+		cfg.MaxJSONSize = 1024 * 1024 // 1MB - minimal safe limit
+		cfg.EnableCache = false       // Disable cache to reduce complexity
+		p, err = New(cfg)
+		if err != nil {
+			// Final fallback: log and continue without fallback processor
+			// Callers must handle nil processor gracefully
+			fmt.Fprintf(os.Stderr, "json: warning: failed to create fallback processor: %v\n", err)
+			return
+		}
 	}
 	fallbackProcessor.Store(p)
 }
@@ -223,19 +229,17 @@ func NewJSONLProcessorWithConfig(reader io.Reader, config JSONLConfig) *JSONLPro
 		processor = getDefaultProcessor()
 	}
 
-	j := &JSONLProcessor{
+	scanner := bufio.NewScanner(reader)
+	scanner.Buffer(make([]byte, config.BufferSize), config.MaxLineSize)
+
+	// Create processor with all fields initialized in one step
+	// stopped defaults to false (atomic.Bool zero value) - ready for processing
+	return &JSONLProcessor{
+		scanner:   scanner,
 		config:    config,
 		processor: processor,
+		// stopped, lineNum, err, bytesRead, linesCount all default to zero values
 	}
-
-	scanner := bufio.NewScanner(reader)
-	scanner.Buffer(make([]byte, j.config.BufferSize), j.config.MaxLineSize)
-
-	j.stopped.Store(true) // Start in stopped state for safety
-	j.scanner = scanner
-	j.stopped.Store(false)
-
-	return j
 }
 
 // shouldSkipLine checks if a line should be skipped based on configuration.

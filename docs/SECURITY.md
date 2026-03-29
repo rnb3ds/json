@@ -543,17 +543,10 @@ Errors include context without exposing sensitive data:
 var jsonsErr *json.JsonsError
 if errors.As(err, &jsonsErr) {
     fmt.Printf("Operation: %s\n", jsonsErr.Op)
+    fmt.Printf("Path: %s\n", jsonsErr.Path)
     fmt.Printf("Message: %s\n", jsonsErr.Message)
-    fmt.Printf("Error Code: %s\n", jsonsErr.ErrorCode)
-
-    // Context is sanitized
-    if jsonsErr.Context != nil {
-        fmt.Printf("Context: %+v\n", jsonsErr.Context)
-    }
-
-    // Suggestions for fixing the error
-    for _, suggestion := range jsonsErr.Suggestions {
-        fmt.Printf("Suggestion: %s\n", suggestion)
+    if jsonsErr.Err != nil {
+        fmt.Printf("Underlying error: %v\n", jsonsErr.Err)
     }
 }
 ```
@@ -573,12 +566,12 @@ devConfig.StrictMode = false
 devConfig.EnableValidation = true
 
 // Production environment
-prodConfig := json.HighSecurityConfig()
+prodConfig := json.SecurityConfig()
 prodConfig.EnableValidation = true
 prodConfig.StrictMode = true
 
 // High-security environment (financial, healthcare, etc.)
-secureConfig := json.HighSecurityConfig()
+secureConfig := json.SecurityConfig()
 secureConfig.MaxJSONSize = 1 * 1024 * 1024  // 1MB only
 secureConfig.MaxPathDepth = 10               // Very shallow
 secureConfig.MaxNestingDepthSecurity = 10    // Very restrictive
@@ -593,7 +586,7 @@ Always validate JSON from external sources:
 result, _ := processor.Get(untrustedJSON, "data")
 
 // Good: With validation
-processor := json.New(&json.Config{
+processor := json.New(json.Config{
     EnableValidation: true,
     StrictMode:       true,
 })
@@ -765,7 +758,7 @@ Use multiple layers of security:
 ```go
 // Layer 1: Network/Transport security (TLS, authentication)
 // Layer 2: Input validation
-config := json.HighSecurityConfig()
+config := json.SecurityConfig()
 processor := json.New(config)
 defer processor.Close()
 
@@ -797,7 +790,7 @@ result, err := processor.Get(input, "data")
 Use this checklist to ensure your implementation is secure:
 
 ### Configuration
-- [ ] Use `HighSecurityConfig()` for production environments with untrusted input
+- [ ] Use `SecurityConfig()` for production environments with untrusted input
 - [ ] Set appropriate `MaxJSONSize` limits (default: 100MB, high-security: 5MB)
 - [ ] Configure `MaxPathDepth` (default: 50) and `MaxNestingDepthSecurity` (default: 200)
 - [ ] Enable `EnableValidation` and `ValidateInput` (enabled by default)
@@ -854,7 +847,7 @@ Use this checklist to ensure your implementation is secure:
 ```go
 func ProcessUserJSON(userInput string) error {
     // Use high security configuration
-    config := json.HighSecurityConfig()
+    config := json.SecurityConfig()
     config.MaxJSONSize = 1 * 1024 * 1024 // 1MB limit for user input
 
     processor := json.New(config)
@@ -944,7 +937,7 @@ func ProcessAPIRequests() {
 ```go
 func ProcessSensitiveData(jsonData string) error {
     // Disable caching for sensitive data
-    config := json.HighSecurityConfig()
+    config := json.SecurityConfig()
     config.EnableCache = false // Don't cache sensitive data
 
     processor := json.New(config)
@@ -979,7 +972,7 @@ func LoadSecureConfig(configPath string) (*Config, error) {
         return nil, fmt.Errorf("invalid config path")
     }
 
-    processor := json.New(json.HighSecurityConfig())
+    processor := json.New(json.SecurityConfig())
     defer processor.Close()
 
     // Read and validate config file

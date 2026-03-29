@@ -7,6 +7,7 @@ import (
 	"os"
 	"sort"
 	"sync"
+	"time"
 
 	"github.com/cybergodev/json/internal"
 )
@@ -115,81 +116,179 @@ func isDefaultConfig(cfg Config) bool {
 	return configFieldsEqual(cfg, defaultCfg)
 }
 
-// configFieldsEqual compares all fields of two Config structs.
-// PERFORMANCE: Uses direct field comparison instead of reflect.DeepEqual
-// for ~10x faster execution in hot paths. New fields must be added explicitly.
-// MAINTENANCE: Must be kept in sync with hashConfigFields - both functions must
-// enumerate the same set of fields to ensure consistent behavior.
-func configFieldsEqual(a, b Config) bool {
-	// Context comparison (interface pointer comparison)
-	if a.Context != b.Context {
-		return false
-	}
+// configFieldAccessor defines how to access and compare/hash a Config field.
+// MAINTENANCE: Add new Config fields to this slice to ensure they are included
+// in both comparison and hashing operations. This single source of truth prevents
+// the functions from getting out of sync.
+type configFieldAccessor struct {
+	name     string
+	equal    func(a, b Config) bool
+	hash     func(h uint64, cfg Config) uint64
+}
 
+// configFieldList defines all Config fields that should be compared/hashed.
+// IMPORTANT: When adding new fields to Config, add them to this list.
+var configFieldList = []configFieldAccessor{
 	// Cache settings
-	if a.MaxCacheSize != b.MaxCacheSize || a.CacheTTL != b.CacheTTL ||
-		a.EnableCache != b.EnableCache || a.CacheResults != b.CacheResults {
-		return false
-	}
-
+	{"MaxCacheSize",
+		func(a, b Config) bool { return a.MaxCacheSize == b.MaxCacheSize },
+		func(h uint64, c Config) uint64 { return internal.HashInt(h, c.MaxCacheSize) }},
+	{"CacheTTL",
+		func(a, b Config) bool { return a.CacheTTL == b.CacheTTL },
+		func(h uint64, c Config) uint64 { return internal.HashInt64(h, int64(c.CacheTTL)) }},
+	{"EnableCache",
+		func(a, b Config) bool { return a.EnableCache == b.EnableCache },
+		func(h uint64, c Config) uint64 { return internal.HashBool(h, c.EnableCache) }},
+	{"CacheResults",
+		func(a, b Config) bool { return a.CacheResults == b.CacheResults },
+		func(h uint64, c Config) uint64 { return internal.HashBool(h, c.CacheResults) }},
 	// Size limits
-	if a.MaxJSONSize != b.MaxJSONSize || a.MaxPathDepth != b.MaxPathDepth ||
-		a.MaxBatchSize != b.MaxBatchSize {
-		return false
-	}
-
+	{"MaxJSONSize",
+		func(a, b Config) bool { return a.MaxJSONSize == b.MaxJSONSize },
+		func(h uint64, c Config) uint64 { return internal.HashInt64(h, c.MaxJSONSize) }},
+	{"MaxPathDepth",
+		func(a, b Config) bool { return a.MaxPathDepth == b.MaxPathDepth },
+		func(h uint64, c Config) uint64 { return internal.HashInt(h, c.MaxPathDepth) }},
+	{"MaxBatchSize",
+		func(a, b Config) bool { return a.MaxBatchSize == b.MaxBatchSize },
+		func(h uint64, c Config) uint64 { return internal.HashInt(h, c.MaxBatchSize) }},
 	// Security limits
-	if a.MaxNestingDepthSecurity != b.MaxNestingDepthSecurity ||
-		a.MaxSecurityValidationSize != b.MaxSecurityValidationSize ||
-		a.MaxObjectKeys != b.MaxObjectKeys || a.MaxArrayElements != b.MaxArrayElements ||
-		a.FullSecurityScan != b.FullSecurityScan {
-		return false
-	}
-
+	{"MaxNestingDepthSecurity",
+		func(a, b Config) bool { return a.MaxNestingDepthSecurity == b.MaxNestingDepthSecurity },
+		func(h uint64, c Config) uint64 { return internal.HashInt(h, c.MaxNestingDepthSecurity) }},
+	{"MaxSecurityValidationSize",
+		func(a, b Config) bool { return a.MaxSecurityValidationSize == b.MaxSecurityValidationSize },
+		func(h uint64, c Config) uint64 { return internal.HashInt64(h, c.MaxSecurityValidationSize) }},
+	{"MaxObjectKeys",
+		func(a, b Config) bool { return a.MaxObjectKeys == b.MaxObjectKeys },
+		func(h uint64, c Config) uint64 { return internal.HashInt(h, c.MaxObjectKeys) }},
+	{"MaxArrayElements",
+		func(a, b Config) bool { return a.MaxArrayElements == b.MaxArrayElements },
+		func(h uint64, c Config) uint64 { return internal.HashInt(h, c.MaxArrayElements) }},
+	{"FullSecurityScan",
+		func(a, b Config) bool { return a.FullSecurityScan == b.FullSecurityScan },
+		func(h uint64, c Config) uint64 { return internal.HashBool(h, c.FullSecurityScan) }},
 	// Concurrency
-	if a.MaxConcurrency != b.MaxConcurrency || a.ParallelThreshold != b.ParallelThreshold {
-		return false
-	}
-
+	{"MaxConcurrency",
+		func(a, b Config) bool { return a.MaxConcurrency == b.MaxConcurrency },
+		func(h uint64, c Config) uint64 { return internal.HashInt(h, c.MaxConcurrency) }},
+	{"ParallelThreshold",
+		func(a, b Config) bool { return a.ParallelThreshold == b.ParallelThreshold },
+		func(h uint64, c Config) uint64 { return internal.HashInt(h, c.ParallelThreshold) }},
 	// Processing options
-	if a.EnableValidation != b.EnableValidation || a.StrictMode != b.StrictMode ||
-		a.CreatePaths != b.CreatePaths || a.CleanupNulls != b.CleanupNulls ||
-		a.CompactArrays != b.CompactArrays || a.ContinueOnError != b.ContinueOnError {
-		return false
-	}
-
+	{"EnableValidation",
+		func(a, b Config) bool { return a.EnableValidation == b.EnableValidation },
+		func(h uint64, c Config) uint64 { return internal.HashBool(h, c.EnableValidation) }},
+	{"StrictMode",
+		func(a, b Config) bool { return a.StrictMode == b.StrictMode },
+		func(h uint64, c Config) uint64 { return internal.HashBool(h, c.StrictMode) }},
+	{"CreatePaths",
+		func(a, b Config) bool { return a.CreatePaths == b.CreatePaths },
+		func(h uint64, c Config) uint64 { return internal.HashBool(h, c.CreatePaths) }},
+	{"CleanupNulls",
+		func(a, b Config) bool { return a.CleanupNulls == b.CleanupNulls },
+		func(h uint64, c Config) uint64 { return internal.HashBool(h, c.CleanupNulls) }},
+	{"CompactArrays",
+		func(a, b Config) bool { return a.CompactArrays == b.CompactArrays },
+		func(h uint64, c Config) uint64 { return internal.HashBool(h, c.CompactArrays) }},
+	{"ContinueOnError",
+		func(a, b Config) bool { return a.ContinueOnError == b.ContinueOnError },
+		func(h uint64, c Config) uint64 { return internal.HashBool(h, c.ContinueOnError) }},
 	// Input/Output options
-	if a.AllowComments != b.AllowComments || a.PreserveNumbers != b.PreserveNumbers ||
-		a.ValidateInput != b.ValidateInput || a.ValidateFilePath != b.ValidateFilePath ||
-		a.SkipValidation != b.SkipValidation {
-		return false
-	}
-
+	{"AllowComments",
+		func(a, b Config) bool { return a.AllowComments == b.AllowComments },
+		func(h uint64, c Config) uint64 { return internal.HashBool(h, c.AllowComments) }},
+	{"PreserveNumbers",
+		func(a, b Config) bool { return a.PreserveNumbers == b.PreserveNumbers },
+		func(h uint64, c Config) uint64 { return internal.HashBool(h, c.PreserveNumbers) }},
+	{"ValidateInput",
+		func(a, b Config) bool { return a.ValidateInput == b.ValidateInput },
+		func(h uint64, c Config) uint64 { return internal.HashBool(h, c.ValidateInput) }},
+	{"ValidateFilePath",
+		func(a, b Config) bool { return a.ValidateFilePath == b.ValidateFilePath },
+		func(h uint64, c Config) uint64 { return internal.HashBool(h, c.ValidateFilePath) }},
+	{"SkipValidation",
+		func(a, b Config) bool { return a.SkipValidation == b.SkipValidation },
+		func(h uint64, c Config) uint64 { return internal.HashBool(h, c.SkipValidation) }},
 	// Encoding options
-	if a.Pretty != b.Pretty || a.Indent != b.Indent || a.Prefix != b.Prefix ||
-		a.EscapeHTML != b.EscapeHTML || a.SortKeys != b.SortKeys ||
-		a.ValidateUTF8 != b.ValidateUTF8 || a.MaxDepth != b.MaxDepth ||
-		a.DisallowUnknown != b.DisallowUnknown || a.FloatPrecision != b.FloatPrecision ||
-		a.FloatTruncate != b.FloatTruncate || a.DisableEscaping != b.DisableEscaping ||
-		a.EscapeUnicode != b.EscapeUnicode || a.EscapeSlash != b.EscapeSlash ||
-		a.EscapeNewlines != b.EscapeNewlines || a.EscapeTabs != b.EscapeTabs ||
-		a.IncludeNulls != b.IncludeNulls {
-		return false
-	}
-
+	{"Pretty",
+		func(a, b Config) bool { return a.Pretty == b.Pretty },
+		func(h uint64, c Config) uint64 { return internal.HashBool(h, c.Pretty) }},
+	{"Indent",
+		func(a, b Config) bool { return a.Indent == b.Indent },
+		func(h uint64, c Config) uint64 { return internal.HashString(h, c.Indent) }},
+	{"Prefix",
+		func(a, b Config) bool { return a.Prefix == b.Prefix },
+		func(h uint64, c Config) uint64 { return internal.HashString(h, c.Prefix) }},
+	{"EscapeHTML",
+		func(a, b Config) bool { return a.EscapeHTML == b.EscapeHTML },
+		func(h uint64, c Config) uint64 { return internal.HashBool(h, c.EscapeHTML) }},
+	{"SortKeys",
+		func(a, b Config) bool { return a.SortKeys == b.SortKeys },
+		func(h uint64, c Config) uint64 { return internal.HashBool(h, c.SortKeys) }},
+	{"ValidateUTF8",
+		func(a, b Config) bool { return a.ValidateUTF8 == b.ValidateUTF8 },
+		func(h uint64, c Config) uint64 { return internal.HashBool(h, c.ValidateUTF8) }},
+	{"MaxDepth",
+		func(a, b Config) bool { return a.MaxDepth == b.MaxDepth },
+		func(h uint64, c Config) uint64 { return internal.HashInt(h, c.MaxDepth) }},
+	{"DisallowUnknown",
+		func(a, b Config) bool { return a.DisallowUnknown == b.DisallowUnknown },
+		func(h uint64, c Config) uint64 { return internal.HashBool(h, c.DisallowUnknown) }},
+	{"FloatPrecision",
+		func(a, b Config) bool { return a.FloatPrecision == b.FloatPrecision },
+		func(h uint64, c Config) uint64 { return internal.HashInt(h, c.FloatPrecision) }},
+	{"FloatTruncate",
+		func(a, b Config) bool { return a.FloatTruncate == b.FloatTruncate },
+		func(h uint64, c Config) uint64 { return internal.HashBool(h, c.FloatTruncate) }},
+	{"DisableEscaping",
+		func(a, b Config) bool { return a.DisableEscaping == b.DisableEscaping },
+		func(h uint64, c Config) uint64 { return internal.HashBool(h, c.DisableEscaping) }},
+	{"EscapeUnicode",
+		func(a, b Config) bool { return a.EscapeUnicode == b.EscapeUnicode },
+		func(h uint64, c Config) uint64 { return internal.HashBool(h, c.EscapeUnicode) }},
+	{"EscapeSlash",
+		func(a, b Config) bool { return a.EscapeSlash == b.EscapeSlash },
+		func(h uint64, c Config) uint64 { return internal.HashBool(h, c.EscapeSlash) }},
+	{"EscapeNewlines",
+		func(a, b Config) bool { return a.EscapeNewlines == b.EscapeNewlines },
+		func(h uint64, c Config) uint64 { return internal.HashBool(h, c.EscapeNewlines) }},
+	{"EscapeTabs",
+		func(a, b Config) bool { return a.EscapeTabs == b.EscapeTabs },
+		func(h uint64, c Config) uint64 { return internal.HashBool(h, c.EscapeTabs) }},
+	{"IncludeNulls",
+		func(a, b Config) bool { return a.IncludeNulls == b.IncludeNulls },
+		func(h uint64, c Config) uint64 { return internal.HashBool(h, c.IncludeNulls) }},
 	// Observability
-	if a.EnableMetrics != b.EnableMetrics || a.EnableHealthCheck != b.EnableHealthCheck {
-		return false
-	}
+	{"EnableMetrics",
+		func(a, b Config) bool { return a.EnableMetrics == b.EnableMetrics },
+		func(h uint64, c Config) uint64 { return internal.HashBool(h, c.EnableMetrics) }},
+	{"EnableHealthCheck",
+		func(a, b Config) bool { return a.EnableHealthCheck == b.EnableHealthCheck },
+		func(h uint64, c Config) uint64 { return internal.HashBool(h, c.EnableHealthCheck) }},
+	// Context - direct pointer comparison (different context instances are not equal)
+	{"Context",
+		func(a, b Config) bool { return a.Context == b.Context },
+		func(h uint64, c Config) uint64 {
+			if c.Context != nil {
+				return internal.HashBool(h, true)
+			}
+			return h
+		}},
+}
 
-	// CustomEscapes map comparison
-	if len(a.CustomEscapes) != len(b.CustomEscapes) {
-		return false
-	}
-	for k, v := range a.CustomEscapes {
-		if bv, ok := b.CustomEscapes[k]; !ok || bv != v {
+// configFieldsEqual compares all fields of two Config structs using the unified field list.
+// PERFORMANCE: Uses direct field comparison instead of reflect.DeepEqual.
+func configFieldsEqual(a, b Config) bool {
+	for _, field := range configFieldList {
+		if !field.equal(a, b) {
 			return false
 		}
+	}
+
+	// CustomEscapes map comparison (handled separately due to complexity)
+	if !customEscapesEqual(a.CustomEscapes, b.CustomEscapes) {
+		return false
 	}
 
 	// Extension points - compare by nil check and length for slices
@@ -218,79 +317,29 @@ func configFieldsEqual(a, b Config) bool {
 	return true
 }
 
-// hashConfigFields hashes all Config fields explicitly.
-// More reliable than JSON serialization which ignores Context.
-// MAINTENANCE: Must be kept in sync with configFieldsEqual - both functions must
-// enumerate the same set of fields to ensure consistent cache key generation.
+// customEscapesEqual compares two CustomEscapes maps
+func customEscapesEqual(a, b map[rune]string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for k, v := range a {
+		if bv, ok := b[k]; !ok || bv != v {
+			return false
+		}
+	}
+	return true
+}
+
+// hashConfigFields hashes all Config fields using the unified field list.
 func hashConfigFields(cfg Config) uint64 {
 	h := internal.FNVOffsetBasis
 
-	// Cache settings
-	h = internal.HashInt(h, cfg.MaxCacheSize)
-	h = internal.HashInt64(h, int64(cfg.CacheTTL))
-	h = internal.HashBool(h, cfg.EnableCache)
-	h = internal.HashBool(h, cfg.CacheResults)
-
-	// Size limits
-	h = internal.HashInt64(h, cfg.MaxJSONSize)
-	h = internal.HashInt(h, cfg.MaxPathDepth)
-	h = internal.HashInt(h, cfg.MaxBatchSize)
-
-	// Security limits
-	h = internal.HashInt(h, cfg.MaxNestingDepthSecurity)
-	h = internal.HashInt64(h, cfg.MaxSecurityValidationSize)
-	h = internal.HashInt(h, cfg.MaxObjectKeys)
-	h = internal.HashInt(h, cfg.MaxArrayElements)
-	h = internal.HashBool(h, cfg.FullSecurityScan)
-
-	// Concurrency
-	h = internal.HashInt(h, cfg.MaxConcurrency)
-	h = internal.HashInt(h, cfg.ParallelThreshold)
-
-	// Processing options
-	h = internal.HashBool(h, cfg.EnableValidation)
-	h = internal.HashBool(h, cfg.StrictMode)
-	h = internal.HashBool(h, cfg.CreatePaths)
-	h = internal.HashBool(h, cfg.CleanupNulls)
-	h = internal.HashBool(h, cfg.CompactArrays)
-	h = internal.HashBool(h, cfg.ContinueOnError)
-
-	// Input/Output options
-	h = internal.HashBool(h, cfg.AllowComments)
-	h = internal.HashBool(h, cfg.PreserveNumbers)
-	h = internal.HashBool(h, cfg.ValidateInput)
-	h = internal.HashBool(h, cfg.ValidateFilePath)
-	h = internal.HashBool(h, cfg.SkipValidation)
-
-	// Encoding options
-	h = internal.HashBool(h, cfg.Pretty)
-	h = internal.HashString(h, cfg.Indent)
-	h = internal.HashString(h, cfg.Prefix)
-	h = internal.HashBool(h, cfg.EscapeHTML)
-	h = internal.HashBool(h, cfg.SortKeys)
-	h = internal.HashBool(h, cfg.ValidateUTF8)
-	h = internal.HashInt(h, cfg.MaxDepth)
-	h = internal.HashBool(h, cfg.DisallowUnknown)
-	h = internal.HashInt(h, cfg.FloatPrecision)
-	h = internal.HashBool(h, cfg.FloatTruncate)
-	h = internal.HashBool(h, cfg.DisableEscaping)
-	h = internal.HashBool(h, cfg.EscapeUnicode)
-	h = internal.HashBool(h, cfg.EscapeSlash)
-	h = internal.HashBool(h, cfg.EscapeNewlines)
-	h = internal.HashBool(h, cfg.EscapeTabs)
-	h = internal.HashBool(h, cfg.IncludeNulls)
-
-	// CustomEscapes
-	h = hashCustomEscapes(h, cfg.CustomEscapes)
-
-	// Observability
-	h = internal.HashBool(h, cfg.EnableMetrics)
-	h = internal.HashBool(h, cfg.EnableHealthCheck)
-
-	// Context - hash based on nil/non-nil
-	if cfg.Context != nil {
-		h = internal.HashBool(h, true)
+	for _, field := range configFieldList {
+		h = field.hash(h, cfg)
 	}
+
+	// CustomEscapes (handled separately due to complexity)
+	h = hashCustomEscapes(h, cfg.CustomEscapes)
 
 	return h
 }
@@ -339,7 +388,7 @@ func Get(jsonStr, path string, cfg ...Config) (any, error) {
 //	user, err := json.GetAs[User](data, "user")
 func GetTyped[T any](jsonStr, path string, cfg ...Config) (T, error) {
 	return withProcessor(func(p *Processor) (T, error) {
-		return GetTypedWithProcessor[T](p, jsonStr, path, cfg...)
+		return getTypedWithProcessor[T](p, jsonStr, path, cfg...)
 	})
 }
 
@@ -996,18 +1045,27 @@ func EncodeStream(values any, cfg ...Config) (string, error) {
 // getProcessorWithConfig returns a processor configured with the given config.
 // Uses caching for identical configurations to improve performance.
 // SECURITY: Implements cache size limit to prevent unbounded memory growth.
-// RACE-FIX: Uses retry loop with maximum attempts to handle concurrent stale entry replacement.
+// RACE-FIX: Uses atomic CompareAndSwap pattern to handle concurrent stale entry replacement safely.
 func getProcessorWithConfig(cfg Config) (*Processor, error) {
 	// Compute cache key from config
 	cacheKey := hashConfig(cfg)
 
-	// Fast path: check cache first
-	if cached, ok := configProcessorCache.Load(cacheKey); ok {
-		if p, ok := cached.(*Processor); ok && !p.IsClosed() {
-			return p, nil
+	// Fast path: check cache first with validation loop
+	for attempts := 0; attempts < 3; attempts++ {
+		if cached, ok := configProcessorCache.Load(cacheKey); ok {
+			if p, ok := cached.(*Processor); ok && !p.IsClosed() {
+				return p, nil
+			}
+			// Stale entry found - try to delete it atomically
+			// Use CAS-like pattern: delete only if it's still the stale value
+			if current, stillThere := configProcessorCache.Load(cacheKey); stillThere {
+				if current == cached {
+					configProcessorCache.Delete(cacheKey)
+				}
+			}
 		}
-		// Remove stale entry
-		configProcessorCache.Delete(cacheKey)
+		// If we found and processed a stale entry, retry the load
+		// This handles the race where another goroutine stores a valid processor
 	}
 
 	// Slow path: create new processor
@@ -1016,16 +1074,30 @@ func getProcessorWithConfig(cfg Config) (*Processor, error) {
 		return nil, err
 	}
 
-	// Try to store in cache
-	if existing, loaded := configProcessorCache.LoadOrStore(cacheKey, p); loaded {
-		// Another goroutine stored first
-		if ep, ok := existing.(*Processor); ok && !ep.IsClosed() {
-			// Theirs is valid, close ours and use theirs
-			p.Close()
-			return ep, nil
+	// Try to store in cache with retry for stale entries
+	for attempts := 0; attempts < 3; attempts++ {
+		if existing, loaded := configProcessorCache.LoadOrStore(cacheKey, p); loaded {
+			// Another goroutine stored first
+			if ep, ok := existing.(*Processor); ok && !ep.IsClosed() {
+				// Theirs is valid, close ours and use theirs
+				_ = p.Close() // best-effort cleanup; error ignored as we're returning a valid processor
+				return ep, nil
+			}
+			// Existing entry is stale; try to replace it atomically
+			// Use CompareAndSwap pattern to avoid race with other goroutines
+			if configProcessorCache.CompareAndSwap(cacheKey, existing, p) {
+				// Successfully replaced stale entry
+				// Close the old stale processor asynchronously
+				go func(stale *Processor) {
+					_ = stale.Close() // best-effort cleanup
+				}(existing.(*Processor))
+				break
+			}
+			// CAS failed - another goroutine modified the entry, retry
+			continue
 		}
-		// Existing entry is stale; replace it with ours
-		configProcessorCache.Store(cacheKey, p)
+		// Successfully stored new entry
+		break
 	}
 
 	// Check cache size and evict if necessary
@@ -1097,23 +1169,53 @@ func maybeEvictConfigCache() {
 			return true
 		})
 
-		// GOROUTINE FIX: Use WaitGroup to track async close operations
-		// This prevents goroutine leaks by ensuring all close operations complete
-		if len(toClose) > 0 {
-			var closeWg sync.WaitGroup
-			closeWg.Add(len(toClose))
+		// Close evicted processors asynchronously with timeout (best-effort cleanup)
+		// RESOURCE FIX: Added timeout to prevent goroutine leak if Close() hangs
+		// GOROUTINE FIX: Use semaphore to limit concurrent close goroutines and prevent
+		// unbounded goroutine growth when evicting many processors at once.
+		const maxConcurrentCloses = 8
+		closeSemaphore := make(chan struct{}, maxConcurrentCloses)
+		var wg sync.WaitGroup
 
-			// Spawn closer goroutine that waits for all Close() calls
-			go func() {
-				closeWg.Wait()
-			}()
+		for _, proc := range toClose {
+			wg.Add(1)
+			go func(p *Processor) {
+				defer wg.Done()
 
-			for _, proc := range toClose {
-				go func(p *Processor) {
-					defer closeWg.Done()
-					p.Close()
-				}(proc)
-			}
+				// Acquire semaphore to limit concurrent closes
+				closeSemaphore <- struct{}{}
+				defer func() { <-closeSemaphore }()
+
+				// Use channel with timeout to prevent indefinite blocking
+				done := make(chan struct{}, 1)
+				go func() {
+					defer close(done)
+					_ = p.Close() // best-effort cleanup; error ignored
+				}()
+				select {
+				case <-done:
+					// Close completed
+				case <-time.After(closeOperationTimeout):
+					// Timeout - goroutine will eventually complete on its own
+					// but we don't want to block here indefinitely
+				}
+			}(proc)
+		}
+
+		// Wait for all close operations with timeout to prevent goroutine leak
+		// Use a done channel to track completion with bounded wait
+		waitDone := make(chan struct{})
+		go func() {
+			wg.Wait()
+			close(waitDone)
+		}()
+
+		select {
+		case <-waitDone:
+			// All close operations completed
+		case <-time.After(closeOperationTimeout):
+			// Timeout - goroutines will eventually complete on their own
+			// This prevents indefinite blocking while still ensuring bounded goroutines
 		}
 	}
 }

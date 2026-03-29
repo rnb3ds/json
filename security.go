@@ -326,6 +326,11 @@ var sensitivePatterns = []string{
 	"azure_key", "gcp_key", "gcp_credentials",
 }
 
+// =============================================================================
+// Security Validator Components
+// These types separate concerns for better maintainability and testability
+// =============================================================================
+
 // validationCacheEntry holds a cache entry with access time for LRU eviction
 // SECURITY FIX: Track access time for better cache management
 type validationCacheEntry struct {
@@ -333,38 +338,265 @@ type validationCacheEntry struct {
 	lastAccess int64 // Unix timestamp for LRU eviction
 }
 
+// PatternChecker handles dangerous pattern detection in JSON content.
+// RESPONSIBILITY: Detects and reports dangerous patterns like XSS, prototype pollution, etc.
+type PatternChecker struct {
+	fullSecurityScan bool
+}
+
+// NewPatternChecker creates a new pattern checker.
+func NewPatternChecker(fullSecurityScan bool) *PatternChecker {
+	return &PatternChecker{fullSecurityScan: fullSecurityScan}
+}
+
+// Check performs pattern validation on the JSON string.
+// Returns error if dangerous patterns are detected.
+func (pc *PatternChecker) Check(jsonStr string) error {
+	if len(jsonStr) < securitySmallJSONThreshold {
+		return pc.checkFull(jsonStr)
+	}
+	return pc.checkOptimized(jsonStr)
+}
+
+// checkFull performs full pattern validation for small JSON strings
+func (pc *PatternChecker) checkFull(jsonStr string) error {
+	// SECURITY: Always scan critical patterns in full
+	for _, cp := range criticalPatterns {
+		if strings.Contains(jsonStr, cp.pattern) {
+			return newSecurityError("pattern_check", fmt.Sprintf("dangerous pattern: %s", cp.name))
+		}
+	}
+
+	// Pre-check: if no HTML/XML tags or function calls exist, skip expensive pattern matching
+	hasAngleBracket := strings.IndexByte(jsonStr, '<') != -1
+	hasFunctionCall := strings.IndexByte(jsonStr, '(') != -1
+
+	if !hasAngleBracket && !hasFunctionCall {
+		if strings.Contains(jsonStr, "javascript:") ||
+			strings.Contains(jsonStr, "vbscript:") ||
+			strings.Contains(jsonStr, "data:") {
+			return newSecurityError("pattern_check", "dangerous protocol pattern detected")
+		}
+		return nil
+	}
+
+	// Check HTML/XSS related patterns
+	if hasAngleBracket {
+		htmlPatterns := []string{"<script", "<iframe", "<object", "<embed", "<svg", "onerror", "onload", "onclick"}
+		for _, pattern := range htmlPatterns {
+			if strings.Contains(jsonStr, pattern) {
+				return newSecurityError("pattern_check", fmt.Sprintf("dangerous HTML pattern: %s", pattern))
+			}
+		}
+	}
+
+	// Check function-related patterns
+	if hasFunctionCall {
+		funcPatterns := []string{"eval(", "function(", "setTimeout(", "setInterval(", "new Function("}
+		for _, pattern := range funcPatterns {
+			if strings.Contains(jsonStr, pattern) {
+				return newSecurityError("pattern_check", fmt.Sprintf("dangerous function pattern: %s", pattern))
+			}
+		}
+	}
+
+	return nil
+}
+
+// checkOptimized performs optimized pattern validation for large JSON strings
+func (pc *PatternChecker) checkOptimized(jsonStr string) error {
+	if pc.fullSecurityScan {
+		return pc.checkFull(jsonStr)
+	}
+
+	// Always scan critical patterns
+	for _, cp := range criticalPatterns {
+		if strings.Contains(jsonStr, cp.pattern) {
+			return newSecurityError("pattern_check", fmt.Sprintf("dangerous pattern: %s", cp.name))
+		}
+	}
+
+	// Check for indicator characters
+	hasIndicators := false
+	for i := 0; i < len(jsonStr); i++ {
+		if indicatorChars[jsonStr[i]] {
+			hasIndicators = true
+			break
+		}
+	}
+	if !hasIndicators {
+		return nil
+	}
+
+	// Check suspicious character density
+	if pc.hasSuspiciousDensity(jsonStr) {
+		return pc.checkFull(jsonStr)
+	}
+
+	// Rolling window scan
+	return pc.scanRollingWindow(jsonStr)
+}
+
+// hasSuspiciousDensity checks if the JSON has high density of suspicious characters
+func (pc *PatternChecker) hasSuspiciousDensity(jsonStr string) bool {
+	sampleSize := min(len(jsonStr), securitySampleSize)
+	suspiciousCount := 0
+	for i := 0; i < sampleSize; i++ {
+		if indicatorChars[jsonStr[i]] {
+			suspiciousCount++
+		}
+	}
+	density := float64(suspiciousCount) / float64(sampleSize)
+	return density > securityLocalDensityThreshold
+}
+
+// scanRollingWindow performs rolling window scan for large JSON
+func (pc *PatternChecker) scanRollingWindow(jsonStr string) error {
+	windowSize := securityScanWindowSize
+	overlap := maxDangerousPatternLen
+
+	for offset := 0; offset < len(jsonStr); offset += windowSize - overlap {
+		end := min(offset+windowSize, len(jsonStr))
+		window := jsonStr[offset:end]
+
+		if err := pc.checkFull(window); err != nil {
+			return err
+		}
+
+		if end >= len(jsonStr) {
+			break
+		}
+	}
+	return nil
+}
+
+// StructureValidator handles JSON structure and nesting validation.
+// RESPONSIBILITY: Validates JSON syntax, structure, and depth limits.
+type StructureValidator struct {
+	maxNestingDepth int64
+}
+
+// NewStructureValidator creates a new structure validator.
+func NewStructureValidator(maxNestingDepth int64) *StructureValidator {
+	return &StructureValidator{maxNestingDepth: maxNestingDepth}
+}
+
+// ValidateStructure checks the JSON structure for validity.
+func (sv *StructureValidator) ValidateStructure(jsonStr string) error {
+	if len(jsonStr) == 0 {
+		return newOperationError("validate_structure", "JSON string cannot be empty", ErrInvalidJSON)
+	}
+
+	// Check UTF-8 validity
+	if !utf8.ValidString(jsonStr) {
+		return newOperationError("validate_structure", "JSON contains invalid UTF-8 sequences", ErrInvalidJSON)
+	}
+
+	// Check for BOM
+	if strings.HasPrefix(jsonStr, validationBOMPrefix) {
+		return newOperationError("validate_structure", "JSON contains BOM which is not allowed", ErrInvalidJSON)
+	}
+
+	return nil
+}
+
+// ValidateNesting checks the nesting depth of the JSON.
+func (sv *StructureValidator) ValidateNesting(jsonStr string) error {
+	if sv.maxNestingDepth <= 0 {
+		return nil // Skip if depth limit not set
+	}
+
+	depth := 0
+	maxDepth := 0
+	inString := false
+	escape := false
+
+	for _, c := range jsonStr {
+		if escape {
+			escape = false
+			continue
+		}
+		if c == '\\' && inString {
+			escape = true
+			continue
+		}
+		if c == '"' {
+			inString = !inString
+			continue
+		}
+		if inString {
+			continue
+		}
+		if c == '{' || c == '[' {
+			depth++
+			if depth > maxDepth {
+				maxDepth = depth
+			}
+		} else if c == '}' || c == ']' {
+			depth--
+		}
+	}
+
+	if int64(maxDepth) > sv.maxNestingDepth {
+		return newSecurityError("validate_nesting", fmt.Sprintf("nesting depth %d exceeds maximum %d", maxDepth, sv.maxNestingDepth))
+	}
+
+	return nil
+}
+
+// PathSecurityChecker handles path security validation.
+// RESPONSIBILITY: Validates JSON path syntax and security.
+type PathSecurityChecker struct {
+	maxPathLength int
+}
+
+// NewPathSecurityChecker creates a new path security checker.
+func NewPathSecurityChecker(maxPathLength int) *PathSecurityChecker {
+	return &PathSecurityChecker{maxPathLength: maxPathLength}
+}
+
+// Validate checks the path for security issues.
+func (pc *PathSecurityChecker) Validate(path string) error {
+	if len(path) > pc.maxPathLength {
+		return newPathError(path, fmt.Sprintf("path length %d exceeds maximum %d", len(path), pc.maxPathLength), ErrInvalidPath)
+	}
+	if path == "" || path == "." {
+		return nil
+	}
+	return internal.ValidatePath(path)
+}
+
 // securityValidator provides comprehensive security validation for JSON processing.
+// It composes PatternChecker, StructureValidator, and PathSecurityChecker for separation of concerns.
 type securityValidator struct {
 	maxJSONSize      int64
 	maxPathLength    int
 	maxNestingDepth  int
 	fullSecurityScan bool
-	// PERFORMANCE: Cache for validation results to avoid repeated scanning
-	// of the same JSON string (common in repeated Get operations)
-	// SECURITY FIX: Use entries with timestamps for LRU eviction
+	// Composed validators for separation of concerns
+	patternChecker   *PatternChecker
+	structureChecker *StructureValidator
+	pathChecker      *PathSecurityChecker
+	// Cache for validation results
 	validationCache map[string]*validationCacheEntry
 	cacheMutex      sync.RWMutex
 }
 
 // newSecurityValidator creates a new security validator with the given limits.
 func newSecurityValidator(maxJSONSize int64, maxPathLength, maxNestingDepth int, fullSecurityScan bool) *securityValidator {
-	return &securityValidator{
+	sv := &securityValidator{
 		maxJSONSize:      maxJSONSize,
 		maxPathLength:    maxPathLength,
 		maxNestingDepth:  maxNestingDepth,
 		fullSecurityScan: fullSecurityScan,
-		validationCache:  make(map[string]*validationCacheEntry, 256), // Pre-allocate for efficiency
+		validationCache:  make(map[string]*validationCacheEntry, 256),
 	}
+	// Initialize composed validators
+	sv.patternChecker = NewPatternChecker(fullSecurityScan)
+	sv.structureChecker = NewStructureValidator(int64(maxNestingDepth))
+	sv.pathChecker = NewPathSecurityChecker(maxPathLength)
+	return sv
 }
-
-// ValidateAll performs comprehensive validation of both JSON and path inputs.
-func (sv *securityValidator) ValidateAll(jsonStr, path string) error {
-	if err := sv.ValidateJSONInput(jsonStr); err != nil {
-		return err
-	}
-	return sv.ValidatePathInput(path)
-}
-
 // ValidateJSONInput performs comprehensive JSON input validation with enhanced security.
 // PERFORMANCE: Uses caching to avoid repeated validation of the same JSON string.
 func (sv *securityValidator) ValidateJSONInput(jsonStr string) error {
@@ -391,7 +623,7 @@ func (sv *securityValidator) ValidateJSONInput(jsonStr string) error {
 	}
 
 	// Detect BOM (not allowed)
-	cleanJSON := strings.TrimPrefix(jsonStr, ValidationBOMPrefix)
+	cleanJSON := strings.TrimPrefix(jsonStr, validationBOMPrefix)
 	if len(cleanJSON) != len(jsonStr) {
 		return newOperationError("validate_json_input", "JSON contains BOM which is not allowed", ErrInvalidJSON)
 	}

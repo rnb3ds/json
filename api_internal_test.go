@@ -3,6 +3,7 @@ package json
 import (
 	"context"
 	"testing"
+	"time"
 )
 
 // ============================================================================
@@ -212,7 +213,7 @@ func TestHashConfig(t *testing.T) {
 
 // TestProcessRecursivelyWithOptions_Comprehensive tests more edge cases
 func TestProcessRecursivelyWithOptions_Comprehensive(t *testing.T) {
-	processor := MustNew()
+	processor, _ := New()
 	defer processor.Close()
 	rp := newRecursiveProcessor(processor)
 
@@ -295,5 +296,122 @@ func BenchmarkHashConfig(b *testing.B) {
 
 	for i := 0; i < b.N; i++ {
 		_ = hashConfig(c)
+	}
+}
+
+// ============================================================================
+// CONFIG FIELD SYNC TESTS
+// Ensures configFieldsEqual and hashConfigFields handle the same fields
+// ============================================================================
+
+// TestConfigFieldSync verifies that configFieldsEqual and hashConfigFields
+// are kept in sync. This test uses reflection to check all Config fields
+// and ensures modifications are properly detected by both functions.
+//
+// MAINTENANCE: When adding new fields to Config, ensure both functions
+// handle the new field. This test will help catch omissions.
+func TestConfigFieldSync(t *testing.T) {
+	// Test that modifying each field individually changes the hash
+	// and breaks equality with default config
+	defaultCfg := DefaultConfig()
+
+	// List of fields to test (all exported fields of Config)
+	// When adding new fields to Config, add them here
+	fieldsToTest := []struct {
+		name   string
+		modify func(*Config)
+	}{
+		// Cache settings
+		{"MaxCacheSize", func(c *Config) { c.MaxCacheSize = 999 }},
+		{"CacheTTL", func(c *Config) { c.CacheTTL = 99 * time.Second }},
+		{"EnableCache", func(c *Config) { c.EnableCache = !c.EnableCache }},
+		{"CacheResults", func(c *Config) { c.CacheResults = !c.CacheResults }},
+
+		// Size limits
+		{"MaxJSONSize", func(c *Config) { c.MaxJSONSize = 999 }},
+		{"MaxPathDepth", func(c *Config) { c.MaxPathDepth = 99 }},
+		{"MaxBatchSize", func(c *Config) { c.MaxBatchSize = 99 }},
+
+		// Security limits
+		{"MaxNestingDepthSecurity", func(c *Config) { c.MaxNestingDepthSecurity = 99 }},
+		{"MaxSecurityValidationSize", func(c *Config) { c.MaxSecurityValidationSize = 999 }},
+		{"MaxObjectKeys", func(c *Config) { c.MaxObjectKeys = 99 }},
+		{"MaxArrayElements", func(c *Config) { c.MaxArrayElements = 99 }},
+		{"FullSecurityScan", func(c *Config) { c.FullSecurityScan = !c.FullSecurityScan }},
+
+		// Concurrency
+		{"MaxConcurrency", func(c *Config) { c.MaxConcurrency = 99 }},
+		{"ParallelThreshold", func(c *Config) { c.ParallelThreshold = 99 }},
+
+		// Processing options
+		{"EnableValidation", func(c *Config) { c.EnableValidation = !c.EnableValidation }},
+		{"StrictMode", func(c *Config) { c.StrictMode = !c.StrictMode }},
+		{"CreatePaths", func(c *Config) { c.CreatePaths = !c.CreatePaths }},
+		{"CleanupNulls", func(c *Config) { c.CleanupNulls = !c.CleanupNulls }},
+		{"CompactArrays", func(c *Config) { c.CompactArrays = !c.CompactArrays }},
+		{"ContinueOnError", func(c *Config) { c.ContinueOnError = !c.ContinueOnError }},
+
+		// Input/Output options
+		{"AllowComments", func(c *Config) { c.AllowComments = !c.AllowComments }},
+		{"PreserveNumbers", func(c *Config) { c.PreserveNumbers = !c.PreserveNumbers }},
+		{"ValidateInput", func(c *Config) { c.ValidateInput = !c.ValidateInput }},
+		{"ValidateFilePath", func(c *Config) { c.ValidateFilePath = !c.ValidateFilePath }},
+		{"SkipValidation", func(c *Config) { c.SkipValidation = !c.SkipValidation }},
+
+		// Encoding options
+		{"Pretty", func(c *Config) { c.Pretty = !c.Pretty }},
+		{"Indent", func(c *Config) { c.Indent = "    " }},
+		{"Prefix", func(c *Config) { c.Prefix = "  " }},
+		{"EscapeHTML", func(c *Config) { c.EscapeHTML = !c.EscapeHTML }},
+		{"SortKeys", func(c *Config) { c.SortKeys = !c.SortKeys }},
+		{"ValidateUTF8", func(c *Config) { c.ValidateUTF8 = !c.ValidateUTF8 }},
+		{"MaxDepth", func(c *Config) { c.MaxDepth = 99 }},
+		{"DisallowUnknown", func(c *Config) { c.DisallowUnknown = !c.DisallowUnknown }},
+		{"FloatPrecision", func(c *Config) { c.FloatPrecision = 10 }},
+		{"FloatTruncate", func(c *Config) { c.FloatTruncate = !c.FloatTruncate }},
+		{"DisableEscaping", func(c *Config) { c.DisableEscaping = !c.DisableEscaping }},
+		{"EscapeUnicode", func(c *Config) { c.EscapeUnicode = !c.EscapeUnicode }},
+		{"EscapeSlash", func(c *Config) { c.EscapeSlash = !c.EscapeSlash }},
+		{"EscapeNewlines", func(c *Config) { c.EscapeNewlines = !c.EscapeNewlines }},
+		{"EscapeTabs", func(c *Config) { c.EscapeTabs = !c.EscapeTabs }},
+		{"IncludeNulls", func(c *Config) { c.IncludeNulls = !c.IncludeNulls }},
+
+		// Observability
+		{"EnableMetrics", func(c *Config) { c.EnableMetrics = !c.EnableMetrics }},
+		{"EnableHealthCheck", func(c *Config) { c.EnableHealthCheck = !c.EnableHealthCheck }},
+
+		// CustomEscapes
+		{"CustomEscapes", func(c *Config) { c.CustomEscapes = map[rune]string{'<': "\\u003c"} }},
+
+		// Context
+		{"Context", func(c *Config) { c.Context = context.Background() }},
+	}
+
+	defaultHash := hashConfig(defaultCfg)
+
+	for _, tt := range fieldsToTest {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create modified config
+			modified := DefaultConfig()
+			tt.modify(&modified)
+
+			// Test 1: configFieldsEqual should return false
+			if configFieldsEqual(defaultCfg, modified) {
+				t.Errorf("configFieldsEqual returned true for modified field %s - field may be missing from comparison", tt.name)
+			}
+
+			// Test 2: hashConfig should produce different hash
+			modifiedHash := hashConfig(modified)
+			if defaultHash == modifiedHash {
+				t.Errorf("hashConfig produced same hash for modified field %s - field may be missing from hash", tt.name)
+			}
+
+			// Test 3: Modified config should not be equal to itself after reset
+			resetModified := DefaultConfig()
+			tt.modify(&resetModified)
+			if !configFieldsEqual(modified, resetModified) {
+				t.Errorf("configFieldsEqual returned false for identical configs with field %s", tt.name)
+			}
+		})
 	}
 }

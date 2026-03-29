@@ -24,6 +24,19 @@ const (
 	pathTypeComplex
 )
 
+// IteratorControl represents control flags for iteration operations.
+// Used by Foreach* functions to control iteration flow.
+type IteratorControl int
+
+const (
+	// IteratorNormal continues iteration normally
+	IteratorNormal IteratorControl = iota
+	// IteratorContinue skips the current item and continues iteration
+	IteratorContinue
+	// IteratorBreak stops iteration entirely
+	IteratorBreak
+)
+
 // pathTypeCacheShard represents a single shard of the path type cache
 // PERFORMANCE: Sharding reduces lock contention for concurrent access
 // SECURITY: Added size limit with LRU-style eviction to prevent unbounded growth
@@ -1610,6 +1623,16 @@ func (it *ParallelIterator) Filter(predicate func(int, any) bool) []any {
 	})
 
 	return result
+}
+
+// Close releases resources associated with the ParallelIterator.
+// RESOURCE FIX: Added for API consistency and to document proper cleanup patterns.
+// The semaphore channel is automatically garbage collected when the iterator
+// is no longer referenced.
+func (it *ParallelIterator) Close() {
+	// Semaphore channel will be garbage collected with the iterator
+	// No explicit close needed as it could cause panics in concurrent use
+	// This method exists for API consistency and future extensibility
 }
 
 // Release returns the IterableValue to the pool

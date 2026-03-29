@@ -48,9 +48,7 @@
 //	}
 //	defer processor.Close()
 //
-// For simple cases where errors are not expected, use MustNew:
 //
-//	processor := json.MustNew() // Panics on error
 //	defer processor.Close()
 //
 // # Key Features

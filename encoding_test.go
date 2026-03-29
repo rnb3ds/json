@@ -13,7 +13,7 @@ func TestEncodingAdvanced(t *testing.T) {
 	helper := newTestHelper(t)
 
 	t.Run("EncodeWithConfig", func(t *testing.T) {
-		processor := MustNew(DefaultConfig())
+		processor, _ := New(DefaultConfig())
 		defer processor.Close()
 
 		type User struct {
@@ -160,7 +160,7 @@ func TestEncodingAdvanced(t *testing.T) {
 	})
 
 	t.Run("HTMLEscaping", func(t *testing.T) {
-		processor := MustNew(DefaultConfig())
+		processor, _ := New(DefaultConfig())
 		defer processor.Close()
 
 		type Data struct {
@@ -192,7 +192,7 @@ func TestEncodingAdvanced(t *testing.T) {
 	})
 
 	t.Run("UnicodeEscaping", func(t *testing.T) {
-		processor := MustNew(DefaultConfig())
+		processor, _ := New(DefaultConfig())
 		defer processor.Close()
 
 		type Data struct {
@@ -224,7 +224,7 @@ func TestEncodingAdvanced(t *testing.T) {
 	})
 
 	t.Run("IncludeNulls", func(t *testing.T) {
-		processor := MustNew(DefaultConfig())
+		processor, _ := New(DefaultConfig())
 		defer processor.Close()
 
 		type Data struct {
@@ -267,7 +267,7 @@ func TestEncodingAdvanced(t *testing.T) {
 func TestEncodingTypes(t *testing.T) {
 	helper := newTestHelper(t)
 
-	processor := MustNew(DefaultConfig())
+	processor, _ := New(DefaultConfig())
 	defer processor.Close()
 
 	t.Run("BasicTypes", func(t *testing.T) {
@@ -380,7 +380,7 @@ func TestEncodingTypes(t *testing.T) {
 func TestEncodingStreams(t *testing.T) {
 	helper := newTestHelper(t)
 
-	processor := MustNew(DefaultConfig())
+	processor, _ := New(DefaultConfig())
 	defer processor.Close()
 
 	t.Run("EncodeStream", func(t *testing.T) {
@@ -469,7 +469,7 @@ func TestEncodingCompatibility(t *testing.T) {
 		original := User{Name: "Alice", Age: 30}
 
 		// Marshal with our processor
-		processor := MustNew(DefaultConfig())
+		processor, _ := New(DefaultConfig())
 		defer processor.Close()
 
 		jsonBytes, err := processor.Marshal(original)
@@ -495,7 +495,7 @@ func TestEncodingCompatibility(t *testing.T) {
 			"object": map[string]interface{}{"nested": "value"},
 		}
 
-		processor := MustNew(DefaultConfig())
+		processor, _ := New(DefaultConfig())
 		defer processor.Close()
 
 		// Encode
@@ -518,7 +518,7 @@ func TestEncodingCompatibility(t *testing.T) {
 func TestEncodingErrors(t *testing.T) {
 	helper := newTestHelper(t)
 
-	processor := MustNew(DefaultConfig())
+	processor, _ := New(DefaultConfig())
 	defer processor.Close()
 
 	t.Run("ClosedProcessor", func(t *testing.T) {
@@ -560,7 +560,7 @@ func TestEncodingErrors(t *testing.T) {
 func TestEncodeDecodeIntegration(t *testing.T) {
 	helper := newTestHelper(t)
 
-	processor := MustNew(DefaultConfig())
+	processor, _ := New(DefaultConfig())
 	defer processor.Close()
 
 	t.Run("FullCycle", func(t *testing.T) {
@@ -633,7 +633,7 @@ func TestEncodeDecodeIntegration(t *testing.T) {
 
 // TestProcessorValidateSchema tests Processor.ValidateSchema method
 func TestProcessorValidateSchema(t *testing.T) {
-	processor := MustNew()
+	processor, _ := New()
 	defer processor.Close()
 
 	t.Run("valid object with schema", func(t *testing.T) {

@@ -265,7 +265,7 @@ func TestEncode(t *testing.T) {
 // TestProcessorClosedState tests processor operations when closed
 func TestProcessorClosedState(t *testing.T) {
 	t.Run("ClosedProcessorOperations", func(t *testing.T) {
-		processor := MustNew()
+		processor, _ := New()
 		processor.Close()
 
 		// All operations should fail on closed processor
@@ -298,7 +298,7 @@ func TestProcessorClosedState(t *testing.T) {
 
 // TestProcessorValidBytes tests ValidBytes method
 func TestProcessorValidBytes(t *testing.T) {
-	processor := MustNew()
+	processor, _ := New()
 	defer processor.Close()
 
 	tests := []struct {
@@ -323,7 +323,7 @@ func TestProcessorValidBytes(t *testing.T) {
 
 // TestProcessorParse tests Parse method
 func TestProcessorParse(t *testing.T) {
-	processor := MustNew()
+	processor, _ := New()
 	defer processor.Close()
 
 	t.Run("ParseToMap", func(t *testing.T) {
@@ -375,7 +375,7 @@ func TestProcessorParse(t *testing.T) {
 
 // TestProcessorBufferMethods tests buffer operation methods
 func TestProcessorBufferMethods(t *testing.T) {
-	processor := MustNew()
+	processor, _ := New()
 	defer processor.Close()
 
 	t.Run("CompactBuffer", func(t *testing.T) {
@@ -428,7 +428,7 @@ func TestProcessorBufferMethods(t *testing.T) {
 
 // TestRecursiveProcessor tests RecursiveProcessor operations
 func TestRecursiveProcessor(t *testing.T) {
-	processor := MustNew()
+	processor, _ := New()
 	defer processor.Close()
 	rp := newRecursiveProcessor(processor)
 
@@ -524,7 +524,7 @@ func TestRecursiveProcessor(t *testing.T) {
 
 // TestDeepCopy tests deep copy functionality
 func TestDeepCopy(t *testing.T) {
-	processor := MustNew()
+	processor, _ := New()
 	defer processor.Close()
 
 	t.Run("DeepCopyMap", func(t *testing.T) {
@@ -606,7 +606,7 @@ func TestDeepCopy(t *testing.T) {
 
 // TestBatchOperationsAdditional tests additional batch operations
 func TestBatchOperationsAdditional(t *testing.T) {
-	processor := MustNew()
+	processor, _ := New()
 	defer processor.Close()
 
 	t.Run("BatchGetMultiple", func(t *testing.T) {
@@ -933,7 +933,7 @@ func TestEscapeJSONPointer(t *testing.T) {
 
 // TestEncodeStringSpecialChars tests encoding strings with special characters
 func TestEncodeStringSpecialChars(t *testing.T) {
-	processor := MustNew()
+	processor, _ := New()
 	defer processor.Close()
 
 	tests := []struct {
@@ -966,7 +966,7 @@ func TestEncodeStringSpecialChars(t *testing.T) {
 
 // TestEncodeStructEdgeCases tests encoding struct edge cases
 func TestEncodeStructEdgeCases(t *testing.T) {
-	processor := MustNew()
+	processor, _ := New()
 	defer processor.Close()
 
 	t.Run("StructWithOmitEmpty", func(t *testing.T) {
@@ -1039,7 +1039,7 @@ func TestEncodeStructEdgeCases(t *testing.T) {
 
 // TestValidateNumberEdgeCases tests number validation edge cases
 func TestValidateNumberEdgeCases(t *testing.T) {
-	processor := MustNew()
+	processor, _ := New()
 	defer processor.Close()
 
 	t.Run("NumberValidation", func(t *testing.T) {
@@ -1107,7 +1107,7 @@ func TestValidateNumberEdgeCases(t *testing.T) {
 
 // TestIsEmptyFunction tests isEmpty function indirectly
 func TestIsEmptyFunction(t *testing.T) {
-	processor := MustNew()
+	processor, _ := New()
 	defer processor.Close()
 
 	t.Run("EmptySlice", func(t *testing.T) {
@@ -1142,7 +1142,7 @@ func TestIsEmptyFunction(t *testing.T) {
 
 // TestValuesEqual tests valuesEqual function indirectly via validation
 func TestValuesEqual(t *testing.T) {
-	processor := MustNew()
+	processor, _ := New()
 	defer processor.Close()
 
 	t.Run("ConstValidation", func(t *testing.T) {
@@ -1175,7 +1175,7 @@ func TestValuesEqual(t *testing.T) {
 
 // TestAssignResult tests assignResult function indirectly
 func TestAssignResult(t *testing.T) {
-	processor := MustNew()
+	processor, _ := New()
 	defer processor.Close()
 
 	t.Run("AssignToInt", func(t *testing.T) {
@@ -1317,7 +1317,7 @@ func TestEncoderMethods(t *testing.T) {
 
 // TestEncodeStructComprehensive tests struct encoding more comprehensively
 func TestEncodeStructComprehensive(t *testing.T) {
-	processor := MustNew()
+	processor, _ := New()
 	defer processor.Close()
 
 	t.Run("StructWithJSONTags", func(t *testing.T) {
@@ -1411,7 +1411,7 @@ func TestEncodeStructComprehensive(t *testing.T) {
 
 // TestEncodeStringEdgeCases tests string encoding edge cases
 func TestEncodeStringEdgeCases(t *testing.T) {
-	processor := MustNew()
+	processor, _ := New()
 	defer processor.Close()
 
 	tests := []struct {
@@ -1444,7 +1444,7 @@ func TestEncodeStringEdgeCases(t *testing.T) {
 
 // TestEncodeArrayEdgeCases tests array encoding edge cases
 func TestEncodeArrayEdgeCases(t *testing.T) {
-	processor := MustNew()
+	processor, _ := New()
 	defer processor.Close()
 
 	t.Run("EmptyArray", func(t *testing.T) {
@@ -1488,7 +1488,7 @@ func TestEncodeArrayEdgeCases(t *testing.T) {
 
 // TestEncodeMapEdgeCases tests map encoding edge cases
 func TestEncodeMapEdgeCases(t *testing.T) {
-	processor := MustNew()
+	processor, _ := New()
 	defer processor.Close()
 
 	t.Run("EmptyMap", func(t *testing.T) {
@@ -1530,7 +1530,7 @@ func TestEncodeMapEdgeCases(t *testing.T) {
 
 // TestValidateStringComprehensive tests string validation more comprehensively
 func TestValidateStringComprehensive(t *testing.T) {
-	processor := MustNew()
+	processor, _ := New()
 	defer processor.Close()
 
 	t.Run("PatternValidation", func(t *testing.T) {
@@ -1656,7 +1656,7 @@ func TestDecodeEdgeCases(t *testing.T) {
 
 // TestEncodeWithOptions tests EncodeWithOptions function
 func TestEncodeWithOptions(t *testing.T) {
-	processor := MustNew()
+	processor, _ := New()
 	defer processor.Close()
 
 	config := DefaultConfig()
@@ -1676,7 +1676,7 @@ func TestEncodeWithOptions(t *testing.T) {
 
 // TestEncodeStreamWithOptions tests EncodeStreamWithOptions function
 func TestEncodeStreamWithOptions(t *testing.T) {
-	processor := MustNew()
+	processor, _ := New()
 	defer processor.Close()
 
 	config := DefaultConfig()
@@ -1697,7 +1697,7 @@ func TestEncodeStreamWithOptions(t *testing.T) {
 
 // TestTruncateFloat tests float truncation
 func TestTruncateFloat(t *testing.T) {
-	processor := MustNew()
+	processor, _ := New()
 	defer processor.Close()
 
 	t.Run("TruncatePrecision", func(t *testing.T) {
@@ -1821,7 +1821,7 @@ func TestParseStringEdgeCases(t *testing.T) {
 
 // TestValuesEqualComprehensive tests valuesEqual function more comprehensively
 func TestValuesEqualComprehensive(t *testing.T) {
-	processor := MustNew()
+	processor, _ := New()
 	defer processor.Close()
 
 	t.Run("StringEquality", func(t *testing.T) {
@@ -1908,7 +1908,7 @@ func TestValuesEqualComprehensive(t *testing.T) {
 
 // TestIsEmptyComprehensive tests isEmpty function more comprehensively
 func TestIsEmptyComprehensive(t *testing.T) {
-	processor := MustNew()
+	processor, _ := New()
 	defer processor.Close()
 
 	tests := []struct {
@@ -1938,7 +1938,7 @@ func TestIsEmptyComprehensive(t *testing.T) {
 
 // TestValidateNumberComprehensive tests validateNumber function more comprehensively
 func TestValidateNumberComprehensive(t *testing.T) {
-	processor := MustNew()
+	processor, _ := New()
 	defer processor.Close()
 
 	t.Run("MultipleOf", func(t *testing.T) {
@@ -1972,7 +1972,7 @@ func TestValidateNumberComprehensive(t *testing.T) {
 
 // TestEncodeNumberEdgeCases tests number encoding edge cases
 func TestEncodeNumberEdgeCases(t *testing.T) {
-	processor := MustNew()
+	processor, _ := New()
 	defer processor.Close()
 
 	tests := []struct {
@@ -2050,7 +2050,7 @@ func TestCustomEncoderEdgeCases(t *testing.T) {
 
 // TestStringFormatValidation tests string format validation
 func TestStringFormatValidation(t *testing.T) {
-	processor := MustNew()
+	processor, _ := New()
 	defer processor.Close()
 
 	t.Run("EmailFormat", func(t *testing.T) {

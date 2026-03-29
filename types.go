@@ -407,6 +407,16 @@ type pathInfo struct {
 	originalPath string
 }
 
+// Resource monitoring thresholds (internal)
+const (
+	// highMemoryThreshold is the threshold for high memory usage warning (100MB)
+	highMemoryThreshold = 100 * 1024 * 1024
+	// highGoroutineThreshold is the threshold for high goroutine count warning
+	highGoroutineThreshold = 1000
+	// minPoolOperationsForEfficiencyCheck is the minimum operations before checking pool efficiency
+	minPoolOperationsForEfficiencyCheck = 1000
+)
+
 // resourceMonitor provides resource monitoring and leak detection
 type resourceMonitor struct {
 	allocatedBytes    int64
@@ -515,7 +525,7 @@ func (rm *resourceMonitor) CheckForLeaks() []string {
 	freed := atomic.LoadInt64(&rm.freedBytes)
 	netMemory := allocated - freed
 
-	if netMemory > 100*1024*1024 {
+	if netMemory > highMemoryThreshold {
 		issues = append(issues, "High memory usage detected")
 	}
 
@@ -527,14 +537,14 @@ func (rm *resourceMonitor) CheckForLeaks() []string {
 		atomic.StoreInt64(&rm.maxGoroutines, currentGoroutines)
 	}
 
-	if currentGoroutines > 1000 {
+	if currentGoroutines > highGoroutineThreshold {
 		issues = append(issues, "High goroutine count detected")
 	}
 
 	hits := atomic.LoadInt64(&rm.poolHits)
 	misses := atomic.LoadInt64(&rm.poolMisses)
 
-	if hits+misses > 1000 && hits < misses {
+	if hits+misses > minPoolOperationsForEfficiencyCheck && hits < misses {
 		issues = append(issues, "Poor pool cache efficiency")
 	}
 
@@ -700,15 +710,6 @@ func (r Result[T]) UnwrapOr(defaultValue T) T {
 	return r.Value
 }
 
-// Must returns the value or panics if there's an error.
-// Use this only when you're certain the operation succeeded.
-func (r Result[T]) Must() T {
-	if r.Error != nil {
-		panic(fmt.Sprintf("Result.Must(): %v", r.Error))
-	}
-	return r.Value
-}
-
 // =============================================================================
 // AccessResult - For dynamic type access with conversion methods
 // =============================================================================
@@ -861,22 +862,13 @@ func (r AccessResult) AsBool() (bool, error) {
 	}
 }
 
-// DefaultSchema returns a default schema configuration
+// DefaultSchema returns a default schema configuration.
+// All zero values are omitted for brevity; only non-zero defaults are set.
 func DefaultSchema() *Schema {
 	return &Schema{
-		Type:                 "",
 		Properties:           make(map[string]*Schema),
-		Items:                nil,
 		Required:             []string{},
-		MinLength:            0,
-		MaxLength:            0,
-		Minimum:              0,
-		Maximum:              0,
-		Pattern:              "",
-		Format:               "",
 		AdditionalProperties: true,
-		MinItems:             0,
-		MaxItems:             0,
 	}
 }
 

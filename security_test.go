@@ -20,7 +20,7 @@ func TestSecurityValidation(t *testing.T) {
 	helper := newTestHelper(t)
 
 	t.Run("PathTraversal", func(t *testing.T) {
-		processor := MustNew(SecurityConfig())
+		processor, _ := New(SecurityConfig())
 		defer processor.Close()
 
 		testData := `{"user": {"name": "Alice", "email": "alice@example.com"}}`
@@ -57,7 +57,7 @@ func TestSecurityValidation(t *testing.T) {
 	})
 
 	t.Run("InjectionAttacks", func(t *testing.T) {
-		processor := MustNew(SecurityConfig())
+		processor, _ := New(SecurityConfig())
 		defer processor.Close()
 
 		testData := `{"data": "normal"}`
@@ -93,7 +93,7 @@ func TestSecurityValidation(t *testing.T) {
 			t.Run("QuickSizeLimit", func(t *testing.T) {
 				smallLimitConfig := SecurityConfig()
 				smallLimitConfig.MaxJSONSize = 100 * 1024 // 100KB limit for quick testing
-				processor := MustNew(smallLimitConfig)
+				processor, _ := New(smallLimitConfig)
 				defer processor.Close()
 
 				largeJSON := generateLargeJSON(150 * 1024) // 150KB (exceeds 100KB limit)
@@ -114,7 +114,7 @@ func TestSecurityValidation(t *testing.T) {
 			// SecurityConfig has conservative limits for untrusted input
 			// This validates actual handling of large JSON without taking 199 seconds
 			t.Run("RealLargeData", func(t *testing.T) {
-				processor := MustNew(SecurityConfig())
+				processor, _ := New(SecurityConfig())
 				defer processor.Close()
 
 				// Generate 2MB of JSON (large enough to test, small enough to be fast)
@@ -134,7 +134,7 @@ func TestSecurityValidation(t *testing.T) {
 		})
 
 		t.Run("DeepNesting", func(t *testing.T) {
-			processor := MustNew(SecurityConfig())
+			processor, _ := New(SecurityConfig())
 			defer processor.Close()
 
 			// Generate deeply nested JSON
@@ -168,7 +168,7 @@ func TestSecurityValidation(t *testing.T) {
 	})
 
 	t.Run("InputValidation", func(t *testing.T) {
-		processor := MustNew(SecurityConfig())
+		processor, _ := New(SecurityConfig())
 		defer processor.Close()
 
 		t.Run("InvalidCharacters", func(t *testing.T) {
@@ -205,7 +205,7 @@ func TestSecurityValidation(t *testing.T) {
 	})
 
 	t.Run("UnicodeHandling", func(t *testing.T) {
-		processor := MustNew(SecurityConfig())
+		processor, _ := New(SecurityConfig())
 		defer processor.Close()
 
 		// Test various Unicode edge cases
@@ -246,7 +246,7 @@ func TestSecurityValidation(t *testing.T) {
 	})
 
 	t.Run("BOMHandling", func(t *testing.T) {
-		processor := MustNew(SecurityConfig())
+		processor, _ := New(SecurityConfig())
 		defer processor.Close()
 
 		// Test JSON with BOM (Byte Order Mark)
@@ -265,7 +265,7 @@ func TestSecurityEdgeCases(t *testing.T) {
 	helper := newTestHelper(t)
 
 	t.Run("NullBytesInStrings", func(t *testing.T) {
-		processor := MustNew(SecurityConfig())
+		processor, _ := New(SecurityConfig())
 		defer processor.Close()
 
 		jsonWithNull := `{"data": "test\x00middle"}`
@@ -278,7 +278,7 @@ func TestSecurityEdgeCases(t *testing.T) {
 	})
 
 	t.Run("OverlongPath", func(t *testing.T) {
-		processor := MustNew(SecurityConfig())
+		processor, _ := New(SecurityConfig())
 		defer processor.Close()
 
 		// Generate extremely long path
@@ -293,7 +293,7 @@ func TestSecurityEdgeCases(t *testing.T) {
 	})
 
 	t.Run("MassiveArrayIndex", func(t *testing.T) {
-		processor := MustNew(SecurityConfig())
+		processor, _ := New(SecurityConfig())
 		defer processor.Close()
 
 		testData := `{"arr": [1, 2, 3]}`
@@ -302,7 +302,7 @@ func TestSecurityEdgeCases(t *testing.T) {
 	})
 
 	t.Run("NegativeIndexEdgeCases", func(t *testing.T) {
-		processor := MustNew(SecurityConfig())
+		processor, _ := New(SecurityConfig())
 		defer processor.Close()
 
 		testData := `{"arr": [1, 2, 3]}`
@@ -387,7 +387,7 @@ func TestWindowsDeviceNames(t *testing.T) {
 		t.Skip("Skipping Windows-specific test on non-Windows platform")
 	}
 
-	processor := MustNew()
+	processor, _ := New()
 	defer processor.Close()
 
 	tests := []struct {
@@ -503,7 +503,7 @@ func TestWindowsDeviceNames(t *testing.T) {
 
 // TestPathTraversalDetection tests path traversal attack detection
 func TestPathTraversalDetection(t *testing.T) {
-	processor := MustNew()
+	processor, _ := New()
 	defer processor.Close()
 
 	tests := []struct {
@@ -628,7 +628,7 @@ func TestAlternateDataStreamDetection(t *testing.T) {
 		t.Skip("Skipping Windows-specific ADS test on non-Windows platform")
 	}
 
-	processor := MustNew()
+	processor, _ := New()
 	defer processor.Close()
 
 	tests := []struct {
@@ -686,7 +686,7 @@ func TestAlternateDataStreamDetection(t *testing.T) {
 
 // TestPathLengthValidation tests path length limits
 func TestPathLengthValidation(t *testing.T) {
-	processor := MustNew()
+	processor, _ := New()
 	defer processor.Close()
 
 	// Create a path that exceeds MaxPathLength
@@ -739,7 +739,7 @@ func TestInvalidCharactersInWindowsPath(t *testing.T) {
 		t.Skip("Skipping Windows-specific character test on non-Windows platform")
 	}
 
-	processor := MustNew()
+	processor, _ := New()
 	defer processor.Close()
 
 	invalidChars := []string{"<", ">", ":", "\"", "|", "?", "*"}
@@ -765,7 +765,7 @@ func TestInvalidCharactersInWindowsPath(t *testing.T) {
 
 // TestNullByteDetection tests null byte detection in paths
 func TestNullByteDetection(t *testing.T) {
-	processor := MustNew()
+	processor, _ := New()
 	defer processor.Close()
 
 	tests := []struct {
@@ -806,7 +806,7 @@ func TestUNCPathDetection(t *testing.T) {
 		t.Skip("Skipping Windows-specific UNC test on non-Windows platform")
 	}
 
-	processor := MustNew()
+	processor, _ := New()
 	defer processor.Close()
 
 	tests := []struct {
@@ -931,7 +931,7 @@ func TestContainsConsecutiveDots(t *testing.T) {
 
 // TestFilePathValidationEdgeCases tests edge cases in file path validation
 func TestFilePathValidationEdgeCases(t *testing.T) {
-	processor := MustNew()
+	processor, _ := New()
 	defer processor.Close()
 
 	tests := []struct {
@@ -1055,7 +1055,7 @@ func TestWindowsPathValidationComponents(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			p := MustNew()
+			p, _ := New()
 			defer p.Close()
 			err := p.validateFilePath(tt.filePath)
 			if tt.expectError && err == nil {
@@ -1070,7 +1070,7 @@ func TestWindowsPathValidationComponents(t *testing.T) {
 
 // TestSecurityValidationWithRealPaths tests security validation with realistic paths
 func TestSecurityValidationWithRealPaths(t *testing.T) {
-	processor := MustNew()
+	processor, _ := New()
 	defer processor.Close()
 
 	validPaths := []string{
@@ -1098,7 +1098,7 @@ func TestSecurityValidationWithRealPaths(t *testing.T) {
 
 // TestFilePathNormalization tests file path normalization
 func TestFilePathNormalization(t *testing.T) {
-	processor := MustNew()
+	processor, _ := New()
 	defer processor.Close()
 
 	tests := []struct {
@@ -1136,7 +1136,7 @@ func TestFilePathNormalization(t *testing.T) {
 
 // TestSymlinkValidation tests symlink validation in paths
 func TestSymlinkValidation(t *testing.T) {
-	p := MustNew()
+	p, _ := New()
 	defer p.Close()
 
 	// This test checks that the validation logic handles symlinks properly
@@ -1170,7 +1170,7 @@ func TestSymlinkValidation(t *testing.T) {
 
 // TestCrossPlatformPathValidation tests path validation works on both platforms
 func TestCrossPlatformPathValidation(t *testing.T) {
-	processor := MustNew()
+	processor, _ := New()
 	defer processor.Close()
 
 	universalPaths := []struct {
@@ -1221,7 +1221,7 @@ func TestSamplingBypassFixed(t *testing.T) {
 	// catches attacks hidden in the middle of large JSON
 	cfg := DefaultConfig()
 	cfg.FullSecurityScan = false // Test optimized mode
-	processor := MustNew(cfg)
+	processor, _ := New(cfg)
 	defer processor.Close()
 
 	t.Run("AttackHiddenInMiddle", func(t *testing.T) {
@@ -1309,7 +1309,7 @@ func TestSamplingBypassFixed(t *testing.T) {
 		// Verify that FullSecurityScan=true still works as expected
 		secureConfig := SecurityConfig()
 		secureConfig.FullSecurityScan = true
-		secureProcessor := MustNew(secureConfig)
+		secureProcessor, _ := New(secureConfig)
 		defer secureProcessor.Close()
 
 		attackPattern := `<script>alert(1)</script>`
@@ -1326,7 +1326,7 @@ func TestSamplingBypassFixed(t *testing.T) {
 func TestRollingWindowCoverage(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.FullSecurityScan = false // Test optimized mode
-	processor := MustNew(cfg)
+	processor, _ := New(cfg)
 	defer processor.Close()
 
 	// Test that the rolling window approach covers the entire string
@@ -1380,7 +1380,7 @@ func TestRollingWindowCoverage(t *testing.T) {
 // ============================================================================
 
 func BenchmarkValidatePathNormal(b *testing.B) {
-	processor := MustNew()
+	processor, _ := New()
 	defer processor.Close()
 
 	path := "data/users/profile.json"
@@ -1391,7 +1391,7 @@ func BenchmarkValidatePathNormal(b *testing.B) {
 }
 
 func BenchmarkValidatePathComplex(b *testing.B) {
-	processor := MustNew()
+	processor, _ := New()
 	defer processor.Close()
 
 	path := "data/users/admin/config/settings.production.json"

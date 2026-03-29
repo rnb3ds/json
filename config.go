@@ -10,13 +10,13 @@ import (
 
 // Configuration constants with optimized defaults for production workloads.
 const (
-	// Buffer and Pool Sizes - Optimized for production workloads
-	DefaultBufferSize = 1024
-	MaxPoolBufferSize = 32768 // 32KB max for better buffer reuse
-	MinPoolBufferSize = 256   // 256B min for efficiency
+	// Buffer and Pool Sizes - Optimized for production workloads (internal)
+	defaultBufferSize = 1024
+	maxPoolBufferSize = 32768 // 32KB max for better buffer reuse
+	minPoolBufferSize = 256   // 256B min for efficiency
 
-	// Cache Sizes - Balanced for performance and memory
-	DefaultCacheSize = 128
+	// Cache Sizes - Balanced for performance and memory (internal)
+	defaultCacheSize = 128
 
 	// Operation Limits - Secure defaults with reasonable headroom
 	DefaultMaxJSONSize     = 100 * 1024 * 1024 // 100MB
@@ -31,15 +31,15 @@ const (
 	DefaultMaxBatchSize      = 2000
 	DefaultParallelThreshold = 10
 
-	// Timing and Intervals - Optimized for responsiveness
-	SlowOperationThreshold = 100 * time.Millisecond
+	// Timing and Intervals - Optimized for responsiveness (internal)
+	slowOperationThreshold = 100 * time.Millisecond
 
-	// Retry and Timeout - Production-ready settings
-	DefaultOperationTimeout = 30 * time.Second
+	// Retry and Timeout - Production-ready settings (internal)
+	defaultOperationTimeout = 30 * time.Second
 
-	// Processor lifecycle timeouts
-	CloseOperationTimeout = 5 * time.Second // Timeout waiting for active operations during Close()
-	SemaphoreDrainTimeout = 1 * time.Second // Timeout for draining concurrency semaphore
+	// Processor lifecycle timeouts (internal)
+	closeOperationTimeout = 5 * time.Second // Timeout waiting for active operations during Close()
+	semaphoreDrainTimeout = 1 * time.Second // Timeout for draining concurrency semaphore
 
 	// LargeStringHashThreshold is the byte threshold for using sampling-based hash.
 	// Re-exported from internal package for public API access.
@@ -58,8 +58,8 @@ const (
 	// Re-exported from internal package for public API access.
 	MaxCacheKeyLength = internal.MaxCacheKeyLength
 
-	// Validation constants
-	ValidationBOMPrefix = "\uFEFF" // UTF-8 BOM prefix to detect and remove
+	// Validation constants (internal)
+	validationBOMPrefix = "\uFEFF" // UTF-8 BOM prefix to detect and remove
 )
 
 // InvalidArrayIndex is a sentinel value indicating an invalid or out-of-bounds array index.
@@ -72,32 +72,12 @@ const (
 //	}
 const InvalidArrayIndex = internal.ArrayIndexInvalid
 
-// clampInt64 clamps an int64 value to the specified range.
-// If value is <= 0, it is set to min. If value > max, it is set to max.
-func clampInt64(value *int64, min, max int64) {
-	if *value <= 0 {
-		*value = min
-	} else if *value > max {
-		*value = max
-	}
-}
-
-// clampInt clamps an int value to the specified range.
-// If value is <= 0, it is set to min. If value > max, it is set to max.
-func clampInt(value *int, min, max int) {
-	if *value <= 0 {
-		*value = min
-	} else if *value > max {
-		*value = max
-	}
-}
-
 // DefaultConfig returns the default configuration.
 // Creates a new instance each time to allow modifications without affecting other callers.
 func DefaultConfig() Config {
 	return Config{
 		// Cache Settings
-		MaxCacheSize: DefaultCacheSize,
+		MaxCacheSize: defaultCacheSize,
 		CacheTTL:     DefaultCacheTTL,
 		EnableCache:  true,
 		CacheResults: true,
@@ -214,51 +194,20 @@ func (c *Config) Clone() *Config {
 
 // Validate validates the configuration and applies corrections.
 // This is the single source of truth for config validation.
+// DRY FIX: Delegates to ValidateWithWarnings to avoid code duplication
 func (c *Config) Validate() error {
 	if c == nil {
 		return errors.New("config cannot be nil")
 	}
 
-	// Size and depth limits
-	clampInt64(&c.MaxJSONSize, 1024*1024, 100*1024*1024)
-	clampInt(&c.MaxPathDepth, 10, 200)
-	clampInt(&c.MaxNestingDepthSecurity, 10, 200)
-	clampInt(&c.MaxConcurrency, 1, 200)
-	clampInt(&c.ParallelThreshold, 1, 50)
-
-	// Security limits
-	clampInt(&c.MaxObjectKeys, 100, 100000)
-	clampInt(&c.MaxArrayElements, 100, 100000)
-	clampInt64(&c.MaxSecurityValidationSize, 1024*1024, 100*1024*1024)
-
-	// Cache settings
-	if c.MaxCacheSize < 0 {
-		c.MaxCacheSize = 0
-		c.EnableCache = false
-	} else if c.MaxCacheSize > 2000 {
-		c.MaxCacheSize = 2000
-	}
-
-	if c.CacheTTL <= 0 {
-		c.CacheTTL = DefaultCacheTTL
-	}
-
-	// Encoding options
-	if c.MaxDepth < 0 || c.MaxDepth > 1000 {
-		c.MaxDepth = 100
-	}
-	if c.FloatPrecision < -1 || c.FloatPrecision > 15 {
-		c.FloatPrecision = -1
-	}
-
-	// Batch size limits
-	clampInt(&c.MaxBatchSize, 10, 10000)
-
+	// Delegate to ValidateWithWarnings, ignoring warnings for silent validation
+	// This ensures both functions use the same validation logic
+	_ = c.ValidateWithWarnings()
 	return nil
 }
 
-// configWarning represents a configuration modification made during validation.
-type configWarning struct {
+// ConfigWarning represents a configuration modification made during validation.
+type ConfigWarning struct {
 	Field    string // The field that was modified
 	OldValue any    // The original value (may be nil for invalid values)
 	NewValue any    // The corrected value
@@ -277,19 +226,19 @@ type configWarning struct {
 //	for _, w := range warnings {
 //	    fmt.Printf("%s: %s\n", w.Field, w.Reason)
 //	}
-func (c *Config) ValidateWithWarnings() []configWarning {
+func (c *Config) ValidateWithWarnings() []ConfigWarning {
 	if c == nil {
-		return []configWarning{{Field: "Config", Reason: "config cannot be nil"}}
+		return []ConfigWarning{{Field: "Config", Reason: "config cannot be nil"}}
 	}
 
-	var warnings []configWarning
+	var warnings []ConfigWarning
 
 	// Helper to record clamped int64 values
 	checkInt64Clamp := func(ptr *int64, min, max int64, fieldName string) {
 		original := *ptr
 		if original <= 0 {
 			*ptr = min
-			warnings = append(warnings, configWarning{
+			warnings = append(warnings, ConfigWarning{
 				Field:    fieldName,
 				OldValue: original,
 				NewValue: min,
@@ -297,7 +246,7 @@ func (c *Config) ValidateWithWarnings() []configWarning {
 			})
 		} else if original > max {
 			*ptr = max
-			warnings = append(warnings, configWarning{
+			warnings = append(warnings, ConfigWarning{
 				Field:    fieldName,
 				OldValue: original,
 				NewValue: max,
@@ -311,7 +260,7 @@ func (c *Config) ValidateWithWarnings() []configWarning {
 		original := *ptr
 		if original <= 0 {
 			*ptr = min
-			warnings = append(warnings, configWarning{
+			warnings = append(warnings, ConfigWarning{
 				Field:    fieldName,
 				OldValue: original,
 				NewValue: min,
@@ -319,7 +268,7 @@ func (c *Config) ValidateWithWarnings() []configWarning {
 			})
 		} else if original > max {
 			*ptr = max
-			warnings = append(warnings, configWarning{
+			warnings = append(warnings, ConfigWarning{
 				Field:    fieldName,
 				OldValue: original,
 				NewValue: max,
@@ -342,7 +291,7 @@ func (c *Config) ValidateWithWarnings() []configWarning {
 
 	// Cache settings
 	if c.MaxCacheSize < 0 {
-		warnings = append(warnings, configWarning{
+		warnings = append(warnings, ConfigWarning{
 			Field:    "MaxCacheSize",
 			OldValue: c.MaxCacheSize,
 			NewValue: 0,
@@ -351,7 +300,7 @@ func (c *Config) ValidateWithWarnings() []configWarning {
 		c.MaxCacheSize = 0
 		c.EnableCache = false
 	} else if c.MaxCacheSize > 2000 {
-		warnings = append(warnings, configWarning{
+		warnings = append(warnings, ConfigWarning{
 			Field:    "MaxCacheSize",
 			OldValue: c.MaxCacheSize,
 			NewValue: 2000,
@@ -361,7 +310,7 @@ func (c *Config) ValidateWithWarnings() []configWarning {
 	}
 
 	if c.CacheTTL <= 0 {
-		warnings = append(warnings, configWarning{
+		warnings = append(warnings, ConfigWarning{
 			Field:    "CacheTTL",
 			OldValue: c.CacheTTL,
 			NewValue: DefaultCacheTTL,
@@ -372,7 +321,7 @@ func (c *Config) ValidateWithWarnings() []configWarning {
 
 	// Encoding options
 	if c.MaxDepth < 0 || c.MaxDepth > 1000 {
-		warnings = append(warnings, configWarning{
+		warnings = append(warnings, ConfigWarning{
 			Field:    "MaxDepth",
 			OldValue: c.MaxDepth,
 			NewValue: 100,
@@ -381,7 +330,7 @@ func (c *Config) ValidateWithWarnings() []configWarning {
 		c.MaxDepth = 100
 	}
 	if c.FloatPrecision < -1 || c.FloatPrecision > 15 {
-		warnings = append(warnings, configWarning{
+		warnings = append(warnings, ConfigWarning{
 			Field:    "FloatPrecision",
 			OldValue: c.FloatPrecision,
 			NewValue: -1,

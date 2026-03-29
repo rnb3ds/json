@@ -3,7 +3,42 @@ package internal
 import (
 	"sync"
 	"sync/atomic"
+	"unsafe"
 )
+
+// ============================================================================
+// BYTE TO STRING CONVERSION OPTIMIZATION
+// PERFORMANCE: Reduces allocations when converting []byte to string for interning
+// SECURITY: Uses safe conversion for untrusted input, unsafe for trusted internal use
+// ============================================================================
+
+// byteBufferPool for temporary byte slice reuse during string conversion
+var byteBufferPool = sync.Pool{
+	New: func() any {
+		buf := make([]byte, 0, 256)
+		return &buf
+	},
+}
+
+// unsafeStringFromBytes converts []byte to string without allocation
+// PERFORMANCE: Zero-allocation conversion using unsafe
+// SECURITY: Only use when the byte slice won't be modified after conversion
+// This is safe for interned strings since they are never modified
+func unsafeStringFromBytes(b []byte) string {
+	if len(b) == 0 {
+		return ""
+	}
+	return unsafe.String(&b[0], len(b))
+}
+
+// safeStringFromBytes converts []byte to string with allocation
+// PERFORMANCE: Allocates a new string, but safer for untrusted input
+func safeStringFromBytes(b []byte) string {
+	if len(b) == 0 {
+		return ""
+	}
+	return string(b)
+}
 
 // ============================================================================
 // STRING INTERNING
@@ -106,13 +141,14 @@ func (si *StringIntern) Intern(s string) string {
 }
 
 // InternBytes returns an interned string from a byte slice
-// SECURITY: Added empty slice check to prevent panic
+// SECURITY: Uses safe conversion to avoid potential race conditions with pooled buffers
 func (si *StringIntern) InternBytes(b []byte) string {
 	if len(b) == 0 {
 		return ""
 	}
-	// SECURITY FIX: Use safe conversion instead of unsafe
-	s := string(b)
+	// SECURITY: Use safe conversion for both lookup and storage
+	// This avoids potential race conditions when byte slices are reused from pools
+	s := safeStringFromBytes(b)
 	return si.Intern(s)
 }
 
@@ -358,13 +394,14 @@ func (ki *KeyIntern) evictShardLocked(shard *keyInternShard) bool {
 }
 
 // InternBytes returns an interned string from a byte slice
-// SECURITY: Added empty slice check to prevent panic
+// SECURITY: Uses safe conversion to avoid potential race conditions with pooled buffers
 func (ki *KeyIntern) InternBytes(b []byte) string {
 	if len(b) == 0 {
 		return ""
 	}
-	// SECURITY FIX: Use safe conversion instead of unsafe
-	s := string(b)
+	// SECURITY: Use safe conversion for both lookup and storage
+	// This avoids potential race conditions when byte slices are reused from pools
+	s := safeStringFromBytes(b)
 	return ki.Intern(s)
 }
 
