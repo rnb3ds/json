@@ -3,33 +3,13 @@ package internal
 import (
 	"sync"
 	"sync/atomic"
-	"unsafe"
 )
 
 // ============================================================================
 // BYTE TO STRING CONVERSION OPTIMIZATION
 // PERFORMANCE: Reduces allocations when converting []byte to string for interning
-// SECURITY: Uses safe conversion for untrusted input, unsafe for trusted internal use
+// SECURITY: Uses safe conversion for untrusted input
 // ============================================================================
-
-// byteBufferPool for temporary byte slice reuse during string conversion
-var byteBufferPool = sync.Pool{
-	New: func() any {
-		buf := make([]byte, 0, 256)
-		return &buf
-	},
-}
-
-// unsafeStringFromBytes converts []byte to string without allocation
-// PERFORMANCE: Zero-allocation conversion using unsafe
-// SECURITY: Only use when the byte slice won't be modified after conversion
-// This is safe for interned strings since they are never modified
-func unsafeStringFromBytes(b []byte) string {
-	if len(b) == 0 {
-		return ""
-	}
-	return unsafe.String(&b[0], len(b))
-}
 
 // safeStringFromBytes converts []byte to string with allocation
 // PERFORMANCE: Allocates a new string, but safer for untrusted input
@@ -47,17 +27,21 @@ func safeStringFromBytes(b []byte) string {
 // SECURITY: Fixed memory exhaustion issues with proactive eviction
 // ============================================================================
 
+// maxStringCopyThreshold is the threshold below which string copies are avoided.
+// Strings shorter than this threshold are returned directly (Go strings are immutable).
+// Longer strings are force-copied via []byte to guarantee independence from any
+// underlying buffer the original string may reference (e.g., from pooled buffers).
+const maxStringCopyThreshold = 8192
+
 // copyString creates an independent copy of a string.
 // Short strings are returned directly (Go strings are immutable).
 // Large strings are force-copied via []byte to guarantee independence
 // from any underlying buffer the original string may reference.
-const maxPoolBufferSize = 8192
-
 func copyString(s string) string {
 	if len(s) == 0 {
 		return ""
 	}
-	if len(s) <= maxPoolBufferSize {
+	if len(s) <= maxStringCopyThreshold {
 		return s // Go strings are immutable; assignment is safe
 	}
 	return string([]byte(s)) // force copy for very large strings

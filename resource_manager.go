@@ -33,7 +33,7 @@ func newUnifiedResourceManager() *unifiedResourceManager {
 		stringBuilderPool: &sync.Pool{
 			New: func() any {
 				sb := &strings.Builder{}
-				sb.Grow(512)
+				sb.Grow(1024) // PERFORMANCE: Increased from 512 to reduce grow() calls
 				return sb
 			},
 		},
@@ -70,7 +70,7 @@ func (urm *unifiedResourceManager) GetStringBuilder() *strings.Builder {
 		slog.Debug("pool corruption detected: string builder type assertion failed", "type", fmt.Sprintf("%T", obj))
 		// Fallback: create new builder if type assertion fails
 		sb = &strings.Builder{}
-		sb.Grow(512)
+		sb.Grow(1024) // PERFORMANCE: Match pool initial capacity
 	}
 	sb.Reset()
 	atomic.AddInt64(&urm.allocatedBuilders, 1)

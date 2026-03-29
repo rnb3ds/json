@@ -1,6 +1,7 @@
 package internal
 
 import (
+	"strings"
 	"sync"
 )
 
@@ -18,6 +19,39 @@ const (
 	// Maximum capacity to pool (prevent memory bloat)
 	maxSliceCap = 256
 )
+
+// ----------------------------------------------------------------------------
+// STRING BUILDER POOL - For string building operations
+// PERFORMANCE: Reduces allocations in string concatenation
+// ----------------------------------------------------------------------------
+
+var stringBuilderPool = sync.Pool{
+	New: func() any {
+		sb := &strings.Builder{}
+		sb.Grow(256)
+		return sb
+	},
+}
+
+// GetStringBuilder retrieves a pooled strings.Builder
+func GetStringBuilder() *strings.Builder {
+	sb := stringBuilderPool.Get().(*strings.Builder)
+	sb.Reset()
+	return sb
+}
+
+// PutStringBuilder returns a strings.Builder to the pool
+func PutStringBuilder(sb *strings.Builder) {
+	if sb == nil {
+		return
+	}
+	// Don't pool very large builders
+	if sb.Cap() > 16*1024 {
+		return
+	}
+	sb.Reset()
+	stringBuilderPool.Put(sb)
+}
 
 // ----------------------------------------------------------------------------
 // RESULTS SLICE POOL - For recursive processing results
@@ -166,14 +200,18 @@ func GetPathSegmentSlice(hint int) *[]PathSegment {
 
 // PutPathSegmentSlice returns a []PathSegment slice to the pool
 func PutPathSegmentSlice(s *[]PathSegment) {
-	if s == nil || cap(*s) > 32 {
+	if s == nil {
 		return
+	}
+	c := cap(*s)
+	if c > 32 {
+		return // Don't pool very large slices
 	}
 	*s = (*s)[:0]
 	switch {
-	case cap(*s) <= 4:
+	case c <= 4:
 		smallPathPool.Put(s)
-	case cap(*s) <= 8:
+	case c <= 8:
 		mediumPathPool.Put(s)
 	default:
 		largePathPool.Put(s)

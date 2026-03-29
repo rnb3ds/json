@@ -887,7 +887,9 @@ func (lfp *LargeFileProcessor) ProcessFileChunked(filename string, chunkSize int
 			if err := fn(chunk); err != nil {
 				return false
 			}
-			chunk = chunk[:0] // Reset chunk
+			// Allocate new slice to avoid sharing underlying array with callback
+			// This prevents data corruption if callback retains reference to chunk
+			chunk = make([]any, 0, chunkSize)
 		}
 		return true
 	})
@@ -1340,8 +1342,10 @@ func (sr *SamplingReader) Sample(fn func(index int, item any) bool) error {
 		if err := sr.decoder.Decode(&value); err != nil {
 			return err
 		}
-		// Honor the callback's return value for consistency
-		_ = fn(0, value)
+		// Honor the callback's return value for consistency with array handling
+		if !fn(0, value) {
+			return nil
+		}
 		return nil
 	}
 

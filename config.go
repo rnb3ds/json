@@ -346,21 +346,20 @@ func (c *Config) ValidateWithWarnings() []ConfigWarning {
 }
 
 // Config accessor methods.
-// These methods implement the CacheConfig interface used by internal/cache.go
-// and provide consistent API for testing and interface-based programming.
+// These methods implement interfaces (CacheConfig, EncoderConfig) and provide
+// consistent API for testing and interface-based programming.
 
-// Required by CacheConfig interface - do not remove.
+// Required by CacheConfig interface (internal/cache.go) - do not remove.
 func (c *Config) IsCacheEnabled() bool       { return c.EnableCache }
 func (c *Config) GetMaxCacheSize() int       { return c.MaxCacheSize }
 func (c *Config) GetCacheTTL() time.Duration { return c.CacheTTL }
 
 // Convenience accessor methods for testing and interface-based usage.
-// Note: For direct configuration access in application code, prefer field access:
+// Rationale: These methods enable mock-based testing and potential future
+// interface abstraction. In application code, direct field access is preferred:
 //
 //	cfg.MaxJSONSize instead of cfg.GetMaxJSONSize()
 //	cfg.StrictMode instead of cfg.IsStrictMode()
-//
-// These methods are primarily for testing and future interface compatibility.
 func (c *Config) GetMaxJSONSize() int64        { return c.MaxJSONSize }
 func (c *Config) GetMaxPathDepth() int         { return c.MaxPathDepth }
 func (c *Config) GetMaxConcurrency() int       { return c.MaxConcurrency }
@@ -376,8 +375,8 @@ func (c *Config) ShouldValidateInput() bool    { return c.ValidateInput }
 func (c *Config) GetMaxNestingDepth() int      { return c.MaxNestingDepthSecurity }
 func (c *Config) ShouldValidateFilePath() bool { return c.ValidateFilePath }
 
-// EncoderConfig interface methods for custom encoders.
-// These provide read-only access to encoding configuration.
+// Required by EncoderConfig interface (interfaces.go) for custom encoders.
+// These methods provide read-only access to encoding configuration.
 func (c *Config) IsHTMLEscapeEnabled() bool      { return c.EscapeHTML }
 func (c *Config) IsPrettyEnabled() bool          { return c.Pretty }
 func (c *Config) GetIndent() string              { return c.Indent }

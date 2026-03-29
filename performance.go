@@ -185,12 +185,6 @@ func NewStreamingProcessor(reader io.Reader, bufferSize int) *StreamingProcessor
 	return sp
 }
 
-// Release returns the streaming processor to the pool
-// Deprecated: Use Close() instead, which now also returns to pool
-func (sp *StreamingProcessor) Release() {
-	sp.Close()
-}
-
 // StreamArray streams array elements one at a time
 // This is memory-efficient for large arrays
 func (sp *StreamingProcessor) StreamArray(fn func(index int, item any) bool) error {

@@ -353,7 +353,7 @@ func StreamLinesIntoWithConfig[T any](reader io.Reader, config JSONLConfig, fn f
 
 // StreamLinesParallel processes JSONL data in parallel using worker pool
 // PERFORMANCE: Parallel processing for CPU-bound operations on JSONL data
-func (j *JSONLProcessor) StreamLinesParallel(fn func(lineNum int, data any) error, workers int) error {
+func (j *JSONLProcessor) StreamLinesParallel(fn func(lineNum int, data any) error, workers int) (err error) {
 	if workers <= 0 {
 		workers = 4
 	}
@@ -379,14 +379,24 @@ func (j *JSONLProcessor) StreamLinesParallel(fn func(lineNum int, data any) erro
 				if atomic.LoadInt32(&errCount) > 0 {
 					continue
 				}
-				if err := fn(job.lineNum, job.data); err != nil {
+				if jobErr := fn(job.lineNum, job.data); jobErr != nil {
 					if atomic.CompareAndSwapInt32(&errCount, 0, 1) {
-						firstErr = err
+						firstErr = jobErr
 					}
 				}
 			}
 		}()
 	}
+
+	// SAFETY: Ensure cleanup and error propagation on all exit paths
+	defer func() {
+		close(jobs)
+		wg.Wait()
+		// Propagate worker error if no other error occurred
+		if err == nil && firstErr != nil {
+			err = firstErr
+		}
+	}()
 
 	// Feed jobs
 	for j.scanner.Scan() {
@@ -404,11 +414,9 @@ func (j *JSONLProcessor) StreamLinesParallel(fn func(lineNum int, data any) erro
 		}
 
 		// Use helper to parse line
-		data, err := j.parseLine(line, j.lineNum)
-		if err != nil {
-			close(jobs)
-			wg.Wait()
-			return err
+		data, parseErr := j.parseLine(line, j.lineNum)
+		if parseErr != nil {
+			return parseErr // defer handles cleanup and error propagation
 		}
 		if data == nil {
 			// ContinueOnErr case - error was suppressed
@@ -417,7 +425,7 @@ func (j *JSONLProcessor) StreamLinesParallel(fn func(lineNum int, data any) erro
 
 		j.linesCount++
 
-		// Wait if error occurred
+		// Check if error occurred before sending
 		if atomic.LoadInt32(&errCount) > 0 {
 			break
 		}
@@ -425,15 +433,12 @@ func (j *JSONLProcessor) StreamLinesParallel(fn func(lineNum int, data any) erro
 		jobs <- lineJob{lineNum: j.lineNum, data: data}
 	}
 
-	close(jobs)
-	wg.Wait()
-
-	if err := j.scanner.Err(); err != nil {
-		j.err = err
-		return err
+	if scanErr := j.scanner.Err(); scanErr != nil {
+		j.err = scanErr
+		return scanErr
 	}
 
-	return firstErr
+	return nil // defer will set err = firstErr if worker had error
 }
 
 // Stop stops the JSONL processor

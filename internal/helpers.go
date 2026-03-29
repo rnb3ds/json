@@ -306,19 +306,21 @@ func ArrayItemKey(item any) string {
 	case nil:
 		return "null"
 	case map[string]any:
-		// For objects, use JSON marshaling for comparison
-		bytes, err := json.Marshal(v)
-		if err != nil {
-			return fmt.Sprintf("obj:%p", v)
+		// PERFORMANCE v2: Use FastEncoder for objects to reduce allocations
+		encoder := GetEncoder()
+		defer PutEncoder(encoder)
+		if err := encoder.EncodeMap(v); err == nil {
+			return "o:" + string(encoder.Bytes())
 		}
-		return "o:" + string(bytes)
+		return fmt.Sprintf("obj:%p", v)
 	case []any:
-		// For arrays, use JSON marshaling for comparison
-		bytes, err := json.Marshal(v)
-		if err != nil {
-			return fmt.Sprintf("arr:%p", v)
+		// PERFORMANCE v2: Use FastEncoder for arrays to reduce allocations
+		encoder := GetEncoder()
+		defer PutEncoder(encoder)
+		if err := encoder.EncodeArray(v); err == nil {
+			return "a:" + string(encoder.Bytes())
 		}
-		return "a:" + string(bytes)
+		return fmt.Sprintf("arr:%p", v)
 	default:
 		// Fallback for other types
 		return fmt.Sprintf("other:%v", v)
@@ -478,7 +480,7 @@ func matchPatternIgnoreCaseFast(s, pattern string) bool {
 		for i := (n / 8) * 8; i < n; i++ {
 			c1 := s[i] | 0x20
 			c2 := pattern[i]
-			if c1 != c2 && !(c2 >= 'a' && c2 <= 'z' && c1 == c2) {
+			if c1 != c2 {
 				return false
 			}
 		}

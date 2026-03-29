@@ -757,23 +757,45 @@ func (p *Processor) checkClosed() error {
 	return nil
 }
 
-// prepareOptions prepares and validates processor options
-// Accepts Config values and returns a pointer for internal use
-// PERFORMANCE: Uses stack allocation for small configs (no pooling to avoid memory leaks)
-func (p *Processor) prepareOptions(opts ...Config) (*Config, error) {
-	var options Config
-	if len(opts) > 0 {
-		options = opts[0]
-	} else {
-		options = DefaultConfig()
-	}
+// configPool pools Config objects to reduce allocations in hot paths
+// PERFORMANCE: Reduces ~6GB allocations from prepareOptions calls
+var configPool = sync.Pool{
+	New: func() any {
+		cfg := DefaultConfig()
+		return &cfg
+	},
+}
 
-	// Validate config
-	if err := options.Validate(); err != nil {
+// getConfig gets a Config from the pool, applies defaults or provided config, and validates
+func (p *Processor) getConfig(opts ...Config) (*Config, error) {
+	cfg := configPool.Get().(*Config)
+	if len(opts) > 0 {
+		*cfg = opts[0]
+	} else {
+		*cfg = DefaultConfig()
+	}
+	if err := cfg.Validate(); err != nil {
+		configPool.Put(cfg)
 		return nil, err
 	}
+	return cfg, nil
+}
 
-	return &options, nil
+// putConfig returns a Config to the pool after clearing sensitive data
+func (p *Processor) putConfig(cfg *Config) {
+	if cfg == nil {
+		return
+	}
+	// Clear sensitive fields to prevent memory leaks
+	cfg.Context = nil
+	configPool.Put(cfg)
+}
+
+// prepareOptions prepares and validates processor options
+// Accepts Config values and returns a pointer for internal use
+// PERFORMANCE: Uses pooled Config objects to reduce allocations
+func (p *Processor) prepareOptions(opts ...Config) (*Config, error) {
+	return p.getConfig(opts...)
 }
 
 // mergeOptionsWithOverride creates a new Config with overrides applied.

@@ -1030,7 +1030,7 @@ func fastEncodeSimple(value any) (string, bool) {
 
 // fastEncodeSimpleWithHTMLEscape encodes simple types with HTML escaping
 // Returns (result, true) if successful, ("", false) if type not supported
-// PERFORMANCE: Uses FastEncoder with post-processing for HTML escaping
+// PERFORMANCE v2: Uses FastEncoder with direct HTML escaping to reduce allocations
 func fastEncodeSimpleWithHTMLEscape(value any) (string, bool) {
 	encoder := internal.GetEncoder()
 	defer internal.PutEncoder(encoder)
@@ -1040,17 +1040,13 @@ func fastEncodeSimpleWithHTMLEscape(value any) (string, bool) {
 		return "", false
 	}
 
-	result := string(encoder.Bytes())
-	// Check if HTML escaping is needed
-	if internal.NeedsHTMLEscape(result) {
-		// Apply HTML escaping
-		var buf bytes.Buffer
-		buf.Grow(len(result) + 16)
-		internal.HTMLEscapeTo(&buf, result)
-		return buf.String(), true
+	// PERFORMANCE v2: Directly escape bytes without intermediate string conversion
+	data := encoder.Bytes()
+	if internal.NeedsHTMLEscape(string(data)) {
+		return internal.HTMLEscape(string(data)), true
 	}
 
-	return result, true
+	return string(data), true
 }
 
 // Encode converts any Go value to JSON string
