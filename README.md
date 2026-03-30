@@ -7,19 +7,18 @@
 [![Security](https://img.shields.io/badge/Security-Hardened-red.svg)](docs/SECURITY.md)
 [![Zero Deps](https://img.shields.io/badge/deps-zero-brightgreen.svg)](go.mod)
 
-> A high-performance, feature-rich Go JSON processing library with 100% `encoding/json` compatibility.  
+> A high-performance, feature-rich Go JSON processing library with 100% `encoding/json` compatibility.
 > Powerful path syntax, type safety, streaming processing, production-grade performance.
 
 **[中文文档](README_zh-CN.md)**
 
 ---
 
-## Why cybergodev/json?
-
+## Why cybergodev/json
 | Feature | encoding/json | cybergodev/json |
-|---------|---------------|-----------------|
+|---------|-------------|---------------|
 | Path-based access | ❌ Manual unmarshal | ✅ `json.Get(data, "users[0].name")` |
-| Negative indexing | ❌ | ✅ `items[-1]` gets last element |
+| Index value | ❌ | ✅ `items[-1]` gets last element |
 | Flatten nested arrays | ❌ | ✅ `users{flat:tags}` |
 | Type-safe defaults | ❌ | ✅ `GetStringOr(data, "path", "default")` |
 | Streaming large files | ❌ | ✅ Built-in streaming processors |
@@ -32,14 +31,12 @@
 
 ## Features
 
-| Feature | Description |
-|---------|-------------|
-| **100% Compatible** | Drop-in replacement for `encoding/json`, zero learning curve |
-| **Powerful Paths** | Intuitive syntax: `users[0].name`, `items[-1]`, `data{flat:tags}` |
-| **High Performance** | Smart caching, memory pooling, optimized hot paths |
-| **Type Safe** | Generics support, compile-time type checking |
-| **Feature Rich** | Batch operations, streaming, file I/O, schema validation, deep merge |
-| **Production Ready** | Thread-safe, comprehensive error handling, security hardened |
+- **100% Compatible** - Drop-in replacement for `encoding/json`, zero learning curve
+- **Powerful Paths** - Intuitive syntax: `users[0].name`, `items[-1]`, `data{flat:tags}`
+- **High Performance** - Smart caching, memory pooling, optimized hot paths
+- **Type Safe** - Generics support with `GetTyped[T]` and `GetTypedOr[T]`
+- **Feature Rich** - Batch operations, streaming, file I/O, schema validation, deep merge
+- **Production Ready** - Thread-safe, comprehensive error handling, security hardened
 
 ---
 

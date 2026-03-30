@@ -7,19 +7,18 @@
 [![Security](https://img.shields.io/badge/Security-Hardened-red.svg)](docs/SECURITY.md)
 [![Zero Deps](https://img.shields.io/badge/deps-zero-brightgreen.svg)](go.mod)
 
-> 一个高性能、功能丰富的 Go JSON 处理库，100% 兼容 `encoding/json`。  
+> 一个高性能、功能丰富的 Go JSON 处理库，100% 兼容 `encoding/json`。
 > 强大的路径语法、类型安全、流式处理、生产级性能。
 
 **[English Documentation](README.md)**
 
 ---
 
-## 为什么选择 cybergodev/json？
-
+## 为什么选择 cybergodev/json
 | 功能 | encoding/json | cybergodev/json |
-|------|---------------|-----------------|
+|-----|-------------|---------------|
 | 路径访问 | ❌ 手动解析 | ✅ `json.Get(data, "users[0].name")` |
-| 负索引 | ❌ | ✅ `items[-1]` 获取最后一个元素 |
+| 索引取值 | ❌ | ✅ `items[-1]` 获取最后一个元素 |
 | 扁平化嵌套数组 | ❌ | ✅ `users{flat:tags}` |
 | 类型安全默认值 | ❌ | ✅ `GetStringOr(data, "path", "default")` |
 | 大文件流式处理 | ❌ | ✅ 内置流式处理器 |
@@ -32,14 +31,12 @@
 
 ## 特性
 
-| 特性 | 描述 |
-|------|------|
-| **100% 兼容** | 直接替换 `encoding/json`，零学习成本 |
-| **强大路径** | 直观语法：`users[0].name`、`items[-1]`、`data{flat:tags}` |
-| **高性能** | 智能缓存、内存池、优化的热路径 |
-| **类型安全** | 泛型支持，编译时类型检查 |
-| **功能丰富** | 批量操作、流式处理、文件I/O、Schema验证、深度合并 |
-| **生产就绪** | 线程安全、完善的错误处理、安全加固 |
+- **100% 兼容** - 直接替换 `encoding/json`，零学习成本
+- **强大路径** - 直观语法：`users[0].name`、`items[-1]`、`data{flat:tags}`
+- **高性能** - 智能缓存、内存池、优化的热路径
+- **类型安全** - 泛型支持，使用 `GetTyped[T]` 和 `GetTypedOr[T]`
+- **功能丰富** - 批量操作、流式处理、文件I/O、Schema验证、深度合并
+- **生产就绪** - 线程安全、完善的错误处理、安全加固
 
 ---
 

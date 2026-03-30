@@ -789,6 +789,7 @@ func (p *Processor) MarshalIndent(value any, prefix, indent string, cfg ...Confi
 
 // Unmarshal parses the JSON-encoded data and stores the result in the value pointed to by v.
 // This method is fully compatible with encoding/json.Unmarshal.
+// PERFORMANCE: Fast path for simple cases to avoid string conversion overhead.
 func (p *Processor) Unmarshal(data []byte, v any, opts ...Config) error {
 	if err := p.checkClosed(); err != nil {
 		return err
@@ -798,7 +799,13 @@ func (p *Processor) Unmarshal(data []byte, v any, opts ...Config) error {
 		return &InvalidUnmarshalError{Type: nil}
 	}
 
-	// Convert bytes to string for internal processing
+	// PERFORMANCE: Fast path when no options are provided
+	// Use encoding/json directly to avoid string conversion overhead
+	if len(opts) == 0 {
+		return json.Unmarshal(data, v)
+	}
+
+	// Slow path for options: convert to string for internal processing
 	jsonStr := string(data)
 
 	// Use the existing Parse method which handles all the validation and parsing logic
@@ -1037,18 +1044,6 @@ func (p *Processor) EncodePretty(value any, config ...Config) (string, error) {
 		cfg = PrettyConfig()
 	}
 	return p.EncodeWithConfig(value, cfg)
-}
-
-// EncodeWithOptions converts any Go value to JSON string with configuration.
-// Deprecated: Use EncodeWithConfig instead. This method is kept for backward compatibility.
-func (p *Processor) EncodeWithOptions(value any, cfg Config) (string, error) {
-	return p.EncodeWithConfig(value, cfg)
-}
-
-// EncodeStreamWithOptions encodes multiple values as a JSON array stream with configuration.
-// Deprecated: Use EncodeStream instead. This method is kept for backward compatibility.
-func (p *Processor) EncodeStreamWithOptions(values any, cfg Config) (string, error) {
-	return p.EncodeStream(values, cfg)
 }
 
 // customEncoder provides advanced JSON encoding with configurable options

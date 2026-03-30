@@ -4,6 +4,46 @@ All notable changes to the cybergodev/json library will be documented in this fi
 
 ---
 
+## v1.3.0 - Performance & API Unification (2026-03-30)
+
+>Internal core restructuring  
+>Basic functionality remains unchanged
+
+### Breaking Changes
+- `EncodeWithOptions()` → Use `EncodeWithConfig()` (deprecated alias removed)
+- `EncodeStreamWithOptions()` → Use `EncodeStream()` (deprecated alias removed)
+- `StreamingProcessor.Release()` → Use `Close()` (deprecated method removed)
+
+### Added
+- `CompactBytes()`, `IndentBytes()` - encoding/json signature compatibility
+- `GetStringOr()`, `GetIntOr()`, `GetFloatOr()`, `GetBoolOr()` instance methods
+- Streaming-optimized object pools (tiered map/slice pools)
+- Path segment cache with sync.Map (lock-free concurrent reads)
+- Config sync.Pool for hot path allocation reduction
+
+### Changed
+- Unified all encoding APIs to variadic `cfg ...Config` pattern
+- StreamingProcessor now reuses bufio.Reader across operations
+- Batch operations use FastMarshal for reduced allocations
+- HTML escape uses pooled buffer with byte-level scanning
+
+### Fixed
+- StreamLinesParallel goroutine leak and error propagation
+- SamplingReader.Sample callback return value handling
+- ProcessFileChunked data corruption (shared array issue)
+- Hash cache TTL-based expiration for stale entry prevention
+- Pool corruption recovery mechanism
+
+### Performance
+- BatchSet_Small: 29% faster, 19% less memory, 35% fewer allocations
+- BatchSet_Large: 43% faster, 19% less memory, 38% fewer allocations
+- StreamingProcessor_Array: 98% faster, 86% less memory, 99.9% fewer allocations
+- PathParsing_Complex: 480ns → 22ns (95% improvement with caching)
+- FastEncoder_String: 9.8% faster, FastEncoder_Int: 8.4% faster
+- Test coverage: 56.9% → 62.6%
+
+---
+
 ## v1.2.2 - Architecture & Quality Enhancement (2026-03-04)
 
 ### Added

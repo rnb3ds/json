@@ -49,8 +49,13 @@ type Processor struct {
 // hashCacheEntry stores a cached hash with its last access time for LRU eviction
 type hashCacheEntry struct {
 	hash       uint64 // The actual hash value of the JSON string
-	lastAccess int64
+	lastAccess int64  // Last access timestamp for LRU eviction
+	expiresAt  int64  // Expiration timestamp for TTL-based cleanup
 }
+
+// hashCacheTTL is the time-to-live for hash cache entries (5 minutes)
+// Entries older than this are recomputed on next access
+const hashCacheTTL = int64(5 * 60 * 1000 * 1000 * 1000) // 5 minutes in nanoseconds
 
 // hashCacheMaxSize is the maximum number of entries in the hash cache
 const hashCacheMaxSize = 64
@@ -479,9 +484,27 @@ func (p *Processor) getOrCacheHash(jsonStr string) uint64 {
 	// PERFORMANCE: Use strong FNV-1a hash of first/last 1KB + length for cache key
 	cacheLookupKey := computeHashCacheKey(jsonStr)
 
-	// Fast path: read lock lookup
+	// Fast path: read lock lookup with TTL check
 	p.hashCacheMu.RLock()
 	if entry, ok := p.hashCache[cacheLookupKey]; ok {
+		// Check if entry has expired
+		if now := time.Now().UnixNano(); now > entry.expiresAt {
+			p.hashCacheMu.RUnlock()
+			// Entry expired, compute fresh hash (will replace in slow path)
+			h := hashStringToUint64(jsonStr)
+			// Try to update cache with new entry
+			p.hashCacheMu.Lock()
+			// Double-check after acquiring write lock
+			if e, exists := p.hashCache[cacheLookupKey]; exists && e.expiresAt == entry.expiresAt {
+				p.hashCache[cacheLookupKey] = &hashCacheEntry{
+					hash:       h,
+					lastAccess: now,
+					expiresAt:  now + hashCacheTTL,
+				}
+			}
+			p.hashCacheMu.Unlock()
+			return h
+		}
 		hash := entry.hash
 		p.hashCacheMu.RUnlock()
 		return hash
@@ -506,7 +529,11 @@ func (p *Processor) getOrCacheHash(jsonStr string) uint64 {
 		// Evict 25% to make room using LRU
 		p.evictOldestHashCacheEntriesLocked(len(p.hashCache) / 4)
 	}
-	p.hashCache[cacheLookupKey] = &hashCacheEntry{hash: h, lastAccess: now}
+	p.hashCache[cacheLookupKey] = &hashCacheEntry{
+		hash:       h,
+		lastAccess: now,
+		expiresAt:  now + hashCacheTTL,
+	}
 	p.hashCacheMu.Unlock()
 
 	return h

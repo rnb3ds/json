@@ -27,6 +27,18 @@ type unifiedResourceManager struct {
 	allocatedMaps     int64
 }
 
+// drainPool removes potentially corrupted items from a sync.Pool
+// This is called when pool corruption is detected to prevent repeated failures
+// PERFORMANCE: Drains up to 8 items to balance recovery vs overhead
+func drainPool(pool *sync.Pool) {
+	for i := 0; i < 8; i++ {
+		// Non-blocking drain - Get returns nil if pool is empty
+		if pool.Get() == nil {
+			break
+		}
+	}
+}
+
 // newUnifiedResourceManager creates a new unified resource manager
 func newUnifiedResourceManager() *unifiedResourceManager {
 	return &unifiedResourceManager{
@@ -67,7 +79,9 @@ func (urm *unifiedResourceManager) GetStringBuilder() *strings.Builder {
 	if !ok {
 		// Pool corruption detected: type assertion failed
 		// Log this rare event for debugging purposes
-		slog.Debug("pool corruption detected: string builder type assertion failed", "type", fmt.Sprintf("%T", obj))
+		slog.Debug("pool corruption detected: string builder type assertion failed, draining pool", "type", fmt.Sprintf("%T", obj))
+		// RECOVERY: Drain corrupted pool to prevent repeated failures
+		drainPool(urm.stringBuilderPool)
 		// Fallback: create new builder if type assertion fails
 		sb = &strings.Builder{}
 		sb.Grow(1024) // PERFORMANCE: Match pool initial capacity
@@ -103,7 +117,9 @@ func (urm *unifiedResourceManager) GetPathSegments() []internal.PathSegment {
 	if !ok {
 		// Pool corruption detected: type assertion failed
 		// Log this rare event for debugging purposes
-		slog.Debug("pool corruption detected: path segments type assertion failed", "type", fmt.Sprintf("%T", obj))
+		slog.Debug("pool corruption detected: path segments type assertion failed, draining pool", "type", fmt.Sprintf("%T", obj))
+		// RECOVERY: Drain corrupted pool to prevent repeated failures
+		drainPool(urm.pathSegmentPool)
 		// Fallback: create new slice if type assertion fails
 		segments = make([]internal.PathSegment, 0, 8)
 	}
@@ -137,7 +153,9 @@ func (urm *unifiedResourceManager) GetBuffer() []byte {
 	if !ok {
 		// Pool corruption detected: type assertion failed
 		// Log this rare event for debugging purposes
-		slog.Debug("pool corruption detected: buffer type assertion failed", "type", fmt.Sprintf("%T", obj))
+		slog.Debug("pool corruption detected: buffer type assertion failed, draining pool", "type", fmt.Sprintf("%T", obj))
+		// RECOVERY: Drain corrupted pool to prevent repeated failures
+		drainPool(urm.bufferPool)
 		// Fallback: create new buffer if type assertion fails
 		buf = make([]byte, 0, 1024)
 	}

@@ -2331,8 +2331,8 @@ func (p *Processor) BatchSetOptimized(jsonStr string, updates map[string]any) (s
 		}
 	}
 
-	// Marshal result once
-	result, err := json.Marshal(data)
+	// PERFORMANCE: Use FastMarshal for encoding to reduce allocations
+	result, err := internal.FastMarshal(data)
 	if err != nil {
 		return jsonStr, err
 	}
@@ -2372,8 +2372,8 @@ func (p *Processor) BatchDeleteOptimized(jsonStr string, paths []string) (string
 		}
 	}
 
-	// Marshal result once
-	result, err := json.Marshal(data)
+	// PERFORMANCE: Use FastMarshal for encoding to reduce allocations
+	result, err := internal.FastMarshal(data)
 	if err != nil {
 		return jsonStr, err
 	}

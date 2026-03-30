@@ -152,6 +152,7 @@ func putPooledDecoder(dec *Decoder) {
 type StreamingProcessor struct {
 	decoder    *json.Decoder
 	reader     io.Reader
+	bufReader  *bufio.Reader // PERFORMANCE: Reusable buffered reader
 	bufferSize int
 	stats      StreamingStats
 }
@@ -168,6 +169,7 @@ var streamingProcessorPool = sync.Pool{
 	New: func() any {
 		return &StreamingProcessor{
 			bufferSize: 64 * 1024,
+			bufReader:  bufio.NewReaderSize(nil, 64*1024),
 		}
 	},
 }
@@ -180,7 +182,13 @@ func NewStreamingProcessor(reader io.Reader, bufferSize int) *StreamingProcessor
 	}
 	sp.bufferSize = bufferSize
 	sp.reader = reader
-	sp.decoder = json.NewDecoder(reader)
+	// PERFORMANCE: Reuse bufio.Reader to reduce allocations
+	if sp.bufReader == nil {
+		sp.bufReader = bufio.NewReaderSize(reader, bufferSize)
+	} else {
+		sp.bufReader.Reset(reader)
+	}
+	sp.decoder = json.NewDecoder(sp.bufReader)
 	sp.stats = StreamingStats{}
 	return sp
 }
@@ -288,9 +296,20 @@ func (sp *StreamingProcessor) Close() error {
 	sp.stats = StreamingStats{}
 	sp.reader = nil
 	sp.decoder = nil
+	// PERFORMANCE: Reset bufReader to release reference and prepare for reuse
+	if sp.bufReader != nil {
+		sp.bufReader.Reset(nilReader{})
+	}
 	// Return to pool
 	streamingProcessorPool.Put(sp)
 	return nil
+}
+
+// nilReader is a zero-cost reader for resetting bufio.Reader
+type nilReader struct{}
+
+func (nilReader) Read(p []byte) (int, error) {
+	return 0, io.EOF
 }
 
 // ============================================================================

@@ -244,3 +244,116 @@ func PutFlattenedSlice(s *[]any) {
 	*s = (*s)[:0]
 	flattenedSlicePool.Put(s)
 }
+
+// ----------------------------------------------------------------------------
+// STREAMING SLICE POOL - For streaming JSON operations
+// PERFORMANCE: Reduces allocations in streaming scenarios
+// ----------------------------------------------------------------------------
+
+var streamingSlicePool = sync.Pool{
+	New: func() any {
+		s := make([]any, 0, mediumSliceSize)
+		return &s
+	},
+}
+
+// GetStreamingSlice retrieves a pooled []any slice for streaming
+func GetStreamingSlice(hint int) *[]any {
+	if hint <= mediumSliceSize {
+		s := streamingSlicePool.Get().(*[]any)
+		*s = (*s)[:0]
+		return s
+	}
+	// For large hints, allocate directly
+	newSlice := make([]any, 0, hint)
+	return &newSlice
+}
+
+// PutStreamingSlice returns a []any slice to the streaming pool
+func PutStreamingSlice(s *[]any) {
+	if s == nil || cap(*s) > maxSliceCap {
+		return
+	}
+	*s = (*s)[:0]
+	streamingSlicePool.Put(s)
+}
+
+// ----------------------------------------------------------------------------
+// MAP POOL - For JSON object decoding
+// PERFORMANCE: Reduces allocations when decoding JSON objects
+// ----------------------------------------------------------------------------
+
+var (
+	// smallMapPool pools small map[string]any (cap 8)
+	smallMapPool = sync.Pool{
+		New: func() any {
+			return make(map[string]any, smallSliceSize)
+		},
+	}
+
+	// mediumMapPool pools medium map[string]any (cap 32)
+	mediumMapPool = sync.Pool{
+		New: func() any {
+			return make(map[string]any, mediumSliceSize)
+		},
+	}
+
+	// largeMapPool pools large map[string]any (cap 128)
+	largeMapPool = sync.Pool{
+		New: func() any {
+			return make(map[string]any, largeSliceSize)
+		},
+	}
+)
+
+// GetStreamingMap retrieves a pooled map[string]any
+func GetStreamingMap(hint int) map[string]any {
+	switch {
+	case hint <= smallSliceSize:
+		m := smallMapPool.Get().(map[string]any)
+		// Clear the map
+		for k := range m {
+			delete(m, k)
+		}
+		return m
+	case hint <= mediumSliceSize:
+		m := mediumMapPool.Get().(map[string]any)
+		for k := range m {
+			delete(m, k)
+		}
+		return m
+	case hint <= largeSliceSize:
+		m := largeMapPool.Get().(map[string]any)
+		for k := range m {
+			delete(m, k)
+		}
+		return m
+	default:
+		return make(map[string]any, hint)
+	}
+}
+
+// PutStreamingMap returns a map[string]any to the pool
+// Note: Uses len() as approximation since maps don't have capacity
+func PutStreamingMap(m map[string]any) {
+	if m == nil {
+		return
+	}
+	// Clear the map
+	for k := range m {
+		delete(m, k)
+	}
+	// Use len as approximation for which pool to use
+	// Maps don't have capacity, so we use len to categorize
+	switch {
+	case len(m) == 0:
+		// Empty map - pool based on typical size pattern
+		smallMapPool.Put(m)
+	case len(m) <= smallSliceSize:
+		smallMapPool.Put(m)
+	case len(m) <= mediumSliceSize:
+		mediumMapPool.Put(m)
+	default:
+		largeMapPool.Put(m)
+	}
+}

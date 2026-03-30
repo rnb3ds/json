@@ -542,7 +542,7 @@ func TestEncodingErrors(t *testing.T) {
 			},
 		}
 
-		_, err := processor.EncodeWithOptions(deepData, config)
+		_, err := processor.EncodeWithConfig(deepData, config)
 		helper.AssertError(err)
 	})
 

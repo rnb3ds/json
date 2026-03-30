@@ -1654,8 +1654,8 @@ func TestDecodeEdgeCases(t *testing.T) {
 	})
 }
 
-// TestEncodeWithOptions tests EncodeWithOptions function
-func TestEncodeWithOptions(t *testing.T) {
+// TestProcessorEncodeWithConfig tests Processor.EncodeWithConfig function
+func TestProcessorEncodeWithConfig(t *testing.T) {
 	processor, _ := New()
 	defer processor.Close()
 
@@ -1664,9 +1664,9 @@ func TestEncodeWithOptions(t *testing.T) {
 	config.Indent = "    "
 
 	data := map[string]any{"key": "value"}
-	result, err := processor.EncodeWithOptions(data, config)
+	result, err := processor.EncodeWithConfig(data, config)
 	if err != nil {
-		t.Errorf("EncodeWithOptions failed: %v", err)
+		t.Errorf("EncodeWithConfig failed: %v", err)
 	}
 
 	if !strings.Contains(result, "    ") {
@@ -1674,8 +1674,8 @@ func TestEncodeWithOptions(t *testing.T) {
 	}
 }
 
-// TestEncodeStreamWithOptions tests EncodeStreamWithOptions function
-func TestEncodeStreamWithOptions(t *testing.T) {
+// TestEncodeStreamWithConfig tests EncodeStream function
+func TestEncodeStreamWithConfig(t *testing.T) {
 	processor, _ := New()
 	defer processor.Close()
 
@@ -1685,9 +1685,9 @@ func TestEncodeStreamWithOptions(t *testing.T) {
 		{"id": 2},
 	}
 
-	result, err := processor.EncodeStreamWithOptions(data, config)
+	result, err := processor.EncodeStream(data, config)
 	if err != nil {
-		t.Errorf("EncodeStreamWithOptions failed: %v", err)
+		t.Errorf("EncodeStream failed: %v", err)
 	}
 
 	if !strings.Contains(result, `"id"`) {

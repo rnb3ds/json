@@ -4608,12 +4608,12 @@ func TestProcessor_EncodeWithOptions(t *testing.T) {
 		data := map[string]any{"key": "value"}
 		encOpts := DefaultConfig()
 		encOpts.Pretty = true
-		result, err := processor.EncodeWithOptions(data, encOpts)
+		result, err := processor.EncodeWithConfig(data, encOpts)
 		if err != nil {
-			t.Errorf("EncodeWithOptions error: %v", err)
+			t.Errorf("EncodeWithConfig error: %v", err)
 		}
 		if result == "" {
-			t.Error("EncodeWithOptions should return non-empty result")
+			t.Error("EncodeWithConfig should return non-empty result")
 		}
 	})
 
@@ -4697,12 +4697,12 @@ func TestProcessor_EncodeWithOptions(t *testing.T) {
 	t.Run("EncodeStreamWithOptions", func(t *testing.T) {
 		values := []any{1, 2, 3}
 		encOpts := DefaultConfig()
-		result, err := processor.EncodeStreamWithOptions(values, encOpts)
+		result, err := processor.EncodeStream(values, encOpts)
 		if err != nil {
-			t.Errorf("EncodeStreamWithOptions error: %v", err)
+			t.Errorf("EncodeStream error: %v", err)
 		}
 		if result == "" {
-			t.Error("EncodeStreamWithOptions should return non-empty result")
+			t.Error("EncodeStream should return non-empty result")
 		}
 	})
 }
