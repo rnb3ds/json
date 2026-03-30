@@ -8,51 +8,59 @@ import (
 	"github.com/cybergodev/json/internal"
 )
 
-// RecursiveProcessor implements true recursive processing for all operations
-type RecursiveProcessor struct {
-	processor *Processor
+// pathSegmentProvider is the minimal interface RecursiveProcessor needs.
+// This interface breaks the circular dependency between Processor and RecursiveProcessor.
+type pathSegmentProvider interface {
+	getCachedPathSegments(path string) ([]internal.PathSegment, error)
 }
 
-// NewRecursiveProcessor creates a new unified recursive processor
-func NewRecursiveProcessor(p *Processor) *RecursiveProcessor {
-	return &RecursiveProcessor{
-		processor: p,
+// recursiveProcessor implements true recursive processing for all ops
+type recursiveProcessor struct {
+	provider pathSegmentProvider
+}
+
+// newRecursiveProcessor creates a new unified recursive processor.
+// The provider must implement pathSegmentProvider interface.
+// Note: *Processor implicitly implements this interface.
+func newRecursiveProcessor(provider pathSegmentProvider) *recursiveProcessor {
+	return &recursiveProcessor{
+		provider: provider,
 	}
 }
 
-// ProcessRecursively performs recursive processing for any operation
-func (urp *RecursiveProcessor) ProcessRecursively(data any, path string, operation Operation, value any) (any, error) {
-	return urp.ProcessRecursivelyWithOptions(data, path, operation, value, false)
+// ProcessRecursively performs recursive processing for any op
+func (urp *recursiveProcessor) ProcessRecursively(data any, path string, op operation, value any) (any, error) {
+	return urp.ProcessRecursivelyWithOptions(data, path, op, value, false)
 }
 
 // ProcessRecursivelyWithOptions performs recursive processing with path creation options
-func (urp *RecursiveProcessor) ProcessRecursivelyWithOptions(data any, path string, operation Operation, value any, createPaths bool) (any, error) {
+func (urp *recursiveProcessor) ProcessRecursivelyWithOptions(data any, path string, op operation, value any, createPaths bool) (any, error) {
 	// Parse path into segments using cached parsing
-	segments, err := urp.processor.getCachedPathSegments(path)
+	segments, err := urp.provider.getCachedPathSegments(path)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse path '%s': %w", path, err)
 	}
 
 	if len(segments) == 0 {
-		switch operation {
-		case OpGet:
+		switch op {
+		case opGet:
 			return data, nil
-		case OpSet:
+		case opSet:
 			return nil, fmt.Errorf("cannot set root value")
-		case OpDelete:
+		case opDelete:
 			return nil, fmt.Errorf("cannot delete root value")
 		}
 	}
 
 	// Start recursive processing from root
-	result, err := urp.processRecursivelyAtSegmentsWithOptions(data, segments, 0, operation, value, createPaths)
+	result, err := urp.processRecursivelyAtSegmentsWithOptions(data, segments, 0, op, value, createPaths)
 	if err != nil {
 		return nil, err
 	}
 
 	// Check if any segment in the path was a flat extraction
-	// If so, we need special handling to apply flattening and subsequent operations correctly
-	if operation == OpGet {
+	// If so, we need special handling to apply flattening and subsequent ops correctly
+	if op == opGet {
 		// Find the LAST flat segment, not the first one
 		// This is important for paths like orders{flat:items}{flat:tags}[0:3]
 		flatSegmentIndex := -1
@@ -63,18 +71,18 @@ func (urp *RecursiveProcessor) ProcessRecursivelyWithOptions(data any, path stri
 		}
 
 		if flatSegmentIndex >= 0 {
-			// Check if there are any operations after the flat extraction
+			// Check if there are any ops after the flat extraction
 			hasPostFlatOps := flatSegmentIndex+1 < len(segments)
 
 			if hasPostFlatOps {
-				// There are operations after flat extraction - need special handling
+				// There are ops after flat extraction - need special handling
 				// Process the path in two phases:
 				// Phase 1: Process up to and including the flat segment
 				// Phase 2: Apply flattening and then process remaining segments
 
 				// Step 1: Process up to and including the flat segment
 				preFlatSegments := segments[:flatSegmentIndex+1]
-				preFlatResult, err := urp.processRecursivelyAtSegmentsWithOptions(data, preFlatSegments, 0, operation, value, createPaths)
+				preFlatResult, err := urp.processRecursivelyAtSegmentsWithOptions(data, preFlatSegments, 0, op, value, createPaths)
 				if err != nil {
 					return nil, err
 				}
@@ -90,7 +98,7 @@ func (urp *RecursiveProcessor) ProcessRecursivelyWithOptions(data any, path stri
 				// Step 3: Process remaining segments on the flattened result
 				postFlatSegments := segments[flatSegmentIndex+1:]
 				if len(postFlatSegments) > 0 {
-					finalResult, err := urp.processRecursivelyAtSegmentsWithOptions(flattened, postFlatSegments, 0, operation, value, createPaths)
+					finalResult, err := urp.processRecursivelyAtSegmentsWithOptions(flattened, postFlatSegments, 0, op, value, createPaths)
 					if err != nil {
 						return nil, err
 					}
@@ -100,7 +108,7 @@ func (urp *RecursiveProcessor) ProcessRecursivelyWithOptions(data any, path stri
 				return flattened, nil
 			}
 
-			// No operations after flat extraction - the flat extraction should have been handled
+			// No ops after flat extraction - the flat extraction should have been handled
 			// during normal processing, so just return the result as-is
 			return result, nil
 		}
@@ -109,21 +117,16 @@ func (urp *RecursiveProcessor) ProcessRecursivelyWithOptions(data any, path stri
 	return result, nil
 }
 
-// processRecursivelyAtSegments recursively processes path segments for any operation
-func (urp *RecursiveProcessor) processRecursivelyAtSegments(data any, segments []internal.PathSegment, segmentIndex int, operation Operation, value any) (any, error) {
-	return urp.processRecursivelyAtSegmentsWithOptions(data, segments, segmentIndex, operation, value, false)
-}
-
 // processRecursivelyAtSegmentsWithOptions recursively processes path segments with path creation options
-func (urp *RecursiveProcessor) processRecursivelyAtSegmentsWithOptions(data any, segments []internal.PathSegment, segmentIndex int, operation Operation, value any, createPaths bool) (any, error) {
+func (urp *recursiveProcessor) processRecursivelyAtSegmentsWithOptions(data any, segments []internal.PathSegment, segmentIndex int, op operation, value any, createPaths bool) (any, error) {
 	// Base case: no more segments to process
 	if segmentIndex >= len(segments) {
-		switch operation {
-		case OpGet:
+		switch op {
+		case opGet:
 			return data, nil
-		case OpSet:
+		case opSet:
 			return nil, fmt.Errorf("cannot set value: no target segment")
-		case OpDelete:
+		case opDelete:
 			return nil, fmt.Errorf("cannot delete value: no target segment")
 		}
 	}
@@ -135,7 +138,7 @@ func (urp *RecursiveProcessor) processRecursivelyAtSegmentsWithOptions(data any,
 
 		// Special handling for {extract}[slice] pattern
 		if currentSegment.Type == internal.ExtractSegment && nextSegment.Type == internal.ArraySliceSegment {
-			return urp.handleExtractThenSlice(data, currentSegment, nextSegment, segments, segmentIndex, operation, value)
+			return urp.handleExtractThenSlice(data, currentSegment, nextSegment, segments, segmentIndex, op, value)
 		}
 	}
 
@@ -144,46 +147,47 @@ func (urp *RecursiveProcessor) processRecursivelyAtSegmentsWithOptions(data any,
 
 	switch currentSegment.Type {
 	case internal.PropertySegment:
-		return urp.handlePropertySegmentUnified(data, currentSegment, segments, segmentIndex, isLastSegment, operation, value, createPaths)
+		return urp.handlePropertySegmentUnified(data, currentSegment, segments, segmentIndex, isLastSegment, op, value, createPaths)
 
 	case internal.ArrayIndexSegment:
-		return urp.handleArrayIndexSegmentUnified(data, currentSegment, segments, segmentIndex, isLastSegment, operation, value, createPaths)
+		return urp.handleArrayIndexSegmentUnified(data, currentSegment, segments, segmentIndex, isLastSegment, op, value, createPaths)
 
 	case internal.ArraySliceSegment:
-		return urp.handleArraySliceSegmentUnified(data, currentSegment, segments, segmentIndex, isLastSegment, operation, value, createPaths)
+		return urp.handleArraySliceSegmentUnified(data, currentSegment, segments, segmentIndex, isLastSegment, op, value, createPaths)
 
 	case internal.ExtractSegment:
-		return urp.handleExtractSegmentUnified(data, currentSegment, segments, segmentIndex, isLastSegment, operation, value, createPaths)
+		return urp.handleExtractSegmentUnified(data, currentSegment, segments, segmentIndex, isLastSegment, op, value, createPaths)
 
 	case internal.WildcardSegment:
-		return urp.handleWildcardSegmentUnified(data, currentSegment, segments, segmentIndex, isLastSegment, operation, value, createPaths)
+		return urp.handleWildcardSegmentUnified(data, currentSegment, segments, segmentIndex, isLastSegment, op, value, createPaths)
 
 	default:
 		return nil, fmt.Errorf("unsupported segment type: %v", currentSegment.Type)
 	}
 }
 
-// handleArrayIndexSegmentUnified handles array index access segments for all operations
-func (urp *RecursiveProcessor) handleArrayIndexSegmentUnified(data any, segment internal.PathSegment, segments []internal.PathSegment, segmentIndex int, isLastSegment bool, operation Operation, value any, createPaths bool) (any, error) {
+// handleArrayIndexSegmentUnified handles array index access segments for all ops
+func (urp *recursiveProcessor) handleArrayIndexSegmentUnified(data any, segment internal.PathSegment, segments []internal.PathSegment, segmentIndex int, isLastSegment bool, op operation, value any, createPaths bool) (any, error) {
 	switch container := data.(type) {
 	case []any:
-		// Determine if this should be a distributed operation based on actual data structure
-		// A distributed operation is needed when we have nested arrays that need individual processing
-		shouldUseDistributed := urp.shouldUseDistributedArrayOperation(container)
+		// Determine if this should be a distributed op based on actual data structure
+		// A distributed op is needed when we have nested arrays that need individual processing
+		shouldUseDistributed := urp.shouldUseDistributedArrayop(container)
 
 		if shouldUseDistributed {
-			// For distributed operations, apply the index to each element in the container
-			var results []any
-			var errs []error
+			// For distributed ops, apply the index to each element in the container
+			// PERFORMANCE: Pre-allocate slices with capacity hints
+			results := make([]any, 0, len(container))
+			errs := make([]error, 0, 4)
 
 			for _, item := range container {
-				// Find the actual target array for distributed operation
-				targetArray := urp.findTargetArrayForDistributedOperation(item)
+				// Find the actual target array for distributed op
+				targetArray := urp.findTargetArrayForDistributedop(item)
 				if targetArray != nil {
-					// Apply index operation to this array
+					// Apply index op to this array
 					index := internal.NormalizeIndex(segment.Index, len(targetArray))
 					if index < 0 || index >= len(targetArray) {
-						if operation == OpGet {
+						if op == opGet {
 							continue // Skip out of bounds items
 						}
 						errs = append(errs, fmt.Errorf("array index %d out of bounds (length %d)", segment.Index, len(targetArray)))
@@ -191,45 +195,45 @@ func (urp *RecursiveProcessor) handleArrayIndexSegmentUnified(data any, segment 
 					}
 
 					if isLastSegment {
-						switch operation {
-						case OpGet:
+						switch op {
+						case opGet:
 							// Get the result from the target array
 							result := targetArray[index]
 
-							// For distributed array operations, unwrap single element results for flattening
-							// This mimics the behavior of the original getValueWithDistributedOperation
+							// For distributed array ops, unwrap single element results for flattening
+							// This mimics the behavior of the original getValueWithDistributedop
 							if segment.Type != internal.ArraySliceSegment {
-								// For index operations (not slice), add the result directly
+								// For index ops (not slice), add the result directly
 								// This will be a single value like "Alice", not an array
 								results = append(results, result)
 							} else {
-								// For slice operations, add the result as-is (could be an array)
+								// For slice ops, add the result as-is (could be an array)
 								results = append(results, result)
 							}
-						case OpSet:
+						case opSet:
 							targetArray[index] = value
-						case OpDelete:
-							targetArray[index] = DeletedMarker
+						case opDelete:
+							targetArray[index] = deletedMarker
 						}
 					} else {
 						// Recursively process next segment
-						result, err := urp.processRecursivelyAtSegmentsWithOptions(targetArray[index], segments, segmentIndex+1, operation, value, createPaths)
+						result, err := urp.processRecursivelyAtSegmentsWithOptions(targetArray[index], segments, segmentIndex+1, op, value, createPaths)
 						if err != nil {
 							errs = append(errs, err)
 							continue
 						}
-						if operation == OpGet && result != nil {
+						if op == opGet && result != nil {
 							results = append(results, result)
 						}
 					}
 				}
 			}
 
-			if operation == OpGet {
-				// For distributed array operations, flatten the results to match expected behavior
-				// This mimics the behavior of the original getValueWithDistributedOperation
+			if op == opGet {
+				// For distributed array ops, flatten the results to match expected behavior
+				// This mimics the behavior of the original getValueWithDistributedop
 				if isLastSegment && segment.Type != internal.ArraySliceSegment {
-					// Return flattened results for distributed array index operations
+					// Return flattened results for distributed array index ops
 					return results, nil
 				}
 				return results, nil
@@ -237,13 +241,13 @@ func (urp *RecursiveProcessor) handleArrayIndexSegmentUnified(data any, segment 
 			return nil, urp.combineErrors(errs)
 		}
 
-		// Non-distributed operation - standard array index access
+		// Non-distributed op - standard array index access
 		index := internal.NormalizeIndex(segment.Index, len(container))
 		if index < 0 || index >= len(container) {
-			if operation == OpGet {
+			if op == opGet {
 				return nil, nil // Index out of bounds
 			}
-			if operation == OpSet && createPaths && index >= 0 {
+			if op == opSet && createPaths && index >= 0 {
 				// Array extension required
 				return nil, fmt.Errorf("array extension required for index %d on array length %d", index, len(container))
 			}
@@ -251,42 +255,43 @@ func (urp *RecursiveProcessor) handleArrayIndexSegmentUnified(data any, segment 
 		}
 
 		if isLastSegment {
-			switch operation {
-			case OpGet:
+			switch op {
+			case opGet:
 				return container[index], nil
-			case OpSet:
+			case opSet:
 				container[index] = value
 				return value, nil
-			case OpDelete:
+			case opDelete:
 				// Mark for deletion (will be cleaned up later)
-				container[index] = DeletedMarker
+				container[index] = deletedMarker
 				return nil, nil
 			}
 		}
 
 		// Recursively process next segment
-		return urp.processRecursivelyAtSegmentsWithOptions(container[index], segments, segmentIndex+1, operation, value, createPaths)
+		return urp.processRecursivelyAtSegmentsWithOptions(container[index], segments, segmentIndex+1, op, value, createPaths)
 
 	case map[string]any:
 		// Apply array index to each map value recursively
-		var results []any
-		var errs []error
+		// PERFORMANCE: Pre-allocate slices with capacity hints
+		results := make([]any, 0, len(container))
+		errs := make([]error, 0, 4)
 
 		for key, mapValue := range container {
-			result, err := urp.handleArrayIndexSegmentUnified(mapValue, segment, segments, segmentIndex, isLastSegment, operation, value, createPaths)
+			result, err := urp.handleArrayIndexSegmentUnified(mapValue, segment, segments, segmentIndex, isLastSegment, op, value, createPaths)
 			if err != nil {
 				errs = append(errs, err)
 				continue
 			}
 
-			if operation == OpGet && result != nil {
+			if op == opGet && result != nil {
 				results = append(results, result)
-			} else if operation == OpSet {
+			} else if op == opSet {
 				container[key] = mapValue // Value was modified in place
 			}
 		}
 
-		if operation == OpGet {
+		if op == opGet {
 			if len(results) == 0 {
 				return nil, nil
 			}
@@ -301,22 +306,22 @@ func (urp *RecursiveProcessor) handleArrayIndexSegmentUnified(data any, segment 
 	}
 }
 
-// handlePropertySegmentUnified handles property access segments for all operations
-func (urp *RecursiveProcessor) handlePropertySegmentUnified(data any, segment internal.PathSegment, segments []internal.PathSegment, segmentIndex int, isLastSegment bool, operation Operation, value any, createPaths bool) (any, error) {
+// handlePropertySegmentUnified handles property access segments for all ops
+func (urp *recursiveProcessor) handlePropertySegmentUnified(data any, segment internal.PathSegment, segments []internal.PathSegment, segmentIndex int, isLastSegment bool, op operation, value any, createPaths bool) (any, error) {
 	switch container := data.(type) {
 	case map[string]any:
 		if isLastSegment {
-			switch operation {
-			case OpGet:
+			switch op {
+			case opGet:
 				if val, exists := container[segment.Key]; exists {
 					return val, nil
 				}
 				// Property doesn't exist - return ErrPathNotFound as documented
 				return nil, ErrPathNotFound
-			case OpSet:
+			case opSet:
 				container[segment.Key] = value
 				return value, nil
-			case OpDelete:
+			case opDelete:
 				delete(container, segment.Key)
 				return nil, nil
 			}
@@ -324,11 +329,11 @@ func (urp *RecursiveProcessor) handlePropertySegmentUnified(data any, segment in
 
 		// Recursively process next segment
 		if nextValue, exists := container[segment.Key]; exists {
-			return urp.processRecursivelyAtSegmentsWithOptions(nextValue, segments, segmentIndex+1, operation, value, createPaths)
+			return urp.processRecursivelyAtSegmentsWithOptions(nextValue, segments, segmentIndex+1, op, value, createPaths)
 		}
 
-		// Handle path creation for Set operations
-		if operation == OpSet && createPaths {
+		// Handle path creation for Set ops
+		if op == opSet && createPaths {
 			// Create missing path segment
 			nextSegment := segments[segmentIndex+1]
 			var newContainer any
@@ -356,16 +361,16 @@ func (urp *RecursiveProcessor) handlePropertySegmentUnified(data any, segment in
 			}
 
 			container[segment.Key] = newContainer
-			return urp.processRecursivelyAtSegmentsWithOptions(newContainer, segments, segmentIndex+1, operation, value, createPaths)
+			return urp.processRecursivelyAtSegmentsWithOptions(newContainer, segments, segmentIndex+1, op, value, createPaths)
 		}
 
 		// Path doesn't exist and we're not creating paths
-		if operation == OpSet {
+		if op == opSet {
 			return nil, fmt.Errorf("path not found: %s", segment.Key)
 		}
 
-		// For Get operation, return ErrPathNotFound as documented
-		if operation == OpGet {
+		// For Get op, return ErrPathNotFound as documented
+		if op == opGet {
 			return nil, ErrPathNotFound
 		}
 
@@ -373,24 +378,25 @@ func (urp *RecursiveProcessor) handlePropertySegmentUnified(data any, segment in
 
 	case []any:
 		// Apply property access to each array element recursively
-		var results []any
-		var errs []error
+		// PERFORMANCE: Pre-allocate slices with capacity hints
+		results := make([]any, 0, len(container))
+		errs := make([]error, 0, 4)
 
 		for i, item := range container {
-			result, err := urp.handlePropertySegmentUnified(item, segment, segments, segmentIndex, isLastSegment, operation, value, createPaths)
+			result, err := urp.handlePropertySegmentUnified(item, segment, segments, segmentIndex, isLastSegment, op, value, createPaths)
 			if err != nil {
 				errs = append(errs, err)
 				continue
 			}
 
-			if operation == OpGet && result != nil {
+			if op == opGet && result != nil {
 				results = append(results, result)
-			} else if operation == OpSet {
+			} else if op == opSet {
 				container[i] = item // Item was modified in place
 			}
 		}
 
-		if operation == OpGet {
+		if op == opGet {
 			if len(results) == 0 {
 				return nil, nil
 			}
@@ -400,27 +406,28 @@ func (urp *RecursiveProcessor) handlePropertySegmentUnified(data any, segment in
 		return nil, urp.combineErrors(errs)
 
 	default:
-		if operation == OpGet {
+		if op == opGet {
 			return nil, nil // Cannot access property on non-object/array
 		}
 		return nil, fmt.Errorf("cannot access property '%s' on type %T", segment.Key, data)
 	}
 }
 
-// handleArraySliceSegmentUnified handles array slice segments for all operations
-func (urp *RecursiveProcessor) handleArraySliceSegmentUnified(data any, segment internal.PathSegment, segments []internal.PathSegment, segmentIndex int, isLastSegment bool, operation Operation, value any, createPaths bool) (any, error) {
+// handleArraySliceSegmentUnified handles array slice segments for all ops
+func (urp *recursiveProcessor) handleArraySliceSegmentUnified(data any, segment internal.PathSegment, segments []internal.PathSegment, segmentIndex int, isLastSegment bool, op operation, value any, createPaths bool) (any, error) {
 	switch container := data.(type) {
 	case []any:
-		// Check if this should be a distributed operation
-		shouldUseDistributed := urp.shouldUseDistributedArrayOperation(container)
+		// Check if this should be a distributed op
+		shouldUseDistributed := urp.shouldUseDistributedArrayop(container)
 
 		if shouldUseDistributed {
-			// Distributed slice operation - apply slice to each array element
-			var results []any
-			var errs []error
+			// Distributed slice op - apply slice to each array element
+			// PERFORMANCE: Pre-allocate slices with capacity hints
+			results := make([]any, 0, len(container))
+			errs := make([]error, 0, 4)
 
 			for _, item := range container {
-				targetArray := urp.findTargetArrayForDistributedOperation(item)
+				targetArray := urp.findTargetArrayForDistributedop(item)
 				if targetArray == nil {
 					continue // Skip non-array items
 				}
@@ -438,8 +445,8 @@ func (urp *RecursiveProcessor) handleArraySliceSegmentUnified(data any, segment 
 				}
 
 				if isLastSegment {
-					switch operation {
-					case OpGet:
+					switch op {
+					case opGet:
 						// Use the array utils for proper slicing with step support
 						var startPtr, endPtr, stepPtr *int
 						if segment.HasStart() {
@@ -454,12 +461,12 @@ func (urp *RecursiveProcessor) handleArraySliceSegmentUnified(data any, segment 
 						}
 						sliceResult := internal.PerformArraySlice(targetArray, startPtr, endPtr, stepPtr)
 						results = append(results, sliceResult)
-					case OpSet:
-						// For distributed set operations on slices, we need special handling
-						return nil, fmt.Errorf("distributed set operations on slices not yet supported")
-					case OpDelete:
-						// For distributed delete operations on slices, we need special handling
-						return nil, fmt.Errorf("distributed delete operations on slices not yet supported")
+					case opSet:
+						// For distributed set ops on slices, we need special handling
+						return nil, fmt.Errorf("distributed set ops on slices not yet supported")
+					case opDelete:
+						// For distributed delete ops on slices, we need special handling
+						return nil, fmt.Errorf("distributed delete ops on slices not yet supported")
 					}
 				} else {
 					// Recursively process next segment on sliced result
@@ -476,12 +483,12 @@ func (urp *RecursiveProcessor) handleArraySliceSegmentUnified(data any, segment 
 					}
 					sliceResult := internal.PerformArraySlice(targetArray, startPtr, endPtr, stepPtr)
 
-					result, err := urp.processRecursivelyAtSegmentsWithOptions(sliceResult, segments, segmentIndex+1, operation, value, createPaths)
+					result, err := urp.processRecursivelyAtSegmentsWithOptions(sliceResult, segments, segmentIndex+1, op, value, createPaths)
 					if err != nil {
 						errs = append(errs, err)
 						continue
 					}
-					if operation == OpGet && result != nil {
+					if op == opGet && result != nil {
 						results = append(results, result)
 					}
 				}
@@ -491,13 +498,13 @@ func (urp *RecursiveProcessor) handleArraySliceSegmentUnified(data any, segment 
 				return nil, urp.combineErrors(errs)
 			}
 
-			if operation == OpGet {
+			if op == opGet {
 				return results, nil
 			}
 			return nil, nil
 		}
 
-		// Non-distributed slice operation
+		// Non-distributed slice op
 		var startVal, endVal int
 		if segment.HasStart() {
 			startVal = segment.Index // Index stores start for slices
@@ -513,8 +520,8 @@ func (urp *RecursiveProcessor) handleArraySliceSegmentUnified(data any, segment 
 		start, end := internal.NormalizeSlice(startVal, endVal, len(container))
 
 		if isLastSegment {
-			switch operation {
-			case OpGet:
+			switch op {
+			case opGet:
 				// Use the array utils for proper slicing with step support
 				var startPtr, endPtr, stepPtr *int
 				if segment.HasStart() {
@@ -528,7 +535,7 @@ func (urp *RecursiveProcessor) handleArraySliceSegmentUnified(data any, segment 
 					stepPtr = &stepVal
 				}
 				return internal.PerformArraySlice(container, startPtr, endPtr, stepPtr), nil
-			case OpSet:
+			case opSet:
 				// Check if we need to extend the array for slice assignment
 				if end > len(container) && createPaths {
 					// For array slice extension, we need to fall back to legacy handling
@@ -541,10 +548,10 @@ func (urp *RecursiveProcessor) handleArraySliceSegmentUnified(data any, segment 
 					container[i] = value
 				}
 				return value, nil
-			case OpDelete:
+			case opDelete:
 				// Mark elements in slice for deletion
 				for i := start; i < end && i < len(container); i++ {
-					container[i] = DeletedMarker
+					container[i] = deletedMarker
 				}
 				return nil, nil
 			}
@@ -566,24 +573,25 @@ func (urp *RecursiveProcessor) handleArraySliceSegmentUnified(data any, segment 
 		}
 
 		// Process remaining segments on each sliced element
-		var results []any
-		var errs []error
+		// PERFORMANCE: Pre-allocate slices with capacity hints
+		results := make([]any, 0, len(slicedContainer))
+		errs := make([]error, 0, 4)
 
 		for i, item := range slicedContainer {
-			result, err := urp.processRecursivelyAtSegmentsWithOptions(item, segments, segmentIndex+1, operation, value, createPaths)
+			result, err := urp.processRecursivelyAtSegmentsWithOptions(item, segments, segmentIndex+1, op, value, createPaths)
 			if err != nil {
 				errs = append(errs, err)
 				continue
 			}
 
-			if operation == OpGet && result != nil {
+			if op == opGet && result != nil {
 				results = append(results, result)
-			} else if operation == OpSet {
+			} else if op == opSet {
 				slicedContainer[i] = item // Item was modified in place
 			}
 		}
 
-		if operation == OpGet {
+		if op == opGet {
 			return results, nil
 		}
 
@@ -591,40 +599,41 @@ func (urp *RecursiveProcessor) handleArraySliceSegmentUnified(data any, segment 
 
 	case map[string]any:
 		// Apply array slice to each map value recursively
-		var results []any
-		var errs []error
+		// PERFORMANCE: Pre-allocate slices with capacity hints
+		results := make([]any, 0, len(container))
+		errs := make([]error, 0, 4)
 
 		for key, mapValue := range container {
-			result, err := urp.handleArraySliceSegmentUnified(mapValue, segment, segments, segmentIndex, isLastSegment, operation, value, createPaths)
+			result, err := urp.handleArraySliceSegmentUnified(mapValue, segment, segments, segmentIndex, isLastSegment, op, value, createPaths)
 			if err != nil {
 				errs = append(errs, err)
 				continue
 			}
 
-			if operation == OpGet && result != nil {
+			if op == opGet && result != nil {
 				// Preserve structure for map values - don't flatten
 				results = append(results, result)
-			} else if operation == OpSet {
+			} else if op == opSet {
 				container[key] = mapValue // Value was modified in place
 			}
 		}
 
-		if operation == OpGet {
+		if op == opGet {
 			return results, nil
 		}
 
 		return nil, urp.combineErrors(errs)
 
 	default:
-		if operation == OpGet {
+		if op == opGet {
 			return nil, nil // Cannot slice non-array
 		}
 		return nil, fmt.Errorf("cannot slice type %T", data)
 	}
 }
 
-// handleExtractSegmentUnified handles extraction segments for all operations
-func (urp *RecursiveProcessor) handleExtractSegmentUnified(data any, segment internal.PathSegment, segments []internal.PathSegment, segmentIndex int, isLastSegment bool, operation Operation, value any, createPaths bool) (any, error) {
+// handleExtractSegmentUnified handles extraction segments for all ops
+func (urp *recursiveProcessor) handleExtractSegmentUnified(data any, segment internal.PathSegment, segments []internal.PathSegment, segmentIndex int, isLastSegment bool, op operation, value any, createPaths bool) (any, error) {
 	// Check for special flat extraction syntax - use the IsFlat flag from parsing
 	isFlat := segment.IsFlatExtract()
 	actualKey := segment.Key
@@ -636,14 +645,15 @@ func (urp *RecursiveProcessor) handleExtractSegmentUnified(data any, segment int
 	switch container := data.(type) {
 	case []any:
 		// Extract from each array element
-		var results []any
-		var errs []error
+		// PERFORMANCE: Pre-allocate slices with capacity hints
+		results := make([]any, 0, len(container))
+		errs := make([]error, 0, 4)
 
 		for i, item := range container {
 			if itemMap, ok := item.(map[string]any); ok {
 				if isLastSegment {
-					switch operation {
-					case OpGet:
+					switch op {
+					case opGet:
 						if val, exists := itemMap[actualKey]; exists {
 							if isFlat {
 								// Flatten the result if it's an array
@@ -656,23 +666,23 @@ func (urp *RecursiveProcessor) handleExtractSegmentUnified(data any, segment int
 								results = append(results, val)
 							}
 						}
-					case OpSet:
+					case opSet:
 						itemMap[actualKey] = value
-					case OpDelete:
+					case opDelete:
 						delete(itemMap, actualKey)
 					}
 				} else {
-					// For non-last segments, we need to handle array operations specially
+					// For non-last segments, we need to handle array ops specially
 					if extractedValue, exists := itemMap[actualKey]; exists {
-						if operation == OpGet {
-							// Check if the next segment is an array operation
+						if op == opGet {
+							// Check if the next segment is an array op
 							nextSegmentIndex := segmentIndex + 1
 							if nextSegmentIndex < len(segments) && segments[nextSegmentIndex].Type == internal.ArrayIndexSegment {
-								// For array operations following extraction, collect values first
+								// For array ops following extraction, collect values first
 								results = append(results, extractedValue)
 							} else {
-								// For non-array operations, process recursively
-								result, err := urp.processRecursivelyAtSegmentsWithOptions(extractedValue, segments, segmentIndex+1, operation, value, createPaths)
+								// For non-array ops, process recursively
+								result, err := urp.processRecursivelyAtSegmentsWithOptions(extractedValue, segments, segmentIndex+1, op, value, createPaths)
 								if err != nil {
 									errs = append(errs, err)
 									continue
@@ -681,9 +691,9 @@ func (urp *RecursiveProcessor) handleExtractSegmentUnified(data any, segment int
 									results = append(results, result)
 								}
 							}
-						} else if operation == OpDelete {
-							// For Delete operations on extraction paths, check if this is the last extraction
-							// followed by array/slice operation
+						} else if op == opDelete {
+							// For Delete ops on extraction paths, check if this is the last extraction
+							// followed by array/slice op
 							nextSegmentIndex := segmentIndex + 1
 							isLastExtraction := true
 
@@ -698,11 +708,11 @@ func (urp *RecursiveProcessor) handleExtractSegmentUnified(data any, segment int
 							if isLastExtraction && nextSegmentIndex < len(segments) {
 								nextSegment := segments[nextSegmentIndex]
 								if nextSegment.Type == internal.ArrayIndexSegment || nextSegment.Type == internal.ArraySliceSegment {
-									// For delete operations like {tasks}[0], we need to check if the extracted value is an array
+									// For delete ops like {tasks}[0], we need to check if the extracted value is an array
 									// If it's an array, delete from the array; if it's a scalar, delete the field
 									if _, isArray := extractedValue.([]any); isArray {
-										// The extracted value is an array, apply the array operation to it
-										_, err := urp.processRecursivelyAtSegmentsWithOptions(extractedValue, segments, segmentIndex+1, operation, value, createPaths)
+										// The extracted value is an array, apply the array op to it
+										_, err := urp.processRecursivelyAtSegmentsWithOptions(extractedValue, segments, segmentIndex+1, op, value, createPaths)
 										if err != nil {
 											errs = append(errs, err)
 											continue
@@ -713,29 +723,29 @@ func (urp *RecursiveProcessor) handleExtractSegmentUnified(data any, segment int
 										delete(itemMap, actualKey)
 									}
 								} else {
-									// For other delete operations, process recursively
-									_, err := urp.processRecursivelyAtSegmentsWithOptions(extractedValue, segments, segmentIndex+1, operation, value, createPaths)
+									// For other delete ops, process recursively
+									_, err := urp.processRecursivelyAtSegmentsWithOptions(extractedValue, segments, segmentIndex+1, op, value, createPaths)
 									if err != nil {
 										errs = append(errs, err)
 										continue
 									}
 								}
 							} else {
-								// For other delete operations, process recursively
-								_, err := urp.processRecursivelyAtSegmentsWithOptions(extractedValue, segments, segmentIndex+1, operation, value, createPaths)
+								// For other delete ops, process recursively
+								_, err := urp.processRecursivelyAtSegmentsWithOptions(extractedValue, segments, segmentIndex+1, op, value, createPaths)
 								if err != nil {
 									errs = append(errs, err)
 									continue
 								}
 							}
 						} else {
-							// For Set operations, always process recursively
-							_, err := urp.processRecursivelyAtSegmentsWithOptions(extractedValue, segments, segmentIndex+1, operation, value, createPaths)
+							// For Set ops, always process recursively
+							_, err := urp.processRecursivelyAtSegmentsWithOptions(extractedValue, segments, segmentIndex+1, op, value, createPaths)
 							if err != nil {
 								errs = append(errs, err)
 								continue
 							}
-							if operation == OpSet {
+							if op == opSet {
 								container[i] = item // Item was modified in place
 							}
 						}
@@ -744,24 +754,24 @@ func (urp *RecursiveProcessor) handleExtractSegmentUnified(data any, segment int
 			}
 		}
 
-		if operation == OpGet {
-			// If this is not the last segment and we have collected results for array operations
+		if op == opGet {
+			// If this is not the last segment and we have collected results for array ops
 			if !isLastSegment && len(results) > 0 {
 				nextSegmentIndex := segmentIndex + 1
 				if nextSegmentIndex < len(segments) && segments[nextSegmentIndex].Type == internal.ArrayIndexSegment {
 					// Process the collected results with the remaining segments
-					result, err := urp.processRecursivelyAtSegmentsWithOptions(results, segments, nextSegmentIndex, operation, value, createPaths)
+					result, err := urp.processRecursivelyAtSegmentsWithOptions(results, segments, nextSegmentIndex, op, value, createPaths)
 					if err != nil {
 						return nil, err
 					}
 
-					// For distributed array operations, apply deep flattening to match expected behavior
-					// This flattens nested arrays from distributed operations like {name}[0]
+					// For distributed array ops, apply deep flattening to match expected behavior
+					// This flattens nested arrays from distributed ops like {name}[0]
 					if resultArray, ok := result.([]any); ok {
-						// Check if the next segment is an array index operation (not slice)
+						// Check if the next segment is an array index op (not slice)
 						nextSegment := segments[nextSegmentIndex]
 						if nextSegment.Type == internal.ArrayIndexSegment {
-							// For array index operations, apply deep flattening
+							// For array index ops, apply deep flattening
 							flattened := urp.deepFlattenDistributedResults(resultArray)
 							return flattened, nil
 						}
@@ -777,9 +787,9 @@ func (urp *RecursiveProcessor) handleExtractSegmentUnified(data any, segment int
 				return flattened, nil
 			}
 
-			// For distributed operations that end with array index operations, apply deep flattening
+			// For distributed ops that end with array index ops, apply deep flattening
 			// This handles cases like {name}[0] where we want ["Alice", "David", "Frank"] not [["Alice", "David"], ["Frank"]]
-			// Only apply this for paths that have multiple extraction segments followed by array operations
+			// Only apply this for paths that have multiple extraction segments followed by array ops
 			if len(results) > 0 && len(segments) > 0 {
 				lastSegment := segments[len(segments)-1]
 				if lastSegment.Type == internal.ArrayIndexSegment {
@@ -807,8 +817,8 @@ func (urp *RecursiveProcessor) handleExtractSegmentUnified(data any, segment int
 
 	case map[string]any:
 		if isLastSegment {
-			switch operation {
-			case OpGet:
+			switch op {
+			case opGet:
 				if val, exists := container[actualKey]; exists {
 					if isFlat {
 						// Flatten the result if it's an array
@@ -819,10 +829,10 @@ func (urp *RecursiveProcessor) handleExtractSegmentUnified(data any, segment int
 					return val, nil
 				}
 				return nil, nil
-			case OpSet:
+			case opSet:
 				container[actualKey] = value
 				return value, nil
-			case OpDelete:
+			case opDelete:
 				delete(container, actualKey)
 				return nil, nil
 			}
@@ -830,13 +840,13 @@ func (urp *RecursiveProcessor) handleExtractSegmentUnified(data any, segment int
 
 		// Recursively process extracted value
 		if extractedValue, exists := container[actualKey]; exists {
-			return urp.processRecursivelyAtSegmentsWithOptions(extractedValue, segments, segmentIndex+1, operation, value, createPaths)
+			return urp.processRecursivelyAtSegmentsWithOptions(extractedValue, segments, segmentIndex+1, op, value, createPaths)
 		}
 
 		return nil, nil
 
 	default:
-		if operation == OpGet {
+		if op == opGet {
 			return nil, nil // Cannot extract from non-object/array
 		}
 		return nil, fmt.Errorf("cannot extract from type %T", data)
@@ -844,14 +854,14 @@ func (urp *RecursiveProcessor) handleExtractSegmentUnified(data any, segment int
 }
 
 // handleExtractThenSlice handles the special case of {extract}[slice] pattern
-func (urp *RecursiveProcessor) handleExtractThenSlice(data any, extractSegment, sliceSegment internal.PathSegment, segments []internal.PathSegment, segmentIndex int, operation Operation, value any) (any, error) {
-	// For Delete operations on {extract}[slice] patterns, we need to apply the slice operation
+func (urp *recursiveProcessor) handleExtractThenSlice(data any, extractSegment, sliceSegment internal.PathSegment, segments []internal.PathSegment, segmentIndex int, op operation, value any) (any, error) {
+	// For Delete ops on {extract}[slice] patterns, we need to apply the slice op
 	// to each extracted array individually, not to the collection of extracted results
-	if operation == OpDelete {
+	if op == opDelete {
 		return urp.handleExtractThenSliceDelete(data, extractSegment, sliceSegment, segments, segmentIndex, value)
 	}
 
-	// For Get operations, use the original logic
+	// For Get ops, use the original logic
 	var extractedResults []any
 
 	switch container := data.(type) {
@@ -889,10 +899,10 @@ func (urp *RecursiveProcessor) handleExtractThenSlice(data any, extractSegment, 
 
 		start, end := internal.NormalizeSlice(startVal, endVal, len(extractedResults))
 
-		// Check if this is the last operation (extract + slice)
-		isLastOperation := segmentIndex+2 >= len(segments)
+		// Check if this is the last op (extract + slice)
+		isLastop := segmentIndex+2 >= len(segments)
 
-		if isLastOperation {
+		if isLastop {
 			// Final result: slice the extracted data
 			if start >= len(extractedResults) || end <= 0 || start >= end {
 				return []any{}, nil
@@ -911,18 +921,18 @@ func (urp *RecursiveProcessor) handleExtractThenSlice(data any, extractSegment, 
 			var errs []error
 
 			for _, item := range slicedData {
-				result, err := urp.processRecursivelyAtSegmentsWithOptions(item, segments, segmentIndex+2, operation, value, false)
+				result, err := urp.processRecursivelyAtSegmentsWithOptions(item, segments, segmentIndex+2, op, value, false)
 				if err != nil {
 					errs = append(errs, err)
 					continue
 				}
 
-				if operation == OpGet && result != nil {
+				if op == opGet && result != nil {
 					results = append(results, result)
 				}
 			}
 
-			if operation == OpGet {
+			if op == opGet {
 				return results, nil
 			}
 
@@ -934,8 +944,8 @@ func (urp *RecursiveProcessor) handleExtractThenSlice(data any, extractSegment, 
 	return []any{}, nil
 }
 
-// handleExtractThenSliceDelete handles Delete operations for {extract}[slice] patterns
-func (urp *RecursiveProcessor) handleExtractThenSliceDelete(data any, extractSegment, sliceSegment internal.PathSegment, segments []internal.PathSegment, segmentIndex int, value any) (any, error) {
+// handleExtractThenSliceDelete handles Delete ops for {extract}[slice] patterns
+func (urp *recursiveProcessor) handleExtractThenSliceDelete(data any, extractSegment, sliceSegment internal.PathSegment, segments []internal.PathSegment, segmentIndex int, value any) (any, error) {
 	switch container := data.(type) {
 	case []any:
 		// Apply slice deletion to each extracted array
@@ -975,7 +985,7 @@ func (urp *RecursiveProcessor) handleExtractThenSliceDelete(data any, extractSeg
 }
 
 // applySliceDeletion applies slice deletion to an array
-func (urp *RecursiveProcessor) applySliceDeletion(arr []any, sliceSegment internal.PathSegment) error {
+func (urp *recursiveProcessor) applySliceDeletion(arr []any, sliceSegment internal.PathSegment) error {
 	var startVal, endVal int
 	if sliceSegment.HasStart() {
 		startVal = sliceSegment.Index // Index stores start for slices
@@ -992,55 +1002,56 @@ func (urp *RecursiveProcessor) applySliceDeletion(arr []any, sliceSegment intern
 
 	// Mark elements in slice for deletion
 	for i := start; i < end && i < len(arr); i++ {
-		arr[i] = DeletedMarker
+		arr[i] = deletedMarker
 	}
 
 	return nil
 }
 
-// handleWildcardSegmentUnified handles wildcard segments for all operations
-func (urp *RecursiveProcessor) handleWildcardSegmentUnified(data any, segment internal.PathSegment, segments []internal.PathSegment, segmentIndex int, isLastSegment bool, operation Operation, value any, createPaths bool) (any, error) {
+// handleWildcardSegmentUnified handles wildcard segments for all ops
+func (urp *recursiveProcessor) handleWildcardSegmentUnified(data any, segment internal.PathSegment, segments []internal.PathSegment, segmentIndex int, isLastSegment bool, op operation, value any, createPaths bool) (any, error) {
 	switch container := data.(type) {
 	case []any:
 		if isLastSegment {
-			switch operation {
-			case OpGet:
+			switch op {
+			case opGet:
 				return container, nil
-			case OpSet:
+			case opSet:
 				// Set value to all array elements
 				for i := range container {
 					container[i] = value
 				}
 				return value, nil
-			case OpDelete:
+			case opDelete:
 				// Mark all array elements for deletion
 				for i := range container {
-					container[i] = DeletedMarker
+					container[i] = deletedMarker
 				}
 				return nil, nil
 			}
 		}
 
 		// Recursively process all array elements
-		var results []any
-		var errs []error
+		// PERFORMANCE: Pre-allocate slices with capacity hints
+		results := make([]any, 0, len(container))
+		errs := make([]error, 0, 4)
 
 		for i, item := range container {
-			result, err := urp.processRecursivelyAtSegmentsWithOptions(item, segments, segmentIndex+1, operation, value, createPaths)
+			result, err := urp.processRecursivelyAtSegmentsWithOptions(item, segments, segmentIndex+1, op, value, createPaths)
 			if err != nil {
 				errs = append(errs, err)
 				continue
 			}
 
-			if operation == OpGet && result != nil {
+			if op == opGet && result != nil {
 				// Preserve structure - don't flatten unless explicitly requested
 				results = append(results, result)
-			} else if operation == OpSet {
+			} else if op == opSet {
 				container[i] = item // Item was modified in place
 			}
 		}
 
-		if operation == OpGet {
+		if op == opGet {
 			return results, nil
 		}
 
@@ -1048,20 +1059,21 @@ func (urp *RecursiveProcessor) handleWildcardSegmentUnified(data any, segment in
 
 	case map[string]any:
 		if isLastSegment {
-			switch operation {
-			case OpGet:
-				var results []any
+			switch op {
+			case opGet:
+				// PERFORMANCE: Pre-allocate slice with capacity hint
+				results := make([]any, 0, len(container))
 				for _, val := range container {
 					results = append(results, val)
 				}
 				return results, nil
-			case OpSet:
+			case opSet:
 				// Set value to all map entries
 				for key := range container {
 					container[key] = value
 				}
 				return value, nil
-			case OpDelete:
+			case opDelete:
 				// Delete all map entries
 				for key := range container {
 					delete(container, key)
@@ -1071,32 +1083,33 @@ func (urp *RecursiveProcessor) handleWildcardSegmentUnified(data any, segment in
 		}
 
 		// Recursively process all map values
-		var results []any
-		var errs []error
+		// PERFORMANCE: Pre-allocate slices with capacity hints
+		results := make([]any, 0, len(container))
+		errs := make([]error, 0, 4)
 
 		for key, mapValue := range container {
-			result, err := urp.processRecursivelyAtSegmentsWithOptions(mapValue, segments, segmentIndex+1, operation, value, createPaths)
+			result, err := urp.processRecursivelyAtSegmentsWithOptions(mapValue, segments, segmentIndex+1, op, value, createPaths)
 			if err != nil {
 				errs = append(errs, err)
 				continue
 			}
 
-			if operation == OpGet && result != nil {
+			if op == opGet && result != nil {
 				// Preserve structure - don't flatten unless explicitly requested
 				results = append(results, result)
-			} else if operation == OpSet {
+			} else if op == opSet {
 				container[key] = mapValue // Value was modified in place
 			}
 		}
 
-		if operation == OpGet {
+		if op == opGet {
 			return results, nil
 		}
 
 		return nil, urp.combineErrors(errs)
 
 	default:
-		if operation == OpGet {
+		if op == opGet {
 			return nil, nil // Cannot wildcard non-container
 		}
 		return nil, fmt.Errorf("cannot apply wildcard to type %T", data)
@@ -1104,7 +1117,7 @@ func (urp *RecursiveProcessor) handleWildcardSegmentUnified(data any, segment in
 }
 
 // combineErrors combines multiple errors into a single error using modern Go 1.24+ patterns
-func (urp *RecursiveProcessor) combineErrors(errs []error) error {
+func (urp *recursiveProcessor) combineErrors(errs []error) error {
 	if len(errs) == 0 {
 		return nil
 	}
@@ -1125,9 +1138,9 @@ func (urp *RecursiveProcessor) combineErrors(errs []error) error {
 	return errors.Join(validErrors...)
 }
 
-// findTargetArrayForDistributedOperation finds the actual target array for distributed operations
-// This handles nested array structures that may result from extraction operations
-func (urp *RecursiveProcessor) findTargetArrayForDistributedOperation(item any) []any {
+// findTargetArrayForDistributedop finds the actual target array for distributed ops
+// This handles nested array structures that may result from extraction ops
+func (urp *recursiveProcessor) findTargetArrayForDistributedop(item any) []any {
 	// If item is directly an array, return it
 	if arr, ok := item.([]any); ok {
 		// Check if this array contains only one element that is also an array
@@ -1142,7 +1155,7 @@ func (urp *RecursiveProcessor) findTargetArrayForDistributedOperation(item any) 
 						return nestedArr
 					} else if _, ok := nestedArr[0].([]any); ok {
 						// Another level of nesting, recurse
-						return urp.findTargetArrayForDistributedOperation(nestedArr)
+						return urp.findTargetArrayForDistributedop(nestedArr)
 					} else {
 						// This is the target array containing primitive values (like strings)
 						return nestedArr
@@ -1160,9 +1173,9 @@ func (urp *RecursiveProcessor) findTargetArrayForDistributedOperation(item any) 
 	return nil
 }
 
-// deepFlattenDistributedResults performs deep flattening of distributed operation results
+// deepFlattenDistributedResults performs deep flattening of distributed op results
 // This handles nested array structures like [["Alice", "David"], ["Frank"]] -> ["Alice", "David", "Frank"]
-func (urp *RecursiveProcessor) deepFlattenDistributedResults(results []any) []any {
+func (urp *recursiveProcessor) deepFlattenDistributedResults(results []any) []any {
 	var flattened []any
 
 	for _, item := range results {
@@ -1188,7 +1201,7 @@ func (urp *RecursiveProcessor) deepFlattenDistributedResults(results []any) []an
 
 // deepFlattenResults recursively flattens nested arrays into a single flat array
 // This is used for flat: extraction syntax to completely flatten all nested structures
-func (urp *RecursiveProcessor) deepFlattenResults(results []any, flattened *[]any) {
+func (urp *recursiveProcessor) deepFlattenResults(results []any, flattened *[]any) {
 	for _, result := range results {
 		if resultArray, ok := result.([]any); ok {
 			// Recursively flatten nested arrays
@@ -1200,16 +1213,16 @@ func (urp *RecursiveProcessor) deepFlattenResults(results []any, flattened *[]an
 	}
 }
 
-// shouldUseDistributedArrayOperation determines if an array operation should be distributed
+// shouldUseDistributedArrayop determines if an array op should be distributed
 // based on the actual data structure. Optimized with early exit and sampling.
-func (urp *RecursiveProcessor) shouldUseDistributedArrayOperation(container []any) bool {
-	// Distributed operations should ONLY be used for extraction results, not regular nested arrays
+func (urp *recursiveProcessor) shouldUseDistributedArrayop(container []any) bool {
+	// Distributed ops should ONLY be used for extraction results, not regular nested arrays
 	// Regular nested arrays like [[1,2,3], [4,5,6]] should use normal array indexing
 	// Extraction results have specific patterns that distinguish them from regular nested arrays
 
 	n := len(container)
 
-	// If the container is empty, no distributed operation needed
+	// If the container is empty, no distributed op needed
 	if n == 0 {
 		return false
 	}
@@ -1258,7 +1271,7 @@ func (urp *RecursiveProcessor) shouldUseDistributedArrayOperation(container []an
 		}
 	}
 
-	// Only use distributed operation if ALL elements are arrays AND at least one contains objects
+	// Only use distributed op if ALL elements are arrays AND at least one contains objects
 	// This prevents treating [[1,2,3], [4,5,6]] as an extraction result
 	return allArrays && hasObjects
 }

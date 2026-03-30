@@ -5,18 +5,56 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math/rand/v2"
 	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	"golang.org/x/text/unicode/norm"
 )
 
+// randSource is a sharded random source for concurrent access.
+// PERFORMANCE: Sharding eliminates lock contention by using per-shard locks.
+type randSource struct {
+	mu   sync.Mutex
+	rand *rand.Rand
+}
+
+// randShards is a pool of random sources sharded for concurrent access.
+// Using 8 shards provides good distribution with minimal memory overhead.
+var randShards [8]randSource
+
+// randCounter is used for round-robin shard selection
+var randCounter atomic.Uint64
+
+// init initializes the random source shards
+func init() {
+	seed := uint64(time.Now().UnixNano())
+	for i := range randShards {
+		// Each shard gets a unique seed derived from the base seed
+		randShards[i].rand = rand.New(rand.NewPCG(seed+uint64(i), seed+uint64(i*7)))
+	}
+}
+
+// randIntn returns a random integer in [0, n) in a thread-safe manner.
+// PERFORMANCE: Uses sharded random sources to minimize lock contention.
+// Note: math/rand/v2 uses IntN (capital N) instead of Intn.
+func randIntn(n int) int {
+	// Select shard using round-robin for load balancing
+	idx := randCounter.Add(1) % uint64(len(randShards))
+	shard := &randShards[idx]
+	shard.mu.Lock()
+	defer shard.mu.Unlock()
+	return shard.rand.IntN(n)
+}
+
 // LoadFromFile loads JSON data from a file and returns the raw JSON string.
-func (p *Processor) LoadFromFile(filePath string, opts ...*ProcessorOptions) (string, error) {
+func (p *Processor) LoadFromFile(filePath string, opts ...Config) (string, error) {
 	if err := p.checkClosed(); err != nil {
 		return "", err
 	}
@@ -40,7 +78,7 @@ func (p *Processor) LoadFromFile(filePath string, opts ...*ProcessorOptions) (st
 }
 
 // LoadFromFileAsData loads JSON data from a file and returns the parsed data structure.
-func (p *Processor) LoadFromFileAsData(filePath string, opts ...*ProcessorOptions) (any, error) {
+func (p *Processor) LoadFromFileAsData(filePath string, opts ...Config) (any, error) {
 	if err := p.checkClosed(); err != nil {
 		return nil, err
 	}
@@ -67,7 +105,7 @@ func (p *Processor) LoadFromFileAsData(filePath string, opts ...*ProcessorOption
 }
 
 // LoadFromReader loads JSON data from an io.Reader and returns the raw JSON string.
-func (p *Processor) LoadFromReader(reader io.Reader, opts ...*ProcessorOptions) (string, error) {
+func (p *Processor) LoadFromReader(reader io.Reader, opts ...Config) (string, error) {
 	if err := p.checkClosed(); err != nil {
 		return "", err
 	}
@@ -98,7 +136,7 @@ func (p *Processor) LoadFromReader(reader io.Reader, opts ...*ProcessorOptions) 
 }
 
 // LoadFromReaderAsData loads JSON data from an io.Reader and returns the parsed data structure.
-func (p *Processor) LoadFromReaderAsData(reader io.Reader, opts ...*ProcessorOptions) (any, error) {
+func (p *Processor) LoadFromReaderAsData(reader io.Reader, opts ...Config) (any, error) {
 	if err := p.checkClosed(); err != nil {
 		return nil, err
 	}
@@ -179,8 +217,13 @@ func (p *Processor) createDirectoryIfNotExists(filePath string) error {
 	return nil
 }
 
-// SaveToFile saves data to a JSON file with automatic directory creation
-func (p *Processor) SaveToFile(filePath string, data any, pretty ...bool) error {
+// SaveToFile saves data to a JSON file using Config.
+// This is the unified API that accepts variadic Config.
+//
+// Example:
+//
+//	err := processor.SaveToFile("data.json", data, json.PrettyConfig())
+func (p *Processor) SaveToFile(filePath string, data any, cfg ...Config) error {
 	if err := p.checkClosed(); err != nil {
 		return err
 	}
@@ -205,15 +248,11 @@ func (p *Processor) SaveToFile(filePath string, data any, pretty ...bool) error 
 		return err
 	}
 
-	// Determine formatting preference
-	shouldFormat := false
-	if len(pretty) > 0 {
-		shouldFormat = pretty[0]
-	}
-
 	// Encode data to JSON
-	config := DefaultEncodeConfig()
-	config.Pretty = shouldFormat
+	config := DefaultConfig()
+	if len(cfg) > 0 {
+		config = cfg[0]
+	}
 	jsonStr, err := p.EncodeWithConfig(processedData, config)
 	if err != nil {
 		return err
@@ -232,8 +271,14 @@ func (p *Processor) SaveToFile(filePath string, data any, pretty ...bool) error 
 	return nil
 }
 
-// SaveToWriter saves data to an io.Writer
-func (p *Processor) SaveToWriter(writer io.Writer, data any, pretty bool, opts ...*ProcessorOptions) error {
+// SaveToWriter saves data to an io.Writer using Config.
+// This is the unified API that accepts variadic Config.
+//
+// Example:
+//
+//	var buf bytes.Buffer
+//	err := processor.SaveToWriter(&buf, data, json.PrettyConfig())
+func (p *Processor) SaveToWriter(writer io.Writer, data any, cfg ...Config) error {
 	if err := p.checkClosed(); err != nil {
 		return err
 	}
@@ -245,9 +290,11 @@ func (p *Processor) SaveToWriter(writer io.Writer, data any, pretty bool, opts .
 	}
 
 	// Encode data to JSON
-	config := DefaultEncodeConfig()
-	config.Pretty = pretty
-	jsonStr, err := p.EncodeWithConfig(processedData, config, opts...)
+	config := DefaultConfig()
+	if len(cfg) > 0 {
+		config = cfg[0]
+	}
+	jsonStr, err := p.EncodeWithConfig(processedData, config)
 	if err != nil {
 		return err
 	}
@@ -265,8 +312,13 @@ func (p *Processor) SaveToWriter(writer io.Writer, data any, pretty bool, opts .
 	return nil
 }
 
-// MarshalToFile converts data to JSON and saves it to the specified file.
-func (p *Processor) MarshalToFile(path string, data any, pretty ...bool) error {
+// MarshalToFile converts data to JSON and saves it to the specified file using Config.
+// This is the unified API that accepts variadic Config.
+//
+// Example:
+//
+//	err := processor.MarshalToFile("data.json", data, json.PrettyConfig())
+func (p *Processor) MarshalToFile(path string, data any, cfg ...Config) error {
 	if err := p.checkClosed(); err != nil {
 		return err
 	}
@@ -291,11 +343,15 @@ func (p *Processor) MarshalToFile(path string, data any, pretty ...bool) error {
 		return err
 	}
 
+	// Determine formatting preference
+	config := DefaultConfig()
+	if len(cfg) > 0 {
+		config = cfg[0]
+	}
+
 	// Marshal data to JSON bytes
 	var jsonBytes []byte
-
-	shouldFormat := len(pretty) > 0 && pretty[0]
-	if shouldFormat {
+	if config.Pretty {
 		jsonBytes, err = p.MarshalIndent(processedData, "", "  ")
 	} else {
 		jsonBytes, err = p.Marshal(processedData)
@@ -323,7 +379,7 @@ func (p *Processor) MarshalToFile(path string, data any, pretty ...bool) error {
 }
 
 // UnmarshalFromFile reads JSON data from the specified file and unmarshals it into the provided value.
-func (p *Processor) UnmarshalFromFile(path string, v any, opts ...*ProcessorOptions) error {
+func (p *Processor) UnmarshalFromFile(path string, v any, opts ...Config) error {
 	if err := p.checkClosed(); err != nil {
 		return err
 	}
@@ -376,8 +432,8 @@ func (p *Processor) UnmarshalFromFile(path string, v any, opts ...*ProcessorOpti
 	return nil
 }
 
-// validateFilePath provides enhanced security validation for file paths
-// REFACTORED: Uses smaller helper functions for better maintainability and testability
+// validateFilePath provides enhanced security validation for file paths.
+// Uses smaller helper functions for better maintainability and testability.
 func (p *Processor) validateFilePath(filePath string) error {
 	// Step 1: Basic validation
 	if err := validatePathBasic(filePath); err != nil {
@@ -510,113 +566,83 @@ func (p *Processor) validatePathFileSize(absPath string) error {
 	return nil
 }
 
-// containsPathTraversal checks for path traversal patterns comprehensively
-// Uses case-insensitive matching without allocation for better performance
-// Includes Unicode normalization and recursive URL decoding for enhanced security
-// REFACTORED: Split into smaller helper functions for better maintainability
+// containsPathTraversal checks for path traversal patterns comprehensively.
+// Uses case-insensitive matching with Unicode normalization and recursive URL decoding.
+// NOTE: For JSON path validation, see security.go:validatePathSecurity which provides
+// JSON-specific security checks. This function is for file system path validation.
 func containsPathTraversal(path string) bool {
-	// SECURITY: First apply Unicode NFC normalization to detect homograph attacks
+	// SECURITY: Apply Unicode NFC normalization to detect homograph attacks
 	normalized := norm.NFC.String(path)
-
 	// SECURITY: Recursively decode URL encoding to catch multi-layered obfuscation
 	decoded := recursiveURLDecode(normalized)
 
-	// Fast path: check for standard traversal patterns
-	if containsBasicTraversal(decoded, path) {
-		return true
-	}
-
-	// Check for encoded traversal patterns
-	if containsEncodedTraversal(decoded, path) {
-		return true
-	}
-
-	// Check for encoded null bytes and control characters
-	if containsEncodedControlChars(decoded, path) {
-		return true
-	}
-
-	// Check for partial double encoding bypass attempts
-	if containsPartialDoubleEncodingIgnoreCase(decoded) ||
-		containsPartialDoubleEncodingIgnoreCase(path) {
-		return true
-	}
-
-	// SECURITY: Check for Unicode lookalike characters
-	if containsUnicodeLookalikes(decoded) {
-		return true
-	}
-
-	return false
-}
-
-// containsBasicTraversal checks for standard path traversal patterns
-func containsBasicTraversal(decoded, original string) bool {
-	// Check for standard traversal (most common case)
-	if strings.Contains(decoded, "..") || strings.Contains(original, "..") {
-		return true
-	}
-
-	// Check for consecutive dots (3 or more)
-	if containsConsecutiveDots(decoded, 3) || containsConsecutiveDots(original, 3) {
-		return true
-	}
-
-	return false
-}
-
-// pathTraversalPatterns contains known traversal attack patterns
-// REFACTORED: Extracted to package-level variable for maintainability
-var pathTraversalPatterns = []string{
-	// URL encoded patterns
-	"%2e%2e", "%252e%252e", "%25252e%25252e",
-	// Mixed encoding patterns
-	"..%2f", "..%5c", "..%c0%af", "..%c1%9c",
-	// Partial encoding patterns
-	".%2e", "%2e.", "%2e%2e%2f", "%2e%2e%5c",
-	// Windows patterns
-	"..\\", "..\\/",
-	// Injection patterns
-	"..%00", "..%0a", "..%0d", "..%09", "..%20",
-	// Double patterns
-	"....//", "....\\\\", ".....", "......",
-	// Mixed case patterns
-	"%2E%2E", "%2E%2e", "%2e%2E", "..%2F", "..%5C",
-	// UTF-8 overlong encoding
-	"%c0%ae", "%c1%1c", "%c1%9c", "..%255c",
-	// Fullwidth encoding
-	"%uff0e%uff0e", "..%ef%bc%8f",
-}
-
-// containsEncodedTraversal checks for encoded path traversal patterns
-func containsEncodedTraversal(decoded, original string) bool {
-	for _, pattern := range pathTraversalPatterns {
-		if fastIndexIgnoreCase(decoded, pattern) != -1 ||
-			fastIndexIgnoreCase(original, pattern) != -1 {
+	// Check both decoded and original for all pattern types
+	for _, s := range []string{decoded, path} {
+		if containsBasicTraversalPattern(s) || containsEncodedPattern(s) || containsUnicodeLookalike(s) {
 			return true
 		}
 	}
 	return false
 }
 
-// encodedControlCharPatterns contains encoded control character patterns
-var encodedControlCharPatterns = []string{"%00", "%0a", "%0d", "%09", "%20"}
+// containsBasicTraversalPattern checks for standalone ".." path components.
+func containsBasicTraversalPattern(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] == '.' && i+1 < len(s) && s[i+1] == '.' {
+			beforeOK := i == 0 || s[i-1] == '/' || s[i-1] == '\\'
+			afterOK := i+2 >= len(s) || s[i+2] == '/' || s[i+2] == '\\'
+			if beforeOK && afterOK {
+				return true
+			}
+			i++ // Skip past ".." to avoid false matches
+		}
+	}
+	return containsConsecutiveDots(s, 3)
+}
 
-// containsEncodedControlChars checks for encoded null bytes and control characters
-func containsEncodedControlChars(decoded, original string) bool {
-	for _, encoded := range encodedControlCharPatterns {
-		if fastIndexIgnoreCase(decoded, encoded) != -1 ||
-			fastIndexIgnoreCase(original, encoded) != -1 {
+// getTraversalPatterns returns the list of known traversal attack patterns.
+// Uses sync.OnceValue for lazy initialization to avoid allocating the slice at package init.
+var getTraversalPatterns = sync.OnceValue(func() []string {
+	return []string{
+		// URL encoded patterns
+		"%2e%2e", "%252e%252e", "%25252e%25252e",
+		// Mixed encoding patterns
+		"..%2f", "..%5c", "..%c0%af", "..%c1%9c",
+		// Partial encoding patterns
+		".%2e", "%2e.", "%2e%2e%2f", "%2e%2e%5c",
+		// Windows patterns
+		"..\\", "..\\/",
+		// Injection patterns (control chars)
+		"..%00", "..%0a", "..%0d", "..%09", "..%20",
+		"%00", "%0a", "%0d", "%09", "%20",
+		// Double patterns
+		"....//", "....\\\\", ".....", "......",
+		// Mixed case patterns
+		"%2E%2E", "%2E%2e", "%2e%2E", "..%2F", "..%5C",
+		// UTF-8 overlong encoding
+		"%c0%ae", "%c1%1c", "%c1%9c", "..%255c",
+		// Fullwidth encoding
+		"%uff0e%uff0e", "..%ef%bc%8f",
+		// Partial double encoding
+		"%2e%2", "%25%2e", "%2f%2", "%5c%2",
+	}
+})
+
+// containsEncodedPattern checks for encoded path traversal patterns.
+func containsEncodedPattern(s string) bool {
+	patterns := getTraversalPatterns()
+	for _, pattern := range patterns {
+		if fastIndexIgnoreCase(s, pattern) != -1 {
 			return true
 		}
 	}
 	return false
 }
 
-// recursiveURLDecode recursively decodes URL-encoded strings to catch multi-layered obfuscation
+// recursiveURLDecode recursively decodes URL-encoded strings (max 3 levels).
 func recursiveURLDecode(s string) string {
 	decoded := s
-	for i := 0; i < 3; i++ { // Maximum 3 levels of decoding
+	for i := 0; i < 3; i++ {
 		newDecoded, err := url.PathUnescape(decoded)
 		if err != nil || newDecoded == decoded {
 			break
@@ -626,53 +652,18 @@ func recursiveURLDecode(s string) string {
 	return decoded
 }
 
-// containsUnicodeLookalikes checks for Unicode characters that look like path traversal characters
-// SECURITY: Comprehensive detection of Unicode lookalike variants for defense in depth
-func containsUnicodeLookalikes(s string) bool {
+// containsUnicodeLookalike checks for Unicode characters that resemble path separators or dots.
+func containsUnicodeLookalike(s string) bool {
 	for _, r := range s {
-		// Check for fullwidth dots and slashes (common bypass technique)
 		switch r {
-		// Fullwidth dot variants
-		case '\uFF0E', // Fullwidth full stop (looks like .)
-			'\u2024', // One dot leader (looks like .)
-			'\u2025', // Two dot leader (looks like ..)
-			'\u2026': // Horizontal ellipsis (looks like ...)
+		// Dot lookalikes
+		case '\uFF0E', '\u2024', '\u2025', '\u2026':
 			return true
-
-		// Fullwidth slash variants
-		case '\uFF0F', // Fullwidth solidus (looks like /)
-			'\uFF3C', // Fullwidth reverse solidus (looks like \)
-			'\u2044', // Fraction slash
-			'\u2215', // Division slash
-			'\u29F8', // Big solidus
-			'\uFE68': // Small reverse solidus
+		// Slash lookalikes
+		case '\uFF0F', '\uFF3C', '\u2044', '\u2215', '\u29F8', '\uFE68':
 			return true
-
-		// Additional potentially dangerous Unicode characters
-		case '\uFF04', // Fullwidth dollar sign (template injection)
-			'\uFEFF', // Byte order mark
-			'\u2060', // Word joiner
-			'\u200B', // Zero-width space
-			'\u200C', // Zero-width non-joiner
-			'\u200D', // Zero-width joiner
-			'\u3000', // Ideographic space
-			'\u00AD', // Soft hyphen
-			'\u034F', // Combining grapheme joiner
-			'\u061C', // Arabic letter mark
-			'\u115F', // Korean jamo filler (choseong)
-			'\u1160', // Korean jamo filler (jungseong)
-			'\u180E': // Mongolian vowel separator
-			return true
-		}
-	}
-	return false
-}
-
-// containsPartialDoubleEncodingIgnoreCase checks for partial double encoding bypass attempts (case-insensitive)
-func containsPartialDoubleEncodingIgnoreCase(path string) bool {
-	patterns := []string{"%2e%2", "%25%2e", "%2f%2", "%5c%2"}
-	for _, pattern := range patterns {
-		if fastIndexIgnoreCase(path, pattern) != -1 {
+		// Dangerous invisible/formatting characters
+		case '\uFEFF', '\u2060', '\u200B', '\u200C', '\u200D', '\u3000', '\u00AD', '\u034F', '\u061C', '\u115F', '\u1160', '\u180E':
 			return true
 		}
 	}
@@ -689,6 +680,9 @@ func hasPrefixIgnoreCase(s, prefix string) bool {
 		c2 := prefix[i]
 		if c1 >= 'A' && c1 <= 'Z' {
 			c1 += 32
+		}
+		if c2 >= 'A' && c2 <= 'Z' {
+			c2 += 32
 		}
 		if c1 != c2 {
 			return false
@@ -854,13 +848,14 @@ func (lfp *LargeFileProcessor) ProcessFile(filename string, fn func(item any) er
 	if err != nil {
 		return err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }() // best-effort cleanup; error ignored in defer
 
 	// Use buffered reader for efficiency
 	reader := bufio.NewReaderSize(file, lfp.config.BufferSize)
 
 	// Create streaming processor
 	sp := NewStreamingProcessor(reader, int(lfp.config.ChunkSize))
+	defer func() { _ = sp.Close() }() // Ensure cleanup for API consistency
 
 	// Stream array elements
 	return sp.StreamArray(func(index int, item any) bool {
@@ -877,10 +872,11 @@ func (lfp *LargeFileProcessor) ProcessFileChunked(filename string, chunkSize int
 	if err != nil {
 		return err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }() // best-effort cleanup; error ignored in defer
 
 	reader := bufio.NewReaderSize(file, lfp.config.BufferSize)
 	sp := NewStreamingProcessor(reader, int(lfp.config.ChunkSize))
+	defer func() { _ = sp.Close() }() // Ensure cleanup for API consistency
 
 	chunk := make([]any, 0, chunkSize)
 
@@ -891,7 +887,9 @@ func (lfp *LargeFileProcessor) ProcessFileChunked(filename string, chunkSize int
 			if err := fn(chunk); err != nil {
 				return false
 			}
-			chunk = chunk[:0] // Reset chunk
+			// Allocate new slice to avoid sharing underlying array with callback
+			// This prevents data corruption if callback retains reference to chunk
+			chunk = make([]any, 0, chunkSize)
 		}
 		return true
 	})
@@ -1041,30 +1039,27 @@ func (lp *LazyParser) Get(path string) (any, error) {
 		return lp.parsed, nil
 	}
 
-	// Use processor for path navigation
 	processor := getDefaultProcessor()
-	jsonBytes, err := processor.Marshal(lp.parsed)
-	if err != nil {
-		return nil, err
+	if processor == nil {
+		return nil, ErrInternalError
 	}
-	return processor.Get(string(jsonBytes), path)
+	return processor.GetFromParsedData(lp.parsed, path)
 }
 
-// GetAll returns all parsed data as an interface
-// Deprecated: Use GetValue() for better type support
-func (lp *LazyParser) GetAll() (map[string]any, error) {
+// GetObject returns the parsed data as a map (only for JSON objects).
+// Returns ErrTypeMismatch if the parsed JSON is not an object.
+func (lp *LazyParser) GetObject() (map[string]any, error) {
 	lp.parse()
 	if lp.parseErr != nil {
 		return nil, lp.parseErr
 	}
 
-	// Try to convert to map[string]any for backward compatibility
 	if m, ok := lp.parsed.(map[string]any); ok {
 		return m, nil
 	}
 	return nil, &JsonsError{
-		Op:      "lazy_parser_get_all",
-		Message: "parsed JSON is not an object",
+		Op:      "lazy_parser_get_object",
+		Message: "parsed JSON is not an object (use GetValue() for arrays or other types)",
 		Err:     ErrTypeMismatch,
 	}
 }
@@ -1102,6 +1097,24 @@ func (lp *LazyParser) IsArray() bool {
 	return ok
 }
 
+// Parse forces parsing and returns the parsed data
+func (lp *LazyParser) Parse() (any, error) {
+	lp.parse()
+	return lp.parsed, lp.parseErr
+}
+
+// Parsed returns the parsed data without forcing parsing.
+// Returns nil if not yet parsed.
+func (lp *LazyParser) Parsed() any {
+	return lp.parsed
+}
+
+// Error returns any parsing error, triggering parse if needed
+func (lp *LazyParser) Error() error {
+	lp.parse()
+	return lp.parseErr
+}
+
 // ============================================================================
 // LINE-DELIMITED JSON PROCESSOR
 // For processing NDJSON (newline-delimited JSON) files
@@ -1126,7 +1139,7 @@ func (np *NDJSONProcessor) ProcessFile(filename string, fn func(lineNum int, obj
 	if err != nil {
 		return err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }() // best-effort cleanup; error ignored in defer
 
 	scanner := bufio.NewScanner(file)
 	buf := make([]byte, 0, np.bufferSize)
@@ -1212,6 +1225,13 @@ func NewChunkedWriter(writer io.Writer, chunkSize int, isArray bool) *ChunkedWri
 
 // WriteItem writes a single item to the chunk
 func (cw *ChunkedWriter) WriteItem(item any) error {
+	// RESOURCE FIX: Encode item first before modifying buffer
+	// This prevents buffer corruption if encoding fails
+	data, err := json.Marshal(item)
+	if err != nil {
+		return err
+	}
+
 	// Start array/object if first item
 	if cw.first {
 		if cw.isArray {
@@ -1224,11 +1244,6 @@ func (cw *ChunkedWriter) WriteItem(item any) error {
 		cw.buffer = append(cw.buffer, ',')
 	}
 
-	// Encode item
-	data, err := json.Marshal(item)
-	if err != nil {
-		return err
-	}
 	cw.buffer = append(cw.buffer, data...)
 	cw.count++
 
@@ -1246,6 +1261,13 @@ func (cw *ChunkedWriter) WriteKeyValue(key string, value any) error {
 		return cw.WriteItem(value)
 	}
 
+	// RESOURCE FIX: Encode key-value pair first before modifying buffer
+	// This prevents buffer corruption if encoding fails
+	data, err := json.Marshal(map[string]any{key: value})
+	if err != nil {
+		return err
+	}
+
 	if cw.first {
 		cw.buffer = append(cw.buffer, '{')
 		cw.first = false
@@ -1253,12 +1275,7 @@ func (cw *ChunkedWriter) WriteKeyValue(key string, value any) error {
 		cw.buffer = append(cw.buffer, ',')
 	}
 
-	// Encode key-value pair
-	data, err := json.Marshal(map[string]any{key: value})
-	if err != nil {
-		return err
-	}
-	// Remove the outer braces
+	// Remove the outer braces and append
 	cw.buffer = append(cw.buffer, data[1:len(data)-1]...)
 	cw.count++
 
@@ -1309,7 +1326,9 @@ func NewSamplingReader(reader io.Reader, sampleSize int) *SamplingReader {
 	}
 }
 
-// Sample reads a sample of items from a JSON array
+// Sample reads a sample of items from a JSON array using reservoir sampling.
+// The reservoir sampling algorithm ensures uniform random sampling distribution:
+// each item in the array has an equal probability of being included in the sample.
 func (sr *SamplingReader) Sample(fn func(index int, item any) bool) error {
 	// Check for array start
 	token, err := sr.decoder.Token()
@@ -1323,7 +1342,10 @@ func (sr *SamplingReader) Sample(fn func(index int, item any) bool) error {
 		if err := sr.decoder.Decode(&value); err != nil {
 			return err
 		}
-		fn(0, value)
+		// Honor the callback's return value for consistency with array handling
+		if !fn(0, value) {
+			return nil
+		}
 		return nil
 	}
 
@@ -1338,14 +1360,18 @@ func (sr *SamplingReader) Sample(fn func(index int, item any) bool) error {
 
 		sr.totalRead++
 
-		// Reservoir sampling algorithm
+		// Reservoir sampling algorithm (Algorithm R)
+		// Ensures uniform random sampling where each element has equal probability
 		if len(samples) < sr.sampleSize {
+			// Fill the reservoir first
 			samples = append(samples, item)
 		} else {
-			// Random replacement (simplified - use actual random in production)
-			replaceIdx := index % sr.sampleSize
-			if replaceIdx < len(samples) {
-				samples[replaceIdx] = item
+			// Random replacement with uniform probability k/(index+1)
+			// Using math/rand for performance - for cryptographic security use crypto/rand
+			// SECURITY FIX: Using thread-safe randIntn wrapper
+			j := randIntn(index + 1)
+			if j < sr.sampleSize {
+				samples[j] = item
 			}
 		}
 		index++

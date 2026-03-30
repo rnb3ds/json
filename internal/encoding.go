@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"strconv"
 	"sync"
+	"unicode/utf8"
 )
 
 // MarshalJSON marshals a value to JSON string with optional pretty printing
@@ -73,6 +74,27 @@ func PutEncoderBuffer(buf *bytes.Buffer) {
 	}
 }
 
+// PutEncoderBufferSecure returns a buffer to the pool after clearing sensitive data
+// SECURITY: Use this when the buffer may have contained sensitive information
+// PERFORMANCE: Slightly slower than PutEncoderBuffer due to zeroing operation
+func PutEncoderBufferSecure(buf *bytes.Buffer) {
+	const maxPoolBufferSize = 8 * 1024
+	const minPoolBufferSize = 256
+	if buf != nil {
+		c := buf.Cap()
+		if c >= minPoolBufferSize && c <= maxPoolBufferSize {
+			// SECURITY: Zero out the buffer content before returning to pool
+			// This prevents potential data leakage through uninitialized memory
+			b := buf.Bytes()
+			for i := range b {
+				b[i] = 0
+			}
+			buf.Reset()
+			encoderBufferPool.Put(buf)
+		}
+	}
+}
+
 // GetByteSlice gets a byte slice from the pool
 // PERFORMANCE: Reusable byte slices for encoding operations
 func GetByteSlice() *[]byte {
@@ -88,6 +110,26 @@ func PutByteSlice(b *[]byte) {
 	const minByteSliceCap = 256
 	c := cap(*b)
 	if c >= minByteSliceCap && c <= maxByteSliceCap {
+		*b = (*b)[:0]
+		byteSlicePool.Put(b)
+	}
+}
+
+// PutByteSliceSecure returns a byte slice to the pool after clearing sensitive data
+// SECURITY: Use this when the slice may have contained sensitive information
+// PERFORMANCE: Slightly slower than PutByteSlice due to zeroing operation
+func PutByteSliceSecure(b *[]byte) {
+	if b == nil {
+		return
+	}
+	const maxByteSliceCap = 32 * 1024 // 32KB
+	const minByteSliceCap = 256
+	c := cap(*b)
+	if c >= minByteSliceCap && c <= maxByteSliceCap {
+		// SECURITY: Zero out the slice content before returning to pool
+		for i := range *b {
+			(*b)[i] = 0
+		}
 		*b = (*b)[:0]
 		byteSlicePool.Put(b)
 	}
@@ -156,31 +198,32 @@ func ParseIntFast(s string) (int, bool) {
 		return val, true
 	}
 
-	// SECURITY: Use platform-independent overflow detection
-	// MaxInt = ^uint(0) >> 1 for both 32-bit and 64-bit
-	const maxInt = int(^uint(0) >> 1)
-	const minInt = -maxInt - 1
-	const cutoff = maxInt / 10
-
-	// Parse multi-digit number with proper overflow detection
-	var result int
+	// SECURITY: Use int64 for parsing to ensure consistent behavior across platforms
+	// This avoids the const-based approach which behaves differently on 32-bit vs 64-bit
+	var result int64
 	for i := start; i < len(s); i++ {
 		c := s[i]
 		if c < '0' || c > '9' {
 			return 0, false
 		}
-		digit := int(c - '0')
+		digit := int64(c - '0')
 
 		// SECURITY: Check overflow before multiplication and addition
-		// For positive: result*10 + digit <= MaxInt
-		// For negative: result*10 + digit <= MaxInt+1 (because MinInt = -MaxInt-1)
-		if result > cutoff || (result == cutoff && digit > maxInt%10) {
-			// Would overflow
+		// MaxInt64 = 9223372036854775807
+		// MinInt64 = -9223372036854775808
+		const maxInt64 = 9223372036854775807
+		const cutoff = maxInt64 / 10
+
+		if result > cutoff || (result == cutoff && digit > maxInt64%10) {
+			// Would overflow int64
 			if negative {
-				// Check if this is exactly MinInt
-				if result == cutoff && digit == maxInt%10+1 {
-					// This is MinInt case
-					return minInt, true
+				// Check if this is exactly MinInt64
+				if result == cutoff && digit == maxInt64%10+1 {
+					// Verify it fits in int (platform-dependent)
+					converted := int(-result - digit)
+					if converted == int(int64(converted)) {
+						return converted, true
+					}
 				}
 			}
 			return 0, false
@@ -192,7 +235,13 @@ func ParseIntFast(s string) (int, bool) {
 		result = -result
 	}
 
-	return result, true
+	// SECURITY: Verify the result fits in int (platform-dependent)
+	converted := int(result)
+	if int64(converted) != result {
+		return 0, false // Overflow on 32-bit platform
+	}
+
+	return converted, true
 }
 
 // smallIntStrings contains pre-computed string representations for integers 0-99
@@ -281,6 +330,7 @@ func EncodeFast(v any, buf *bytes.Buffer) bool {
 
 // writeEscapedStringFast writes an escaped JSON string to the buffer
 // PERFORMANCE: Optimized escape handling without allocations
+// SECURITY: Validates UTF-8 encoding for non-ASCII characters (RFC 8259 compliance)
 func writeEscapedStringFast(buf *bytes.Buffer, s string) {
 	for i := 0; i < len(s); i++ {
 		c := s[i]
@@ -304,6 +354,18 @@ func writeEscapedStringFast(buf *bytes.Buffer, s string) {
 				buf.WriteString(`\u00`)
 				buf.WriteByte(hexChars[c>>4])
 				buf.WriteByte(hexChars[c&0x0F])
+			} else if c >= 0x80 {
+				// SECURITY: Validate UTF-8 for non-ASCII characters
+				// RFC 8259 requires JSON strings to be valid UTF-8
+				r, size := utf8.DecodeRuneInString(s[i:])
+				if r == utf8.RuneError && size == 1 {
+					// Invalid UTF-8 sequence - replace with replacement character
+					buf.WriteString(`\ufffd`)
+				} else {
+					// Valid UTF-8, write all bytes of the rune directly
+					buf.WriteString(s[i : i+size])
+					i += size - 1 // Skip remaining bytes of this rune
+				}
 			} else {
 				buf.WriteByte(c)
 			}

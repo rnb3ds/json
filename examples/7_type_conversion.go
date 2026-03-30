@@ -20,51 +20,40 @@ import (
 // - JSON Number handling
 // - Custom type conversions
 //
-// Run: go run examples/7_type_conversion.go
+// Run: go run -tags=example examples/7_type_conversion.go
 
 func main() {
 	fmt.Println("🔄 JSON Library - Type Conversion")
 	fmt.Println("=================================\n ")
 
 	// 1. SAFE TYPE CONVERSION
-	fmt.Println("1️⃣  Safe Type Conversion")
-	fmt.Println("─────────────────────────")
 	demonstrateSafeConversion()
 
 	// 2. AUTOMATIC CONVERSION
-	fmt.Println("\n2️⃣  Automatic Type Conversion")
-	fmt.Println("───────────────────────────")
 	demonstrateAutomaticConversion()
 
 	// 3. NUMBER HANDLING
-	fmt.Println("\n3️⃣  JSON Number Handling")
-	fmt.Println("────────────────────────")
 	demonstrateNumberHandling()
 
 	// 4. STRING CONVERSION
-	fmt.Println("\n4️⃣  String Conversion")
-	fmt.Println("──────────────────────")
 	demonstrateStringConversion()
 
 	// 5. BOOL CONVERSION
-	fmt.Println("\n5️⃣  Boolean Conversion")
-	fmt.Println("───────────────────────")
 	demonstrateBoolConversion()
 
 	// 6. TYPE-SAFE GENERICS
-	fmt.Println("\n6️⃣  Type-Safe Generic Operations")
-	fmt.Println("────────────────────────────────")
 	demonstrateGenerics()
 
 	// 7. DEEP COPY
-	fmt.Println("\n7️⃣  Deep Copy with Type Preservation")
-	fmt.Println("──────────────────────────────────")
 	demonstrateDeepCopy()
 
 	fmt.Println("\n✅ Type conversion examples complete!")
 }
 
 func demonstrateSafeConversion() {
+	fmt.Println("1️⃣  Safe Type Conversion")
+	fmt.Println("─────────────────────────")
+
 	values := []interface{}{
 		42,                        // int
 		3.14,                      // float64
@@ -109,6 +98,9 @@ func demonstrateSafeConversion() {
 }
 
 func demonstrateAutomaticConversion() {
+	fmt.Println("\n2️⃣  Automatic Type Conversion")
+	fmt.Println("───────────────────────────")
+
 	testJSON := `{
 		"intString": "42",
 		"floatString": "3.14",
@@ -126,7 +118,7 @@ func demonstrateAutomaticConversion() {
 	fmt.Printf("   String '42' -> int: %d\n", intVal)
 
 	// String to float64
-	floatVal, _ := json.GetFloat64(testJSON, "floatString")
+	floatVal, _ := json.GetFloat(testJSON, "floatString")
 	fmt.Printf("   String '3.14' -> float64: %.2f\n", floatVal)
 
 	// String to bool
@@ -138,11 +130,14 @@ func demonstrateAutomaticConversion() {
 	intVal2, _ := json.GetInt(testJSON, "actualInt")
 	fmt.Printf("   int 100 -> int: %d (type: %T)\n", intVal2, intVal2)
 
-	floatVal2, _ := json.GetFloat64(testJSON, "actualFloat")
+	floatVal2, _ := json.GetFloat(testJSON, "actualFloat")
 	fmt.Printf("   float64 2.718 -> float64: %.3f (type: %T)\n", floatVal2, floatVal2)
 }
 
 func demonstrateNumberHandling() {
+	fmt.Println("\n3️⃣  JSON Number Handling")
+	fmt.Println("────────────────────────")
+
 	// JSON with number in various formats
 	numberJSON := `{
 		"integer": 42,
@@ -160,7 +155,7 @@ func demonstrateNumberHandling() {
 	fmt.Printf("   Large integer: %d\n", largeInt)
 
 	// Get as float64 for decimals
-	floatVal, _ := json.GetFloat64(numberJSON, "float")
+	floatVal, _ := json.GetFloat(numberJSON, "float")
 	fmt.Printf("   Float value: %.5f\n", floatVal)
 
 	// Get as uint64 for unsigned numbers
@@ -182,6 +177,9 @@ func demonstrateNumberHandling() {
 }
 
 func demonstrateStringConversion() {
+	fmt.Println("\n4️⃣  String Conversion")
+	fmt.Println("──────────────────────")
+
 	values := []interface{}{
 		42,
 		3.14,
@@ -198,6 +196,9 @@ func demonstrateStringConversion() {
 }
 
 func demonstrateBoolConversion() {
+	fmt.Println("\n5️⃣  Boolean Conversion")
+	fmt.Println("───────────────────────")
+
 	fmt.Println("   Boolean conversion truth table:")
 
 	testCases := []struct {
@@ -232,6 +233,9 @@ func demonstrateBoolConversion() {
 }
 
 func demonstrateGenerics() {
+	fmt.Println("\n6️⃣  Type-Safe Generic Operations")
+	fmt.Println("────────────────────────────────")
+
 	testJSON := `{
 		"name": "Alice",
 		"age": 30,
@@ -241,7 +245,7 @@ func demonstrateGenerics() {
 	}`
 
 	// Type-safe generic operations
-	fmt.Println("   Type-safe generic retrieval with GetTyped[T]:")
+	fmt.Println("   Type-safe generic retrieval with GetAs[T]:")
 
 	// Get as string
 	name, err := json.GetTyped[string](testJSON, "name")
@@ -281,6 +285,9 @@ func demonstrateGenerics() {
 }
 
 func demonstrateDeepCopy() {
+	fmt.Println("\n7️⃣  Deep Copy with Type Preservation")
+	fmt.Println("──────────────────────────────────")
+
 	original := map[string]interface{}{
 		"name": "Bob",
 		"age":  25,

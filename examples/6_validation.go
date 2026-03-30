@@ -20,41 +20,34 @@ import (
 // - JSON format validation
 // - Custom validation rules
 //
-// Run: go run examples/6_validation.go
+// Run: go run -tags=example examples/6_validation.go
 
 func main() {
 	fmt.Println("✓ JSON Library - Validation")
 	fmt.Println("===========================\n ")
 
 	// 1. JSON FORMAT VALIDATION
-	fmt.Println("1️⃣  JSON Format Validation")
-	fmt.Println("─────────────────────────")
 	demonstrateFormatValidation()
 
 	// 2. PATH VALIDATION
-	fmt.Println("\n2️⃣  Path Validation")
-	fmt.Println("───────────────────")
 	demonstrateValidationPath()
 
 	// 3. SCHEMA VALIDATION
-	fmt.Println("\n3️⃣  Schema Validation")
-	fmt.Println("────────────────────")
 	demonstrateSchemaValidation()
 
 	// 4. SECURITY VALIDATION
-	fmt.Println("\n4️⃣  Security Validation")
-	fmt.Println("───────────────────────")
 	demonstrateSecurityValidation()
 
 	// 5. VALIDATION WITH PROCESSOR
-	fmt.Println("\n5️⃣  Validation with Processor")
-	fmt.Println("────────────────────────────")
 	demonstrateProcessorValidation()
 
 	fmt.Println("\n✅ Validation examples complete!")
 }
 
 func demonstrateFormatValidation() {
+	fmt.Println("1️⃣  JSON Format Validation")
+	fmt.Println("─────────────────────────")
+
 	testCases := []struct {
 		name  string
 		data  string
@@ -83,6 +76,9 @@ func demonstrateFormatValidation() {
 }
 
 func demonstrateValidationPath() {
+	fmt.Println("\n2️⃣  Path Validation")
+	fmt.Println("───────────────────")
+
 	testPaths := []struct {
 		name  string
 		path  string
@@ -117,6 +113,9 @@ func demonstrateValidationPath() {
 }
 
 func demonstrateSchemaValidation() {
+	fmt.Println("\n3️⃣  Schema Validation")
+	fmt.Println("────────────────────")
+
 	// Create a schema for user data
 	schema := &json.Schema{
 		Type:     "object",
@@ -198,8 +197,11 @@ func demonstrateSchemaValidation() {
 }
 
 func demonstrateSecurityValidation() {
-	// Create a high-security processor
-	processor := json.New(json.HighSecurityConfig())
+	fmt.Println("\n4️⃣  Security Validation")
+	fmt.Println("───────────────────────")
+
+	// Create a security processor
+	processor, _ := json.New(json.SecurityConfig())
 	defer processor.Close()
 
 	testCases := []struct {
@@ -224,7 +226,7 @@ func demonstrateSecurityValidation() {
 		},
 	}
 
-	fmt.Println("   Security validation with HighSecurityConfig:")
+	fmt.Println("   Security validation with SecurityConfig:")
 	for _, tc := range testCases {
 		valid := json.IsValidJSON(tc.data)
 		status := "✓"
@@ -236,12 +238,15 @@ func demonstrateSecurityValidation() {
 }
 
 func demonstrateProcessorValidation() {
+	fmt.Println("\n5️⃣  Validation with Processor")
+	fmt.Println("────────────────────────────")
+
 	// Create processor with validation enabled
 	config := json.DefaultConfig()
 	config.EnableValidation = true
 	config.MaxJSONSize = 1024 * 1024 // 1MB
 
-	processor := json.New(config)
+	processor, _ := json.New(config)
 	defer processor.Close()
 
 	testJSON := `{

@@ -4,19 +4,18 @@ import (
 	"fmt"
 	"math/rand"
 	"reflect"
-	"runtime"
 	"strings"
 	"testing"
 	"time"
 )
 
-// TestHelper provides utilities for testing JSON operations
-type TestHelper struct {
+// testHelper provides utilities for testing JSON operations
+type testHelper struct {
 	t *testing.T
 }
 
-// TestProcessorResourcePools tests processor resource pool functionality
-func TestProcessorResourcePools(processor *Processor) bool {
+// testProcessorResourcePools tests processor resource pool functionality
+func testProcessorResourcePools(processor *Processor) bool {
 	// Test string builder pool
 	sb := processor.getStringBuilder()
 	if sb == nil {
@@ -34,13 +33,13 @@ func TestProcessorResourcePools(processor *Processor) bool {
 	return true
 }
 
-// NewTestHelper creates a new test helper
-func NewTestHelper(t *testing.T) *TestHelper {
-	return &TestHelper{t: t}
+// newTestHelper creates a new test helper
+func newTestHelper(t *testing.T) *testHelper {
+	return &testHelper{t: t}
 }
 
 // AssertEqual checks if two values are equal
-func (h *TestHelper) AssertEqual(expected, actual any, msgAndArgs ...any) {
+func (h *testHelper) AssertEqual(expected, actual any, msgAndArgs ...any) {
 	h.t.Helper()
 	if !reflect.DeepEqual(expected, actual) {
 		msg := "Values are not equal"
@@ -52,7 +51,7 @@ func (h *TestHelper) AssertEqual(expected, actual any, msgAndArgs ...any) {
 }
 
 // AssertNotEqual checks if two values are not equal
-func (h *TestHelper) AssertNotEqual(expected, actual any, msgAndArgs ...any) {
+func (h *testHelper) AssertNotEqual(expected, actual any, msgAndArgs ...any) {
 	h.t.Helper()
 	if reflect.DeepEqual(expected, actual) {
 		msg := "Values should not be equal"
@@ -64,7 +63,7 @@ func (h *TestHelper) AssertNotEqual(expected, actual any, msgAndArgs ...any) {
 }
 
 // AssertNoError checks that error is nil
-func (h *TestHelper) AssertNoError(err error, msgAndArgs ...any) {
+func (h *testHelper) AssertNoError(err error, msgAndArgs ...any) {
 	h.t.Helper()
 	if err != nil {
 		msg := "Expected no error"
@@ -76,7 +75,7 @@ func (h *TestHelper) AssertNoError(err error, msgAndArgs ...any) {
 }
 
 // AssertError checks that error is not nil
-func (h *TestHelper) AssertError(err error, msgAndArgs ...any) {
+func (h *testHelper) AssertError(err error, msgAndArgs ...any) {
 	h.t.Helper()
 	if err == nil {
 		msg := "Expected an error"
@@ -88,7 +87,7 @@ func (h *TestHelper) AssertError(err error, msgAndArgs ...any) {
 }
 
 // AssertErrorContains checks that error contains specific text
-func (h *TestHelper) AssertErrorContains(err error, contains string, msgAndArgs ...any) {
+func (h *testHelper) AssertErrorContains(err error, contains string, msgAndArgs ...any) {
 	h.t.Helper()
 	if err == nil {
 		msg := "Expected an error"
@@ -108,7 +107,7 @@ func (h *TestHelper) AssertErrorContains(err error, contains string, msgAndArgs 
 }
 
 // AssertPanic checks that function panics
-func (h *TestHelper) AssertPanic(fn func(), msgAndArgs ...any) {
+func (h *testHelper) AssertPanic(fn func(), msgAndArgs ...any) {
 	h.t.Helper()
 	defer func() {
 		if r := recover(); r == nil {
@@ -123,7 +122,7 @@ func (h *TestHelper) AssertPanic(fn func(), msgAndArgs ...any) {
 }
 
 // AssertNoPanic checks that function doesn't panic
-func (h *TestHelper) AssertNoPanic(fn func(), msgAndArgs ...any) {
+func (h *testHelper) AssertNoPanic(fn func(), msgAndArgs ...any) {
 	h.t.Helper()
 	defer func() {
 		if r := recover(); r != nil {
@@ -138,7 +137,7 @@ func (h *TestHelper) AssertNoPanic(fn func(), msgAndArgs ...any) {
 }
 
 // AssertTrue checks that condition is true
-func (h *TestHelper) AssertTrue(condition bool, msgAndArgs ...any) {
+func (h *testHelper) AssertTrue(condition bool, msgAndArgs ...any) {
 	h.t.Helper()
 	if !condition {
 		msg := "Expected condition to be true"
@@ -150,7 +149,7 @@ func (h *TestHelper) AssertTrue(condition bool, msgAndArgs ...any) {
 }
 
 // AssertFalse checks that condition is false
-func (h *TestHelper) AssertFalse(condition bool, msgAndArgs ...any) {
+func (h *testHelper) AssertFalse(condition bool, msgAndArgs ...any) {
 	h.t.Helper()
 	if condition {
 		msg := "Expected condition to be false"
@@ -162,7 +161,7 @@ func (h *TestHelper) AssertFalse(condition bool, msgAndArgs ...any) {
 }
 
 // AssertNotNil checks that value is not nil
-func (h *TestHelper) AssertNotNil(value any, msgAndArgs ...any) {
+func (h *testHelper) AssertNotNil(value any, msgAndArgs ...any) {
 	h.t.Helper()
 	if value == nil {
 		msg := "Expected value to be not nil"
@@ -174,7 +173,7 @@ func (h *TestHelper) AssertNotNil(value any, msgAndArgs ...any) {
 }
 
 // AssertNil checks that value is nil
-func (h *TestHelper) AssertNil(value any, msgAndArgs ...any) {
+func (h *testHelper) AssertNil(value any, msgAndArgs ...any) {
 	h.t.Helper()
 	if value != nil {
 		msg := "Expected value to be nil"
@@ -185,20 +184,20 @@ func (h *TestHelper) AssertNil(value any, msgAndArgs ...any) {
 	}
 }
 
-// TestDataGenerator generates test data for various scenarios
-type TestDataGenerator struct {
+// testDataGenerator generates test data for various scenarios
+type testDataGenerator struct {
 	rand *rand.Rand
 }
 
-// NewTestDataGenerator creates a new test data generator
-func NewTestDataGenerator() *TestDataGenerator {
-	return &TestDataGenerator{
+// newTestDataGenerator creates a new test data generator
+func newTestDataGenerator() *testDataGenerator {
+	return &testDataGenerator{
 		rand: rand.New(rand.NewSource(time.Now().UnixNano())),
 	}
 }
 
 // GenerateSimpleJSON generates simple JSON structures
-func (g *TestDataGenerator) GenerateSimpleJSON() string {
+func (g *testDataGenerator) GenerateSimpleJSON() string {
 	templates := []string{
 		`{"name":"John","age":30}`,
 		`{"active":true,"score":95.5}`,
@@ -210,7 +209,7 @@ func (g *TestDataGenerator) GenerateSimpleJSON() string {
 }
 
 // GenerateComplexJSON generates complex nested JSON structures
-func (g *TestDataGenerator) GenerateComplexJSON() string {
+func (g *testDataGenerator) GenerateComplexJSON() string {
 	return `{
 		"users": [
 			{
@@ -281,7 +280,7 @@ func (g *TestDataGenerator) GenerateComplexJSON() string {
 }
 
 // GenerateArrayJSON generates JSON with various array structures
-func (g *TestDataGenerator) GenerateArrayJSON() string {
+func (g *testDataGenerator) GenerateArrayJSON() string {
 	return `{
 		"numbers": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
 		"strings": ["apple", "banana", "cherry", "date", "elderberry"],
@@ -302,7 +301,7 @@ func (g *TestDataGenerator) GenerateArrayJSON() string {
 }
 
 // GenerateInvalidJSON generates invalid JSON for error testing
-func (g *TestDataGenerator) GenerateInvalidJSON() []string {
+func (g *testDataGenerator) GenerateInvalidJSON() []string {
 	return []string{
 		`{invalid json}`,
 		`{"unclosed": "string}`,
@@ -318,49 +317,16 @@ func (g *TestDataGenerator) GenerateInvalidJSON() []string {
 	}
 }
 
-// MemoryTracker tracks memory usage during tests
-type MemoryTracker struct {
-	initialStats runtime.MemStats
-	name         string
-}
-
-// NewMemoryTracker creates a new memory tracker
-func NewMemoryTracker(name string) *MemoryTracker {
-	var stats runtime.MemStats
-	runtime.GC()
-	runtime.ReadMemStats(&stats)
-	return &MemoryTracker{
-		initialStats: stats,
-		name:         name,
-	}
-}
-
-// Report reports memory usage
-func (mt *MemoryTracker) Report(t *testing.T) {
-	var stats runtime.MemStats
-	runtime.GC()
-	runtime.ReadMemStats(&stats)
-
-	allocDiff := int64(stats.Alloc) - int64(mt.initialStats.Alloc)
-	totalAllocDiff := int64(stats.TotalAlloc) - int64(mt.initialStats.TotalAlloc)
-
-	t.Logf("Memory usage for %s:", mt.name)
-	t.Logf("  Current alloc diff: %d bytes", allocDiff)
-	t.Logf("  Total alloc diff: %d bytes", totalAllocDiff)
-	t.Logf("  Mallocs: %d", stats.Mallocs-mt.initialStats.Mallocs)
-	t.Logf("  Frees: %d", stats.Frees-mt.initialStats.Frees)
-}
-
-// ConcurrencyTester helps test concurrent operations
-type ConcurrencyTester struct {
+// concurrencyTester helps test concurrent operations
+type concurrencyTester struct {
 	t           *testing.T
 	concurrency int
 	iterations  int
 }
 
-// NewConcurrencyTester creates a new concurrency tester
-func NewConcurrencyTester(t *testing.T, concurrency, iterations int) *ConcurrencyTester {
-	return &ConcurrencyTester{
+// newConcurrencyTester creates a new concurrency tester
+func newConcurrencyTester(t *testing.T, concurrency, iterations int) *concurrencyTester {
+	return &concurrencyTester{
 		t:           t,
 		concurrency: concurrency,
 		iterations:  iterations,
@@ -368,7 +334,7 @@ func NewConcurrencyTester(t *testing.T, concurrency, iterations int) *Concurrenc
 }
 
 // Run runs concurrent test operations
-func (ct *ConcurrencyTester) Run(operation func(workerID, iteration int) error) {
+func (ct *concurrencyTester) Run(operation func(workerID, iteration int) error) {
 	ct.t.Helper()
 
 	done := make(chan error, ct.concurrency)
@@ -390,32 +356,4 @@ func (ct *ConcurrencyTester) Run(operation func(workerID, iteration int) error) 
 			ct.t.Errorf("Concurrent operation failed: %v", err)
 		}
 	}
-}
-
-// BenchmarkHelper provides utilities for benchmark tests
-type BenchmarkHelper struct {
-	b *testing.B
-}
-
-// NewBenchmarkHelper creates a new benchmark helper
-func NewBenchmarkHelper(b *testing.B) *BenchmarkHelper {
-	return &BenchmarkHelper{b: b}
-}
-
-// MeasureMemory measures memory allocations during benchmark
-func (bh *BenchmarkHelper) MeasureMemory(fn func()) {
-	bh.b.Helper()
-	bh.b.ReportAllocs()
-
-	var before, after runtime.MemStats
-	runtime.GC()
-	runtime.ReadMemStats(&before)
-
-	fn()
-
-	runtime.GC()
-	runtime.ReadMemStats(&after)
-
-	bh.b.ReportMetric(float64(after.Alloc-before.Alloc), "bytes/op")
-	bh.b.ReportMetric(float64(after.Mallocs-before.Mallocs), "allocs/op")
 }

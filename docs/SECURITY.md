@@ -112,20 +112,20 @@ config := json.DefaultConfig()
 
 ### High Security Configuration
 
-For high-security environments, use the `HighSecurityConfig`:
+For high-security environments, use the `SecurityConfig`:
 
 ```go
-config := json.HighSecurityConfig()
+config := json.SecurityConfig()
 processor := json.New(config)
 defer processor.Close()
 
-// High security settings:
-// - MaxJSONSize: 5MB (more restrictive)
-// - MaxPathDepth: 20 (more restrictive than DefaultConfig's 50)
-// - MaxNestingDepthSecurity: 20 (very restrictive)
+// SecurityConfig settings:
+// - MaxJSONSize: 10MB (more restrictive)
+// - MaxPathDepth: 30 (more restrictive than DefaultConfig's 50)
+// - MaxNestingDepthSecurity: 30 (very restrictive)
 // - MaxSecurityValidationSize: 10MB
-// - MaxObjectKeys: 1,000 (fewer keys)
-// - MaxArrayElements: 1,000 (fewer elements)
+// - MaxObjectKeys: 5,000 (fewer keys)
+// - MaxArrayElements: 5,000 (fewer elements)
 // - StrictMode: true (strict validation)
 // - EnableValidation: true (forced validation)
 // - FullSecurityScan: true (disables sampling, full scan all JSON)
@@ -178,15 +178,16 @@ Check current security configuration:
 ```go
 limits := config.GetSecurityLimits()
 fmt.Printf("Security Limits: %+v\n", limits)
-// Output:
+// Output (DefaultConfig values):
 // {
-//   "max_nesting_depth": 50,
-//   "max_security_validation_size": 104857600,
-//   "max_object_keys": 10000,
-//   "max_array_elements": 10000,
-//   "max_json_size": 10485760,
-//   "max_path_depth": 100
+//   "max_nesting_depth": 200,
+//   "max_security_validation_size": 10485760,
+//   "max_object_keys": 100000,
+//   "max_array_elements": 100000,
+//   "max_json_size": 104857600,
+//   "max_path_depth": 50
 // }
+// Note: SecurityConfig() uses more restrictive values than DefaultConfig().
 ```
 
 ---
@@ -294,7 +295,7 @@ For large JSON (>4KB), the library uses an optimized security scanning approach:
 // Full scan mode (FullSecurityScan: true) - Maximum security:
 // - All JSON is fully scanned regardless of size
 // - Recommended for untrusted input and sensitive data
-config := json.HighSecurityConfig()  // Has FullSecurityScan: true by default
+config := json.SecurityConfig()  // Has FullSecurityScan: true by default
 ```
 
 ---
@@ -542,17 +543,10 @@ Errors include context without exposing sensitive data:
 var jsonsErr *json.JsonsError
 if errors.As(err, &jsonsErr) {
     fmt.Printf("Operation: %s\n", jsonsErr.Op)
+    fmt.Printf("Path: %s\n", jsonsErr.Path)
     fmt.Printf("Message: %s\n", jsonsErr.Message)
-    fmt.Printf("Error Code: %s\n", jsonsErr.ErrorCode)
-
-    // Context is sanitized
-    if jsonsErr.Context != nil {
-        fmt.Printf("Context: %+v\n", jsonsErr.Context)
-    }
-
-    // Suggestions for fixing the error
-    for _, suggestion := range jsonsErr.Suggestions {
-        fmt.Printf("Suggestion: %s\n", suggestion)
+    if jsonsErr.Err != nil {
+        fmt.Printf("Underlying error: %v\n", jsonsErr.Err)
     }
 }
 ```
@@ -572,12 +566,12 @@ devConfig.StrictMode = false
 devConfig.EnableValidation = true
 
 // Production environment
-prodConfig := json.HighSecurityConfig()
+prodConfig := json.SecurityConfig()
 prodConfig.EnableValidation = true
 prodConfig.StrictMode = true
 
 // High-security environment (financial, healthcare, etc.)
-secureConfig := json.HighSecurityConfig()
+secureConfig := json.SecurityConfig()
 secureConfig.MaxJSONSize = 1 * 1024 * 1024  // 1MB only
 secureConfig.MaxPathDepth = 10               // Very shallow
 secureConfig.MaxNestingDepthSecurity = 10    // Very restrictive
@@ -592,7 +586,7 @@ Always validate JSON from external sources:
 result, _ := processor.Get(untrustedJSON, "data")
 
 // Good: With validation
-processor := json.New(&json.Config{
+processor := json.New(json.Config{
     EnableValidation: true,
     StrictMode:       true,
 })
@@ -764,7 +758,7 @@ Use multiple layers of security:
 ```go
 // Layer 1: Network/Transport security (TLS, authentication)
 // Layer 2: Input validation
-config := json.HighSecurityConfig()
+config := json.SecurityConfig()
 processor := json.New(config)
 defer processor.Close()
 
@@ -796,7 +790,7 @@ result, err := processor.Get(input, "data")
 Use this checklist to ensure your implementation is secure:
 
 ### Configuration
-- [ ] Use `HighSecurityConfig()` for production environments with untrusted input
+- [ ] Use `SecurityConfig()` for production environments with untrusted input
 - [ ] Set appropriate `MaxJSONSize` limits (default: 100MB, high-security: 5MB)
 - [ ] Configure `MaxPathDepth` (default: 50) and `MaxNestingDepthSecurity` (default: 200)
 - [ ] Enable `EnableValidation` and `ValidateInput` (enabled by default)
@@ -853,7 +847,7 @@ Use this checklist to ensure your implementation is secure:
 ```go
 func ProcessUserJSON(userInput string) error {
     // Use high security configuration
-    config := json.HighSecurityConfig()
+    config := json.SecurityConfig()
     config.MaxJSONSize = 1 * 1024 * 1024 // 1MB limit for user input
 
     processor := json.New(config)
@@ -943,7 +937,7 @@ func ProcessAPIRequests() {
 ```go
 func ProcessSensitiveData(jsonData string) error {
     // Disable caching for sensitive data
-    config := json.HighSecurityConfig()
+    config := json.SecurityConfig()
     config.EnableCache = false // Don't cache sensitive data
 
     processor := json.New(config)
@@ -978,7 +972,7 @@ func LoadSecureConfig(configPath string) (*Config, error) {
         return nil, fmt.Errorf("invalid config path")
     }
 
-    processor := json.New(json.HighSecurityConfig())
+    processor := json.New(json.SecurityConfig())
     defer processor.Close()
 
     // Read and validate config file
@@ -1436,7 +1430,7 @@ hotKeyCache: sync.Map          // Lock-free hot keys
 All type conversions include overflow checking:
 
 ```go
-func (r TypeSafeAccessResult) AsInt() (int, error) {
+func (r AccessResult) AsInt() (int, error) {
     case int64:
         // Check for overflow when converting int64 to int
         if v > int64(1<<(strconv.IntSize-1)-1) ||

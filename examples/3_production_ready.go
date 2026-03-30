@@ -21,7 +21,7 @@ import (
 // - Resource management and monitoring
 // - Best practices for production environments
 //
-// Run: go run examples/production_ready.go
+// Run: go run -tags=example examples/3_production_ready.go
 
 func main() {
 	fmt.Println("🏭 JSON Library - Production Ready")
@@ -42,28 +42,18 @@ func main() {
 	}`
 
 	// 1. CONFIGURATION PATTERNS
-	fmt.Println("1️⃣  Configuration Patterns")
-	fmt.Println("───────────────────────────")
 	demonstrateConfigurations(testData)
 
 	// 2. THREAD-SAFE OPERATIONS
-	fmt.Println("\n2️⃣  Thread-Safe Concurrent Operations")
-	fmt.Println("──────────────────────────────────────")
 	demonstrateConcurrency(testData)
 
 	// 3. PERFORMANCE OPTIMIZATION
-	fmt.Println("\n3️⃣  Performance Optimization")
-	fmt.Println("─────────────────────────────")
 	demonstratePerformance(testData)
 
 	// 4. RESOURCE MANAGEMENT
-	fmt.Println("\n4️⃣  Resource Management")
-	fmt.Println("────────────────────────")
 	demonstrateResourceManagement(testData)
 
 	// 5. MONITORING & METRICS
-	fmt.Println("\n5️⃣  Monitoring & Metrics")
-	fmt.Println("─────────────────────────")
 	demonstrateMonitoring(testData)
 
 	fmt.Println("\n✅ Production-ready patterns complete!")
@@ -71,9 +61,12 @@ func main() {
 }
 
 func demonstrateConfigurations(testData string) {
+	fmt.Println("1️⃣  Configuration Patterns")
+	fmt.Println("───────────────────────────")
+
 	// 1. Default configuration (quick start)
 	fmt.Println("   Default Configuration:")
-	defaultProc := json.New(json.DefaultConfig())
+	defaultProc, _ := json.New(json.DefaultConfig())
 	defer defaultProc.Close()
 
 	result, _ := defaultProc.Get(testData, "users[0].name")
@@ -81,7 +74,7 @@ func demonstrateConfigurations(testData string) {
 
 	// 2. High-performance configuration
 	fmt.Println("\n   High-Performance Configuration:")
-	perfConfig := &json.Config{
+	perfConfig := json.Config{
 		EnableCache:       true,
 		MaxCacheSize:      10000,
 		CacheTTL:          30 * time.Minute,
@@ -93,7 +86,7 @@ func demonstrateConfigurations(testData string) {
 		EnableMetrics:     true,
 		EnableValidation:  false, // Skip validation for speed
 	}
-	perfProc := json.New(perfConfig)
+	perfProc, _ := json.New(perfConfig)
 	defer perfProc.Close()
 
 	start := time.Now()
@@ -103,19 +96,21 @@ func demonstrateConfigurations(testData string) {
 	duration := time.Since(start)
 	fmt.Printf("   - 100 operations in: %v\n", duration)
 
-	// 3. High-security configuration
-	fmt.Println("\n   High-Security Configuration:")
-	secConfig := json.HighSecurityConfig()
-	secProc := json.New(secConfig)
+	// 3. Security configuration
+	fmt.Println("\n   Security Configuration:")
+	secConfig := json.SecurityConfig()
+	secProc, _ := json.New(secConfig)
 	defer secProc.Close()
 
 	result2, _ := secProc.Get(testData, "users[0].email")
 	fmt.Printf("   - Secure result: %v\n", result2)
 
-	// 4. Large data configuration
+	// 4. Large data configuration (use SecurityConfig with adjusted limits)
 	fmt.Println("\n   Large Data Configuration:")
-	largeConfig := json.LargeDataConfig()
-	largeProc := json.New(largeConfig)
+	largeConfig := json.SecurityConfig()
+	largeConfig.MaxJSONSize = 100 * 1024 * 1024 // 100MB
+	largeConfig.MaxNestingDepthSecurity = 100
+	largeProc, _ := json.New(largeConfig)
 	defer largeProc.Close()
 
 	result3, _ := largeProc.Get(testData, "config.version")
@@ -123,7 +118,10 @@ func demonstrateConfigurations(testData string) {
 }
 
 func demonstrateConcurrency(testData string) {
-	processor := json.New(json.DefaultConfig())
+	fmt.Println("\n2️⃣  Thread-Safe Concurrent Operations")
+	fmt.Println("──────────────────────────────────────")
+
+	processor, _ := json.New(json.DefaultConfig())
 	defer processor.Close()
 
 	var wg sync.WaitGroup
@@ -177,8 +175,11 @@ func demonstrateConcurrency(testData string) {
 }
 
 func demonstratePerformance(testData string) {
+	fmt.Println("\n3️⃣  Performance Optimization")
+	fmt.Println("─────────────────────────────")
+
 	// Test with cache enabled
-	cacheConfig := &json.Config{
+	cacheConfig := json.Config{
 		EnableCache:       true,
 		MaxCacheSize:      1000,
 		CacheTTL:          10 * time.Minute,
@@ -188,7 +189,7 @@ func demonstratePerformance(testData string) {
 		MaxConcurrency:    20,
 		ParallelThreshold: 5,
 	}
-	cachedProc := json.New(cacheConfig)
+	cachedProc, _ := json.New(cacheConfig)
 	defer cachedProc.Close()
 
 	// Warm up cache
@@ -210,7 +211,7 @@ func demonstratePerformance(testData string) {
 	fmt.Printf("   ✓ Throughput: %.0f ops/sec\n", 1000.0/cachedDuration.Seconds())
 
 	// Test without cache for comparison
-	noCacheConfig := &json.Config{
+	noCacheConfig := json.Config{
 		EnableCache:       false,
 		MaxPathDepth:      50,
 		MaxJSONSize:       50 * 1024 * 1024,
@@ -218,7 +219,7 @@ func demonstratePerformance(testData string) {
 		MaxConcurrency:    20,
 		ParallelThreshold: 5,
 	}
-	noCacheProc := json.New(noCacheConfig)
+	noCacheProc, _ := json.New(noCacheConfig)
 	defer noCacheProc.Close()
 
 	start = time.Now()
@@ -232,8 +233,11 @@ func demonstratePerformance(testData string) {
 }
 
 func demonstrateResourceManagement(testData string) {
+	fmt.Println("\n4️⃣  Resource Management")
+	fmt.Println("────────────────────────")
+
 	// Proper resource lifecycle management
-	processor := json.New(json.DefaultConfig())
+	processor, _ := json.New(json.DefaultConfig())
 
 	// Use defer to ensure cleanup
 	defer func() {
@@ -253,13 +257,13 @@ func demonstrateResourceManagement(testData string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	opts := &json.ProcessorOptions{
-		Context:      ctx,
-		CacheResults: true,
-		StrictMode:   false,
-	}
+	// Using unified Config for operation
+	cfg := json.DefaultConfig()
+	cfg.Context = ctx
+	cfg.CacheResults = true
+	cfg.StrictMode = false
 
-	result, err := processor.Get(testData, "config.features", opts)
+	result, err := processor.Get(testData, "config.features", cfg)
 	if err != nil {
 		fmt.Printf("   ✗ Operation failed: %v\n", err)
 	} else {
@@ -268,7 +272,10 @@ func demonstrateResourceManagement(testData string) {
 }
 
 func demonstrateMonitoring(testData string) {
-	config := &json.Config{
+	fmt.Println("\n5️⃣  Monitoring & Metrics")
+	fmt.Println("─────────────────────────")
+
+	config := json.Config{
 		EnableCache:       true,
 		MaxCacheSize:      1000,
 		CacheTTL:          10 * time.Minute,
@@ -280,7 +287,7 @@ func demonstrateMonitoring(testData string) {
 		MaxConcurrency:    20,
 		ParallelThreshold: 5,
 	}
-	processor := json.New(config)
+	processor, _ := json.New(config)
 	defer processor.Close()
 
 	// Perform various operations

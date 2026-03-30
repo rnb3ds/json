@@ -20,11 +20,13 @@ type MetricsCollector struct {
 	minProcessingTime    int64
 	totalMemoryAllocated int64
 	peakMemoryUsage      int64
-	currentMemoryUsage   int64
-	activeConcurrentOps  int64
-	maxConcurrentOps     int64
-	errorsByType         sync.Map
-	startTime            time.Time
+	// cumulativeMemoryUsage tracks total memory allocated (never decreases).
+	// Exposed as CurrentMemoryUsage in the Metrics struct for API compatibility.
+	cumulativeMemoryUsage int64
+	activeConcurrentOps   int64
+	maxConcurrentOps      int64
+	errorsByType          sync.Map
+	startTime             time.Time
 }
 
 // NewMetricsCollector creates a new metrics collector
@@ -55,7 +57,7 @@ func (mc *MetricsCollector) RecordOperation(duration time.Duration, success bool
 
 	if memoryUsed > 0 {
 		atomic.AddInt64(&mc.totalMemoryAllocated, memoryUsed)
-		newUsage := atomic.AddInt64(&mc.currentMemoryUsage, memoryUsed)
+		newUsage := atomic.AddInt64(&mc.cumulativeMemoryUsage, memoryUsed)
 		updateMax(&mc.peakMemoryUsage, newUsage)
 	}
 }
@@ -68,12 +70,6 @@ func (mc *MetricsCollector) RecordCacheHit() {
 // RecordCacheMiss records a cache miss
 func (mc *MetricsCollector) RecordCacheMiss() {
 	atomic.AddInt64(&mc.cacheMisses, 1)
-}
-
-// UpdateMemoryUsage updates memory usage metrics
-func (mc *MetricsCollector) UpdateMemoryUsage(current int64) {
-	atomic.StoreInt64(&mc.currentMemoryUsage, current)
-	updateMax(&mc.peakMemoryUsage, current)
 }
 
 // StartConcurrentOperation records the start of a concurrent operation
@@ -105,7 +101,7 @@ func (mc *MetricsCollector) GetMetrics() Metrics {
 	}
 
 	errorsByType := make(map[string]int64)
-	mc.errorsByType.Range(func(key, value interface{}) bool {
+	mc.errorsByType.Range(func(key, value any) bool {
 		if k, ok := key.(string); ok {
 			if v, ok := value.(*int64); ok {
 				errorsByType[k] = atomic.LoadInt64(v)
@@ -126,7 +122,7 @@ func (mc *MetricsCollector) GetMetrics() Metrics {
 		MinProcessingTime:    time.Duration(atomic.LoadInt64(&mc.minProcessingTime)),
 		TotalMemoryAllocated: atomic.LoadInt64(&mc.totalMemoryAllocated),
 		PeakMemoryUsage:      atomic.LoadInt64(&mc.peakMemoryUsage),
-		CurrentMemoryUsage:   atomic.LoadInt64(&mc.currentMemoryUsage),
+		CurrentMemoryUsage:   atomic.LoadInt64(&mc.cumulativeMemoryUsage),
 		ActiveConcurrentOps:  atomic.LoadInt64(&mc.activeConcurrentOps),
 		MaxConcurrentOps:     atomic.LoadInt64(&mc.maxConcurrentOps),
 		Uptime:               time.Since(mc.startTime),
@@ -149,7 +145,7 @@ func (mc *MetricsCollector) Reset() {
 	atomic.StoreInt64(&mc.minProcessingTime, 1<<63-1) // Max int64 value
 	atomic.StoreInt64(&mc.totalMemoryAllocated, 0)
 	atomic.StoreInt64(&mc.peakMemoryUsage, 0)
-	atomic.StoreInt64(&mc.currentMemoryUsage, 0)
+	atomic.StoreInt64(&mc.cumulativeMemoryUsage, 0)
 	atomic.StoreInt64(&mc.activeConcurrentOps, 0)
 	atomic.StoreInt64(&mc.maxConcurrentOps, 0)
 	mc.errorsByType = sync.Map{}

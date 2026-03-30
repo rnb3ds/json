@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"io"
 	"sync"
-	"sync/atomic"
 
 	"github.com/cybergodev/json/internal"
 )
@@ -20,154 +19,35 @@ import (
 // 4. Bulk operation optimizations
 // ============================================================================
 
-// pathSegmentCache caches parsed path segments for reuse
-// Uses sharding for concurrent access performance
-type pathSegmentCache struct {
-	shards     []*pathCacheShard
-	shardMask  uint64
-	maxEntries int
-	evictions  int64
-}
-
-type pathCacheShard struct {
-	mu      sync.RWMutex
-	entries map[string][]internal.PathSegment
-	lru     []string // Simple LRU tracking
-}
-
-// globalPathCache is the global path segment cache
-var globalPathCache *pathSegmentCache
-var pathCacheOnce sync.Once
-
-const pathCacheShardCount = 16
-
-func getPathCache() *pathSegmentCache {
-	pathCacheOnce.Do(func() {
-		globalPathCache = newPathSegmentCache(10000) // Cache up to 10k paths
-	})
-	return globalPathCache
-}
-
-func newPathSegmentCache(maxEntries int) *pathSegmentCache {
-	shards := make([]*pathCacheShard, pathCacheShardCount)
-	for i := range shards {
-		shards[i] = &pathCacheShard{
-			entries: make(map[string][]internal.PathSegment, maxEntries/pathCacheShardCount),
-			lru:     make([]string, 0, 100),
-		}
-	}
-	return &pathSegmentCache{
-		shards:     shards,
-		shardMask:  uint64(pathCacheShardCount - 1),
-		maxEntries: maxEntries,
-	}
-}
-
-func (c *pathSegmentCache) getShard(key string) *pathCacheShard {
-	// Inline FNV-1a hash
-	h := uint64(14695981039346656037)
-	for i := 0; i < len(key); i++ {
-		h ^= uint64(key[i])
-		h *= 1099511628211
-	}
-	return c.shards[h&c.shardMask]
-}
-
-// Get retrieves cached path segments
-func (c *pathSegmentCache) Get(path string) ([]internal.PathSegment, bool) {
-	if len(path) > 256 {
-		// Don't cache very long paths
-		return nil, false
-	}
-
-	shard := c.getShard(path)
-	shard.mu.RLock()
-	segments, ok := shard.entries[path]
-	shard.mu.RUnlock()
-	return segments, ok
-}
-
-// Set stores path segments in cache
-func (c *pathSegmentCache) Set(path string, segments []internal.PathSegment) {
-	if len(path) > 256 || len(segments) == 0 {
-		return
-	}
-
-	// Create a copy to prevent external modification
-	copied := make([]internal.PathSegment, len(segments))
-	copy(copied, segments)
-
-	shard := c.getShard(path)
-	shard.mu.Lock()
-
-	// Check if we need to evict
-	if len(shard.entries) >= c.maxEntries/pathCacheShardCount && shard.entries[path] == nil {
-		// Evict oldest entry
-		if len(shard.lru) > 0 {
-			oldest := shard.lru[0]
-			delete(shard.entries, oldest)
-			shard.lru = shard.lru[1:]
-			atomic.AddInt64(&c.evictions, 1)
-		}
-	}
-
-	shard.entries[path] = copied
-	shard.lru = append(shard.lru, path)
-	shard.mu.Unlock()
-}
-
-// WarmupPathCache pre-populates the path cache with common paths
-// PERFORMANCE: Reduces first-access latency for frequently used paths
+// WarmupPathCache pre-populates the path cache with common paths.
+// Delegates to internal.GlobalPathIntern for storage.
 func WarmupPathCache(commonPaths []string) {
-	if len(commonPaths) == 0 {
+	processor := getDefaultProcessor()
+	if processor == nil {
 		return
 	}
-
-	cache := getPathCache()
-	processor := getDefaultProcessor()
-
-	for _, path := range commonPaths {
-		if len(path) == 0 || len(path) > 256 {
-			continue
-		}
-
-		// Check if already cached
-		if _, ok := cache.Get(path); ok {
-			continue
-		}
-
-		// Parse the path string to string segments
-		stringSegments, err := processor.parsePath(path)
-		if err != nil {
-			continue // Skip invalid paths
-		}
-
-		// Convert string segments to PathSegments
-		var segments []internal.PathSegment
-		for _, part := range stringSegments {
-			segments = internal.ParsePathSegment(part, segments)
-		}
-
-		cache.Set(path, segments)
-	}
+	warmupPathCacheWith(processor, commonPaths)
 }
 
-// WarmupPathCacheWithProcessor pre-populates the path cache using a specific processor
-// PERFORMANCE: Useful when using custom processor configurations
+// WarmupPathCacheWithProcessor pre-populates the path cache using a specific processor.
+// Delegates to internal.GlobalPathIntern for storage.
 func WarmupPathCacheWithProcessor(processor *Processor, commonPaths []string) {
+	warmupPathCacheWith(processor, commonPaths)
+}
+
+// warmupPathCacheWith is the shared implementation for path cache warmup.
+func warmupPathCacheWith(processor *Processor, commonPaths []string) {
 	if len(commonPaths) == 0 || processor == nil {
 		return
 	}
 
-	cache := getPathCache()
-
 	for _, path := range commonPaths {
 		if len(path) == 0 || len(path) > 256 {
 			continue
 		}
 
 		// Check if already cached
-		if _, ok := cache.Get(path); ok {
+		if _, ok := internal.GlobalPathIntern.Get(path); ok {
 			continue
 		}
 
@@ -183,7 +63,7 @@ func WarmupPathCacheWithProcessor(processor *Processor, commonPaths []string) {
 			segments = internal.ParsePathSegment(part, segments)
 		}
 
-		cache.Set(path, segments)
+		internal.GlobalPathIntern.Set(path, segments)
 	}
 }
 
@@ -231,7 +111,10 @@ func (dec *Decoder) reset(r io.Reader) {
 		dec.buf.Reset(r)
 	}
 	if dec.processor == nil {
-		dec.processor = getDefaultProcessor()
+		p := getDefaultProcessor()
+		if p != nil {
+			dec.processor = p
+		}
 	}
 	dec.offset = 0
 	dec.scanp = 0
@@ -249,25 +132,27 @@ func (dec *Decoder) clear() {
 	dec.scanp = 0
 }
 
-// GetPooledDecoder gets a decoder from the global pool
+// getPooledDecoder gets a decoder from the global pool
 // PERFORMANCE: Use this for streaming scenarios to reduce allocations
-func GetPooledDecoder(r io.Reader) *Decoder {
+func getPooledDecoder(r io.Reader) *Decoder {
 	return globalDecoderPool.Get(r)
 }
 
-// PutPooledDecoder returns a decoder to the global pool
-func PutPooledDecoder(dec *Decoder) {
+// putPooledDecoder returns a decoder to the global pool
+func putPooledDecoder(dec *Decoder) {
 	globalDecoderPool.Put(dec)
 }
 
 // ============================================================================
 // STREAMING JSON PROCESSOR - For large JSON files
+// PERFORMANCE v2: Added pooled streaming processor for reduced allocations
 // ============================================================================
 
 // StreamingProcessor handles large JSON files efficiently
 type StreamingProcessor struct {
 	decoder    *json.Decoder
 	reader     io.Reader
+	bufReader  *bufio.Reader // PERFORMANCE: Reusable buffered reader
 	bufferSize int
 	stats      StreamingStats
 }
@@ -279,16 +164,33 @@ type StreamingStats struct {
 	Depth          int
 }
 
+// streamingProcessorPool for reusing streaming processors
+var streamingProcessorPool = sync.Pool{
+	New: func() any {
+		return &StreamingProcessor{
+			bufferSize: 64 * 1024,
+			bufReader:  bufio.NewReaderSize(nil, 64*1024),
+		}
+	},
+}
+
 // NewStreamingProcessor creates a streaming processor for large JSON
 func NewStreamingProcessor(reader io.Reader, bufferSize int) *StreamingProcessor {
+	sp := streamingProcessorPool.Get().(*StreamingProcessor)
 	if bufferSize <= 0 {
 		bufferSize = 64 * 1024 // 64KB default buffer
 	}
-	return &StreamingProcessor{
-		decoder:    json.NewDecoder(reader),
-		reader:     reader,
-		bufferSize: bufferSize,
+	sp.bufferSize = bufferSize
+	sp.reader = reader
+	// PERFORMANCE: Reuse bufio.Reader to reduce allocations
+	if sp.bufReader == nil {
+		sp.bufReader = bufio.NewReaderSize(reader, bufferSize)
+	} else {
+		sp.bufReader.Reset(reader)
 	}
+	sp.decoder = json.NewDecoder(sp.bufReader)
+	sp.stats = StreamingStats{}
+	return sp
 }
 
 // StreamArray streams array elements one at a time
@@ -385,6 +287,31 @@ func (sp *StreamingProcessor) GetStats() StreamingStats {
 	return sp.stats
 }
 
+// Close releases any resources held by the streaming processor.
+// Note: This does NOT close the underlying reader - the caller owns it.
+// Provided for API consistency and future extensibility.
+// PERFORMANCE v2: Returns processor to pool for reuse
+func (sp *StreamingProcessor) Close() error {
+	// Reset internal state for potential reuse
+	sp.stats = StreamingStats{}
+	sp.reader = nil
+	sp.decoder = nil
+	// PERFORMANCE: Reset bufReader to release reference and prepare for reuse
+	if sp.bufReader != nil {
+		sp.bufReader.Reset(nilReader{})
+	}
+	// Return to pool
+	streamingProcessorPool.Put(sp)
+	return nil
+}
+
+// nilReader is a zero-cost reader for resetting bufio.Reader
+type nilReader struct{}
+
+func (nilReader) Read(p []byte) (int, error) {
+	return 0, io.EOF
+}
+
 // ============================================================================
 // BULK OPERATION OPTIMIZATIONS
 // ============================================================================
@@ -418,7 +345,7 @@ func (bp *BulkProcessor) BulkGet(jsonStr string, paths []string) (map[string]any
 
 	// Reuse parsed data for all path lookups
 	for _, path := range paths {
-		value, err := bp.processor.Get(jsonStr, path)
+		value, err := bp.processor.GetFromParsedData(data, path)
 		if err == nil {
 			results[path] = value
 		}
@@ -433,14 +360,22 @@ func (bp *BulkProcessor) BulkGet(jsonStr string, paths []string) (map[string]any
 
 // isSimplePropertyAccess checks if path is a simple single-level property access
 // This is the fastest case that can bypass most parsing logic
+// SECURITY: Does not allow paths starting with digits to prevent ambiguity
 func isSimplePropertyAccess(path string) bool {
 	if len(path) == 0 || len(path) > 64 {
 		return false
 	}
 
-	for i := 0; i < len(path); i++ {
+	// SECURITY: First character must be a letter or underscore
+	// This prevents ambiguity with array indices and ensures valid identifier syntax
+	first := path[0]
+	if !((first >= 'a' && first <= 'z') || (first >= 'A' && first <= 'Z') || first == '_') {
+		return false
+	}
+
+	// Remaining characters can be alphanumeric or underscore
+	for i := 1; i < len(path); i++ {
 		c := path[i]
-		// Only allow alphanumeric and underscore
 		if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
 			(c >= '0' && c <= '9') || c == '_') {
 			return false
@@ -482,13 +417,13 @@ var encodeBufferPool = sync.Pool{
 	},
 }
 
-// GetEncodeBuffer gets a buffer for encoding operations
-func GetEncodeBuffer() []byte {
+// getEncodeBuffer gets a buffer for encoding operations
+func getEncodeBuffer() []byte {
 	return encodeBufferPool.Get().([]byte)[:0]
 }
 
-// PutEncodeBuffer returns a buffer to the pool
-func PutEncodeBuffer(buf []byte) {
+// putEncodeBuffer returns a buffer to the pool
+func putEncodeBuffer(buf []byte) {
 	if cap(buf) <= 16*1024 { // Don't pool buffers larger than 16KB
 		encodeBufferPool.Put(buf)
 	}
@@ -751,41 +686,6 @@ func StreamArraySkip(reader io.Reader, n int) ([]any, error) {
 // PERFORMANCE: Defer JSON parsing until data is actually needed
 // ============================================================================
 
-// LazyJSON provides lazy parsing for JSON data
-// The JSON is only parsed when a value is accessed
-type LazyJSON struct {
-	raw    []byte
-	parsed any
-	err    error
-	once   sync.Once
-}
-
-// NewLazyJSON creates a new LazyJSON from raw bytes
-func NewLazyJSON(data []byte) *LazyJSON {
-	return &LazyJSON{
-		raw: data,
-	}
-}
-
-// parse performs the actual parsing (called once)
-func (lj *LazyJSON) parse() {
-	lj.once.Do(func() {
-		lj.err = json.Unmarshal(lj.raw, &lj.parsed)
-	})
-}
-
-// Get retrieves a value at the specified path
-// Parses the JSON on first access
-func (lj *LazyJSON) Get(path string) (any, error) {
-	lj.parse()
-	if lj.err != nil {
-		return nil, lj.err
-	}
-
-	p := getDefaultProcessor()
-	return p.GetFromParsedData(lj.parsed, path)
-}
-
 // GetFromParsedData retrieves a value from already-parsed data
 // Uses the processor's path navigation without re-parsing
 func (p *Processor) GetFromParsedData(data any, path string) (any, error) {
@@ -794,33 +694,5 @@ func (p *Processor) GetFromParsedData(data any, path string) (any, error) {
 	}
 
 	// Navigate directly using the recursive processor
-	return p.recursiveProcessor.ProcessRecursively(data, path, OpGet, nil)
-}
-
-// Parse forces parsing and returns the parsed data
-func (lj *LazyJSON) Parse() (any, error) {
-	lj.parse()
-	return lj.parsed, lj.err
-}
-
-// Raw returns the raw JSON bytes
-func (lj *LazyJSON) Raw() []byte {
-	return lj.raw
-}
-
-// IsParsed returns true if the JSON has been parsed
-func (lj *LazyJSON) IsParsed() bool {
-	return lj.parsed != nil || lj.err != nil
-}
-
-// Parsed returns the parsed data without forcing parsing
-// Returns nil if not yet parsed
-func (lj *LazyJSON) Parsed() any {
-	return lj.parsed
-}
-
-// Error returns any parsing error
-func (lj *LazyJSON) Error() error {
-	lj.parse()
-	return lj.err
+	return p.recursiveProcessor.ProcessRecursively(data, path, opGet, nil)
 }

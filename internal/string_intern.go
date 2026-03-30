@@ -6,53 +6,45 @@ import (
 )
 
 // ============================================================================
+// BYTE TO STRING CONVERSION OPTIMIZATION
+// PERFORMANCE: Reduces allocations when converting []byte to string for interning
+// SECURITY: Uses safe conversion for untrusted input
+// ============================================================================
+
+// safeStringFromBytes converts []byte to string with allocation
+// PERFORMANCE: Allocates a new string, but safer for untrusted input
+func safeStringFromBytes(b []byte) string {
+	if len(b) == 0 {
+		return ""
+	}
+	return string(b)
+}
+
+// ============================================================================
 // STRING INTERNING
 // Reduces memory allocations for frequently used strings (JSON keys, paths)
 // PERFORMANCE: Significant memory reduction for JSON with repeated keys
 // SECURITY: Fixed memory exhaustion issues with proactive eviction
 // ============================================================================
 
-// stringBuilderPool pools strings.Builder instances for string copying
-// PERFORMANCE: Reduces allocations when copying strings for interning
-var stringBuilderPool = sync.Pool{
-	New: func() any {
-		return new(stringBuilderWrapper)
-	},
-}
+// maxStringCopyThreshold is the threshold below which string copies are avoided.
+// Strings shorter than this threshold are returned directly (Go strings are immutable).
+// Longer strings are force-copied via []byte to guarantee independence from any
+// underlying buffer the original string may reference (e.g., from pooled buffers).
+const maxStringCopyThreshold = 8192
 
-// stringBuilderWrapper wraps strings.Builder with a buffer for reuse
-type stringBuilderWrapper struct {
-	buf []byte
-}
-
-// copyString creates a copy of a string using pooled buffers
-// PERFORMANCE: Avoids allocation of intermediate []byte slice
+// copyString creates an independent copy of a string.
+// Short strings are returned directly (Go strings are immutable).
+// Large strings are force-copied via []byte to guarantee independence
+// from any underlying buffer the original string may reference.
 func copyString(s string) string {
 	if len(s) == 0 {
 		return ""
 	}
-
-	// Get a wrapper from the pool
-	wrapper := stringBuilderPool.Get().(*stringBuilderWrapper)
-
-	// Ensure buffer is large enough
-	if cap(wrapper.buf) < len(s) {
-		wrapper.buf = make([]byte, 0, max(len(s), 64))
+	if len(s) <= maxStringCopyThreshold {
+		return s // Go strings are immutable; assignment is safe
 	}
-
-	// Copy the string
-	buf := wrapper.buf[:len(s)]
-	copy(buf, s)
-
-	// Create string from the copied bytes
-	result := string(buf)
-
-	// Return wrapper to pool (but not if buffer grew too large)
-	if cap(wrapper.buf) <= 4096 {
-		stringBuilderPool.Put(wrapper)
-	}
-
-	return result
+	return string([]byte(s)) // force copy for very large strings
 }
 
 // StringIntern stores interned strings for reuse
@@ -115,7 +107,7 @@ func (si *StringIntern) Intern(s string) string {
 	// This gives more headroom before hitting the hard limit
 	highWatermark := int64(float64(si.maxSize) * 0.8)
 	for si.size+int64(len(s)) > highWatermark {
-		if !si.evictOldestLocked() {
+		if !si.evictRandomLocked() {
 			// Can't evict any more, skip interning to prevent memory exhaustion
 			atomic.AddInt64(&si.misses, 1)
 			return s
@@ -133,29 +125,29 @@ func (si *StringIntern) Intern(s string) string {
 }
 
 // InternBytes returns an interned string from a byte slice
-// SECURITY: Added empty slice check to prevent panic
+// SECURITY: Uses safe conversion to avoid potential race conditions with pooled buffers
 func (si *StringIntern) InternBytes(b []byte) string {
 	if len(b) == 0 {
 		return ""
 	}
-	// SECURITY FIX: Use safe conversion instead of unsafe
-	s := string(b)
+	// SECURITY: Use safe conversion for both lookup and storage
+	// This avoids potential race conditions when byte slices are reused from pools
+	s := safeStringFromBytes(b)
 	return si.Intern(s)
 }
 
-// evictOldestLocked removes entries when size limit is reached
+// evictRandomLocked removes entries when size limit is reached
 // Returns true if entries were evicted, false if no entries to evict
 // SECURITY: Must be called with lock already held
-func (si *StringIntern) evictOldestLocked() bool {
+// NOTE: Go map iteration order is random, so eviction is effectively random
+func (si *StringIntern) evictRandomLocked() bool {
 	if len(si.strings) == 0 {
 		return false
 	}
 	// Remove half the entries
 	count := 0
 	target := len(si.strings) / 2
-	if target < 1 {
-		target = 1
-	}
+	target = max(target, 1)
 	for k := range si.strings {
 		if count >= target {
 			break
@@ -202,18 +194,23 @@ func (si *StringIntern) Clear() {
 // ============================================================================
 // KEY INTERN - Specialized for JSON keys
 // PERFORMANCE: Increased shards to 64, added hot key cache with sync.Map
-// SECURITY FIX: Added memory-based eviction to prevent unbounded growth
+// SECURITY FIX: Added memory-based eviction and size limit for hot key cache
 // ============================================================================
 
 // maxShardSize is the maximum size per shard before eviction (256KB)
 const maxShardSize = 256 * 1024
 
+// maxHotKeys is the maximum number of hot keys to cache
+// SECURITY: Prevents unbounded memory growth from hot key cache
+const maxHotKeys = 10000
+
 // KeyIntern is a specialized interner for JSON keys
 // Uses sharding for better concurrent performance with hot key cache
 type KeyIntern struct {
-	shards    []*keyInternShard
-	shardMask uint64
-	hotKeys   sync.Map // Lock-free cache for frequently accessed keys
+	shards      []*keyInternShard
+	shardMask   uint64
+	hotKeys     sync.Map // Lock-free cache for frequently accessed keys
+	hotKeyCount int64    // Atomic counter for hot key cache size
 }
 
 type keyInternShard struct {
@@ -243,7 +240,7 @@ func NewKeyIntern() *KeyIntern {
 
 // Intern returns an interned version of the key
 // PERFORMANCE: First checks hot key cache (lock-free), then falls back to sharded lookup
-// SECURITY FIX: Added memory-based eviction when shard exceeds maxShardSize
+// SECURITY FIX: Added memory-based eviction and hot key cache size limit
 func (ki *KeyIntern) Intern(key string) string {
 	if len(key) == 0 {
 		return ""
@@ -265,8 +262,8 @@ func (ki *KeyIntern) Intern(key string) string {
 	shard.mu.RLock()
 	if interned, ok := shard.strings[key]; ok {
 		shard.mu.RUnlock()
-		// Promote to hot key cache
-		ki.hotKeys.Store(key, interned)
+		// Promote to hot key cache with size limit
+		ki.promoteToHotCache(key, interned)
 		return interned
 	}
 	shard.mu.RUnlock()
@@ -277,8 +274,8 @@ func (ki *KeyIntern) Intern(key string) string {
 
 	// Double-check
 	if interned, ok := shard.strings[key]; ok {
-		// Promote to hot key cache
-		ki.hotKeys.Store(key, interned)
+		// Promote to hot key cache with size limit
+		ki.promoteToHotCache(key, interned)
 		return interned
 	}
 
@@ -294,9 +291,46 @@ func (ki *KeyIntern) Intern(key string) string {
 	shard.strings[copied] = copied
 	shard.size += int64(len(copied))
 
-	// Promote to hot key cache
-	ki.hotKeys.Store(key, copied)
+	// Promote to hot key cache with size limit
+	ki.promoteToHotCache(key, copied)
 	return copied
+}
+
+// promoteToHotCache adds a key to the hot cache with size limiting
+// SECURITY: Prevents unbounded growth of the hot key cache
+func (ki *KeyIntern) promoteToHotCache(key, interned string) {
+	// Check if already in cache
+	if _, exists := ki.hotKeys.Load(key); exists {
+		return
+	}
+
+	// Store first, then increment counter to prevent overcounting
+	// for keys that might be stored concurrently
+	ki.hotKeys.Store(key, interned)
+	count := atomic.AddInt64(&ki.hotKeyCount, 1)
+	if count > maxHotKeys {
+		// Trim cache: delete ~25% of entries
+		ki.trimHotCache()
+	}
+}
+
+// trimHotCache removes approximately 25% of hot cache entries
+// SECURITY: Prevents memory exhaustion from unbounded hot key cache
+func (ki *KeyIntern) trimHotCache() {
+	toDelete := maxHotKeys / 4
+	deleted := int64(0)
+
+	ki.hotKeys.Range(func(key, value any) bool {
+		if deleted >= int64(toDelete) {
+			return false
+		}
+		ki.hotKeys.Delete(key)
+		deleted++
+		return true
+	})
+
+	// Update counter (approximately, as there might be concurrent additions)
+	atomic.AddInt64(&ki.hotKeyCount, -deleted)
 }
 
 // evictShardLocked removes entries when shard size limit is reached
@@ -309,12 +343,9 @@ func (ki *KeyIntern) evictShardLocked(shard *keyInternShard) bool {
 
 	// Remove half the entries
 	target := len(shard.strings) / 2
-	if target < 1 {
-		target = 1
-	}
+	target = max(target, 1)
 
-	// SECURITY FIX: Collect keys to delete first, then batch delete
-	// This ensures consistency between shard.strings and hotKeys
+	// SECURITY FIX: Collect keys to delete first
 	keysToDelete := make([]string, 0, target)
 	count := 0
 	for k := range shard.strings {
@@ -322,15 +353,24 @@ func (ki *KeyIntern) evictShardLocked(shard *keyInternShard) bool {
 			break
 		}
 		keysToDelete = append(keysToDelete, k)
-		shard.size -= int64(len(k))
-		delete(shard.strings, k)
 		count++
 	}
 
-	// Delete from hot key cache after modifying shard
-	// This is safe because sync.Map.Delete is safe for concurrent use
+	// SECURITY FIX: Delete from hot key cache FIRST, then from shard
+	// This prevents a race where a lookup finds the key in hot cache
+	// but the shard no longer has it, causing inconsistent behavior.
+	// The correct order is:
+	// 1. Remove from hot cache (fast path lookup will fail)
+	// 2. Remove from shard (slow path lookup will also fail)
+	// sync.Map.Delete is safe for concurrent use
 	for _, k := range keysToDelete {
 		ki.hotKeys.Delete(k)
+	}
+
+	// Now delete from shard
+	for _, k := range keysToDelete {
+		shard.size -= int64(len(k))
+		delete(shard.strings, k)
 	}
 
 	shard.evictions += int64(count)
@@ -338,23 +378,20 @@ func (ki *KeyIntern) evictShardLocked(shard *keyInternShard) bool {
 }
 
 // InternBytes returns an interned string from a byte slice
-// SECURITY: Added empty slice check to prevent panic
+// SECURITY: Uses safe conversion to avoid potential race conditions with pooled buffers
 func (ki *KeyIntern) InternBytes(b []byte) string {
 	if len(b) == 0 {
 		return ""
 	}
-	// SECURITY FIX: Use safe conversion instead of unsafe
-	s := string(b)
+	// SECURITY: Use safe conversion for both lookup and storage
+	// This avoids potential race conditions when byte slices are reused from pools
+	s := safeStringFromBytes(b)
 	return ki.Intern(s)
 }
 
 // getShard returns the shard for a key using FNV-1a hash
 func (ki *KeyIntern) getShard(key string) *keyInternShard {
-	h := uint64(14695981039346656037)
-	for i := 0; i < len(key); i++ {
-		h ^= uint64(key[i])
-		h *= 1099511628211
-	}
+	h := HashStringFNV1a(key)
 	return ki.shards[h&ki.shardMask]
 }
 
@@ -368,6 +405,18 @@ func (ki *KeyIntern) Clear() {
 	}
 	// Clear hot key cache
 	ki.hotKeys = sync.Map{}
+	atomic.StoreInt64(&ki.hotKeyCount, 0)
+}
+
+// Size returns the total number of interned keys across all shards
+func (ki *KeyIntern) Size() int {
+	var total int
+	for _, shard := range ki.shards {
+		shard.mu.RLock()
+		total += len(shard.strings)
+		shard.mu.RUnlock()
+	}
+	return total
 }
 
 // Stats returns statistics about the key interner
@@ -396,10 +445,13 @@ func (ki *KeyIntern) GetStats() KeyInternStats {
 // ============================================================================
 
 // PathIntern caches parsed path segments with their string representations
+// SECURITY FIX: Added memory-based eviction to prevent unbounded growth
 type PathIntern struct {
-	mu      sync.RWMutex
-	paths   map[string][]PathSegment
-	maxSize int
+	mu        sync.RWMutex
+	paths     map[string][]PathSegment
+	size      int64 // Track memory usage for eviction
+	maxSize   int   // Max number of entries
+	maxMemory int64 // Max memory in bytes (10MB default)
 }
 
 // GlobalPathIntern is the global path interner
@@ -408,8 +460,9 @@ var GlobalPathIntern = NewPathIntern(50000)
 // NewPathIntern creates a new path interner
 func NewPathIntern(maxSize int) *PathIntern {
 	return &PathIntern{
-		paths:   make(map[string][]PathSegment, maxSize/2),
-		maxSize: maxSize,
+		paths:     make(map[string][]PathSegment, maxSize/2),
+		maxSize:   maxSize,
+		maxMemory: 10 * 1024 * 1024, // 10MB default memory limit
 	}
 }
 
@@ -422,27 +475,64 @@ func (pi *PathIntern) Get(path string) ([]PathSegment, bool) {
 }
 
 // Set stores path segments in cache
+// SECURITY FIX: Added memory-based eviction at 80% watermark
 func (pi *PathIntern) Set(path string, segments []PathSegment) {
 	if len(path) > 256 {
 		return // Don't cache very long paths
 	}
 
+	// Estimate entry size: path string + segments
+	entrySize := int64(len(path)) + int64(len(segments))*int64(pathSegmentSize)
+
 	pi.mu.Lock()
 	defer pi.mu.Unlock()
 
-	// Evict if over limit
-	if len(pi.paths) >= pi.maxSize {
-		// Remove a random entry (simplified LRU)
-		for k := range pi.paths {
-			delete(pi.paths, k)
-			break
+	// SECURITY: Check memory-based eviction at 80% watermark
+	highWatermark := int64(float64(pi.maxMemory) * 0.8)
+	for pi.size+entrySize > highWatermark && len(pi.paths) > 0 {
+		if !pi.evictOneLocked() {
+			break // Can't evict anymore
 		}
+	}
+
+	// Also check entry count limit
+	if len(pi.paths) >= pi.maxSize {
+		pi.evictOneLocked()
+	}
+
+	// Check if we have room
+	if pi.size+entrySize > pi.maxMemory {
+		return // Skip caching to prevent memory exhaustion
 	}
 
 	// Make a copy of segments
 	copied := make([]PathSegment, len(segments))
 	copy(copied, segments)
+
+	// Update size tracking (remove old entry if exists)
+	if old, exists := pi.paths[path]; exists {
+		pi.size -= int64(len(path)) + int64(len(old))*int64(pathSegmentSize)
+	}
+
 	pi.paths[path] = copied
+	pi.size += entrySize
+}
+
+// pathSegmentSize is the estimated size of a PathSegment struct in bytes
+const pathSegmentSize = 128
+
+// evictOneLocked removes one entry from the cache (must be called with lock held)
+func (pi *PathIntern) evictOneLocked() bool {
+	if len(pi.paths) == 0 {
+		return false
+	}
+	// Remove a random entry
+	for k, v := range pi.paths {
+		pi.size -= int64(len(k)) + int64(len(v))*int64(pathSegmentSize)
+		delete(pi.paths, k)
+		return true
+	}
+	return false
 }
 
 // Clear removes all cached paths
@@ -482,6 +572,7 @@ func InternStringBytes(b []byte) string {
 
 // BatchIntern interns multiple strings at once
 // More efficient than calling Intern multiple times due to reduced lock overhead
+// SECURITY FIX: Added memory-based eviction to prevent unbounded growth
 func BatchIntern(strings []string) []string {
 	if len(strings) == 0 {
 		return strings
@@ -490,6 +581,10 @@ func BatchIntern(strings []string) []string {
 	result := make([]string, len(strings))
 	intern := GlobalStringIntern
 	intern.mu.Lock()
+	defer intern.mu.Unlock()
+
+	// SECURITY: Pre-check memory watermark (80%)
+	highWatermark := int64(float64(intern.maxSize) * 0.8)
 
 	for i, s := range strings {
 		if len(s) == 0 || len(s) > 256 {
@@ -502,13 +597,22 @@ func BatchIntern(strings []string) []string {
 			continue
 		}
 
+		// SECURITY: Check memory before adding
+		for intern.size+int64(len(s)) > highWatermark {
+			if !intern.evictRandomLocked() {
+				// Can't evict anymore, skip interning this string
+				result[i] = s
+				continue
+			}
+		}
+
 		// SECURITY FIX: Use safe string copy instead of unsafe
 		copied := string([]byte(s))
 		intern.strings[copied] = copied
+		intern.size += int64(len(s))
 		result[i] = copied
 	}
 
-	intern.mu.Unlock()
 	return result
 }
 

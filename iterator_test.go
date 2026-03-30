@@ -88,13 +88,13 @@ func BenchmarkSafeTypeAssert(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, _ = SafeTypeAssert[int](input)
+		_, _ = safeTypeAssert[int](input)
 	}
 }
 
 // TestBulkProcessor tests BulkProcessor functionality
 func TestBulkProcessor(t *testing.T) {
-	processor := New()
+	processor, _ := New()
 	defer processor.Close()
 
 	bp := NewBulkProcessor(processor, 10)
@@ -183,21 +183,21 @@ func TestDefaultValues(t *testing.T) {
 
 // TestEncodeBuffer tests encode buffer pooling
 func TestEncodeBuffer(t *testing.T) {
-	buf := GetEncodeBuffer()
+	buf := getEncodeBuffer()
 	if buf == nil {
-		t.Fatal("GetEncodeBuffer returned nil")
+		t.Fatal("getEncodeBuffer returned nil")
 	}
 
 	// Use the buffer
 	buf = append(buf, "test data"...)
 
 	// Return to pool
-	PutEncodeBuffer(buf)
+	putEncodeBuffer(buf)
 
 	// Get another buffer
-	buf2 := GetEncodeBuffer()
+	buf2 := getEncodeBuffer()
 	if buf2 == nil {
-		t.Fatal("GetEncodeBuffer returned nil on second call")
+		t.Fatal("getEncodeBuffer returned nil on second call")
 	}
 
 	// Buffer should be reset
@@ -205,7 +205,7 @@ func TestEncodeBuffer(t *testing.T) {
 		t.Errorf("Buffer length = %d, want 0", len(buf2))
 	}
 
-	PutEncodeBuffer(buf2)
+	putEncodeBuffer(buf2)
 }
 
 // TestIsSimplePropertyAccess tests simple property access detection
@@ -1274,11 +1274,11 @@ func TestIterableValue_RealWorldScenario(t *testing.T) {
 
 // TestIteratorDataState tests iterator maintains correct state
 func TestIteratorDataState(t *testing.T) {
-	processor := New()
+	processor, _ := New()
 	defer processor.Close()
 
 	data := []any{1, 2, 3, 4, 5}
-	it := NewIterator(processor, data, nil)
+	it := NewIterator(data)
 
 	// Check initial state
 	if it.position != 0 {
@@ -1304,12 +1304,12 @@ func TestIteratorDataState(t *testing.T) {
 
 // TestIteratorHasNext tests Iterator.HasNext method
 func TestIteratorHasNext(t *testing.T) {
-	processor := New()
+	processor, _ := New()
 	defer processor.Close()
 
 	t.Run("array iterator", func(t *testing.T) {
 		data := []any{1, 2, 3}
-		it := NewIterator(processor, data, nil)
+		it := NewIterator(data)
 
 		count := 0
 		for it.HasNext() {
@@ -1324,7 +1324,7 @@ func TestIteratorHasNext(t *testing.T) {
 
 	t.Run("object iterator", func(t *testing.T) {
 		data := map[string]any{"a": 1, "b": 2, "c": 3}
-		it := NewIterator(processor, data, nil)
+		it := NewIterator(data)
 
 		count := 0
 		for it.HasNext() {
@@ -1339,7 +1339,7 @@ func TestIteratorHasNext(t *testing.T) {
 
 	t.Run("empty array", func(t *testing.T) {
 		data := []any{}
-		it := NewIterator(processor, data, nil)
+		it := NewIterator(data)
 
 		if it.HasNext() {
 			t.Error("Expected no elements in empty array")
@@ -1349,12 +1349,12 @@ func TestIteratorHasNext(t *testing.T) {
 
 // TestIteratorNext tests Iterator.Next method
 func TestIteratorNext(t *testing.T) {
-	processor := New()
+	processor, _ := New()
 	defer processor.Close()
 
 	t.Run("array elements", func(t *testing.T) {
 		data := []any{"a", "b", "c"}
-		it := NewIterator(processor, data, nil)
+		it := NewIterator(data)
 
 		expected := []any{"a", "b", "c"}
 		for i := 0; i < len(expected); i++ {
@@ -1376,7 +1376,7 @@ func TestIteratorNext(t *testing.T) {
 
 	t.Run("object values", func(t *testing.T) {
 		data := map[string]any{"a": 1, "b": 2}
-		it := NewIterator(processor, data, nil)
+		it := NewIterator(data)
 
 		count := 0
 		for it.HasNext() {
@@ -1420,40 +1420,40 @@ func TestLargeBuffer(t *testing.T) {
 	putLargeBuffer(buf2)
 }
 
-// TestLazyJSON tests LazyJSON functionality
-func TestLazyJSON(t *testing.T) {
+// TestLazyParserFunctionality tests LazyParser functionality
+func TestLazyParserFunctionality(t *testing.T) {
 	t.Run("lazy parsing", func(t *testing.T) {
 		data := []byte(`{"name":"test","value":42}`)
-		lj := NewLazyJSON(data)
+		lp := NewLazyParser(data)
 
 		// Should not be parsed yet
-		if lj.IsParsed() {
-			t.Error("LazyJSON should not be parsed yet")
+		if lp.IsParsed() {
+			t.Error("LazyParser should not be parsed yet")
 		}
 
 		// Get triggers parsing
-		result, err := lj.Get("name")
+		result, err := lp.Get("name")
 		if err != nil {
-			t.Fatalf("LazyJSON.Get error: %v", err)
+			t.Fatalf("LazyParser.Get error: %v", err)
 		}
 
 		if result != "test" {
-			t.Errorf("LazyJSON.Get = %v, want test", result)
+			t.Errorf("LazyParser.Get = %v, want test", result)
 		}
 
 		// Should be parsed now
-		if !lj.IsParsed() {
-			t.Error("LazyJSON should be parsed now")
+		if !lp.IsParsed() {
+			t.Error("LazyParser should be parsed now")
 		}
 	})
 
 	t.Run("parse method", func(t *testing.T) {
 		data := []byte(`{"key":"value"}`)
-		lj := NewLazyJSON(data)
+		lp := NewLazyParser(data)
 
-		parsed, err := lj.Parse()
+		parsed, err := lp.Parse()
 		if err != nil {
-			t.Fatalf("LazyJSON.Parse error: %v", err)
+			t.Fatalf("LazyParser.Parse error: %v", err)
 		}
 
 		obj, ok := parsed.(map[string]any)
@@ -1468,53 +1468,53 @@ func TestLazyJSON(t *testing.T) {
 
 	t.Run("raw method", func(t *testing.T) {
 		data := []byte(`{"test":"data"}`)
-		lj := NewLazyJSON(data)
+		lp := NewLazyParser(data)
 
-		raw := lj.Raw()
+		raw := lp.Raw()
 		if !bytes.Equal(raw, data) {
-			t.Errorf("LazyJSON.Raw = %s, want %s", raw, data)
+			t.Errorf("LazyParser.Raw = %s, want %s", raw, data)
 		}
 	})
 
 	t.Run("parsed method", func(t *testing.T) {
 		data := []byte(`{"test":"data"}`)
-		lj := NewLazyJSON(data)
+		lp := NewLazyParser(data)
 
 		// Before parsing
-		if lj.Parsed() != nil {
-			t.Error("LazyJSON.Parsed should be nil before parsing")
+		if lp.Parsed() != nil {
+			t.Error("LazyParser.Parsed should be nil before parsing")
 		}
 
 		// Trigger parsing
-		_, _ = lj.Get("test")
+		_, _ = lp.Get("test")
 
 		// After parsing
-		if lj.Parsed() == nil {
-			t.Error("LazyJSON.Parsed should not be nil after parsing")
+		if lp.Parsed() == nil {
+			t.Error("LazyParser.Parsed should not be nil after parsing")
 		}
 	})
 
 	t.Run("error method", func(t *testing.T) {
 		data := []byte(`{invalid json}`)
-		lj := NewLazyJSON(data)
+		lp := NewLazyParser(data)
 
-		err := lj.Error()
+		err := lp.Error()
 		if err == nil {
-			t.Error("LazyJSON.Error should return error for invalid JSON")
+			t.Error("LazyParser.Error should return error for invalid JSON")
 		}
 	})
 
 	t.Run("nested path", func(t *testing.T) {
 		data := []byte(`{"nested":{"key":"value"}}`)
-		lj := NewLazyJSON(data)
+		lp := NewLazyParser(data)
 
-		result, err := lj.Get("nested.key")
+		result, err := lp.Get("nested.key")
 		if err != nil {
-			t.Fatalf("LazyJSON.Get nested error: %v", err)
+			t.Fatalf("LazyParser.Get nested error: %v", err)
 		}
 
 		if result != "value" {
-			t.Errorf("LazyJSON.Get nested = %v, want value", result)
+			t.Errorf("LazyParser.Get nested = %v, want value", result)
 		}
 	})
 }
@@ -1572,9 +1572,9 @@ func TestPooledDecoder(t *testing.T) {
 	jsonData := `{"name":"test","value":42}`
 	reader := strings.NewReader(jsonData)
 
-	dec := GetPooledDecoder(reader)
+	dec := getPooledDecoder(reader)
 	if dec == nil {
-		t.Fatal("GetPooledDecoder returned nil")
+		t.Fatal("getPooledDecoder returned nil")
 	}
 
 	var result map[string]any
@@ -1588,8 +1588,8 @@ func TestPooledDecoder(t *testing.T) {
 	}
 
 	// Return to pool
-	PutPooledDecoder(dec)
-	PutPooledDecoder(nil) // Should not panic
+	putPooledDecoder(dec)
+	putPooledDecoder(nil) // Should not panic
 }
 
 // TestSafeTypeAssert tests SafeTypeAssert function
@@ -1646,25 +1646,25 @@ func TestSafeTypeAssert(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			switch tt.targetType {
 			case "int":
-				result, ok := SafeTypeAssert[int](tt.input)
+				result, ok := safeTypeAssert[int](tt.input)
 				if ok != tt.shouldSucceed {
-					t.Errorf("SafeTypeAssert[int](%v) success = %v; want %v", tt.input, ok, tt.shouldSucceed)
+					t.Errorf("safeTypeAssert[int](%v) success = %v; want %v", tt.input, ok, tt.shouldSucceed)
 				}
 				if tt.validate != nil {
 					tt.validate(t, result)
 				}
 			case "string":
-				result, ok := SafeTypeAssert[string](tt.input)
+				result, ok := safeTypeAssert[string](tt.input)
 				if ok != tt.shouldSucceed {
-					t.Errorf("SafeTypeAssert[string](%v) success = %v; want %v", tt.input, ok, tt.shouldSucceed)
+					t.Errorf("safeTypeAssert[string](%v) success = %v; want %v", tt.input, ok, tt.shouldSucceed)
 				}
 				if tt.validate != nil {
 					tt.validate(t, result)
 				}
 			case "float64":
-				result, ok := SafeTypeAssert[float64](tt.input)
+				result, ok := safeTypeAssert[float64](tt.input)
 				if ok != tt.shouldSucceed {
-					t.Errorf("SafeTypeAssert[float64](%v) success = %v; want %v", tt.input, ok, tt.shouldSucceed)
+					t.Errorf("safeTypeAssert[float64](%v) success = %v; want %v", tt.input, ok, tt.shouldSucceed)
 				}
 				if tt.validate != nil {
 					tt.validate(t, result)
@@ -2016,7 +2016,7 @@ func TestWarmupPathCache(t *testing.T) {
 
 // TestWarmupPathCacheWithProcessor tests path cache warmup with processor
 func TestWarmupPathCacheWithProcessor(t *testing.T) {
-	processor := New()
+	processor, _ := New()
 	defer processor.Close()
 
 	paths := []string{

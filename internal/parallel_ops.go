@@ -24,9 +24,7 @@ type ParallelConfig struct {
 // DefaultParallelConfig returns the default parallel configuration
 func DefaultParallelConfig() ParallelConfig {
 	workers := runtime.NumCPU()
-	if workers < 2 {
-		workers = 2
-	}
+	workers = max(workers, 2)
 	// Default max workers cap - can be overridden via MaxWorkers field
 	maxWorkers := 64
 	if workers > maxWorkers {
@@ -113,10 +111,7 @@ func (pp *ParallelProcessor) ParallelMap(m map[string]any, fn func(key string, v
 
 	// Process in batches
 	for i := 0; i < len(keys); i += pp.config.BatchSize {
-		end := i + pp.config.BatchSize
-		if end > len(keys) {
-			end = len(keys)
-		}
+		end := min(i+pp.config.BatchSize, len(keys))
 		batch := keys[i:end]
 
 		wg.Add(1)
@@ -185,10 +180,7 @@ func (pp *ParallelProcessor) ParallelSlice(arr []any, fn func(index int, value a
 
 	// Process in batches
 	for i := 0; i < len(arr); i += pp.config.BatchSize {
-		end := i + pp.config.BatchSize
-		if end > len(arr) {
-			end = len(arr)
-		}
+		end := min(i+pp.config.BatchSize, len(arr))
 		start := i
 
 		wg.Add(1)
@@ -242,10 +234,7 @@ func (pp *ParallelProcessor) ParallelForEach(arr []any, fn func(index int, value
 	var errCount int32
 
 	for i := 0; i < len(arr); i += pp.config.BatchSize {
-		end := i + pp.config.BatchSize
-		if end > len(arr) {
-			end = len(arr)
-		}
+		end := min(i+pp.config.BatchSize, len(arr))
 		start := i
 
 		wg.Add(1)
@@ -295,10 +284,7 @@ func (pp *ParallelProcessor) ParallelForEachMap(m map[string]any, fn func(key st
 	var errCount int32
 
 	for i := 0; i < len(keys); i += pp.config.BatchSize {
-		end := i + pp.config.BatchSize
-		if end > len(keys) {
-			end = len(keys)
-		}
+		end := min(i+pp.config.BatchSize, len(keys))
 		batch := keys[i:end]
 
 		wg.Add(1)
@@ -497,10 +483,7 @@ func NewChunkProcessor(chunkSize int) *ChunkProcessor {
 // ProcessSlice processes a slice in chunks
 func (cp *ChunkProcessor) ProcessSlice(arr []any, fn func(chunk []any) error) error {
 	for i := 0; i < len(arr); i += cp.chunkSize {
-		end := i + cp.chunkSize
-		if end > len(arr) {
-			end = len(arr)
-		}
+		end := min(i+cp.chunkSize, len(arr))
 
 		if err := fn(arr[i:end]); err != nil {
 			return err
@@ -571,10 +554,7 @@ func (pp *ParallelProcessor) ParallelFilter(arr []any, predicate func(value any)
 		if start >= len(arr) {
 			break
 		}
-		end := start + chunkSize
-		if end > len(arr) {
-			end = len(arr)
-		}
+		end := min(start+chunkSize, len(arr))
 
 		wg.Add(1)
 		go func(workerID, startIdx, endIdx int) {
@@ -623,10 +603,7 @@ func (pp *ParallelProcessor) ParallelTransform(arr []any, transform func(value a
 		if start >= len(arr) {
 			break
 		}
-		end := start + chunkSize
-		if end > len(arr) {
-			end = len(arr)
-		}
+		end := min(start+chunkSize, len(arr))
 
 		wg.Add(1)
 		go func(startIdx, endIdx int) {

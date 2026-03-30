@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"math"
 	"reflect"
 	"strconv"
@@ -20,7 +21,7 @@ import (
 // needsEscapeTable is a pre-computed lookup table for characters that need escaping
 // Index is the byte value, value is true if escaping is needed
 var needsEscapeTable = [256]bool{
-	// Control characters (0x00-0x1F) need escaping
+	// Control characters (0x00-0x1F) need escaping per RFC 8259
 	0x00: true, 0x01: true, 0x02: true, 0x03: true, 0x04: true, 0x05: true, 0x06: true, 0x07: true,
 	0x08: true, 0x09: true, 0x0A: true, 0x0B: true, 0x0C: true, 0x0D: true, 0x0E: true, 0x0F: true,
 	0x10: true, 0x11: true, 0x12: true, 0x13: true, 0x14: true, 0x15: true, 0x16: true, 0x17: true,
@@ -28,7 +29,6 @@ var needsEscapeTable = [256]bool{
 	// Quote and backslash need escaping
 	'"':  true,
 	'\\': true,
-	// All other characters (0x20-0xFF except " and \) are safe
 }
 
 // Note: hexChars, StringToBytes, BufferPool are defined in encoding.go
@@ -64,7 +64,7 @@ var mediumEncoderPool = sync.Pool{
 }
 
 // largeEncoderPool for buffers between 4KB and 64KB
-// SECURITY FIX: Tiered pools prevent memory bloat from large buffers
+// Tiered pools prevent memory bloat from large buffers
 var largeEncoderPool = sync.Pool{
 	New: func() any {
 		return &FastEncoder{
@@ -203,8 +203,18 @@ func (e *FastEncoder) EncodeValue(v any) error {
 	case []float64:
 		e.EncodeFloatSlice(val)
 	case json.Number:
+		// SECURITY: Validate json.Number content before appending
+		// json.Number should only contain valid JSON number characters
+		if !isValidJSONNumber(string(val)) {
+			return fmt.Errorf("invalid json.Number: %s", string(val))
+		}
 		e.buf = append(e.buf, val...)
 	case json.RawMessage:
+		// SECURITY: Validate RawMessage is valid JSON before appending
+		// This prevents malformed JSON from corrupting the output
+		if len(val) > 0 && !json.Valid(val) {
+			return fmt.Errorf("invalid json.RawMessage: not valid JSON")
+		}
 		e.buf = append(e.buf, val...)
 	default:
 		// Fallback to stdlib for complex types
@@ -226,24 +236,26 @@ func (e *FastEncoder) encodeSlow(v any) error {
 
 // EncodeString encodes a JSON string
 // PERFORMANCE: Avoids reflection, uses inline escaping
+// SECURITY: Validates UTF-8 encoding per RFC 8259
 func (e *FastEncoder) EncodeString(s string) {
 	e.buf = append(e.buf, '"')
 
-	// Fast path: check if escaping is needed
-	if !needsEscape(s) {
+	// Fast path: check if escaping is needed AND UTF-8 is valid
+	// SECURITY: RFC 8259 requires JSON strings to be valid UTF-8
+	// We must validate UTF-8 even in the fast path to prevent invalid output
+	if !needsEscape(s) && utf8.ValidString(s) {
 		e.buf = append(e.buf, s...)
 		e.buf = append(e.buf, '"')
 		return
 	}
 
-	// Slow path: escape special characters
+	// Slow path: escape special characters and validate/fix UTF-8
 	e.escapeString(s)
 	e.buf = append(e.buf, '"')
 }
 
 // needsEscape checks if a string needs JSON escaping
 // PERFORMANCE: Uses SWAR (SIMD Within A Register) technique for batch processing
-// PERFORMANCE: First checks if any byte is potentially problematic using bit operations
 func needsEscape(s string) bool {
 	n := len(s)
 	if n == 0 {
@@ -258,12 +270,10 @@ func needsEscape(s string) bool {
 
 		// Check for control characters (< 0x20) using bit manipulation
 		// A byte is a control char if (byte - 0x20) has the sign bit set
-		// We use: if byte < 0x20, then (byte - 0x20) & 0x80 != 0
 		ctrlMask := ((b0 - 0x20) & 0x80) | ((b1 - 0x20) & 0x80) | ((b2 - 0x20) & 0x80) | ((b3 - 0x20) & 0x80) |
 			((b4 - 0x20) & 0x80) | ((b5 - 0x20) & 0x80) | ((b6 - 0x20) & 0x80) | ((b7 - 0x20) & 0x80)
 
 		// Quick check for common safe case: no control chars, no quotes, no backslashes
-		// This avoids individual comparisons in the common case
 		if ctrlMask != 0 ||
 			b0 == '"' || b1 == '"' || b2 == '"' || b3 == '"' ||
 			b4 == '"' || b5 == '"' || b6 == '"' || b7 == '"' ||
@@ -288,17 +298,39 @@ func needsEscape(s string) bool {
 }
 
 // escapeString escapes special characters for JSON
+// PERFORMANCE: Batch copies safe segments to reduce append calls
+// SECURITY: Validates UTF-8 encoding and replaces invalid sequences
 func (e *FastEncoder) escapeString(s string) {
-	// Process byte by byte for proper UTF-8 handling
 	start := 0
-	for i := 0; i < len(s); {
+	n := len(s)
+
+	for i := 0; i < n; {
 		c := s[i]
+
+		// SECURITY: Check for invalid UTF-8 sequences (high bytes)
+		if c >= 0x80 {
+			r, size := utf8.DecodeRuneInString(s[i:])
+			if r == utf8.RuneError && size == 1 {
+				// Invalid UTF-8 sequence - batch append safe portion then replace
+				if start < i {
+					e.buf = append(e.buf, s[start:i]...)
+				}
+				e.buf = append(e.buf, `\ufffd`...)
+				i++
+				start = i
+				continue
+			}
+			// Valid multi-byte UTF-8 - skip entire rune
+			i += size
+			continue
+		}
+
 		if c >= 0x20 && c != '"' && c != '\\' {
 			i++
 			continue
 		}
 
-		// Append the safe portion
+		// Batch append the safe portion before this character
 		if start < i {
 			e.buf = append(e.buf, s[start:i]...)
 		}
@@ -330,7 +362,7 @@ func (e *FastEncoder) escapeString(s string) {
 	}
 
 	// Append remaining safe portion
-	if start < len(s) {
+	if start < n {
 		e.buf = append(e.buf, s[start:]...)
 	}
 }
@@ -446,7 +478,7 @@ var mediumIntsNeg [900][]byte
 // init initializes the medium and negative integer lookup tables and common floats
 func init() {
 	// Initialize medium integers (100-999)
-	for i := 0; i < 900; i++ {
+	for i := range 900 {
 		n := i + 100
 		mediumInts[i] = []byte(
 			string(byte('0'+n/100)) +
@@ -456,7 +488,7 @@ func init() {
 	}
 
 	// Initialize large integers (1000-9999)
-	for i := 0; i < 9000; i++ {
+	for i := range 9000 {
 		n := i + 1000
 		largeInts[i] = []byte(
 			string(byte('0'+n/1000)) +
@@ -473,48 +505,85 @@ func init() {
 	}
 
 	// Initialize medium negative integers (-100 to -999)
-	for i := 0; i < 900; i++ {
+	for i := range 900 {
 		mediumIntsNeg[i] = []byte("-" + string(mediumInts[i]))
 	}
 
 	// Initialize common floats table
 	// These are the most frequently used float values in JSON
+	// PERFORMANCE: Extended coverage for 0.0-10.0 range
 	commonFloats = map[uint64][]byte{
-		// Common positive values
-		0x3ff0000000000000: []byte("1"),    // 1.0
-		0x4000000000000000: []byte("2"),    // 2.0
-		0x4008000000000000: []byte("3"),    // 3.0
-		0x4010000000000000: []byte("4"),    // 4.0
-		0x4014000000000000: []byte("5"),    // 5.0
-		0x4018000000000000: []byte("6"),    // 6.0
-		0x401c000000000000: []byte("7"),    // 7.0
-		0x4020000000000000: []byte("8"),    // 8.0
-		0x4022000000000000: []byte("9"),    // 9.0
-		0x4024000000000000: []byte("10"),   // 10.0
-		0x3fe0000000000000: []byte("0.5"),  // 0.5
-		0x3fc999999999999a: []byte("0.2"),  // 0.2
-		0x3fb999999999999a: []byte("0.1"),  // 0.1
-		0x3fd3333333333333: []byte("0.3"),  // 0.3
-		0x3fd999999999999a: []byte("0.4"),  // 0.4
-		0x3fe3333333333333: []byte("0.6"),  // 0.6
-		0x3fe6666666666666: []byte("0.7"),  // 0.7
-		0x3feccccccccccccd: []byte("0.8"),  // 0.8
-		0x3ff199999999999a: []byte("1.1"),  // 1.1
-		0x3ff3333333333333: []byte("1.2"),  // 1.2
-		0x3ff4cccccccccccd: []byte("1.3"),  // 1.3
-		0x3ff6666666666666: []byte("1.4"),  // 1.4
-		0x3ff8000000000000: []byte("1.5"),  // 1.5
-		0x3ff999999999999a: []byte("1.6"),  // 1.6
-		0x3ffb333333333333: []byte("1.7"),  // 1.7
-		0x3ffccccccccccccd: []byte("1.8"),  // 1.8
-		0x3ffe666666666666: []byte("1.9"),  // 1.9
-		0x400199999999999a: []byte("2.5"),  // 2.5
-		0x403e000000000000: []byte("30"),   // 30.0
-		0x4049000000000000: []byte("50"),   // 50.0
-		0x4059000000000000: []byte("100"),  // 100.0
-		0x408f400000000000: []byte("1000"), // 1000.0
-		// Additional powers of 10
-		0x40c3880000000000: []byte("10000"), // 10000.0
+		// Integers 0-10 (handled by zero check and integer path, but included for completeness)
+		0x3ff0000000000000: []byte("1"),  // 1.0
+		0x4000000000000000: []byte("2"),  // 2.0
+		0x4008000000000000: []byte("3"),  // 3.0
+		0x4010000000000000: []byte("4"),  // 4.0
+		0x4014000000000000: []byte("5"),  // 5.0
+		0x4018000000000000: []byte("6"),  // 6.0
+		0x401c000000000000: []byte("7"),  // 7.0
+		0x4020000000000000: []byte("8"),  // 8.0
+		0x4022000000000000: []byte("9"),  // 9.0
+		0x4024000000000000: []byte("10"), // 10.0
+		// Decimals 0.1-0.9
+		0x3fb999999999999a: []byte("0.1"), // 0.1
+		0x3fc999999999999a: []byte("0.2"), // 0.2
+		0x3fd3333333333333: []byte("0.3"), // 0.3
+		0x3fd999999999999a: []byte("0.4"), // 0.4
+		0x3fe0000000000000: []byte("0.5"), // 0.5
+		0x3fe3333333333333: []byte("0.6"), // 0.6
+		0x3fe6666666666666: []byte("0.7"), // 0.7
+		0x3fe999999999999a: []byte("0.8"), // 0.8
+		0x3feccccccccccccd: []byte("0.9"), // 0.9
+		// 1.x range
+		0x3ff199999999999a: []byte("1.1"), // 1.1
+		0x3ff3333333333333: []byte("1.2"), // 1.2
+		0x3ff4cccccccccccd: []byte("1.3"), // 1.3
+		0x3ff6666666666666: []byte("1.4"), // 1.4
+		0x3ff8000000000000: []byte("1.5"), // 1.5
+		0x3ff999999999999a: []byte("1.6"), // 1.6
+		0x3ffb333333333333: []byte("1.7"), // 1.7
+		0x3ffccccccccccccd: []byte("1.8"), // 1.8
+		0x3ffe666666666666: []byte("1.9"), // 1.9
+		// 2.x range
+		0x4000666666666666: []byte("2.1"), // 2.1
+		0x4000cccccccccccd: []byte("2.2"), // 2.2
+		0x4001333333333333: []byte("2.3"), // 2.3
+		0x400199999999999a: []byte("2.4"), // 2.4
+		0x4002000000000000: []byte("2.5"), // 2.5
+		0x4002666666666666: []byte("2.6"), // 2.6
+		0x4002cccccccccccd: []byte("2.7"), // 2.7
+		0x4003333333333333: []byte("2.8"), // 2.8
+		0x400399999999999a: []byte("2.9"), // 2.9
+		// 3.x range
+		0x4008666666666666: []byte("3.1"), // 3.1
+		0x4008cccccccccccd: []byte("3.2"), // 3.2
+		0x4009333333333333: []byte("3.3"), // 3.3
+		0x400999999999999a: []byte("3.4"), // 3.4
+		0x400a000000000000: []byte("3.5"), // 3.5
+		0x400a666666666666: []byte("3.6"), // 3.6
+		0x400acccccccccccd: []byte("3.7"), // 3.7
+		0x400b333333333333: []byte("3.8"), // 3.8
+		0x400b99999999999a: []byte("3.9"), // 3.9
+		// 4.x range
+		0x4010666666666666: []byte("4.1"), // 4.1
+		0x4010cccccccccccd: []byte("4.2"), // 4.2
+		0x4011333333333333: []byte("4.3"), // 4.3
+		0x401199999999999a: []byte("4.4"), // 4.4
+		0x4012000000000000: []byte("4.5"), // 4.5
+		0x4012666666666666: []byte("4.6"), // 4.6
+		0x4012cccccccccccd: []byte("4.7"), // 4.7
+		0x4013333333333333: []byte("4.8"), // 4.8
+		0x401399999999999a: []byte("4.9"), // 4.9
+		// 5.x range
+		0x4014666666666666: []byte("5.1"), // 5.1
+		0x4014cccccccccccd: []byte("5.2"), // 5.2
+		0x4015333333333333: []byte("5.3"), // 5.3
+		0x401599999999999a: []byte("5.4"), // 5.4
+		0x4016000000000000: []byte("5.5"), // 5.5
+		0x4016666666666666: []byte("5.6"), // 5.6
+		0x4016cccccccccccd: []byte("5.7"), // 5.7
+		0x4017333333333333: []byte("5.8"), // 5.8
+		0x401799999999999a: []byte("5.9"), // 5.9
 		// Common fractions
 		0x3fd0000000000000: []byte("0.25"),  // 0.25
 		0x3fe4000000000000: []byte("0.75"),  // 0.75
@@ -526,6 +595,12 @@ func init() {
 		0x3fc3333333333333: []byte("0.15"), // 0.15
 		// Small decimals
 		0x3f50624dd2f1a9fc: []byte("0.001"), // 0.001
+		// Powers of 10
+		0x403e000000000000: []byte("30"),    // 30.0
+		0x4049000000000000: []byte("50"),    // 50.0
+		0x4059000000000000: []byte("100"),   // 100.0
+		0x408f400000000000: []byte("1000"),  // 1000.0
+		0x40c3880000000000: []byte("10000"), // 10000.0
 		// Common negative values
 		0xbff0000000000000: []byte("-1"),    // -1.0
 		0xc000000000000000: []byte("-2"),    // -2.0
@@ -874,7 +949,6 @@ func (e *FastEncoder) EncodeUint64Slice(arr []uint64) {
 
 // FastParseInt parses an integer from a byte slice
 // PERFORMANCE: Avoids string allocation by parsing directly from bytes
-// SECURITY FIX: Proper overflow detection for both positive and negative numbers
 func FastParseInt(b []byte) (int64, error) {
 	if len(b) == 0 {
 		return 0, strconv.ErrSyntax
@@ -900,7 +974,7 @@ func FastParseInt(b []byte) (int64, error) {
 		}
 		digit := int64(c - '0')
 
-		// SECURITY FIX: Improved overflow detection
+		// Overflow detection:
 		// For positive: n*10 + digit <= MaxInt64 (9223372036854775807)
 		// For negative: -(n*10 + digit) >= MinInt64 (-9223372036854775808)
 		// MinInt64 = -9223372036854775808, so we need n*10 + digit <= 9223372036854775808
@@ -909,6 +983,16 @@ func FastParseInt(b []byte) (int64, error) {
 			// For negative numbers, the absolute value can be up to 9223372036854775808
 			// Check: n*10 + digit <= 9223372036854775808
 			// Safe threshold: n < 922337203685477580 OR (n == 922337203685477580 AND digit <= 8)
+			//
+			// SECURITY NOTE: The boundary case "-9223372036854775808" (MinInt64) is valid:
+			//   - After parsing "922337203685477580", n = 922337203685477580
+			//   - The final digit is 8
+			//   - Condition: n == maxVal/10 (922337203685477580) AND digit == 8
+			//   - This passes the check (digit > 8 would fail), so we allow it
+			//   - After negation: n = -9223372036854775808, which is exactly MinInt64
+			//
+			// CRITICAL: The check "digit > 8" (not "digit >= 8") is intentional and correct.
+			// Changing to ">=" would incorrectly reject the valid MinInt64 value.
 			const maxVal = 1 << 63 // 9223372036854775808
 			if n > maxVal/10 || (n == maxVal/10 && digit > 8) {
 				return 0, strconv.ErrRange
@@ -917,6 +1001,11 @@ func FastParseInt(b []byte) (int64, error) {
 			// For positive numbers, the value can be up to 9223372036854775807
 			// Check: n*10 + digit <= 9223372036854775807
 			// Safe threshold: n < 922337203685477580 OR (n == 922337203685477580 AND digit <= 7)
+			//
+			// SECURITY NOTE: MaxInt64 is 9223372036854775807, last digit is 7
+			//   - After parsing "922337203685477580", n = 922337203685477580
+			//   - The final digit must be <= 7
+			//   - Condition: digit > 7 would overflow, correctly rejected
 			const maxVal = 1<<63 - 1 // 9223372036854775807
 			if n > maxVal/10 || (n == maxVal/10 && digit > 7) {
 				return 0, strconv.ErrRange
@@ -933,18 +1022,33 @@ func FastParseInt(b []byte) (int64, error) {
 }
 
 // FastParseFloat parses a float from a byte slice
+// SECURITY: Rejects NaN and Infinity values which are invalid in standard JSON (RFC 8259)
 func FastParseFloat(b []byte) (float64, error) {
-	// For now, use strconv (float parsing is complex)
-	return strconv.ParseFloat(unsafeString(b), 64)
-}
-
-// unsafeString converts byte slice to string.
-// SECURITY FIX: Uses standard library conversion for safety.
-// Go 1.20+ optimizes this conversion in most cases, making unsafe unnecessary.
-// The previous unsafe implementation could cause data corruption if the input
-// slice was modified after the string was created.
-func unsafeString(b []byte) string {
-	return string(b)
+	// SECURITY: Fast check for invalid JSON float values
+	// NaN, Inf, +Inf, -Inf are not valid JSON numbers per RFC 8259
+	if len(b) >= 3 {
+		// Check first 3 characters (case-insensitive)
+		c0, c1, c2 := b[0], b[1], b[2]
+		// Check for "nan", "inf" (with optional sign)
+		if (c0 == 'N' || c0 == 'n') && (c1 == 'A' || c1 == 'a') && (c2 == 'N' || c2 == 'n') {
+			return 0, strconv.ErrSyntax
+		}
+		if (c0 == 'I' || c0 == 'i') && (c1 == 'N' || c1 == 'n') && (c2 == 'F' || c2 == 'f') {
+			return 0, strconv.ErrSyntax
+		}
+		// Check for "+inf", "-inf", "+nan", "-nan"
+		if len(b) >= 4 && (c0 == '+' || c0 == '-') {
+			c1, c2, c3 := b[1], b[2], b[3]
+			if (c1 == 'N' || c1 == 'n') && (c2 == 'A' || c2 == 'a') && (c3 == 'N' || c3 == 'n') {
+				return 0, strconv.ErrSyntax
+			}
+			if (c1 == 'I' || c1 == 'i') && (c2 == 'N' || c2 == 'n') && (c3 == 'F' || c3 == 'f') {
+				return 0, strconv.ErrSyntax
+			}
+		}
+	}
+	// Use strconv for actual parsing
+	return strconv.ParseFloat(string(b), 64)
 }
 
 // ============================================================================
@@ -978,6 +1082,80 @@ func FastMarshalToString(v any) (string, error) {
 	}
 
 	return string(e.buf), nil
+}
+
+// ============================================================================
+// SECURITY VALIDATION HELPERS
+// ============================================================================
+
+// isValidJSONNumber validates that a string is a valid JSON number
+// SECURITY: Prevents malformed numbers from corrupting JSON output
+// PERFORMANCE: Single-pass validation without allocations
+func isValidJSONNumber(s string) bool {
+	if len(s) == 0 {
+		return false
+	}
+
+	i := 0
+
+	// Optional leading minus
+	if s[i] == '-' {
+		i++
+		if i >= len(s) {
+			return false
+		}
+	}
+
+	// Integer part
+	if s[i] == '0' {
+		i++
+		// Leading zero must be followed by . or end
+		if i < len(s) && s[i] != '.' && s[i] != 'e' && s[i] != 'E' {
+			return false
+		}
+	} else if s[i] >= '1' && s[i] <= '9' {
+		i++
+		for i < len(s) && s[i] >= '0' && s[i] <= '9' {
+			i++
+		}
+	} else {
+		return false
+	}
+
+	// Optional fractional part
+	if i < len(s) && s[i] == '.' {
+		i++
+		if i >= len(s) || s[i] < '0' || s[i] > '9' {
+			return false // Must have at least one digit after .
+		}
+		for i < len(s) && s[i] >= '0' && s[i] <= '9' {
+			i++
+		}
+	}
+
+	// Optional exponent
+	if i < len(s) && (s[i] == 'e' || s[i] == 'E') {
+		i++
+		if i >= len(s) {
+			return false
+		}
+		// Optional sign
+		if s[i] == '+' || s[i] == '-' {
+			i++
+			if i >= len(s) {
+				return false
+			}
+		}
+		// Must have at least one digit
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+		for i < len(s) && s[i] >= '0' && s[i] <= '9' {
+			i++
+		}
+	}
+
+	return i == len(s)
 }
 
 // ============================================================================
@@ -1037,7 +1215,7 @@ func GetStructEncoder(t reflect.Type) []StructFieldInfo {
 			OmitEmpty: omitEmpty,
 			Offset:    f.Offset,
 			Type:      f.Type,
-			IsPointer: f.Type.Kind() == reflect.Ptr,
+			IsPointer: f.Type.Kind() == reflect.Pointer,
 			EncodeFn:  getEncodeFn(f.Type),
 		}
 
@@ -1053,7 +1231,7 @@ func GetStructEncoder(t reflect.Type) []StructFieldInfo {
 // PERFORMANCE: Avoids reflection for common types by generating specialized encoders
 func getEncodeFn(t reflect.Type) func(*FastEncoder, reflect.Value) error {
 	// Handle pointer types
-	if t.Kind() == reflect.Ptr {
+	if t.Kind() == reflect.Pointer {
 		elemType := t.Elem()
 		elemEncoder := getEncodeFn(elemType)
 		return func(e *FastEncoder, v reflect.Value) error {
@@ -1199,7 +1377,7 @@ func isEmptyValue(v reflect.Value) bool {
 		return v.Uint() == 0
 	case reflect.Float32, reflect.Float64:
 		return v.Float() == 0
-	case reflect.Interface, reflect.Ptr:
+	case reflect.Interface, reflect.Pointer:
 		return v.IsNil()
 	}
 	return false
@@ -1223,14 +1401,6 @@ func splitTag(tag string) []string {
 // ============================================================================
 // ZERO-COPY STRING OPERATIONS
 // ============================================================================
-
-// BytesToString converts a byte slice to a string.
-// SECURITY FIX: Uses standard library conversion for safety.
-// Note: For performance-critical code where the caller guarantees the slice
-// won't be modified, consider using a separate unsafe version with clear documentation.
-func BytesToString(b []byte) string {
-	return string(b)
-}
 
 // IsValidUTF8 checks if a byte slice is valid UTF-8
 func IsValidUTF8(b []byte) bool {

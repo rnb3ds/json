@@ -25,7 +25,7 @@ import (
 // For advanced features, see: 2_advanced_features.go
 // For production patterns, see: 3_production_ready.go
 //
-// Run: go run examples/basic_usage.go
+// Run: go run -tags=example examples/1_basic_usage.go
 
 func main() {
 	fmt.Println("Basic Usage - JSON Library")
@@ -50,39 +50,30 @@ func main() {
 	}`
 
 	// 1. BASIC GET OPERATIONS
-	fmt.Println("1. Basic Get Operations")
-	fmt.Println("-----------------------")
 	demonstrateGet(sampleData)
 
 	// 2. TYPE-SAFE OPERATIONS
-	fmt.Println("\n2. Type-Safe Operations")
-	fmt.Println("-----------------------")
 	demonstrateTypeSafe(sampleData)
 
 	// 3. SET OPERATIONS
-	fmt.Println("\n3. Set Operations")
-	fmt.Println("-----------------")
 	demonstrateSet(sampleData)
 
 	// 4. ARRAY OPERATIONS
-	fmt.Println("\n4. Array Operations")
-	fmt.Println("-------------------")
 	demonstrateArrays(sampleData)
 
 	// 5. BATCH OPERATIONS
-	fmt.Println("\n5. Batch Operations")
-	fmt.Println("-------------------")
 	demonstrateBatch(sampleData)
 
 	// 6. ENCODING/JSON COMPATIBILITY
-	fmt.Println("\n6. encoding/json Compatibility")
-	fmt.Println("------------------------------")
 	demonstrateCompatibility()
 
 	fmt.Println("\nBasic usage complete!")
 }
 
 func demonstrateGet(data string) {
+	fmt.Println("1. Basic Get Operations")
+	fmt.Println("-----------------------")
+
 	// Simple field access
 	name, _ := json.Get(data, "user.name")
 	fmt.Printf("   Name: %v\n", name)
@@ -105,6 +96,9 @@ func demonstrateGet(data string) {
 }
 
 func demonstrateTypeSafe(data string) {
+	fmt.Println("\n2. Type-Safe Operations")
+	fmt.Println("-----------------------")
+
 	// Type-safe getters with automatic conversion
 	name, _ := json.GetString(data, "user.name")
 	fmt.Printf("   Name (string): %s\n", name)
@@ -112,7 +106,7 @@ func demonstrateTypeSafe(data string) {
 	age, _ := json.GetInt(data, "user.age")
 	fmt.Printf("   Age (int): %d\n", age)
 
-	balance, _ := json.GetFloat64(data, "user.balance")
+	balance, _ := json.GetFloat(data, "user.balance")
 	fmt.Printf("   Balance (float64): %.2f\n", balance)
 
 	active, _ := json.GetBool(data, "user.active")
@@ -124,12 +118,15 @@ func demonstrateTypeSafe(data string) {
 	settings, _ := json.GetObject(data, "settings")
 	fmt.Printf("   Settings (object): %v\n", settings)
 
-	// Generic GetTyped for custom types
+	// Generic GetAs for custom types
 	id, _ := json.GetTyped[int](data, "user.id")
 	fmt.Printf("   ID (generic): %d\n", id)
 }
 
 func demonstrateSet(data string) {
+	fmt.Println("\n3. Set Operations")
+	fmt.Println("-----------------")
+
 	// Set simple field
 	updated, _ := json.Set(data, "user.age", 29)
 	newAge, _ := json.GetInt(updated, "user.age")
@@ -140,8 +137,10 @@ func demonstrateSet(data string) {
 	newTheme, _ := json.GetString(updated2, "settings.theme")
 	fmt.Printf("   Updated theme: %s\n", newTheme)
 
-	// SetWithAdd creates paths automatically
-	updated3, _ := json.SetWithAdd(data, "user.premium.level", "gold")
+	// Set with auto-create paths using fluent config
+	cfg := json.DefaultConfig()
+	cfg.CreatePaths = true
+	updated3, _ := json.Set(data, "user.premium.level", "gold", cfg)
 	level, _ := json.GetString(updated3, "user.premium.level")
 	fmt.Printf("   New premium level (auto-created): %s\n", level)
 
@@ -149,9 +148,18 @@ func demonstrateSet(data string) {
 	updated4, _ := json.Set(data, "user.tags[0]", "VIP")
 	firstTag, _ := json.GetString(updated4, "user.tags[0]")
 	fmt.Printf("   Updated first tag: %s\n", firstTag)
+
+	// Append array element
+	updated5, _ := json.Set(data, "user.tags[+]", "Testers")
+	lastTag, _ := json.GetString(updated5, "user.tags[-1]")
+	fmt.Printf("   Append tag: %s\n", lastTag)
+
 }
 
 func demonstrateArrays(data string) {
+	fmt.Println("\n4. Array Operations")
+	fmt.Println("-------------------")
+
 	// Array slicing
 	firstTwo, _ := json.Get(data, "user.tags[0:2]")
 	fmt.Printf("   First two tags: %v\n", firstTwo)
@@ -166,6 +174,9 @@ func demonstrateArrays(data string) {
 }
 
 func demonstrateBatch(data string) {
+	fmt.Println("\n5. Batch Operations")
+	fmt.Println("-------------------")
+
 	// Batch get multiple paths
 	paths := []string{"user.name", "user.age", "settings.theme"}
 	results, err := json.GetMultiple(data, paths)
@@ -190,17 +201,22 @@ func demonstrateBatch(data string) {
 	fmt.Printf("   After batch set - Age: %d, Theme: %s, Active: %t\n",
 		newAge, newTheme, newActive)
 
-	// SetMultipleWithAdd for paths that may not exist
+	// SetMultiple with auto-create paths using fluent config
 	newUpdates := map[string]any{
 		"user.stats.logins":    100,
 		"user.stats.lastLogin": "2024-06-15",
 	}
-	updated2, _ := json.SetMultipleWithAdd(data, newUpdates)
+	cfg := json.DefaultConfig()
+	cfg.CreatePaths = true
+	updated2, _ := json.SetMultiple(data, newUpdates, cfg)
 	logins, _ := json.GetInt(updated2, "user.stats.logins")
 	fmt.Printf("   New stats.logins: %d\n", logins)
 }
 
 func demonstrateCompatibility() {
+	fmt.Println("\n6. encoding/json Compatibility")
+	fmt.Println("------------------------------")
+
 	// 100% compatible with encoding/json
 	type User struct {
 		Name   string   `json:"name"`

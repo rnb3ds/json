@@ -24,7 +24,7 @@ import (
 // For file I/O operations, see: 10_file_operations.go
 // For iterator functions, see: 9_iterator_functions.go
 //
-// Run: go run examples/advanced_features.go
+// Run: go run -tags=example examples/2_advanced_features.go
 
 func main() {
 	fmt.Println("Advanced Features - JSON Library")
@@ -72,34 +72,27 @@ func main() {
 	}`
 
 	// 1. COMPLEX PATH QUERIES
-	fmt.Println("1. Complex Path Queries")
-	fmt.Println("-----------------------")
 	demonstrateComplexPaths(complexData)
 
 	// 2. NESTED EXTRACTION
-	fmt.Println("\n2. Nested Extraction")
-	fmt.Println("--------------------")
 	demonstrateExtraction(complexData)
 
 	// 3. FLAT EXTRACTION
-	fmt.Println("\n3. Flat Extraction")
-	fmt.Println("------------------")
 	demonstrateFlatExtraction(complexData)
 
 	// 4. DEEP MODIFICATIONS
-	fmt.Println("\n4. Deep Modifications")
-	fmt.Println("---------------------")
 	demonstrateDeepModifications(complexData)
 
 	// 5. BATCH OPERATIONS
-	fmt.Println("\n5. Batch Operations")
-	fmt.Println("-------------------")
 	demonstrateBatchOperations(complexData)
 
 	fmt.Println("\nAdvanced features complete!")
 }
 
 func demonstrateComplexPaths(data string) {
+	fmt.Println("1. Complex Path Queries")
+	fmt.Println("-----------------------")
+
 	// Access first team of first department
 	firstTeam, _ := json.GetString(data, "departments[0].teams[0].name")
 	fmt.Printf("   First team: %s\n", firstTeam)
@@ -122,6 +115,9 @@ func demonstrateComplexPaths(data string) {
 }
 
 func demonstrateExtraction(data string) {
+	fmt.Println("\n2. Nested Extraction")
+	fmt.Println("--------------------")
+
 	// Extract all department names
 	deptNames, _ := json.Get(data, "departments{name}")
 	fmt.Printf("   Department names: %v\n", deptNames)
@@ -140,6 +136,9 @@ func demonstrateExtraction(data string) {
 }
 
 func demonstrateFlatExtraction(data string) {
+	fmt.Println("\n3. Flat Extraction")
+	fmt.Println("------------------")
+
 	// Flat extraction - flattens all nested arrays into single array
 
 	// Extract all teams (flat) from all departments
@@ -160,6 +159,9 @@ func demonstrateFlatExtraction(data string) {
 }
 
 func demonstrateDeepModifications(data string) {
+	fmt.Println("\n4. Deep Modifications")
+	fmt.Println("---------------------")
+
 	// Modify deep nested value
 	updated, _ := json.Set(data, "departments[0].teams[0].members[0].role", "Senior Lead")
 	newRole, _ := json.GetString(updated, "departments[0].teams[0].members[0].role")
@@ -172,22 +174,24 @@ func demonstrateDeepModifications(data string) {
 		"skills": []string{"Rust", "WebAssembly"},
 	}
 
-	// Get current members and append
-	members, _ := json.GetArray(data, "departments[0].teams[0].members")
-	members = append(members, newMember)
-	updated2, _ := json.Set(data, "departments[0].teams[0].members", members)
+	updated2, _ := json.Set(data, "departments[0].teams[0].members[+]", newMember)
 
 	// Verify addition
 	allMembers, _ := json.Get(updated2, "departments[0].teams[0].members{name}")
 	fmt.Printf("   Backend members after addition: %v\n", allMembers)
 
-	// Add nested path that doesn't exist
-	updated3, _ := json.SetWithAdd(data, "departments[0].budget.allocated", 1000000)
+	// Add nested path that doesn't exist using fluent config
+	cfg := json.DefaultConfig()
+	cfg.CreatePaths = true
+	updated3, _ := json.Set(data, "departments[0].budget.allocated", 1000000, cfg)
 	budget, _ := json.Get(updated3, "departments[0].budget")
 	fmt.Printf("   New budget path: %v\n", budget)
 }
 
 func demonstrateBatchOperations(data string) {
+	fmt.Println("\n5. Batch Operations")
+	fmt.Println("-------------------")
+
 	// Batch update multiple deep paths
 	updates := map[string]any{
 		"departments[0].name":                     "Engineering & Innovation",
@@ -224,13 +228,15 @@ func demonstrateBatchOperations(data string) {
 		fmt.Printf("   - %s: %v\n", path, value)
 	}
 
-	// SetMultipleWithAdd for paths that may not exist
+	// SetMultiple with path creation for paths that may not exist
 	newUpdates := map[string]any{
 		"statistics.total_departments": 2,
 		"statistics.total_teams":       3,
 		"statistics.last_updated":      "2024-06-15",
 	}
-	updated2, _ := json.SetMultipleWithAdd(data, newUpdates)
+	cfg := json.DefaultConfig()
+	cfg.CreatePaths = true
+	updated2, _ := json.SetMultiple(data, newUpdates, cfg)
 
 	stats, _ := json.Get(updated2, "statistics")
 	fmt.Printf("\n   New statistics section: %v\n", stats)

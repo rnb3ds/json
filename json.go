@@ -5,7 +5,7 @@
 //   - 100% encoding/json compatibility - drop-in replacement
 //   - High-performance path operations with smart caching
 //   - Thread-safe concurrent operations
-//   - Type-safe generic operations with Go 1.22+ features
+//   - Type-safe generic operations with Go 1.18+ generics
 //   - Memory-efficient resource pooling
 //   - Production-ready error handling and validation
 //
@@ -21,7 +21,7 @@
 //
 //	// Type-safe operations
 //	name, err := json.GetString(jsonStr, "user.name")
-//	age, err := json.GetInt(jsonStr, "user.age")
+//	age, err := json.GetAsInt(jsonStr, "user.age")
 //
 //	// Advanced processor for complex operations
 //	processor := json.New() // Use default config
@@ -35,6 +35,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"sync"
 	"sync/atomic"
 
@@ -44,10 +45,33 @@ import (
 var (
 	defaultProcessor   atomic.Pointer[Processor]
 	defaultProcessorMu sync.Mutex
+	fallbackProcessor  atomic.Pointer[Processor] // SAFETY: fallback for error recovery
 )
 
-// getDefaultProcessorFn is a thread-safe function that returns the default processor
-// Uses sync.OnceValue pattern for efficient lazy initialization
+// init initializes the fallback processor at package load time.
+// SAFETY: Ensures a fallback processor is always available for error recovery.
+func init() {
+	p, err := New()
+	if err != nil {
+		// This should never happen with DefaultConfig, but handle gracefully.
+		// Create a minimal config with reduced limits as a last resort.
+		cfg := DefaultConfig()
+		cfg.MaxJSONSize = 1024 * 1024 // 1MB - minimal safe limit
+		cfg.EnableCache = false       // Disable cache to reduce complexity
+		p, err = New(cfg)
+		if err != nil {
+			// Final fallback: log and continue without fallback processor
+			// Callers must handle nil processor gracefully
+			fmt.Fprintf(os.Stderr, "json: warning: failed to create fallback processor: %v\n", err)
+			return
+		}
+	}
+	fallbackProcessor.Store(p)
+}
+
+// getDefaultProcessor returns the default processor in a panic-safe manner.
+// SAFETY: Never panics - returns fallback processor on error.
+// Uses sync.OnceValue pattern for efficient lazy initialization.
 func getDefaultProcessor() *Processor {
 	// Fast path: check if processor exists and is not closed
 	if p := defaultProcessor.Load(); p != nil && !p.IsClosed() {
@@ -64,7 +88,23 @@ func getDefaultProcessor() *Processor {
 	}
 
 	// Create new processor
-	p := New()
+	p, err := New()
+	if err != nil {
+		// SAFETY: Return fallback processor instead of panicking
+		// This ensures the library never terminates the calling program
+		if fb := fallbackProcessor.Load(); fb != nil && !fb.IsClosed() {
+			return fb
+		}
+		// Last resort: create a minimal processor directly
+		// This should never fail with DefaultConfig
+		minimalP, minimalErr := New()
+		if minimalErr != nil {
+			// Return nil - callers must handle nil processor
+			// This is safer than panicking in production
+			return nil
+		}
+		return minimalP
+	}
 	defaultProcessor.Store(p)
 	return p
 }
@@ -111,11 +151,12 @@ func ShutdownGlobalProcessor() {
 
 // JSONLConfig holds configuration for JSONL processing
 type JSONLConfig struct {
-	BufferSize    int  // Buffer size for reading (default: 64KB)
-	MaxLineSize   int  // Maximum line size (default: 1MB)
-	SkipEmpty     bool // Skip empty lines (default: true)
-	SkipComments  bool // Skip lines starting with # or // (default: false)
-	ContinueOnErr bool // Continue processing on parse errors (default: false)
+	BufferSize    int        // Buffer size for reading (default: 64KB)
+	MaxLineSize   int        // Maximum line size (default: 1MB)
+	SkipEmpty     bool       // Skip empty lines (default: true)
+	SkipComments  bool       // Skip lines starting with # or // (default: false)
+	ContinueOnErr bool       // Continue processing on parse errors (default: false)
+	Processor     *Processor // Optional custom processor (default: global processor)
 }
 
 // DefaultJSONLConfig returns the default JSONL configuration
@@ -126,7 +167,26 @@ func DefaultJSONLConfig() JSONLConfig {
 		SkipEmpty:     true,
 		SkipComments:  false,
 		ContinueOnErr: false,
+		Processor:     nil, // Use global processor
 	}
+}
+
+// shouldSkipJSONLLine checks if a line should be skipped based on JSONLConfig.
+// This is a standalone function for use without a JSONLProcessor instance.
+func shouldSkipJSONLLine(line []byte, config JSONLConfig) bool {
+	// Skip empty lines if configured
+	if config.SkipEmpty && len(line) == 0 {
+		return true
+	}
+
+	// Skip comments if configured
+	if config.SkipComments && len(line) > 0 {
+		if line[0] == '#' || (len(line) > 1 && line[0] == '/' && line[1] == '/') {
+			return true
+		}
+	}
+
+	return false
 }
 
 // JSONLProcessor processes JSON Lines format data
@@ -142,20 +202,21 @@ type JSONLProcessor struct {
 	linesCount int64
 }
 
-// jsonlProcessorPool for reusing JSONL processors
-var jsonlProcessorPool = sync.Pool{
-	New: func() any {
-		return &JSONLProcessor{}
-	},
-}
-
-// NewJSONLProcessor creates a new JSONL processor with default configuration
+// NewJSONLProcessor creates a new JSONL processor with default configuration.
 func NewJSONLProcessor(reader io.Reader) *JSONLProcessor {
 	return NewJSONLProcessorWithConfig(reader, DefaultJSONLConfig())
 }
 
-// NewJSONLProcessorWithConfig creates a new JSONL processor with custom configuration
+// NewJSONLProcessorWithConfig creates a new JSONL processor with the specified configuration.
+//
+// Example:
+//
+//	cfg := json.DefaultJSONLConfig()
+//	cfg.SkipEmpty = false
+//	cfg.Processor = customProcessor
+//	proc := json.NewJSONLProcessorWithConfig(reader, cfg)
 func NewJSONLProcessorWithConfig(reader io.Reader, config JSONLConfig) *JSONLProcessor {
+	// Apply config defaults
 	if config.BufferSize <= 0 {
 		config.BufferSize = 64 * 1024
 	}
@@ -163,20 +224,41 @@ func NewJSONLProcessorWithConfig(reader io.Reader, config JSONLConfig) *JSONLPro
 		config.MaxLineSize = 1024 * 1024
 	}
 
+	processor := config.Processor
+	if processor == nil {
+		processor = getDefaultProcessor()
+	}
+
 	scanner := bufio.NewScanner(reader)
 	scanner.Buffer(make([]byte, config.BufferSize), config.MaxLineSize)
 
-	p := jsonlProcessorPool.Get().(*JSONLProcessor)
-	p.scanner = scanner
-	p.config = config
-	p.lineNum = 0
-	p.err = nil
-	p.processor = getDefaultProcessor()
-	p.stopped.Store(false)
-	p.bytesRead = 0
-	p.linesCount = 0
+	// Create processor with all fields initialized in one step
+	// stopped defaults to false (atomic.Bool zero value) - ready for processing
+	return &JSONLProcessor{
+		scanner:   scanner,
+		config:    config,
+		processor: processor,
+		// stopped, lineNum, err, bytesRead, linesCount all default to zero values
+	}
+}
 
-	return p
+// shouldSkipLine checks if a line should be skipped based on configuration.
+// Returns true if the line should be skipped (empty or comment).
+func (j *JSONLProcessor) shouldSkipLine(line []byte) bool {
+	return shouldSkipJSONLLine(line, j.config)
+}
+
+// parseLine parses a JSON line and returns the parsed data.
+// Returns an error if parsing fails and ContinueOnErr is false.
+func (j *JSONLProcessor) parseLine(line []byte, lineNum int) (any, error) {
+	var data any
+	if err := json.Unmarshal(line, &data); err != nil {
+		if j.config.ContinueOnErr {
+			return nil, nil // Signal to continue (error is suppressed)
+		}
+		return nil, fmt.Errorf("line %d: %w", lineNum, err)
+	}
+	return data, nil
 }
 
 // StreamLines processes JSONL data line by line
@@ -192,24 +274,19 @@ func (j *JSONLProcessor) StreamLines(fn func(lineNum int, data any) bool) error 
 		line := j.scanner.Bytes()
 		j.bytesRead += int64(len(line))
 
-		// Skip empty lines if configured
-		if j.config.SkipEmpty && len(line) == 0 {
+		// Use helper to check if line should be skipped
+		if j.shouldSkipLine(line) {
 			continue
 		}
 
-		// Skip comments if configured
-		if j.config.SkipComments && len(line) > 0 {
-			if line[0] == '#' || (len(line) > 1 && line[0] == '/' && line[1] == '/') {
-				continue
-			}
+		// Use helper to parse line
+		data, err := j.parseLine(line, j.lineNum)
+		if err != nil {
+			return err
 		}
-
-		var data any
-		if err := json.Unmarshal(line, &data); err != nil {
-			if j.config.ContinueOnErr {
-				continue
-			}
-			return fmt.Errorf("line %d: %w", j.lineNum, err)
+		if data == nil {
+			// ContinueOnErr case - error was suppressed
+			continue
 		}
 
 		j.linesCount++
@@ -245,14 +322,9 @@ func StreamLinesIntoWithConfig[T any](reader io.Reader, config JSONLConfig, fn f
 		lineNum++
 		line := scanner.Bytes()
 
-		if config.SkipEmpty && len(line) == 0 {
+		// Use helper to check if line should be skipped
+		if shouldSkipJSONLLine(line, config) {
 			continue
-		}
-
-		if config.SkipComments && len(line) > 0 {
-			if line[0] == '#' || (len(line) > 1 && line[0] == '/' && line[1] == '/') {
-				continue
-			}
 		}
 
 		var data T
@@ -281,7 +353,7 @@ func StreamLinesIntoWithConfig[T any](reader io.Reader, config JSONLConfig, fn f
 
 // StreamLinesParallel processes JSONL data in parallel using worker pool
 // PERFORMANCE: Parallel processing for CPU-bound operations on JSONL data
-func (j *JSONLProcessor) StreamLinesParallel(fn func(lineNum int, data any) error, workers int) error {
+func (j *JSONLProcessor) StreamLinesParallel(fn func(lineNum int, data any) error, workers int) (err error) {
 	if workers <= 0 {
 		workers = 4
 	}
@@ -299,7 +371,7 @@ func (j *JSONLProcessor) StreamLinesParallel(fn func(lineNum int, data any) erro
 	var wg sync.WaitGroup
 
 	// Start workers
-	for i := 0; i < workers; i++ {
+	for range workers {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -307,14 +379,24 @@ func (j *JSONLProcessor) StreamLinesParallel(fn func(lineNum int, data any) erro
 				if atomic.LoadInt32(&errCount) > 0 {
 					continue
 				}
-				if err := fn(job.lineNum, job.data); err != nil {
+				if jobErr := fn(job.lineNum, job.data); jobErr != nil {
 					if atomic.CompareAndSwapInt32(&errCount, 0, 1) {
-						firstErr = err
+						firstErr = jobErr
 					}
 				}
 			}
 		}()
 	}
+
+	// SAFETY: Ensure cleanup and error propagation on all exit paths
+	defer func() {
+		close(jobs)
+		wg.Wait()
+		// Propagate worker error if no other error occurred
+		if err == nil && firstErr != nil {
+			err = firstErr
+		}
+	}()
 
 	// Feed jobs
 	for j.scanner.Scan() {
@@ -326,29 +408,24 @@ func (j *JSONLProcessor) StreamLinesParallel(fn func(lineNum int, data any) erro
 		line := j.scanner.Bytes()
 		j.bytesRead += int64(len(line))
 
-		if j.config.SkipEmpty && len(line) == 0 {
+		// Use helper to check if line should be skipped
+		if j.shouldSkipLine(line) {
 			continue
 		}
 
-		if j.config.SkipComments && len(line) > 0 {
-			if line[0] == '#' || (len(line) > 1 && line[0] == '/' && line[1] == '/') {
-				continue
-			}
+		// Use helper to parse line
+		data, parseErr := j.parseLine(line, j.lineNum)
+		if parseErr != nil {
+			return parseErr // defer handles cleanup and error propagation
 		}
-
-		var data any
-		if err := json.Unmarshal(line, &data); err != nil {
-			if j.config.ContinueOnErr {
-				continue
-			}
-			close(jobs)
-			wg.Wait()
-			return fmt.Errorf("line %d: %w", j.lineNum, err)
+		if data == nil {
+			// ContinueOnErr case - error was suppressed
+			continue
 		}
 
 		j.linesCount++
 
-		// Wait if error occurred
+		// Check if error occurred before sending
 		if atomic.LoadInt32(&errCount) > 0 {
 			break
 		}
@@ -356,15 +433,12 @@ func (j *JSONLProcessor) StreamLinesParallel(fn func(lineNum int, data any) erro
 		jobs <- lineJob{lineNum: j.lineNum, data: data}
 	}
 
-	close(jobs)
-	wg.Wait()
-
-	if err := j.scanner.Err(); err != nil {
-		j.err = err
-		return err
+	if scanErr := j.scanner.Err(); scanErr != nil {
+		j.err = scanErr
+		return scanErr
 	}
 
-	return firstErr
+	return nil // defer will set err = firstErr if worker had error
 }
 
 // Stop stops the JSONL processor
@@ -381,6 +455,7 @@ func (j *JSONLProcessor) Err() error {
 type JSONLStats struct {
 	LinesProcessed int64
 	BytesRead      int64
+	BytesWritten   int64
 	CurrentLine    int
 }
 
@@ -393,16 +468,23 @@ func (j *JSONLProcessor) GetStats() JSONLStats {
 	}
 }
 
-// Release returns the processor to the pool
+// Release releases resources held by the JSONLProcessor.
+//
+// IMPORTANT:
+//   - Call this after all processing is complete
+//   - For StreamLinesParallel, ensure workers have finished before calling Release
+//   - After Release, the processor must not be used
+//
+// Resource Management:
+//   - Sets stopped flag to halt any pending operations
+//   - Clears internal processor reference to allow garbage collection
 func (j *JSONLProcessor) Release() {
+	// Signal stop to any running operations first
+	j.stopped.Store(true)
+
+	// Clear all references including processor for GC
 	j.scanner = nil
-	j.err = nil
 	j.processor = nil
-	j.lineNum = 0
-	j.bytesRead = 0
-	j.linesCount = 0
-	j.stopped.Store(false)
-	jsonlProcessorPool.Put(j)
 }
 
 // ============================================================================
@@ -488,7 +570,7 @@ func (w *JSONLWriter) Err() error {
 func (w *JSONLWriter) Stats() JSONLStats {
 	return JSONLStats{
 		LinesProcessed: int64(w.lineNum),
-		BytesRead:      w.bytesOut,
+		BytesWritten:   w.bytesOut,
 	}
 }
 
@@ -522,10 +604,7 @@ func ToJSONL(data []any) ([]byte, error) {
 	}
 
 	// Estimate buffer size
-	estimatedSize := len(data) * 64 // Rough estimate
-	if estimatedSize > 64*1024 {
-		estimatedSize = 64 * 1024
-	}
+	estimatedSize := min(len(data)*64, 64*1024)
 
 	buf := internal.GetEncoderBuffer()
 	defer internal.PutEncoderBuffer(buf)

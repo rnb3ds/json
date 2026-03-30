@@ -18,7 +18,7 @@ import (
 
 // TestLoadFromFile tests the LoadFromFile method
 func TestLoadFromFile(t *testing.T) {
-	processor := New()
+	processor, _ := New()
 	defer processor.Close()
 
 	t.Run("ValidFile", func(t *testing.T) {
@@ -81,7 +81,7 @@ func TestLoadFromFile(t *testing.T) {
 
 // TestSaveToFile tests the SaveToFile method
 func TestSaveToFile(t *testing.T) {
-	processor := New()
+	processor, _ := New()
 	defer processor.Close()
 
 	t.Run("SaveAndLoad", func(t *testing.T) {
@@ -89,7 +89,9 @@ func TestSaveToFile(t *testing.T) {
 		filePath := filepath.Join(tempDir, "save_test.json")
 		testData := map[string]interface{}{"name": "test", "value": 123}
 
-		err := processor.SaveToFile(filePath, testData, false)
+		cfg := DefaultConfig()
+		cfg.Pretty = false
+		err := processor.SaveToFile(filePath, testData, cfg)
 		if err != nil {
 			t.Errorf("SaveToFile failed: %v", err)
 		}
@@ -114,7 +116,9 @@ func TestSaveToFile(t *testing.T) {
 		filePath := filepath.Join(tempDir, "pretty_test.json")
 		testData := map[string]interface{}{"name": "test", "nested": map[string]interface{}{"key": "value"}}
 
-		err := processor.SaveToFile(filePath, testData, true)
+		cfg := DefaultConfig()
+		cfg.Pretty = true
+		err := processor.SaveToFile(filePath, testData, cfg)
 		if err != nil {
 			t.Errorf("SaveToFile with pretty failed: %v", err)
 		}
@@ -134,7 +138,9 @@ func TestSaveToFile(t *testing.T) {
 		filePath := filepath.Join(tempDir, "subdir", "nested", "test.json")
 		testData := map[string]interface{}{"created": true}
 
-		err := processor.SaveToFile(filePath, testData, false)
+		cfg := DefaultConfig()
+		cfg.Pretty = false
+		err := processor.SaveToFile(filePath, testData, cfg)
 		if err != nil {
 			t.Errorf("SaveToFile with directory creation failed: %v", err)
 		}
@@ -149,7 +155,9 @@ func TestSaveToFile(t *testing.T) {
 		filePath := filepath.Join(tempDir, "string_test.json")
 		testData := `{"already":"json"}`
 
-		err := processor.SaveToFile(filePath, testData, false)
+		cfg := DefaultConfig()
+		cfg.Pretty = false
+		err := processor.SaveToFile(filePath, testData, cfg)
 		if err != nil {
 			t.Errorf("SaveToFile with string data failed: %v", err)
 		}
@@ -158,7 +166,7 @@ func TestSaveToFile(t *testing.T) {
 
 // TestLoadFromReader tests the LoadFromReader method
 func TestLoadFromReader(t *testing.T) {
-	processor := New()
+	processor, _ := New()
 	defer processor.Close()
 
 	t.Run("ValidReader", func(t *testing.T) {
@@ -192,14 +200,16 @@ func TestLoadFromReader(t *testing.T) {
 
 // TestSaveToWriter tests the SaveToWriter method
 func TestSaveToWriter(t *testing.T) {
-	processor := New()
+	processor, _ := New()
 	defer processor.Close()
 
 	t.Run("SaveToWriter", func(t *testing.T) {
 		testData := map[string]interface{}{"writer": "test"}
 		var buf bytes.Buffer
 
-		err := processor.SaveToWriter(&buf, testData, false)
+		cfg := DefaultConfig()
+		cfg.Pretty = false
+		err := processor.SaveToWriter(&buf, testData, cfg)
 		if err != nil {
 			t.Errorf("SaveToWriter failed: %v", err)
 		}
@@ -213,7 +223,9 @@ func TestSaveToWriter(t *testing.T) {
 		testData := map[string]interface{}{"pretty": true}
 		var buf bytes.Buffer
 
-		err := processor.SaveToWriter(&buf, testData, true)
+		cfg := DefaultConfig()
+		cfg.Pretty = true
+		err := processor.SaveToWriter(&buf, testData, cfg)
 		if err != nil {
 			t.Errorf("SaveToWriter with pretty failed: %v", err)
 		}
@@ -226,7 +238,7 @@ func TestSaveToWriter(t *testing.T) {
 
 // TestMarshalToFile tests the MarshalToFile method
 func TestMarshalToFile(t *testing.T) {
-	processor := New()
+	processor, _ := New()
 	defer processor.Close()
 
 	t.Run("MarshalAndUnmarshal", func(t *testing.T) {
@@ -240,7 +252,9 @@ func TestMarshalToFile(t *testing.T) {
 
 		testData := TestStruct{Name: "marshal_test", Value: 42}
 
-		err := processor.MarshalToFile(filePath, testData, false)
+		cfg := DefaultConfig()
+		cfg.Pretty = false
+		err := processor.MarshalToFile(filePath, testData, cfg)
 		if err != nil {
 			t.Errorf("MarshalToFile failed: %v", err)
 		}
@@ -262,7 +276,9 @@ func TestMarshalToFile(t *testing.T) {
 
 		testData := map[string]interface{}{"pretty": true}
 
-		err := processor.MarshalToFile(filePath, testData, true)
+		cfg := DefaultConfig()
+		cfg.Pretty = true
+		err := processor.MarshalToFile(filePath, testData, cfg)
 		if err != nil {
 			t.Errorf("MarshalToFile with pretty failed: %v", err)
 		}
@@ -732,16 +748,16 @@ func TestLazyParser(t *testing.T) {
 		}
 	})
 
-	t.Run("GetAll", func(t *testing.T) {
+	t.Run("GetObject", func(t *testing.T) {
 		data := []byte(`{"a":1,"b":2}`)
 		lp := NewLazyParser(data)
 
-		all, err := lp.GetAll()
+		all, err := lp.GetObject()
 		if err != nil {
-			t.Errorf("GetAll failed: %v", err)
+			t.Errorf("GetObject failed: %v", err)
 		}
 		if all["a"].(float64) != 1 || all["b"].(float64) != 2 {
-			t.Errorf("GetAll = %v, want {a:1, b:2}", all)
+			t.Errorf("GetObject = %v, want {a:1, b:2}", all)
 		}
 	})
 

@@ -398,11 +398,15 @@ func TestIsExtractionPath(t *testing.T) {
 	}{
 		{"", false},
 		{"users", false},
-		{"items{name}", true},
-		{"items[:]{name,age}", true},
-		{"{field}", true},
+		{"items{name}", false},        // single extraction, not multi-container
+		{"items[:]{name,age}", false}, // single extraction
+		{"{field}", false},            // single extraction
 		{"no.extraction", false},
-		{"only{bracket", false}, // needs both { and }
+		{"items{name}[0]", true},         // extraction followed by array access
+		{"items{name}:field", true},      // extraction followed by property
+		{"data{items}{other}", true},     // extraction followed by extraction
+		{"data{items}{flat:name}", true}, // flat extraction
+		{"only{bracket", false},
 		{"only}bracket", false},
 	}
 
@@ -764,5 +768,374 @@ func BenchmarkTryConvertToArray(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_, _ = TryConvertToArray(m)
+	}
+}
+
+// ============================================================================
+// DeepMergeWithMode TESTS - Union Mode
+// ============================================================================
+
+func TestDeepMergeWithMode_Union_Objects(t *testing.T) {
+	tests := []struct {
+		name     string
+		base     map[string]any
+		override map[string]any
+		expected map[string]any
+	}{
+		{
+			name:     "empty objects",
+			base:     map[string]any{},
+			override: map[string]any{},
+			expected: map[string]any{},
+		},
+		{
+			name:     "add new keys",
+			base:     map[string]any{"a": 1},
+			override: map[string]any{"b": 2},
+			expected: map[string]any{"a": 1, "b": 2},
+		},
+		{
+			name:     "override existing keys",
+			base:     map[string]any{"a": 1, "b": 2},
+			override: map[string]any{"b": 3, "c": 4},
+			expected: map[string]any{"a": 1, "b": 3, "c": 4},
+		},
+		{
+			name:     "nested objects",
+			base:     map[string]any{"nested": map[string]any{"a": 1}},
+			override: map[string]any{"nested": map[string]any{"b": 2}},
+			expected: map[string]any{"nested": map[string]any{"a": 1, "b": 2}},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := DeepMergeWithMode(tt.base, tt.override, MergeUnion)
+			resultMap, ok := result.(map[string]any)
+			if !ok {
+				t.Fatalf("expected map, got %T", result)
+			}
+			if !reflect.DeepEqual(resultMap, tt.expected) {
+				t.Errorf("expected %v, got %v", tt.expected, resultMap)
+			}
+		})
+	}
+}
+
+func TestDeepMergeWithMode_Union_Arrays(t *testing.T) {
+	tests := []struct {
+		name     string
+		base     []any
+		override []any
+		expected []any
+	}{
+		{
+			name:     "empty arrays",
+			base:     []any{},
+			override: []any{},
+			expected: []any{},
+		},
+		{
+			name:     "combine different elements",
+			base:     []any{1, 2},
+			override: []any{3, 4},
+			expected: []any{1, 2, 3, 4},
+		},
+		{
+			name:     "deduplicate same elements",
+			base:     []any{1, 2, 3},
+			override: []any{2, 3, 4},
+			expected: []any{1, 2, 3, 4},
+		},
+		{
+			name:     "string deduplication",
+			base:     []any{"a", "b"},
+			override: []any{"b", "c"},
+			expected: []any{"a", "b", "c"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := DeepMergeWithMode(tt.base, tt.override, MergeUnion)
+			resultArr, ok := result.([]any)
+			if !ok {
+				t.Fatalf("expected array, got %T", result)
+			}
+			if !reflect.DeepEqual(resultArr, tt.expected) {
+				t.Errorf("expected %v, got %v", tt.expected, resultArr)
+			}
+		})
+	}
+}
+
+// ============================================================================
+// DeepMergeWithMode TESTS - Intersection Mode
+// ============================================================================
+
+func TestDeepMergeWithMode_Intersection_Objects(t *testing.T) {
+	tests := []struct {
+		name     string
+		base     map[string]any
+		override map[string]any
+		expected map[string]any
+	}{
+		{
+			name:     "no common keys",
+			base:     map[string]any{"a": 1},
+			override: map[string]any{"b": 2},
+			expected: map[string]any{},
+		},
+		{
+			name:     "some common keys",
+			base:     map[string]any{"a": 1, "b": 2, "c": 3},
+			override: map[string]any{"b": 20, "c": 30, "d": 40},
+			expected: map[string]any{"b": 20, "c": 30},
+		},
+		{
+			name:     "all common keys",
+			base:     map[string]any{"a": 1, "b": 2},
+			override: map[string]any{"a": 10, "b": 20},
+			expected: map[string]any{"a": 10, "b": 20},
+		},
+		{
+			name: "nested objects intersection",
+			base: map[string]any{
+				"common": map[string]any{"a": 1, "b": 2},
+				"onlyA":  1,
+			},
+			override: map[string]any{
+				"common": map[string]any{"a": 10, "c": 3},
+				"onlyB":  2,
+			},
+			expected: map[string]any{
+				"common": map[string]any{"a": 10}, // only "a" is common in nested
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := DeepMergeWithMode(tt.base, tt.override, MergeIntersection)
+			resultMap, ok := result.(map[string]any)
+			if !ok {
+				t.Fatalf("expected map, got %T", result)
+			}
+			if !reflect.DeepEqual(resultMap, tt.expected) {
+				t.Errorf("expected %v, got %v", tt.expected, resultMap)
+			}
+		})
+	}
+}
+
+func TestDeepMergeWithMode_Intersection_Arrays(t *testing.T) {
+	tests := []struct {
+		name     string
+		base     []any
+		override []any
+		expected []any
+	}{
+		{
+			name:     "no common elements",
+			base:     []any{1, 2},
+			override: []any{3, 4},
+			expected: []any{},
+		},
+		{
+			name:     "some common elements",
+			base:     []any{1, 2, 3},
+			override: []any{2, 3, 4},
+			expected: []any{2, 3},
+		},
+		{
+			name:     "all common elements",
+			base:     []any{1, 2},
+			override: []any{1, 2},
+			expected: []any{1, 2},
+		},
+		{
+			name:     "strings intersection",
+			base:     []any{"a", "b", "c"},
+			override: []any{"b", "c", "d"},
+			expected: []any{"b", "c"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := DeepMergeWithMode(tt.base, tt.override, MergeIntersection)
+			resultArr, ok := result.([]any)
+			if !ok {
+				t.Fatalf("expected array, got %T", result)
+			}
+			if !reflect.DeepEqual(resultArr, tt.expected) {
+				t.Errorf("expected %v, got %v", tt.expected, resultArr)
+			}
+		})
+	}
+}
+
+// ============================================================================
+// DeepMergeWithMode TESTS - Difference Mode
+// ============================================================================
+
+func TestDeepMergeWithMode_Difference_Objects(t *testing.T) {
+	tests := []struct {
+		name     string
+		base     map[string]any
+		override map[string]any
+		expected map[string]any
+	}{
+		{
+			name:     "no overlap - all from base",
+			base:     map[string]any{"a": 1, "b": 2},
+			override: map[string]any{"c": 3, "d": 4},
+			expected: map[string]any{"a": 1, "b": 2},
+		},
+		{
+			name:     "some overlap",
+			base:     map[string]any{"a": 1, "b": 2, "c": 3},
+			override: map[string]any{"b": 2, "d": 4},
+			expected: map[string]any{"a": 1, "c": 3},
+		},
+		{
+			name:     "full overlap - empty result",
+			base:     map[string]any{"a": 1, "b": 2},
+			override: map[string]any{"a": 1, "b": 2},
+			expected: map[string]any{},
+		},
+		{
+			name: "nested objects difference",
+			base: map[string]any{
+				"onlyA":  1,
+				"common": map[string]any{"a": 1, "b": 2},
+			},
+			override: map[string]any{
+				"onlyB":  2,
+				"common": map[string]any{"a": 1, "c": 3},
+			},
+			expected: map[string]any{
+				"onlyA":  1,
+				"common": map[string]any{"b": 2}, // only "b" is not in override.common
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := DeepMergeWithMode(tt.base, tt.override, MergeDifference)
+			resultMap, ok := result.(map[string]any)
+			if !ok {
+				t.Fatalf("expected map, got %T", result)
+			}
+			if !reflect.DeepEqual(resultMap, tt.expected) {
+				t.Errorf("expected %v, got %v", tt.expected, resultMap)
+			}
+		})
+	}
+}
+
+func TestDeepMergeWithMode_Difference_Arrays(t *testing.T) {
+	tests := []struct {
+		name     string
+		base     []any
+		override []any
+		expected []any
+	}{
+		{
+			name:     "no overlap - all from base",
+			base:     []any{1, 2},
+			override: []any{3, 4},
+			expected: []any{1, 2},
+		},
+		{
+			name:     "some overlap",
+			base:     []any{1, 2, 3},
+			override: []any{2, 3, 4},
+			expected: []any{1},
+		},
+		{
+			name:     "full overlap - empty result",
+			base:     []any{1, 2},
+			override: []any{1, 2},
+			expected: []any{},
+		},
+		{
+			name:     "strings difference",
+			base:     []any{"a", "b", "c"},
+			override: []any{"b", "d"},
+			expected: []any{"a", "c"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := DeepMergeWithMode(tt.base, tt.override, MergeDifference)
+			resultArr, ok := result.([]any)
+			if !ok {
+				t.Fatalf("expected array, got %T", result)
+			}
+			if !reflect.DeepEqual(resultArr, tt.expected) {
+				t.Errorf("expected %v, got %v", tt.expected, resultArr)
+			}
+		})
+	}
+}
+
+// ============================================================================
+// DeepMergeWithMode BENCHMARKS
+// ============================================================================
+
+func BenchmarkDeepMergeWithMode_Union(b *testing.B) {
+	base := map[string]any{
+		"a": 1,
+		"b": map[string]any{"c": 2},
+		"d": []any{1, 2, 3},
+	}
+	override := map[string]any{
+		"a": 10,
+		"b": map[string]any{"e": 3},
+		"d": []any{3, 4, 5},
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = DeepMergeWithMode(base, override, MergeUnion)
+	}
+}
+
+func BenchmarkDeepMergeWithMode_Intersection(b *testing.B) {
+	base := map[string]any{
+		"a": 1,
+		"b": map[string]any{"c": 2},
+		"d": []any{1, 2, 3},
+	}
+	override := map[string]any{
+		"a": 10,
+		"b": map[string]any{"e": 3},
+		"d": []any{3, 4, 5},
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = DeepMergeWithMode(base, override, MergeIntersection)
+	}
+}
+
+func BenchmarkDeepMergeWithMode_Difference(b *testing.B) {
+	base := map[string]any{
+		"a": 1,
+		"b": map[string]any{"c": 2},
+		"d": []any{1, 2, 3},
+	}
+	override := map[string]any{
+		"a": 10,
+		"b": map[string]any{"e": 3},
+		"d": []any{3, 4, 5},
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = DeepMergeWithMode(base, override, MergeDifference)
 	}
 }

@@ -18,7 +18,7 @@ import (
 // Merged from: types_test.go, json_test.go, error_test.go
 
 func BenchmarkBufferPool(b *testing.B) {
-	rm := NewUnifiedResourceManager()
+	rm := newUnifiedResourceManager()
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -29,7 +29,7 @@ func BenchmarkBufferPool(b *testing.B) {
 }
 
 func BenchmarkConcurrentPools(b *testing.B) {
-	rm := NewUnifiedResourceManager()
+	rm := newUnifiedResourceManager()
 
 	b.ResetTimer()
 	b.RunParallel(func(pb *testing.PB) {
@@ -68,7 +68,7 @@ func BenchmarkConvertToInt64(b *testing.B) {
 }
 
 func BenchmarkPathSegmentPool(b *testing.B) {
-	rm := NewUnifiedResourceManager()
+	rm := newUnifiedResourceManager()
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -78,7 +78,7 @@ func BenchmarkPathSegmentPool(b *testing.B) {
 }
 
 func BenchmarkResourceMonitor(b *testing.B) {
-	rm := NewResourceMonitor()
+	rm := newResourceMonitor()
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -88,7 +88,7 @@ func BenchmarkResourceMonitor(b *testing.B) {
 }
 
 func BenchmarkStringBuilderPool(b *testing.B) {
-	rm := NewUnifiedResourceManager()
+	rm := newUnifiedResourceManager()
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -102,13 +102,13 @@ func BenchmarkUnifiedTypeConversion(b *testing.B) {
 	input := 42
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, _ = UnifiedTypeConversion[int64](input)
+		_, _ = unifiedTypeConversion[int64](input)
 	}
 }
 
-// TestAdvancedPathOperations tests advanced path features
-func TestAdvancedPathOperations(t *testing.T) {
-	helper := NewTestHelper(t)
+// TestAdvancedPathoperations tests advanced path features
+func TestAdvancedPathoperations(t *testing.T) {
+	helper := newTestHelper(t)
 
 	t.Run("WildcardAccess", func(t *testing.T) {
 		testData := `{
@@ -169,49 +169,10 @@ func TestAdvancedPathOperations(t *testing.T) {
 	})
 }
 
-// TestArrayExtensionError tests the ArrayExtensionError type
-func TestArrayExtensionError(t *testing.T) {
-	// Test default message
-	err1 := &ArrayExtensionError{
-		CurrentLength:  5,
-		RequiredLength: 10,
-		TargetIndex:    9,
-		Value:          "test",
-	}
-	expectedMsg1 := "array extension required: current length 5, required length 10 for index 9"
-	if err1.Error() != expectedMsg1 {
-		t.Errorf("Error() = %q, want %q", err1.Error(), expectedMsg1)
-	}
-
-	// Test custom message
-	err2 := &ArrayExtensionError{
-		CurrentLength:  5,
-		RequiredLength: 10,
-		TargetIndex:    9,
-		Value:          "test",
-		Message:        "Custom error message",
-	}
-	if err2.Error() != "Custom error message" {
-		t.Errorf("Error() with custom message = %q, want %q", err2.Error(), "Custom error message")
-	}
-
-	// Test with custom message
-	err3 := &ArrayExtensionError{
-		CurrentLength:  3,
-		RequiredLength: 10,
-		TargetIndex:    9,
-		Value:          "test",
-		Message:        "Array too small",
-	}
-	if err3.Error() != "Array too small" {
-		t.Errorf("Error() with custom message = %q, want %q", err3.Error(), "Array too small")
-	}
-}
-
 // TestConfigConstantsComprehensive consolidates configuration and constants tests
 // This replaces: config_constants_test.go
 func TestConfigConstantsComprehensive(t *testing.T) {
-	helper := NewTestHelper(t)
+	helper := newTestHelper(t)
 
 	t.Run("ConfigGetters", func(t *testing.T) {
 		config := DefaultConfig()
@@ -232,66 +193,52 @@ func TestConfigConstantsComprehensive(t *testing.T) {
 		config := DefaultConfig()
 		helper.AssertNotNil(config)
 
-		highSec := HighSecurityConfig()
-		helper.AssertNotNil(highSec)
-
-		largeDat := LargeDataConfig()
-		helper.AssertNotNil(largeDat)
+		sec := SecurityConfig()
+		helper.AssertNotNil(sec)
 	})
 
 	t.Run("EncodeConfigPresets", func(t *testing.T) {
-		config := DefaultEncodeConfig()
+		config := DefaultConfig()
 		helper.AssertNotNil(config)
 
-		pretty := NewPrettyConfig()
+		pretty := PrettyConfig()
 		helper.AssertNotNil(pretty)
 		helper.AssertTrue(pretty.Pretty)
 
 		// Default config is compact (Pretty = false)
 		helper.AssertFalse(config.Pretty)
 
-		cloned := config.Clone()
+		cloned := (&config).Clone()
 		helper.AssertNotNil(cloned)
 	})
 
 	t.Run("ConfigValidation", func(t *testing.T) {
 		config := DefaultConfig()
-		err := ValidateConfig(config)
+		err := config.Validate()
 		helper.AssertNoError(err)
 
-		invalidConfig := DefaultConfig()
-		invalidConfig.MaxCacheSize = -1
-		err = ValidateConfig(invalidConfig)
-		helper.AssertError(err)
+		// Negative cache size should be clamped to 0 and cache disabled
+		configWithNegativeCache := DefaultConfig()
+		configWithNegativeCache.MaxCacheSize = -1
+		err = configWithNegativeCache.Validate()
+		helper.AssertNoError(err)
+		helper.AssertEqual(0, configWithNegativeCache.MaxCacheSize)
+		helper.AssertFalse(configWithNegativeCache.EnableCache)
 	})
 
 	t.Run("Constants", func(t *testing.T) {
-		helper.AssertTrue(DefaultBufferSize > 0)
-		helper.AssertTrue(MaxPoolBufferSize > MinPoolBufferSize)
-		helper.AssertTrue(DefaultCacheSize > 0)
+		helper.AssertTrue(defaultBufferSize > 0)
+		helper.AssertTrue(maxPoolBufferSize > minPoolBufferSize)
+		helper.AssertTrue(defaultCacheSize > 0)
 		helper.AssertTrue(DefaultMaxJSONSize > 0)
 		helper.AssertTrue(DefaultMaxNestingDepth > 0)
 		helper.AssertTrue(MaxPathLength > 0)
-		helper.AssertTrue(DefaultOperationTimeout > 0)
-	})
-
-	t.Run("ErrorCodes", func(t *testing.T) {
-		errorCodes := []string{
-			ErrCodeInvalidJSON,
-			ErrCodePathNotFound,
-			ErrCodeTypeMismatch,
-			ErrCodeSizeLimit,
-			ErrCodeSecurityViolation,
-		}
-
-		for _, code := range errorCodes {
-			helper.AssertTrue(len(code) > 0)
-			helper.AssertTrue(code[:4] == "ERR_")
-		}
+		helper.AssertTrue(defaultOperationTimeout > 0)
 	})
 
 	t.Run("GlobalProcessor", func(t *testing.T) {
-		SetGlobalProcessor(New(DefaultConfig()))
+		p, _ := New(DefaultConfig())
+		SetGlobalProcessor(p)
 		ShutdownGlobalProcessor()
 	})
 }
@@ -913,28 +860,28 @@ func TestConvertToUint64(t *testing.T) {
 	}
 }
 
-// TestDeletedMarker tests the DeletedMarker constant
-func TestDeletedMarker(t *testing.T) {
-	if DeletedMarker == nil {
-		t.Errorf("DeletedMarker should not be nil")
+// TestIsDeletedMarker tests the IsDeletedMarker function
+func TestIsDeletedMarker(t *testing.T) {
+	// Test that IsDeletedMarker returns false for nil
+	if IsDeletedMarker(nil) {
+		t.Errorf("IsDeletedMarker(nil) should return false")
 	}
 
-	// Test that DeletedMarker can be used for comparison
-	arr := []any{1, DeletedMarker, 3}
-	count := 0
-	for _, v := range arr {
-		if v == DeletedMarker {
-			count++
-		}
+	// Test that IsDeletedMarker returns false for regular values
+	if IsDeletedMarker(1) {
+		t.Errorf("IsDeletedMarker(1) should return false")
 	}
-	if count != 1 {
-		t.Errorf("Found %d DeletedMarker, want 1", count)
+	if IsDeletedMarker("test") {
+		t.Errorf("IsDeletedMarker(\"test\") should return false")
+	}
+	if IsDeletedMarker(map[string]any{"key": "value"}) {
+		t.Errorf("IsDeletedMarker(map) should return false")
 	}
 }
 
 // TestEncodeConfig_Clone tests EncodeConfig.Clone method
 func TestEncodeConfig_Clone(t *testing.T) {
-	original := &EncodeConfig{
+	original := &Config{
 		Pretty:        true,
 		Indent:        "  ",
 		EscapeHTML:    true,
@@ -964,18 +911,18 @@ func TestEncodeConfig_Clone(t *testing.T) {
 	}
 }
 
-// TestEncodeConfig_Clone_Nil tests Clone with nil receiver
-func TestEncodeConfig_Clone_Nil(t *testing.T) {
-	var config *EncodeConfig
-	cloned := config.Clone()
-	if cloned == nil {
-		t.Error("Clone of nil should return default config, not nil")
+// TestEncodeConfig_Clone_Zero tests Clone with zero value
+func TestEncodeConfig_Clone_Zero(t *testing.T) {
+	var config Config
+	cloned := (&config).Clone()
+	if cloned.Pretty != false {
+		t.Error("Clone of zero value should have default values")
 	}
 }
 
 // TestErrorClassifier tests error classification functionality
 func TestErrorClassifier(t *testing.T) {
-	helper := NewTestHelper(t)
+	helper := newTestHelper(t)
 
 	t.Run("IsSecurityRelated", func(t *testing.T) {
 		tests := []struct {
@@ -1064,7 +1011,7 @@ func TestErrorClassifier(t *testing.T) {
 
 // TestErrorHandling comprehensive error handling tests
 func TestErrorHandling(t *testing.T) {
-	helper := NewTestHelper(t)
+	helper := newTestHelper(t)
 
 	t.Run("JsonsErrorStructure", func(t *testing.T) {
 		err := &JsonsError{
@@ -1134,7 +1081,7 @@ func TestErrorHandling(t *testing.T) {
 
 // TestErrorMessages verifies error messages are helpful
 func TestErrorMessages(t *testing.T) {
-	helper := NewTestHelper(t)
+	helper := newTestHelper(t)
 
 	t.Run("PathNotFoundMessage", func(t *testing.T) {
 		testData := `{"user": {"name": "John"}}`
@@ -1175,7 +1122,7 @@ func TestErrorMessages(t *testing.T) {
 
 // TestErrorRecovery tests error recovery scenarios
 func TestErrorRecovery(t *testing.T) {
-	helper := NewTestHelper(t)
+	helper := newTestHelper(t)
 
 	t.Run("RetryAfterTimeout", func(t *testing.T) {
 		retryableErrors := []error{
@@ -1229,7 +1176,7 @@ func TestErrorRecovery(t *testing.T) {
 
 // TestErrorScenarios tests various error scenarios
 func TestErrorScenarios(t *testing.T) {
-	helper := NewTestHelper(t)
+	helper := newTestHelper(t)
 
 	t.Run("InvalidJSON", func(t *testing.T) {
 		invalidJSON := []string{
@@ -1315,7 +1262,7 @@ func TestErrorScenarios(t *testing.T) {
 			helper.AssertNil(result)
 		})
 
-		t.Run("GetTypedNull", func(t *testing.T) {
+		t.Run("GetAsNull", func(t *testing.T) {
 			_, err := GetTyped[string](testData, "null_value")
 			// Null to string might error or return "null"
 			_ = err
@@ -1328,7 +1275,7 @@ func TestErrorScenarios(t *testing.T) {
 	})
 
 	t.Run("ProcessorClosed", func(t *testing.T) {
-		processor := New(DefaultConfig())
+		processor, _ := New(DefaultConfig())
 		processor.Close()
 
 		testData := `{"test": "value"}`
@@ -1358,7 +1305,7 @@ func TestErrorScenarios(t *testing.T) {
 	})
 
 	t.Run("ConcurrentErrors", func(t *testing.T) {
-		processor := New(DefaultConfig())
+		processor, _ := New(DefaultConfig())
 		defer processor.Close()
 
 		// Attempt to access after close from multiple goroutines
@@ -1433,7 +1380,7 @@ func TestFormatNumber(t *testing.T) {
 
 // TestGetStatsWithResourceManager tests processor GetStats functionality with resource manager
 func TestGetStatsWithResourceManager(t *testing.T) {
-	p := New()
+	p, _ := New()
 	defer p.Close()
 
 	stats := p.GetStats()
@@ -1477,10 +1424,10 @@ func TestGlobalResourceManager(t *testing.T) {
 
 // TestHealthCheckSystem tests health check functionality
 func TestHealthCheckSystem(t *testing.T) {
-	helper := NewTestHelper(t)
+	helper := newTestHelper(t)
 
 	t.Run("BasicHealthCheck", func(t *testing.T) {
-		processor := New()
+		processor, _ := New()
 		defer processor.Close()
 
 		health := processor.GetHealthStatus()
@@ -1490,7 +1437,7 @@ func TestHealthCheckSystem(t *testing.T) {
 	})
 
 	t.Run("HealthCheckWithLoad", func(t *testing.T) {
-		processor := New()
+		processor, _ := New()
 		defer processor.Close()
 
 		testData := `{"test": "value"}`
@@ -1538,7 +1485,7 @@ func TestInvalidUnmarshalError(t *testing.T) {
 
 // TestIteratorAdvancedFeatures tests advanced iterator functionality
 func TestIteratorAdvancedFeatures(t *testing.T) {
-	helper := NewTestHelper(t)
+	helper := newTestHelper(t)
 
 	t.Run("IteratorControlBreak", func(t *testing.T) {
 		testData := `{"items": [1, 2, 3, 4, 5]}`
@@ -1556,7 +1503,7 @@ func TestIteratorAdvancedFeatures(t *testing.T) {
 
 	t.Run("IterableValueGetPath", func(t *testing.T) {
 		testData := `{"user": {"name": "Alice", "profile": {"age": 25}}}`
-		processor := New()
+		processor, _ := New()
 		defer processor.Close()
 
 		var data map[string]any
@@ -1626,62 +1573,62 @@ func TestMarshalerError(t *testing.T) {
 	}
 }
 
-// TestOperation_String tests Operation.String method
+// TestOperation_String tests operation.String method
 func TestOperation_String(t *testing.T) {
 	tests := []struct {
-		op       Operation
+		op       operation
 		expected string
 	}{
-		{OpGet, "get"},
-		{OpSet, "set"},
-		{OpDelete, "delete"},
-		{OpValidate, "validate"},
-		{Operation(999), "unknown"},
+		{opGet, "get"},
+		{opSet, "set"},
+		{opDelete, "delete"},
+		{opValidate, "validate"},
+		{operation(999), "unknown"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.expected, func(t *testing.T) {
 			if got := tt.op.String(); got != tt.expected {
-				t.Errorf("Operation.String() = %v, want %v", got, tt.expected)
+				t.Errorf("operation.String() = %v, want %v", got, tt.expected)
 			}
 		})
 	}
 }
 
-// TestPathInfo tests the PathInfo type
+// TestPathInfo tests the pathInfo type (internal)
 func TestPathInfo(t *testing.T) {
-	segments := []PathSegment{
+	segments := []internal.PathSegment{
 		{Type: internal.PropertySegment, Key: "user"},
 		{Type: internal.ArrayIndexSegment, Index: 0},
 	}
 
-	pathInfo := PathInfo{
-		Segments:     segments,
-		IsPointer:    false,
-		OriginalPath: "user[0]",
+	pathInfo := pathInfo{
+		segments:     segments,
+		isPointer:    false,
+		originalPath: "user[0]",
 	}
 
-	if len(pathInfo.Segments) != 2 {
-		t.Errorf("Segments length = %d, want 2", len(pathInfo.Segments))
+	if len(pathInfo.segments) != 2 {
+		t.Errorf("segments length = %d, want 2", len(pathInfo.segments))
 	}
 
-	if pathInfo.IsPointer {
-		t.Errorf("IsPointer = true, want false")
+	if pathInfo.isPointer {
+		t.Errorf("isPointer = true, want false")
 	}
 
-	if pathInfo.OriginalPath != "user[0]" {
-		t.Errorf("OriginalPath = %q, want %q", pathInfo.OriginalPath, "user[0]")
+	if pathInfo.originalPath != "user[0]" {
+		t.Errorf("originalPath = %q, want %q", pathInfo.originalPath, "user[0]")
 	}
 }
 
 // TestProcessorConcurrencyComprehensive consolidates processor and concurrency tests
 // This replaces: processor_concurrency_test.go, concurrency_test.go
 func TestProcessorConcurrencyComprehensive(t *testing.T) {
-	helper := NewTestHelper(t)
-	generator := NewTestDataGenerator()
+	helper := newTestHelper(t)
+	generator := newTestDataGenerator()
 
-	t.Run("ProcessorOperations", func(t *testing.T) {
-		processor := New()
+	t.Run("Processoroperations", func(t *testing.T) {
+		processor, _ := New()
 		defer processor.Close()
 
 		testData := `{
@@ -1721,7 +1668,7 @@ func TestProcessorConcurrencyComprehensive(t *testing.T) {
 			helper.AssertTrue(len(health.Checks) > 0)
 		})
 
-		t.Run("CacheOperations", func(t *testing.T) {
+		t.Run("Cacheoperations", func(t *testing.T) {
 			_, _ = processor.Get(testData, "user.name")
 			processor.ClearCache()
 
@@ -1730,7 +1677,7 @@ func TestProcessorConcurrencyComprehensive(t *testing.T) {
 		})
 
 		t.Run("Lifecycle", func(t *testing.T) {
-			p := New()
+			p, _ := New()
 			helper.AssertFalse(p.IsClosed())
 			p.Close()
 			helper.AssertTrue(p.IsClosed())
@@ -1740,10 +1687,10 @@ func TestProcessorConcurrencyComprehensive(t *testing.T) {
 		})
 	})
 
-	t.Run("ConcurrentOperations", func(t *testing.T) {
+	t.Run("Concurrentoperations", func(t *testing.T) {
 		t.Run("ConcurrentReads", func(t *testing.T) {
 			jsonStr := generator.GenerateComplexJSON()
-			concurrencyTester := NewConcurrencyTester(t, 20, 100)
+			concurrencyTester := newConcurrencyTester(t, 20, 100)
 
 			concurrencyTester.Run(func(workerID, iteration int) error {
 				paths := []string{
@@ -1762,7 +1709,7 @@ func TestProcessorConcurrencyComprehensive(t *testing.T) {
 			var results []string
 			var resultsMutex sync.Mutex
 
-			concurrencyTester := NewConcurrencyTester(t, 10, 50)
+			concurrencyTester := newConcurrencyTester(t, 10, 50)
 			concurrencyTester.Run(func(workerID, iteration int) error {
 				counterKey := fmt.Sprintf("counters.%c", 'a'+workerID%2)
 				result, err := Set(originalJSON, counterKey, workerID*1000+iteration)
@@ -1778,11 +1725,11 @@ func TestProcessorConcurrencyComprehensive(t *testing.T) {
 			helper.AssertTrue(len(results) > 0)
 		})
 
-		t.Run("MixedOperations", func(t *testing.T) {
+		t.Run("Mixedoperations", func(t *testing.T) {
 			baseJSON := `{"data": {"counter": 0}, "array": [1, 2, 3]}`
 			var operations int64
 
-			concurrencyTester := NewConcurrencyTester(t, 15, 100)
+			concurrencyTester := newConcurrencyTester(t, 15, 100)
 			concurrencyTester.Run(func(workerID, iteration int) error {
 				atomic.AddInt64(&operations, 1)
 				switch iteration % 3 {
@@ -1803,11 +1750,11 @@ func TestProcessorConcurrencyComprehensive(t *testing.T) {
 		})
 
 		t.Run("SharedProcessor", func(t *testing.T) {
-			processor := New()
+			processor, _ := New()
 			defer processor.Close()
 
 			jsonStr := generator.GenerateComplexJSON()
-			concurrencyTester := NewConcurrencyTester(t, 25, 200)
+			concurrencyTester := newConcurrencyTester(t, 25, 200)
 
 			concurrencyTester.Run(func(workerID, iteration int) error {
 				switch iteration % 2 {
@@ -1834,7 +1781,7 @@ func TestProcessorConcurrencyComprehensive(t *testing.T) {
 				wg.Add(1)
 				go func(processorID int) {
 					defer wg.Done()
-					processor := New()
+					processor, _ := New()
 					defer processor.Close()
 
 					for j := 0; j < operationsPerProcessor; j++ {
@@ -1857,7 +1804,7 @@ func TestProcessorConcurrencyComprehensive(t *testing.T) {
 			config.EnableCache = true
 			config.MaxCacheSize = 100
 
-			processor := New(config)
+			processor, _ := New(config)
 			defer processor.Close()
 
 			jsonStr := `{"cached": "value", "number": 123}`
@@ -1888,7 +1835,7 @@ func TestProcessorConcurrencyComprehensive(t *testing.T) {
 	// Additional concurrency tests from concurrency_test.go
 	t.Run("ConcurrentAccessDetailed", func(t *testing.T) {
 		t.Run("ConcurrentReadsWithProcessor", func(t *testing.T) {
-			proc := New(DefaultConfig())
+			proc, _ := New(DefaultConfig())
 			defer proc.Close()
 
 			testData := `{"users": [` + generateUserJSON(100) + `]}`
@@ -1953,7 +1900,7 @@ func TestProcessorConcurrencyComprehensive(t *testing.T) {
 		})
 
 		t.Run("ConcurrentMixedReadWrite", func(t *testing.T) {
-			proc := New(DefaultConfig())
+			proc, _ := New(DefaultConfig())
 			defer proc.Close()
 
 			testData := `{"data": {"value": 0}}`
@@ -2000,7 +1947,7 @@ func TestProcessorConcurrencyComprehensive(t *testing.T) {
 				go func(workerID int) {
 					defer wg.Done()
 
-					proc := New(DefaultConfig())
+					proc, _ := New(DefaultConfig())
 					defer proc.Close()
 
 					for j := 0; j < iterations; j++ {
@@ -2013,13 +1960,13 @@ func TestProcessorConcurrencyComprehensive(t *testing.T) {
 		})
 	})
 
-	t.Run("ConcurrentCacheOperations", func(t *testing.T) {
+	t.Run("ConcurrentCacheoperations", func(t *testing.T) {
 		t.Run("CacheConcurrency", func(t *testing.T) {
 			config := DefaultConfig()
 			config.EnableCache = true
 			config.MaxCacheSize = 100
 
-			proc := New(config)
+			proc, _ := New(config)
 			defer proc.Close()
 
 			testData := `{"user": {"name": "Alice", "age": 30}}`
@@ -2055,7 +2002,7 @@ func TestProcessorConcurrencyComprehensive(t *testing.T) {
 			config.EnableCache = true
 			config.CacheTTL = 100 * time.Millisecond
 
-			proc := New(config)
+			proc, _ := New(config)
 			defer proc.Close()
 
 			testData := `{"value": "test"}`
@@ -2069,7 +2016,7 @@ func TestProcessorConcurrencyComprehensive(t *testing.T) {
 		})
 	})
 
-	t.Run("ConcurrentIteratorOperations", func(t *testing.T) {
+	t.Run("ConcurrentIteratoroperations", func(t *testing.T) {
 		t.Run("ConcurrentForeach", func(t *testing.T) {
 			testData := `{"items": [` + generateArrayItems(50) + `]}`
 
@@ -2135,7 +2082,7 @@ func TestProcessorConcurrencyComprehensive(t *testing.T) {
 				go func(workerID int) {
 					defer wg.Done()
 
-					localConfig := config.Clone()
+					localConfig := (&config).Clone()
 					localConfig.Validate()
 				}(i)
 			}
@@ -2144,7 +2091,7 @@ func TestProcessorConcurrencyComprehensive(t *testing.T) {
 		})
 
 		t.Run("SharedProcessorStats", func(t *testing.T) {
-			proc := New(DefaultConfig())
+			proc, _ := New(DefaultConfig())
 			defer proc.Close()
 
 			testData := `{"data": "value"}`
@@ -2183,15 +2130,15 @@ func TestProcessorConcurrencyComprehensive(t *testing.T) {
 		}
 
 		t.Run("HighConcurrency", func(t *testing.T) {
-			proc := New(DefaultConfig())
+			proc, _ := New(DefaultConfig())
 			defer proc.Close()
 
-			testData := NewTestDataGenerator().GenerateComplexJSON()
+			testData := newTestDataGenerator().GenerateComplexJSON()
 
 			concurrency := 50
 			operations := 1000
 
-			ct := NewConcurrencyTester(t, concurrency, operations)
+			ct := newConcurrencyTester(t, concurrency, operations)
 			ct.Run(func(workerID, iteration int) error {
 				switch iteration % 4 {
 				case 0:
@@ -2212,7 +2159,7 @@ func TestProcessorConcurrencyComprehensive(t *testing.T) {
 
 		t.Run("RapidClose", func(t *testing.T) {
 			for i := 0; i < 20; i++ {
-				proc := New(DefaultConfig())
+				proc, _ := New(DefaultConfig())
 				proc.Get(`{"test": "value"}`, "test")
 				proc.Close()
 			}
@@ -2220,8 +2167,8 @@ func TestProcessorConcurrencyComprehensive(t *testing.T) {
 	})
 
 	t.Run("ProcessorLifecycleConcurrency", func(t *testing.T) {
-		t.Run("CloseDuringOperations", func(t *testing.T) {
-			proc := New(DefaultConfig())
+		t.Run("CloseDuringoperations", func(t *testing.T) {
+			proc, _ := New(DefaultConfig())
 
 			testData := `{"test": "value"}`
 
@@ -2250,7 +2197,8 @@ func TestProcessorConcurrencyComprehensive(t *testing.T) {
 		})
 
 		t.Run("GlobalProcessorConcurrency", func(t *testing.T) {
-			SetGlobalProcessor(New(DefaultConfig()))
+			p, _ := New(DefaultConfig())
+			SetGlobalProcessor(p)
 			defer ShutdownGlobalProcessor()
 
 			testData := `{"test": "value"}`
@@ -2273,47 +2221,47 @@ func TestProcessorConcurrencyComprehensive(t *testing.T) {
 	})
 }
 
-// TestPropertyAccessResult tests the PropertyAccessResult type
+// TestPropertyAccessResult tests the propertyAccessResult type
 func TestPropertyAccessResult(t *testing.T) {
 	// Test exists case
-	result1 := PropertyAccessResult{
-		Value:  "test",
-		Exists: true,
+	result1 := propertyAccessResult{
+		value:  "test",
+		exists: true,
 	}
 
-	if !result1.Exists {
-		t.Errorf("Exists should be true")
+	if !result1.exists {
+		t.Errorf("exists should be true")
 	}
 
-	if result1.Value != "test" {
-		t.Errorf("Value = %v, want %v", result1.Value, "test")
+	if result1.value != "test" {
+		t.Errorf("value = %v, want %v", result1.value, "test")
 	}
 
 	// Test not exists case
-	result2 := PropertyAccessResult{
-		Value:  nil,
-		Exists: false,
+	result2 := propertyAccessResult{
+		value:  nil,
+		exists: false,
 	}
 
-	if result2.Exists {
-		t.Errorf("Exists should be false")
+	if result2.exists {
+		t.Errorf("exists should be false")
 	}
 }
 
 // TestResourceManager tests resource management functionality
 func TestResourceManager(t *testing.T) {
-	helper := NewTestHelper(t)
+	helper := newTestHelper(t)
 
 	t.Run("StringBuilderPool", func(t *testing.T) {
-		processor := New()
+		processor, _ := New()
 		defer processor.Close()
 
-		success := TestProcessorResourcePools(processor)
+		success := testProcessorResourcePools(processor)
 		helper.AssertTrue(success, "Resource pools should be functional")
 	})
 
 	t.Run("MemoryEfficiency", func(t *testing.T) {
-		processor := New()
+		processor, _ := New()
 		defer processor.Close()
 
 		testData := `{"data": {"nested": {"deep": "value"}}}`
@@ -2333,20 +2281,20 @@ func TestResourceManager(t *testing.T) {
 // TestResourceMonitor tests the ResourceMonitor functionality
 func TestResourceMonitor(t *testing.T) {
 	t.Run("Creation", func(t *testing.T) {
-		rm := NewResourceMonitor()
+		rm := newResourceMonitor()
 		if rm == nil {
-			t.Fatal("NewResourceMonitor returned nil")
+			t.Fatal("newResourceMonitor returned nil")
 		}
 	})
 
 	t.Run("RecordAllocation", func(t *testing.T) {
-		rm := NewResourceMonitor()
+		rm := newResourceMonitor()
 
 		rm.RecordAllocation(1024)
 		rm.RecordAllocation(2048)
 		rm.RecordDeallocation(512)
 
-		stats := rm.GetStats()
+		stats := rm.getStats()
 		// Note: AllocatedBytes should be positive (at least the sum of allocations minus deallocations)
 		if stats.AllocatedBytes <= 0 {
 			t.Errorf("Expected positive allocated bytes, got %d", stats.AllocatedBytes)
@@ -2357,14 +2305,14 @@ func TestResourceMonitor(t *testing.T) {
 		}
 	})
 
-	t.Run("RecordPoolOperations", func(t *testing.T) {
-		rm := NewResourceMonitor()
+	t.Run("RecordPooloperations", func(t *testing.T) {
+		rm := newResourceMonitor()
 
 		rm.RecordPoolHit()
 		rm.RecordPoolMiss()
 		rm.RecordPoolEviction()
 
-		stats := rm.GetStats()
+		stats := rm.getStats()
 		if stats.PoolHits != 1 {
 			t.Errorf("Expected 1 pool hit, got %d", stats.PoolHits)
 		}
@@ -2377,12 +2325,12 @@ func TestResourceMonitor(t *testing.T) {
 	})
 
 	t.Run("RecordOperation", func(t *testing.T) {
-		rm := NewResourceMonitor()
+		rm := newResourceMonitor()
 
 		rm.RecordOperation(100 * time.Millisecond)
 		rm.RecordOperation(200 * time.Millisecond)
 
-		stats := rm.GetStats()
+		stats := rm.getStats()
 		if stats.TotalOperations != 2 {
 			t.Errorf("Expected 2 operations, got %d", stats.TotalOperations)
 		}
@@ -2392,24 +2340,24 @@ func TestResourceMonitor(t *testing.T) {
 	})
 
 	t.Run("PeakMemoryTracking", func(t *testing.T) {
-		rm := NewResourceMonitor()
+		rm := newResourceMonitor()
 
 		// Record increasing allocations to test peak tracking
 		rm.RecordAllocation(1000)
-		stats1 := rm.GetStats()
+		stats1 := rm.getStats()
 		if stats1.PeakMemoryUsage < 1000 {
 			t.Errorf("Expected peak >= 1000, got %d", stats1.PeakMemoryUsage)
 		}
 
 		rm.RecordAllocation(2000)
-		stats2 := rm.GetStats()
+		stats2 := rm.getStats()
 		// Peak should be at least 3000 (1000 + 2000)
 		if stats2.PeakMemoryUsage < 3000 {
 			t.Errorf("Expected peak >= 3000, got %d", stats2.PeakMemoryUsage)
 		}
 
 		rm.RecordDeallocation(500)
-		stats3 := rm.GetStats()
+		stats3 := rm.getStats()
 		// Peak should remain at maximum (not decrease with deallocations)
 		if stats3.PeakMemoryUsage < stats2.PeakMemoryUsage {
 			t.Errorf("Peak should not decrease with deallocations, went from %d to %d",
@@ -2418,13 +2366,13 @@ func TestResourceMonitor(t *testing.T) {
 	})
 
 	t.Run("Reset", func(t *testing.T) {
-		rm := NewResourceMonitor()
+		rm := newResourceMonitor()
 
 		rm.RecordAllocation(1000)
 		rm.RecordPoolHit()
 		rm.Reset()
 
-		stats := rm.GetStats()
+		stats := rm.getStats()
 		if stats.AllocatedBytes != 0 {
 			t.Errorf("Expected 0 allocated bytes after reset, got %d", stats.AllocatedBytes)
 		}
@@ -2436,7 +2384,7 @@ func TestResourceMonitor(t *testing.T) {
 
 // TestResourceMonitor_CheckForLeaks tests CheckForLeaks method
 func TestResourceMonitor_CheckForLeaks(t *testing.T) {
-	rm := NewResourceMonitor()
+	rm := newResourceMonitor()
 	rm.leakCheckInterval = 0 // Force immediate check
 
 	issues := rm.CheckForLeaks()
@@ -2445,25 +2393,25 @@ func TestResourceMonitor_CheckForLeaks(t *testing.T) {
 	t.Logf("CheckForLeaks returned: %v", issues)
 }
 
-// TestResourceMonitor_EfficiencyMethods tests GetMemoryEfficiency and GetPoolEfficiency
+// TestResourceMonitor_EfficiencyMethods tests GetDeallocationRatio and GetPoolEfficiency
 func TestResourceMonitor_EfficiencyMethods(t *testing.T) {
-	t.Run("GetMemoryEfficiency", func(t *testing.T) {
-		rm := NewResourceMonitor()
+	t.Run("GetDeallocationRatio", func(t *testing.T) {
+		rm := newResourceMonitor()
 		// Initially 100% (no allocations)
-		if eff := rm.GetMemoryEfficiency(); eff != 100.0 {
-			t.Errorf("GetMemoryEfficiency() = %v, want 100.0", eff)
+		if eff := rm.GetDeallocationRatio(); eff != 100.0 {
+			t.Errorf("GetDeallocationRatio() = %v, want 100.0", eff)
 		}
 
 		rm.RecordAllocation(1000)
 		rm.RecordDeallocation(500)
 		// 500 / 1000 * 100 = 50%
-		if eff := rm.GetMemoryEfficiency(); eff != 50.0 {
-			t.Errorf("GetMemoryEfficiency() = %v, want 50.0", eff)
+		if eff := rm.GetDeallocationRatio(); eff != 50.0 {
+			t.Errorf("GetDeallocationRatio() = %v, want 50.0", eff)
 		}
 	})
 
 	t.Run("GetPoolEfficiency", func(t *testing.T) {
-		rm := NewResourceMonitor()
+		rm := newResourceMonitor()
 		// Initially 100% (no operations)
 		if eff := rm.GetPoolEfficiency(); eff != 100.0 {
 			t.Errorf("GetPoolEfficiency() = %v, want 100.0", eff)
@@ -2480,12 +2428,12 @@ func TestResourceMonitor_EfficiencyMethods(t *testing.T) {
 	})
 }
 
-// TestRootDataTypeConversionError tests the RootDataTypeConversionError type
+// TestRootDataTypeConversionError tests the rootDataTypeConversionError type
 func TestRootDataTypeConversionError(t *testing.T) {
-	err := &RootDataTypeConversionError{
-		RequiredType: "object",
-		RequiredSize: 100,
-		CurrentType:  "string",
+	err := &rootDataTypeConversionError{
+		requiredType: "object",
+		requiredSize: 100,
+		currentType:  "string",
 	}
 
 	expectedMsg := "root data type conversion required: from string to object (size: 100)"
@@ -2494,7 +2442,7 @@ func TestRootDataTypeConversionError(t *testing.T) {
 	}
 
 	// Test nil error
-	var nilErr *RootDataTypeConversionError
+	var nilErr *rootDataTypeConversionError
 	if nilErr != nil {
 		t.Errorf("nil error should be nil")
 	}
@@ -2590,7 +2538,22 @@ func TestSafeConvertToUint64(t *testing.T) {
 
 // TestSchema tests the Schema type
 func TestSchema(t *testing.T) {
-	schema := &Schema{}
+	schema := &Schema{
+		MinLength:        5,
+		MaxLength:        100,
+		Minimum:          0,
+		Maximum:          1000,
+		MinItems:         1,
+		MaxItems:         10,
+		ExclusiveMinimum: true,
+		ExclusiveMaximum: true,
+	}
+	schema.hasMinLength = true
+	schema.hasMaxLength = true
+	schema.hasMinimum = true
+	schema.hasMaximum = true
+	schema.hasMinItems = true
+	schema.hasMaxItems = true
 
 	// Test DefaultSchema initialization
 	defaultSchema := DefaultSchema()
@@ -2598,73 +2561,51 @@ func TestSchema(t *testing.T) {
 		t.Errorf("DefaultSchema() should not return nil")
 	}
 
-	// Test SetMinLength
-	schema.SetMinLength(5)
+	// Test Has* methods
 	if !schema.HasMinLength() {
-		t.Errorf("HasMinLength() should return true after SetMinLength")
+		t.Errorf("HasMinLength() should return true")
 	}
-
-	// Test SetMaxLength
-	schema.SetMaxLength(100)
 	if !schema.HasMaxLength() {
-		t.Errorf("HasMaxLength() should return true after SetMaxLength")
+		t.Errorf("HasMaxLength() should return true")
 	}
-
-	// Test SetMinimum
-	schema.SetMinimum(0)
 	if !schema.HasMinimum() {
-		t.Errorf("HasMinimum() should return true after SetMinimum")
+		t.Errorf("HasMinimum() should return true")
 	}
-
-	// Test SetMaximum
-	schema.SetMaximum(1000)
 	if !schema.HasMaximum() {
-		t.Errorf("HasMaximum() should return true after SetMaximum")
+		t.Errorf("HasMaximum() should return true")
 	}
-
-	// Test SetMinItems
-	schema.SetMinItems(1)
 	if !schema.HasMinItems() {
-		t.Errorf("HasMinItems() should return true after SetMinItems")
+		t.Errorf("HasMinItems() should return true")
 	}
-
-	// Test SetMaxItems
-	schema.SetMaxItems(10)
 	if !schema.HasMaxItems() {
-		t.Errorf("HasMaxItems() should return true after SetMaxItems")
+		t.Errorf("HasMaxItems() should return true")
 	}
-
-	// Test SetExclusiveMinimum (should not affect other fields)
-	schema.SetExclusiveMinimum(true)
 	if !schema.ExclusiveMinimum {
 		t.Errorf("ExclusiveMinimum should be true")
 	}
-	if schema.MinLength != 5 {
-		t.Errorf("MinLength should still be 5 after SetExclusiveMinimum, got %d", schema.MinLength)
-	}
-
-	// Test SetExclusiveMaximum (should not affect other fields)
-	schema.SetExclusiveMaximum(true)
 	if !schema.ExclusiveMaximum {
 		t.Errorf("ExclusiveMaximum should be true")
-	}
-	if schema.MaxLength != 100 {
-		t.Errorf("MaxLength should still be 100 after SetExclusiveMaximum, got %d", schema.MaxLength)
 	}
 }
 
 // TestSchema_AllConstraints tests setting all constraints together
 func TestSchema_AllConstraints(t *testing.T) {
-	schema := &Schema{}
-
-	schema.SetMinLength(5)
-	schema.SetMaxLength(50)
-	schema.SetMinimum(0)
-	schema.SetMaximum(100)
-	schema.SetMinItems(1)
-	schema.SetMaxItems(10)
-	schema.SetExclusiveMinimum(false)
-	schema.SetExclusiveMaximum(false)
+	schema := &Schema{
+		MinLength:        5,
+		MaxLength:        50,
+		Minimum:          0,
+		Maximum:          100,
+		MinItems:         1,
+		MaxItems:         10,
+		ExclusiveMinimum: false,
+		ExclusiveMaximum: false,
+	}
+	schema.hasMinLength = true
+	schema.hasMaxLength = true
+	schema.hasMinimum = true
+	schema.hasMaximum = true
+	schema.hasMinItems = true
+	schema.hasMaxItems = true
 
 	if !schema.HasMinLength() || schema.MinLength != 5 {
 		t.Errorf("MinLength not set correctly")
@@ -2694,10 +2635,14 @@ func TestSchema_AllConstraints(t *testing.T) {
 
 // TestSchema_ArrayConstraints tests array constraint methods
 func TestSchema_ArrayConstraints(t *testing.T) {
-	schema := &Schema{}
+	schema := &Schema{
+		MinItems: 1,
+		MaxItems: 100,
+	}
+	schema.hasMinItems = true
+	schema.hasMaxItems = true
 
-	// Test SetMinItems and HasMinItems
-	schema.SetMinItems(1)
+	// Test HasMinItems
 	if !schema.HasMinItems() {
 		t.Errorf("HasMinItems() should return true")
 	}
@@ -2705,8 +2650,7 @@ func TestSchema_ArrayConstraints(t *testing.T) {
 		t.Errorf("MinItems = %d, want 1", schema.MinItems)
 	}
 
-	// Test SetMaxItems and HasMaxItems
-	schema.SetMaxItems(100)
+	// Test HasMaxItems
 	if !schema.HasMaxItems() {
 		t.Errorf("HasMaxItems() should return true")
 	}
@@ -2715,13 +2659,12 @@ func TestSchema_ArrayConstraints(t *testing.T) {
 	}
 
 	// Test zero values
-	schema2 := &Schema{}
-	schema2.SetMinItems(0)
+	schema2 := &Schema{MinItems: 0, MaxItems: 0}
+	schema2.hasMinItems = true
+	schema2.hasMaxItems = true
 	if !schema2.HasMinItems() {
 		t.Errorf("HasMinItems() should return true for 0")
 	}
-
-	schema2.SetMaxItems(0)
 	if !schema2.HasMaxItems() {
 		t.Errorf("HasMaxItems() should return true for 0")
 	}
@@ -2758,39 +2701,39 @@ func TestSchema_DefaultSchema(t *testing.T) {
 
 // TestSchema_ExclusiveConstraints tests exclusive constraint methods
 func TestSchema_ExclusiveConstraints(t *testing.T) {
-	schema := &Schema{}
-
-	// Test SetExclusiveMinimum
-	schema.SetExclusiveMinimum(true)
+	// Test ExclusiveMinimum
+	schema := &Schema{ExclusiveMinimum: true}
 	if !schema.ExclusiveMinimum {
 		t.Errorf("ExclusiveMinimum should be true")
 	}
 
-	schema.SetExclusiveMinimum(false)
+	schema.ExclusiveMinimum = false
 	if schema.ExclusiveMinimum {
 		t.Errorf("ExclusiveMinimum should be false")
 	}
 
-	// Test SetExclusiveMaximum
-	schema.SetExclusiveMaximum(true)
+	// Test ExclusiveMaximum
+	schema.ExclusiveMaximum = true
 	if !schema.ExclusiveMaximum {
 		t.Errorf("ExclusiveMaximum should be true")
 	}
 
-	schema.SetExclusiveMaximum(false)
+	schema.ExclusiveMaximum = false
 	if schema.ExclusiveMaximum {
 		t.Errorf("ExclusiveMaximum should be false")
 	}
 
 	// Test with other constraints set
-	schema.SetMinimum(10)
-	schema.SetExclusiveMinimum(true)
+	schema.Minimum = 10
+	schema.hasMinimum = true
+	schema.ExclusiveMinimum = true
 	if schema.Minimum != 10 {
 		t.Errorf("Minimum should still be 10")
 	}
 
-	schema.SetMaximum(100)
-	schema.SetExclusiveMaximum(true)
+	schema.Maximum = 100
+	schema.hasMaximum = true
+	schema.ExclusiveMaximum = true
 	if schema.Maximum != 100 {
 		t.Errorf("Maximum should still be 100")
 	}
@@ -2798,10 +2741,14 @@ func TestSchema_ExclusiveConstraints(t *testing.T) {
 
 // TestSchema_NumericConstraints tests numeric constraint methods
 func TestSchema_NumericConstraints(t *testing.T) {
-	schema := &Schema{}
+	schema := &Schema{
+		Minimum: -100,
+		Maximum: 1000,
+	}
+	schema.hasMinimum = true
+	schema.hasMaximum = true
 
-	// Test SetMinimum and HasMinimum
-	schema.SetMinimum(-100)
+	// Test HasMinimum
 	if !schema.HasMinimum() {
 		t.Errorf("HasMinimum() should return true")
 	}
@@ -2809,8 +2756,7 @@ func TestSchema_NumericConstraints(t *testing.T) {
 		t.Errorf("Minimum = %f, want -100", schema.Minimum)
 	}
 
-	// Test SetMaximum and HasMaximum
-	schema.SetMaximum(1000)
+	// Test HasMaximum
 	if !schema.HasMaximum() {
 		t.Errorf("HasMaximum() should return true")
 	}
@@ -2819,13 +2765,12 @@ func TestSchema_NumericConstraints(t *testing.T) {
 	}
 
 	// Test zero values
-	schema2 := &Schema{}
-	schema2.SetMinimum(0)
+	schema2 := &Schema{Minimum: 0, Maximum: 0}
+	schema2.hasMinimum = true
+	schema2.hasMaximum = true
 	if !schema2.HasMinimum() {
 		t.Errorf("HasMinimum() should return true for 0")
 	}
-
-	schema2.SetMaximum(0)
 	if !schema2.HasMaximum() {
 		t.Errorf("HasMaximum() should return true for 0")
 	}
@@ -2833,10 +2778,14 @@ func TestSchema_NumericConstraints(t *testing.T) {
 
 // TestSchema_StringConstraints tests string constraint methods
 func TestSchema_StringConstraints(t *testing.T) {
-	schema := &Schema{}
+	schema := &Schema{
+		MinLength: 10,
+		MaxLength: 100,
+	}
+	schema.hasMinLength = true
+	schema.hasMaxLength = true
 
-	// Test SetMinLength and HasMinLength
-	schema.SetMinLength(10)
+	// Test HasMinLength
 	if !schema.HasMinLength() {
 		t.Errorf("HasMinLength() should return true")
 	}
@@ -2844,8 +2793,7 @@ func TestSchema_StringConstraints(t *testing.T) {
 		t.Errorf("MinLength = %d, want 10", schema.MinLength)
 	}
 
-	// Test SetMaxLength and HasMaxLength
-	schema.SetMaxLength(100)
+	// Test HasMaxLength
 	if !schema.HasMaxLength() {
 		t.Errorf("HasMaxLength() should return true")
 	}
@@ -2853,9 +2801,9 @@ func TestSchema_StringConstraints(t *testing.T) {
 		t.Errorf("MaxLength = %d, want 100", schema.MaxLength)
 	}
 
-	// Test multiple sets
-	schema.SetMinLength(5)
-	schema.SetMaxLength(50)
+	// Test updating values
+	schema.MinLength = 5
+	schema.MaxLength = 50
 	if schema.MinLength != 5 || schema.MaxLength != 50 {
 		t.Errorf("MinLength/MaxLength not updated correctly")
 	}
@@ -2923,8 +2871,8 @@ func TestTypeConversionBoundaryConditions(t *testing.T) {
 	})
 }
 
-// TestTypeSafeAccessResult_AsBool tests AsBool method
-func TestTypeSafeAccessResult_AsBool(t *testing.T) {
+// TestAccessResult_AsBool tests AsBool method
+func TestAccessResult_AsBool(t *testing.T) {
 	tests := []struct {
 		name        string
 		value       any
@@ -2945,7 +2893,7 @@ func TestTypeSafeAccessResult_AsBool(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := TypeSafeAccessResult{Value: tt.value, Exists: tt.exists}
+			result := AccessResult{Value: tt.value, Exists: tt.exists}
 			got, err := result.AsBool()
 			if tt.expectError {
 				if err == nil {
@@ -2963,8 +2911,8 @@ func TestTypeSafeAccessResult_AsBool(t *testing.T) {
 	}
 }
 
-// TestTypeSafeAccessResult_AsFloat64 tests AsFloat64 method
-func TestTypeSafeAccessResult_AsFloat64(t *testing.T) {
+// TestAccessResult_AsFloat64 tests AsFloat64 method
+func TestAccessResult_AsFloat64(t *testing.T) {
 	tests := []struct {
 		name        string
 		value       any
@@ -2985,7 +2933,7 @@ func TestTypeSafeAccessResult_AsFloat64(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := TypeSafeAccessResult{Value: tt.value, Exists: tt.exists}
+			result := AccessResult{Value: tt.value, Exists: tt.exists}
 			got, err := result.AsFloat64()
 			if tt.expectError {
 				if err == nil {
@@ -3003,8 +2951,8 @@ func TestTypeSafeAccessResult_AsFloat64(t *testing.T) {
 	}
 }
 
-// TestTypeSafeAccessResult_AsInt tests AsInt method
-func TestTypeSafeAccessResult_AsInt(t *testing.T) {
+// TestAccessResult_AsInt tests AsInt method
+func TestAccessResult_AsInt(t *testing.T) {
 	tests := []struct {
 		name        string
 		value       any
@@ -3032,7 +2980,7 @@ func TestTypeSafeAccessResult_AsInt(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := TypeSafeAccessResult{Value: tt.value, Exists: tt.exists}
+			result := AccessResult{Value: tt.value, Exists: tt.exists}
 			got, err := result.AsInt()
 			if tt.expectError {
 				if err == nil {
@@ -3050,10 +2998,10 @@ func TestTypeSafeAccessResult_AsInt(t *testing.T) {
 	}
 }
 
-// TestTypeSafeAccessResult_AsString tests AsString method
-func TestTypeSafeAccessResult_AsString(t *testing.T) {
+// TestAccessResult_AsString tests AsString method
+func TestAccessResult_AsString(t *testing.T) {
 	t.Run("valid string", func(t *testing.T) {
-		result := TypeSafeAccessResult{Value: "hello", Exists: true}
+		result := AccessResult{Value: "hello", Exists: true}
 		got, err := result.AsString()
 		if err != nil {
 			t.Errorf("AsString() unexpected error: %v", err)
@@ -3064,7 +3012,7 @@ func TestTypeSafeAccessResult_AsString(t *testing.T) {
 	})
 
 	t.Run("not exists returns error", func(t *testing.T) {
-		result := TypeSafeAccessResult{Value: nil, Exists: false}
+		result := AccessResult{Value: nil, Exists: false}
 		_, err := result.AsString()
 		if err == nil {
 			t.Error("AsString() should return error when not exists")
@@ -3072,7 +3020,7 @@ func TestTypeSafeAccessResult_AsString(t *testing.T) {
 	})
 
 	t.Run("type mismatch returns error", func(t *testing.T) {
-		result := TypeSafeAccessResult{Value: 123, Exists: true}
+		result := AccessResult{Value: 123, Exists: true}
 		_, err := result.AsString()
 		if err == nil {
 			t.Error("AsString() should return error for non-string type")
@@ -3080,10 +3028,10 @@ func TestTypeSafeAccessResult_AsString(t *testing.T) {
 	})
 }
 
-// TestTypeSafeAccessResult_AsStringConverted tests AsStringConverted method
-func TestTypeSafeAccessResult_AsStringConverted(t *testing.T) {
+// TestAccessResult_AsStringConverted tests AsStringConverted method
+func TestAccessResult_AsStringConverted(t *testing.T) {
 	t.Run("valid string", func(t *testing.T) {
-		result := TypeSafeAccessResult{Value: "hello", Exists: true}
+		result := AccessResult{Value: "hello", Exists: true}
 		got, err := result.AsStringConverted()
 		if err != nil {
 			t.Errorf("AsStringConverted() unexpected error: %v", err)
@@ -3094,7 +3042,7 @@ func TestTypeSafeAccessResult_AsStringConverted(t *testing.T) {
 	})
 
 	t.Run("int converts to string", func(t *testing.T) {
-		result := TypeSafeAccessResult{Value: 123, Exists: true}
+		result := AccessResult{Value: 123, Exists: true}
 		got, err := result.AsStringConverted()
 		if err != nil {
 			t.Errorf("AsStringConverted() unexpected error: %v", err)
@@ -3105,7 +3053,7 @@ func TestTypeSafeAccessResult_AsStringConverted(t *testing.T) {
 	})
 
 	t.Run("not exists returns error", func(t *testing.T) {
-		result := TypeSafeAccessResult{Value: nil, Exists: false}
+		result := AccessResult{Value: nil, Exists: false}
 		_, err := result.AsStringConverted()
 		if err == nil {
 			t.Error("AsStringConverted() should return error when not exists")
@@ -3113,31 +3061,31 @@ func TestTypeSafeAccessResult_AsStringConverted(t *testing.T) {
 	})
 }
 
-// TestTypeSafeResult_Ok tests the Ok method
-func TestTypeSafeResult_Ok(t *testing.T) {
+// TestResult_Ok tests the Ok method
+func TestResult_Ok(t *testing.T) {
 	tests := []struct {
 		name     string
-		result   TypeSafeResult[string]
+		result   Result[string]
 		expected bool
 	}{
 		{
 			name:     "valid result",
-			result:   TypeSafeResult[string]{Value: "hello", Exists: true, Error: nil},
+			result:   Result[string]{Value: "hello", Exists: true, Error: nil},
 			expected: true,
 		},
 		{
 			name:     "result with error",
-			result:   TypeSafeResult[string]{Value: "", Exists: true, Error: fmt.Errorf("error")},
+			result:   Result[string]{Value: "", Exists: true, Error: fmt.Errorf("error")},
 			expected: false,
 		},
 		{
 			name:     "result not exists",
-			result:   TypeSafeResult[string]{Value: "", Exists: false, Error: nil},
+			result:   Result[string]{Value: "", Exists: false, Error: nil},
 			expected: false,
 		},
 		{
 			name:     "result with error and not exists",
-			result:   TypeSafeResult[string]{Value: "", Exists: false, Error: fmt.Errorf("error")},
+			result:   Result[string]{Value: "", Exists: false, Error: fmt.Errorf("error")},
 			expected: false,
 		},
 	}
@@ -3145,52 +3093,52 @@ func TestTypeSafeResult_Ok(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := tt.result.Ok(); got != tt.expected {
-				t.Errorf("TypeSafeResult.Ok() = %v, want %v", got, tt.expected)
+				t.Errorf("Result.Ok() = %v, want %v", got, tt.expected)
 			}
 		})
 	}
 }
 
-// TestTypeSafeResult_Unwrap tests the Unwrap method
-func TestTypeSafeResult_Unwrap(t *testing.T) {
+// TestResult_Unwrap tests the Unwrap method
+func TestResult_Unwrap(t *testing.T) {
 	t.Run("valid result returns value", func(t *testing.T) {
-		result := TypeSafeResult[int]{Value: 42, Exists: true, Error: nil}
+		result := Result[int]{Value: 42, Exists: true, Error: nil}
 		if got := result.Unwrap(); got != 42 {
-			t.Errorf("TypeSafeResult.Unwrap() = %v, want 42", got)
+			t.Errorf("Result.Unwrap() = %v, want 42", got)
 		}
 	})
 
 	t.Run("result with error returns zero", func(t *testing.T) {
-		result := TypeSafeResult[int]{Value: 42, Exists: true, Error: fmt.Errorf("error")}
+		result := Result[int]{Value: 42, Exists: true, Error: fmt.Errorf("error")}
 		if got := result.Unwrap(); got != 0 {
-			t.Errorf("TypeSafeResult.Unwrap() with error = %v, want 0", got)
+			t.Errorf("Result.Unwrap() with error = %v, want 0", got)
 		}
 	})
 }
 
-// TestTypeSafeResult_UnwrapOr tests the UnwrapOr method
-func TestTypeSafeResult_UnwrapOr(t *testing.T) {
+// TestResult_UnwrapOr tests the UnwrapOr method
+func TestResult_UnwrapOr(t *testing.T) {
 	tests := []struct {
 		name         string
-		result       TypeSafeResult[int]
+		result       Result[int]
 		defaultValue int
 		expected     int
 	}{
 		{
 			name:         "valid result returns value",
-			result:       TypeSafeResult[int]{Value: 42, Exists: true, Error: nil},
+			result:       Result[int]{Value: 42, Exists: true, Error: nil},
 			defaultValue: 0,
 			expected:     42,
 		},
 		{
 			name:         "result with error returns default",
-			result:       TypeSafeResult[int]{Value: 42, Exists: true, Error: fmt.Errorf("error")},
+			result:       Result[int]{Value: 42, Exists: true, Error: fmt.Errorf("error")},
 			defaultValue: 100,
 			expected:     100,
 		},
 		{
 			name:         "result not exists returns default",
-			result:       TypeSafeResult[int]{Value: 42, Exists: false, Error: nil},
+			result:       Result[int]{Value: 42, Exists: false, Error: nil},
 			defaultValue: 200,
 			expected:     200,
 		},
@@ -3199,43 +3147,23 @@ func TestTypeSafeResult_UnwrapOr(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := tt.result.UnwrapOr(tt.defaultValue); got != tt.expected {
-				t.Errorf("TypeSafeResult.UnwrapOr() = %v, want %v", got, tt.expected)
+				t.Errorf("Result.UnwrapOr() = %v, want %v", got, tt.expected)
 			}
 		})
 	}
 }
 
-// TestTypeSafeResult_UnwrapOrPanic tests the UnwrapOrPanic method
-func TestTypeSafeResult_UnwrapOrPanic(t *testing.T) {
-	t.Run("valid result returns value", func(t *testing.T) {
-		result := TypeSafeResult[string]{Value: "hello", Exists: true, Error: nil}
-		if got := result.UnwrapOrPanic(); got != "hello" {
-			t.Errorf("TypeSafeResult.UnwrapOrPanic() = %v, want hello", got)
-		}
-	})
-
-	t.Run("result with error panics", func(t *testing.T) {
-		defer func() {
-			if r := recover(); r == nil {
-				t.Error("TypeSafeResult.UnwrapOrPanic() should panic on error")
-			}
-		}()
-		result := TypeSafeResult[int]{Value: 0, Exists: true, Error: fmt.Errorf("error")}
-		result.UnwrapOrPanic()
-	})
-}
-
 // TestUnifiedResourceManager tests the unified resource manager functionality
 func TestUnifiedResourceManager(t *testing.T) {
 	t.Run("Creation", func(t *testing.T) {
-		rm := NewUnifiedResourceManager()
+		rm := newUnifiedResourceManager()
 		if rm == nil {
-			t.Fatal("NewUnifiedResourceManager returned nil")
+			t.Fatal("newUnifiedResourceManager returned nil")
 		}
 	})
 
 	t.Run("StringBuilderPool", func(t *testing.T) {
-		rm := NewUnifiedResourceManager()
+		rm := newUnifiedResourceManager()
 
 		// Test Get and Put cycle
 		sb1 := rm.GetStringBuilder()
@@ -3262,7 +3190,7 @@ func TestUnifiedResourceManager(t *testing.T) {
 	})
 
 	t.Run("PathSegmentPool", func(t *testing.T) {
-		rm := NewUnifiedResourceManager()
+		rm := newUnifiedResourceManager()
 
 		// Test Get and Put cycle
 		seg1 := rm.GetPathSegments()
@@ -3287,7 +3215,7 @@ func TestUnifiedResourceManager(t *testing.T) {
 	})
 
 	t.Run("BufferPool", func(t *testing.T) {
-		rm := NewUnifiedResourceManager()
+		rm := newUnifiedResourceManager()
 
 		// Test Get and Put cycle
 		buf1 := rm.GetBuffer()
@@ -3310,7 +3238,7 @@ func TestUnifiedResourceManager(t *testing.T) {
 	})
 
 	t.Run("ConcurrentAccess", func(t *testing.T) {
-		rm := NewUnifiedResourceManager()
+		rm := newUnifiedResourceManager()
 		const goroutines = 100
 		const opsPerGoroutine = 100
 
@@ -3356,7 +3284,7 @@ func TestUnifiedResourceManager(t *testing.T) {
 	})
 
 	t.Run("Stats", func(t *testing.T) {
-		rm := NewUnifiedResourceManager()
+		rm := newUnifiedResourceManager()
 
 		// Perform some operations
 		sb := rm.GetStringBuilder()
@@ -3372,38 +3300,27 @@ func TestUnifiedResourceManager(t *testing.T) {
 		rm.PutBuffer(buf)
 
 		// Get stats - verify no crashes
-		_ = rm.GetStats()
+		_ = rm.getStats()
 		// Note: Allocated counts are tracked atomically and should be positive
 		// The specific counts may vary due to internal implementation details
 	})
 
 	t.Run("SizeLimits", func(t *testing.T) {
-		rm := NewUnifiedResourceManager()
+		rm := newUnifiedResourceManager()
 
 		// Test oversized builder is discarded
 		oversizedSb := &strings.Builder{}
-		oversizedSb.Grow(100000) // Way over MaxPoolBufferSize
+		oversizedSb.Grow(100000) // Way over maxPoolBufferSize
 		rm.PutStringBuilder(oversizedSb)
 
 		// Test undersized builder is discarded
 		undersizedSb := &strings.Builder{}
-		undersizedSb.Grow(10) // Under MinPoolBufferSize
+		undersizedSb.Grow(10) // Under minPoolBufferSize
 		rm.PutStringBuilder(undersizedSb)
 
 		// Note: Oversized/undersized builders are discarded automatically
 	})
 
-	t.Run("PerformMaintenance", func(t *testing.T) {
-		rm := NewUnifiedResourceManager()
-
-		// Should not panic
-		rm.PerformMaintenance()
-
-		// Multiple calls should be safe
-		for i := 0; i < 10; i++ {
-			rm.PerformMaintenance()
-		}
-	})
 }
 
 // TestUnifiedTypeConversion tests generic type conversion
@@ -3474,44 +3391,44 @@ func TestUnifiedTypeConversion(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			switch tt.expected.(type) {
 			case int:
-				result, ok := UnifiedTypeConversion[int](tt.input)
+				result, ok := unifiedTypeConversion[int](tt.input)
 				if ok != tt.shouldSucceed {
-					t.Errorf("UnifiedTypeConversion[int](%v) success = %v; want %v", tt.input, ok, tt.shouldSucceed)
+					t.Errorf("unifiedTypeConversion[int](%v) success = %v; want %v", tt.input, ok, tt.shouldSucceed)
 				}
 				if ok && result != tt.expected.(int) {
-					t.Errorf("UnifiedTypeConversion[int](%v) = %d; want %d", tt.input, result, tt.expected)
+					t.Errorf("unifiedTypeConversion[int](%v) = %d; want %d", tt.input, result, tt.expected)
 				}
 			case int64:
-				result, ok := UnifiedTypeConversion[int64](tt.input)
+				result, ok := unifiedTypeConversion[int64](tt.input)
 				if ok != tt.shouldSucceed {
-					t.Errorf("UnifiedTypeConversion[int64](%v) success = %v; want %v", tt.input, ok, tt.shouldSucceed)
+					t.Errorf("unifiedTypeConversion[int64](%v) success = %v; want %v", tt.input, ok, tt.shouldSucceed)
 				}
 				if ok && result != tt.expected.(int64) {
-					t.Errorf("UnifiedTypeConversion[int64](%v) = %d; want %d", tt.input, result, tt.expected)
+					t.Errorf("unifiedTypeConversion[int64](%v) = %d; want %d", tt.input, result, tt.expected)
 				}
 			case float64:
-				result, ok := UnifiedTypeConversion[float64](tt.input)
+				result, ok := unifiedTypeConversion[float64](tt.input)
 				if ok != tt.shouldSucceed {
-					t.Errorf("UnifiedTypeConversion[float64](%v) success = %v; want %v", tt.input, ok, tt.shouldSucceed)
+					t.Errorf("unifiedTypeConversion[float64](%v) success = %v; want %v", tt.input, ok, tt.shouldSucceed)
 				}
 				if ok && result != tt.expected.(float64) {
-					t.Errorf("UnifiedTypeConversion[float64](%v) = %f; want %f", tt.input, result, tt.expected)
+					t.Errorf("unifiedTypeConversion[float64](%v) = %f; want %f", tt.input, result, tt.expected)
 				}
 			case bool:
-				result, ok := UnifiedTypeConversion[bool](tt.input)
+				result, ok := unifiedTypeConversion[bool](tt.input)
 				if ok != tt.shouldSucceed {
-					t.Errorf("UnifiedTypeConversion[bool](%v) success = %v; want %v", tt.input, ok, tt.shouldSucceed)
+					t.Errorf("unifiedTypeConversion[bool](%v) success = %v; want %v", tt.input, ok, tt.shouldSucceed)
 				}
 				if ok && result != tt.expected.(bool) {
-					t.Errorf("UnifiedTypeConversion[bool](%v) = %v; want %v", tt.input, result, tt.expected)
+					t.Errorf("unifiedTypeConversion[bool](%v) = %v; want %v", tt.input, result, tt.expected)
 				}
 			case string:
-				result, ok := UnifiedTypeConversion[string](tt.input)
+				result, ok := unifiedTypeConversion[string](tt.input)
 				if ok != tt.shouldSucceed {
-					t.Errorf("UnifiedTypeConversion[string](%v) success = %v; want %v", tt.input, ok, tt.shouldSucceed)
+					t.Errorf("unifiedTypeConversion[string](%v) success = %v; want %v", tt.input, ok, tt.shouldSucceed)
 				}
 				if ok && result != tt.expected.(string) {
-					t.Errorf("UnifiedTypeConversion[string](%v) = %s; want %s", tt.input, result, tt.expected)
+					t.Errorf("unifiedTypeConversion[string](%v) = %s; want %s", tt.input, result, tt.expected)
 				}
 			}
 		})

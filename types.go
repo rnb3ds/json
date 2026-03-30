@@ -3,7 +3,6 @@ package json
 import (
 	"context"
 	"fmt"
-	"math"
 	"reflect"
 	"runtime"
 	"strconv"
@@ -13,42 +12,32 @@ import (
 	"github.com/cybergodev/json/internal"
 )
 
-// Config holds configuration for the JSON processor
+// Config holds all configuration for the JSON processor.
+// Start with DefaultConfig() and modify as needed.
+//
+// Example:
+//
+//	cfg := json.DefaultConfig()
+//	cfg.CreatePaths = true
+//	cfg.Pretty = true
+//	result, err := json.Set(data, "path", value, cfg)
 type Config struct {
-	// Cache settings
+	// ===== Cache Settings =====
 	MaxCacheSize int           `json:"max_cache_size"`
 	CacheTTL     time.Duration `json:"cache_ttl"`
 	EnableCache  bool          `json:"enable_cache"`
+	CacheResults bool          `json:"cache_results"` // Per-operation caching
 
-	// Size limits
+	// ===== Size Limits =====
 	MaxJSONSize  int64 `json:"max_json_size"`
 	MaxPathDepth int   `json:"max_path_depth"`
 	MaxBatchSize int   `json:"max_batch_size"`
 
-	// Security limits
+	// ===== Security Limits =====
 	MaxNestingDepthSecurity   int   `json:"max_nesting_depth"`
 	MaxSecurityValidationSize int64 `json:"max_security_validation_size"`
 	MaxObjectKeys             int   `json:"max_object_keys"`
 	MaxArrayElements          int   `json:"max_array_elements"`
-
-	// Concurrency
-	MaxConcurrency    int `json:"max_concurrency"`
-	ParallelThreshold int `json:"parallel_threshold"`
-
-	// Processing
-	EnableValidation bool `json:"enable_validation"`
-	StrictMode       bool `json:"strict_mode"`
-	CreatePaths      bool `json:"create_paths"`
-	CleanupNulls     bool `json:"cleanup_nulls"`
-	CompactArrays    bool `json:"compact_arrays"`
-
-	// Additional options
-	EnableMetrics     bool `json:"enable_metrics"`
-	EnableHealthCheck bool `json:"enable_health_check"`
-	AllowComments     bool `json:"allow_comments"`
-	PreserveNumbers   bool `json:"preserve_numbers"`
-	ValidateInput     bool `json:"validate_input"`
-	ValidateFilePath  bool `json:"validate_file_path"`
 	// FullSecurityScan enables full (non-sampling) security validation for all JSON input.
 	//
 	// When false (default): Large JSON (>4KB) uses optimized sampling with:
@@ -69,6 +58,81 @@ type Config struct {
 	// PERFORMANCE NOTE: Full scanning adds ~10-30% overhead for JSON >100KB.
 	// For trusted internal services with large JSON payloads, sampling mode is acceptable.
 	FullSecurityScan bool `json:"full_security_scan"`
+
+	// ===== Concurrency =====
+	MaxConcurrency    int `json:"max_concurrency"`
+	ParallelThreshold int `json:"parallel_threshold"`
+
+	// ===== Processing Options =====
+	EnableValidation bool `json:"enable_validation"`
+	StrictMode       bool `json:"strict_mode"`
+	CreatePaths      bool `json:"create_paths"`
+	CleanupNulls     bool `json:"cleanup_nulls"`
+	CompactArrays    bool `json:"compact_arrays"`
+	ContinueOnError  bool `json:"continue_on_error"` // Continue on batch errors
+
+	// ===== Input/Output Options =====
+	AllowComments    bool `json:"allow_comments"`
+	PreserveNumbers  bool `json:"preserve_numbers"`
+	ValidateInput    bool `json:"validate_input"`
+	ValidateFilePath bool `json:"validate_file_path"`
+	SkipValidation   bool `json:"skip_validation"` // Skip validation for trusted input
+
+	// ===== Encoding Options =====
+	Pretty          bool            `json:"pretty"`
+	Indent          string          `json:"indent"`
+	Prefix          string          `json:"prefix"`
+	EscapeHTML      bool            `json:"escape_html"`
+	SortKeys        bool            `json:"sort_keys"`
+	ValidateUTF8    bool            `json:"validate_utf8"`
+	MaxDepth        int             `json:"max_depth"`
+	DisallowUnknown bool            `json:"disallow_unknown"`
+	FloatPrecision  int             `json:"float_precision"`
+	FloatTruncate   bool            `json:"float_truncate"`
+	DisableEscaping bool            `json:"disable_escaping"`
+	EscapeUnicode   bool            `json:"escape_unicode"`
+	EscapeSlash     bool            `json:"escape_slash"`
+	EscapeNewlines  bool            `json:"escape_newlines"`
+	EscapeTabs      bool            `json:"escape_tabs"`
+	IncludeNulls    bool            `json:"include_nulls"`
+	CustomEscapes   map[rune]string `json:"custom_escapes,omitempty"`
+
+	// ===== Observability =====
+	EnableMetrics     bool `json:"enable_metrics"`
+	EnableHealthCheck bool `json:"enable_health_check"`
+
+	// ===== Context =====
+	Context context.Context `json:"-"` // Operation context
+
+	// ===== Extension Points =====
+
+	// CustomEncoder replaces the default encoder entirely.
+	// If set, Encode operations use this encoder instead of the built-in one.
+	CustomEncoder CustomEncoder
+
+	// CustomTypeEncoders provides encoding for specific types.
+	// Keys are reflect.Type values; values implement TypeEncoder.
+	CustomTypeEncoders map[reflect.Type]TypeEncoder
+
+	// CustomValidators run before operations.
+	// All validators must pass for the operation to proceed.
+	CustomValidators []Validator
+
+	// AdditionalDangerousPatterns adds security patterns beyond defaults.
+	// These are checked in addition to built-in patterns unless
+	// DisableDefaultPatterns is true.
+	AdditionalDangerousPatterns []DangerousPattern
+
+	// DisableDefaultPatterns disables built-in security patterns.
+	// Set to true to use only AdditionalDangerousPatterns.
+	DisableDefaultPatterns bool
+
+	// Hooks provide before/after interception for operations.
+	Hooks []Hook
+
+	// CustomPathParser replaces the default path parser.
+	// If set, path parsing uses this parser instead of the built-in one.
+	CustomPathParser PathParser
 }
 
 // GetSecurityLimits returns a summary of current security limits
@@ -83,82 +147,21 @@ func (c *Config) GetSecurityLimits() map[string]any {
 	}
 }
 
-// ProcessorOptions provides per-operation configuration
-type ProcessorOptions struct {
-	Context         context.Context `json:"-"`
-	CacheResults    bool            `json:"cache_results"`
-	StrictMode      bool            `json:"strict_mode"`
-	MaxDepth        int             `json:"max_depth"`
-	AllowComments   bool            `json:"allow_comments"`
-	PreserveNumbers bool            `json:"preserve_numbers"`
-	CreatePaths     bool            `json:"create_paths"`
-	CleanupNulls    bool            `json:"cleanup_nulls"`
-	CompactArrays   bool            `json:"compact_arrays"`
-	ContinueOnError bool            `json:"continue_on_error"`
-	// OPTIMIZED: SkipValidation allows skipping security validation for trusted input
-	// WARNING: Only use this option when you are certain the input is safe
-	// Use with caution - skipping validation may expose security vulnerabilities
-	SkipValidation bool `json:"skip_validation"`
+// AddHook adds an operation hook to the configuration.
+// Hooks are executed in order for Before and in reverse order for After.
+func (c *Config) AddHook(hook Hook) {
+	c.Hooks = append(c.Hooks, hook)
 }
 
-// Clone creates a deep copy of ProcessorOptions
-func (opts *ProcessorOptions) Clone() *ProcessorOptions {
-	if opts == nil {
-		return nil
-	}
-	return &ProcessorOptions{
-		Context:         opts.Context,
-		CacheResults:    opts.CacheResults,
-		StrictMode:      opts.StrictMode,
-		MaxDepth:        opts.MaxDepth,
-		AllowComments:   opts.AllowComments,
-		PreserveNumbers: opts.PreserveNumbers,
-		CreatePaths:     opts.CreatePaths,
-		CleanupNulls:    opts.CleanupNulls,
-		CompactArrays:   opts.CompactArrays,
-		ContinueOnError: opts.ContinueOnError,
-		SkipValidation:  opts.SkipValidation,
-	}
+// AddValidator adds a custom validator to the configuration.
+// Validators are executed in order; all must pass for operations to proceed.
+func (c *Config) AddValidator(validator Validator) {
+	c.CustomValidators = append(c.CustomValidators, validator)
 }
 
-// defaultOptions is a singleton containing default processor options.
-// This eliminates allocations when callers only need to read defaults.
-// DO NOT MODIFY this singleton - use DefaultOptionsClone() if modification is needed.
-var defaultOptions = &ProcessorOptions{
-	CacheResults:    true,
-	StrictMode:      false,
-	MaxDepth:        50,
-	AllowComments:   false,
-	PreserveNumbers: false, // Disable number preservation for encoding/json compatibility
-	CreatePaths:     false, // Conservative default - don't auto-create paths
-	CleanupNulls:    false, // Conservative default - don't auto-cleanup nulls
-	CompactArrays:   false, // Conservative default - don't auto-compact arrays
-	ContinueOnError: false, // Conservative default - fail fast on errors
-}
-
-// DefaultOptions returns default processor options as a singleton.
-// IMPORTANT: Returns an immutable pointer - callers MUST NOT modify the returned value.
-// Modifying the returned value will affect all users of DefaultOptions().
-// Use DefaultOptionsClone() if you need a modifiable copy.
-//
-// Example:
-//
-//	// Read-only access (safe):
-//	opts := json.DefaultOptions()
-//	if opts.MaxDepth > 10 { ... }
-//
-//	// Modification (use clone):
-//	opts := json.DefaultOptionsClone()
-//	opts.MaxDepth = 100
-func DefaultOptions() *ProcessorOptions {
-	return defaultOptions
-}
-
-// DefaultOptionsClone returns a modifiable copy of the default processor options.
-// Use this when you need to customize the options before passing to operations.
-func DefaultOptionsClone() *ProcessorOptions {
-	clone := *defaultOptions
-	return &clone
+// AddDangerousPattern adds a security pattern to the configuration.
+func (c *Config) AddDangerousPattern(pattern DangerousPattern) {
+	c.AdditionalDangerousPatterns = append(c.AdditionalDangerousPatterns, pattern)
 }
 
 // ParsedJSON represents a pre-parsed JSON document that can be reused for multiple operations.
@@ -190,60 +193,6 @@ type Stats struct {
 	MemoryEfficiency float64       `json:"memory_efficiency"`
 	OperationCount   int64         `json:"operation_count"`
 	ErrorCount       int64         `json:"error_count"`
-}
-
-// DetailedStats provides comprehensive processor statistics (internal debugging)
-type DetailedStats struct {
-	Stats             Stats             `json:"stats"`
-	state             int32             `json:"-"` // Processor state (0=active, 1=closing, 2=closed)
-	configSnapshot    Config            `json:"-"` // Internal: config snapshot
-	resourcePoolStats ResourcePoolStats `json:"-"` // Internal: resource pool stats
-}
-
-// ResourcePoolStats provides statistics about resource pools
-type ResourcePoolStats struct {
-	StringBuilderPoolActive bool `json:"string_builder_pool_active"` // Whether string builder pool is active
-	PathSegmentPoolActive   bool `json:"path_segment_pool_active"`   // Whether path segment pool is active
-}
-
-// CacheStats provides comprehensive cache statistics
-type CacheStats struct {
-	HitCount         int64        `json:"hit_count"`
-	MissCount        int64        `json:"miss_count"`
-	TotalMemory      int64        `json:"total_memory"`
-	HitRatio         float64      `json:"hit_ratio"`
-	MemoryEfficiency float64      `json:"memory_efficiency"`
-	Evictions        int64        `json:"evictions"`
-	ShardCount       int          `json:"shard_count"`
-	ShardStats       []ShardStats `json:"shard_stats"`
-}
-
-// ShardStats provides statistics for a single cache shard
-type ShardStats struct {
-	Size   int64 `json:"size"`
-	Memory int64 `json:"memory"`
-}
-
-// ProcessorMetrics provides comprehensive processor performance metrics
-type ProcessorMetrics struct {
-	TotalOperations       int64            `json:"total_operations"`
-	SuccessfulOperations  int64            `json:"successful_operations"`
-	FailedOperations      int64            `json:"failed_operations"`
-	SuccessRate           float64          `json:"success_rate"`
-	CacheHits             int64            `json:"cache_hits"`
-	CacheMisses           int64            `json:"cache_misses"`
-	CacheHitRate          float64          `json:"cache_hit_rate"`
-	AverageProcessingTime time.Duration    `json:"average_processing_time"`
-	MaxProcessingTime     time.Duration    `json:"max_processing_time"`
-	MinProcessingTime     time.Duration    `json:"min_processing_time"`
-	TotalMemoryAllocated  int64            `json:"total_memory_allocated"`
-	PeakMemoryUsage       int64            `json:"peak_memory_usage"`
-	CurrentMemoryUsage    int64            `json:"current_memory_usage"`
-	ActiveConcurrentOps   int64            `json:"active_concurrent_ops"`
-	MaxConcurrentOps      int64            `json:"max_concurrent_ops"`
-	runtimeMemStats       runtime.MemStats `json:"-"`
-	uptime                time.Duration    `json:"-"`
-	errorsByType          map[string]int64 `json:"-"`
 }
 
 // HealthStatus represents the health status of the processor
@@ -282,118 +231,6 @@ type BatchResult struct {
 	ID     string `json:"id"`
 	Result any    `json:"result"`
 	Error  error  `json:"error"`
-}
-
-// EncodeConfig provides advanced encoding configuration (for complex use cases)
-type EncodeConfig struct {
-	Pretty          bool   `json:"pretty"`
-	Indent          string `json:"indent"`
-	Prefix          string `json:"prefix"`
-	EscapeHTML      bool   `json:"escape_html"`
-	SortKeys        bool   `json:"sort_keys"`
-	ValidateUTF8    bool   `json:"validate_utf8"`
-	MaxDepth        int    `json:"max_depth"`
-	DisallowUnknown bool   `json:"disallow_unknown"`
-
-	// Number formatting
-	PreserveNumbers bool `json:"preserve_numbers"`
-	FloatPrecision  int  `json:"float_precision"`
-	FloatTruncate   bool `json:"float_truncate"` // Truncate instead of round when FloatPrecision >= 0
-
-	// Character escaping
-	DisableEscaping bool `json:"disable_escaping"`
-	EscapeUnicode   bool `json:"escape_unicode"`
-	EscapeSlash     bool `json:"escape_slash"`
-	EscapeNewlines  bool `json:"escape_newlines"`
-	EscapeTabs      bool `json:"escape_tabs"`
-
-	// Null handling
-	IncludeNulls  bool            `json:"include_nulls"`
-	CustomEscapes map[rune]string `json:"custom_escapes,omitempty"`
-}
-
-// Clone creates a deep copy of the EncodeConfig
-func (c *EncodeConfig) Clone() *EncodeConfig {
-	if c == nil {
-		return DefaultEncodeConfig()
-	}
-
-	clone := *c
-
-	if c.CustomEscapes != nil {
-		clone.CustomEscapes = make(map[rune]string, len(c.CustomEscapes))
-		for k, v := range c.CustomEscapes {
-			clone.CustomEscapes[k] = v
-		}
-	}
-
-	return &clone
-}
-
-// NewReadableConfig creates a configuration for human-readable JSON with minimal escaping
-func NewReadableConfig() *EncodeConfig {
-	return &EncodeConfig{
-		Pretty:          false,
-		Indent:          "  ",
-		Prefix:          "",
-		EscapeHTML:      false,
-		SortKeys:        false,
-		ValidateUTF8:    true,
-		MaxDepth:        100,
-		DisallowUnknown: false,
-		DisableEscaping: true,
-		EscapeUnicode:   false,
-		EscapeSlash:     false,
-		EscapeNewlines:  true,
-		EscapeTabs:      true,
-		IncludeNulls:    true, // Include null values by default
-		CustomEscapes:   nil,
-		PreserveNumbers: false, // Disable number preservation for encoding/json compatibility
-	}
-}
-
-// NewWebSafeConfig creates a configuration for web-safe JSON
-func NewWebSafeConfig() *EncodeConfig {
-	return &EncodeConfig{
-		Pretty:          false,
-		Indent:          "  ",
-		Prefix:          "",
-		EscapeHTML:      true,
-		SortKeys:        false,
-		ValidateUTF8:    true,
-		MaxDepth:        100,
-		DisallowUnknown: false,
-		DisableEscaping: false,
-		EscapeUnicode:   false,
-		EscapeSlash:     true,
-		EscapeNewlines:  true,
-		EscapeTabs:      true,
-		IncludeNulls:    true, // Include null values by default
-		CustomEscapes:   nil,
-	}
-}
-
-// NewCleanConfig creates a configuration that omits null and empty values
-func NewCleanConfig() *EncodeConfig {
-	return &EncodeConfig{
-		Pretty:          true,
-		Indent:          "  ",
-		Prefix:          "",
-		EscapeHTML:      true,
-		SortKeys:        true,
-		ValidateUTF8:    true,
-		MaxDepth:        100,
-		DisallowUnknown: false,
-		PreserveNumbers: false,
-		FloatPrecision:  -1,
-		DisableEscaping: false,
-		EscapeUnicode:   false,
-		EscapeSlash:     false,
-		EscapeNewlines:  true,
-		EscapeTabs:      true,
-		IncludeNulls:    false, // Exclude null values for clean output
-		CustomEscapes:   nil,
-	}
 }
 
 // Marshaler is the interface implemented by types that
@@ -518,137 +355,70 @@ func (e *MarshalerError) Error() string {
 
 func (e *MarshalerError) Unwrap() error { return e.Err }
 
-// Operation represents the type of operation being performed
-type Operation int
-
-const (
-	OpGet Operation = iota
-	OpSet
-	OpDelete
-	OpValidate
-)
-
-// String returns the string representation of the operation
-func (op Operation) String() string {
-	switch op {
-	case OpGet:
-		return "get"
-	case OpSet:
-		return "set"
-	case OpDelete:
-		return "delete"
-	case OpValidate:
-		return "validate"
-	default:
-		return "unknown"
-	}
-}
-
-// OperationContext contains context information for operations
-type OperationContext struct {
-	Context     context.Context
-	Operation   Operation
-	Path        string
-	Value       any
-	Options     *ProcessorOptions
-	StartTime   time.Time
-	CreatePaths bool
-}
-
-// CacheKey represents a cache key for operations
-type CacheKey struct {
-	Operation string
-	JSONStr   string
-	Path      string
-	Options   string
-}
-
-// DeletedMarker is a special sentinel value used to mark array elements
+// deletedMarker is a special sentinel value used to mark array elements
 // for deletion. It is compared by pointer identity (using ==).
+//
 // SECURITY: This is an unexported struct pointer to prevent external modification.
 // The zero-size struct{}{} is used because we only need unique pointer identity.
-var DeletedMarker = &struct{}{} // deleted marker - empty struct for pointer identity
+//
+// Naming Convention: Uses camelCase (unexported) to prevent external packages from
+// accessing this internal implementation detail. The "Marker" suffix indicates this
+// is a sentinel value for marking items, not a data container.
+//
+// IMPORTANT: Do not reassign this variable. Use IsDeletedMarker() for comparisons.
+var deletedMarker = &struct{}{} // deleted marker - empty struct for pointer identity
 
-// ValidateOptions validates processor options with enhanced checks
-func ValidateOptions(options *ProcessorOptions) error {
-	if options == nil {
-		return &JsonsError{
-			Op:      "validate_options",
-			Message: "options cannot be nil",
-			Err:     ErrOperationFailed,
-		}
-	}
-
-	if options.MaxDepth < 0 {
-		return &JsonsError{
-			Op:      "validate_options",
-			Message: fmt.Sprintf("MaxDepth cannot be negative: %d", options.MaxDepth),
-			Err:     ErrOperationFailed,
-		}
-	}
-	if options.MaxDepth > 1000 {
-		return &JsonsError{
-			Op:      "validate_options",
-			Message: fmt.Sprintf("MaxDepth too large (max 1000): %d", options.MaxDepth),
-			Err:     ErrDepthLimit,
-		}
-	}
-
-	return nil
+// IsDeletedMarker checks if a value is the deleted marker sentinel.
+// This is the recommended way to check for deleted markers instead of direct comparison.
+func IsDeletedMarker(v any) bool {
+	return v == deletedMarker
 }
 
-// PropertyAccessResult represents the result of a property access operation
-type PropertyAccessResult struct {
-	Value  any
-	Exists bool
-	Path   string // Path that was accessed
-	Error  error
+// propertyAccessResult represents the result of a property access operation
+type propertyAccessResult struct {
+	value  any
+	exists bool
 }
 
-// RootDataTypeConversionError signals that root data type conversion is needed
-type RootDataTypeConversionError struct {
-	RequiredType string
-	RequiredSize int
-	CurrentType  string
+// ============================================================================
+// INTERNAL ERROR TYPES
+// These are unexported types used internally for control flow during operations.
+// They should not be used directly by external code.
+// ============================================================================
+
+// rootDataTypeConversionError signals that root data type conversion is needed
+type rootDataTypeConversionError struct {
+	requiredType string
+	requiredSize int
+	currentType  string
 }
 
-func (e *RootDataTypeConversionError) Error() string {
+func (e *rootDataTypeConversionError) Error() string {
 	return fmt.Sprintf("root data type conversion required: from %s to %s (size: %d)",
-		e.CurrentType, e.RequiredType, e.RequiredSize)
+		e.currentType, e.requiredType, e.requiredSize)
 }
 
-// ArrayExtensionError signals that array extension is needed
-type ArrayExtensionError struct {
-	CurrentLength  int
-	RequiredLength int
-	TargetIndex    int
-	Value          any
-	Message        string
+// pathInfo contains parsed path information.
+// This is an internal type used for path parsing.
+// Uses internal.PathSegment directly to avoid redundant type alias.
+type pathInfo struct {
+	segments     []internal.PathSegment
+	isPointer    bool
+	originalPath string
 }
 
-func (e *ArrayExtensionError) Error() string {
-	if e.Message != "" {
-		return e.Message
-	}
-	return fmt.Sprintf("array extension required: current length %d, required length %d for index %d",
-		e.CurrentLength, e.RequiredLength, e.TargetIndex)
-}
+// Resource monitoring thresholds (internal)
+const (
+	// highMemoryThreshold is the threshold for high memory usage warning (100MB)
+	highMemoryThreshold = 100 * 1024 * 1024
+	// highGoroutineThreshold is the threshold for high goroutine count warning
+	highGoroutineThreshold = 1000
+	// minPoolOperationsForEfficiencyCheck is the minimum operations before checking pool efficiency
+	minPoolOperationsForEfficiencyCheck = 1000
+)
 
-// PathSegment represents a parsed path segment with its type and value
-type PathSegment = internal.PathSegment
-
-// ExtractionGroup represents a group of consecutive extraction segments
-type ExtractionGroup = internal.ExtractionGroup
-
-// PathInfo contains parsed path information
-type PathInfo struct {
-	Segments     []PathSegment `json:"segments"`
-	IsPointer    bool          `json:"is_pointer"`
-	OriginalPath string        `json:"original_path"`
-}
-
-// ResourceMonitor provides resource monitoring and leak detection
-type ResourceMonitor struct {
+// resourceMonitor provides resource monitoring and leak detection
+type resourceMonitor struct {
 	allocatedBytes    int64
 	freedBytes        int64
 	peakMemoryUsage   int64
@@ -663,19 +433,35 @@ type ResourceMonitor struct {
 	totalOperations   int64
 }
 
-// NewResourceMonitor creates a new resource monitor
-func NewResourceMonitor() *ResourceMonitor {
-	return &ResourceMonitor{
+// resourceStats represents resource usage statistics
+type resourceStats struct {
+	AllocatedBytes    int64         `json:"allocated_bytes"`
+	FreedBytes        int64         `json:"freed_bytes"`
+	PeakMemoryUsage   int64         `json:"peak_memory_usage"`
+	PoolHits          int64         `json:"pool_hits"`
+	PoolMisses        int64         `json:"pool_misses"`
+	PoolEvictions     int64         `json:"pool_evictions"`
+	MaxGoroutines     int64         `json:"max_goroutines"`
+	CurrentGoroutines int64         `json:"current_goroutines"`
+	AvgResponseTime   time.Duration `json:"avg_response_time"`
+	TotalOperations   int64         `json:"total_operations"`
+}
+
+// newResourceMonitor creates a new resource monitor
+func newResourceMonitor() *resourceMonitor {
+	return &resourceMonitor{
 		leakCheckInterval: 300, // 5 minutes
 		lastLeakCheck:     time.Now().Unix(),
 	}
 }
 
-// RecordAllocation records an allocation of the specified size
-func (rm *ResourceMonitor) RecordAllocation(bytes int64) {
-	atomic.AddInt64(&rm.allocatedBytes, bytes)
-
-	current := atomic.LoadInt64(&rm.allocatedBytes) - atomic.LoadInt64(&rm.freedBytes)
+// RecordAllocation records an allocation of the specified size.
+// Note: the peak memory calculation uses a snapshot of allocated/freed counters,
+// so it is approximate under high concurrency. This is acceptable for monitoring.
+func (rm *resourceMonitor) RecordAllocation(bytes int64) {
+	allocated := atomic.AddInt64(&rm.allocatedBytes, bytes)
+	freed := atomic.LoadInt64(&rm.freedBytes)
+	current := allocated - freed
 	for {
 		peak := atomic.LoadInt64(&rm.peakMemoryUsage)
 		if current <= peak || atomic.CompareAndSwapInt64(&rm.peakMemoryUsage, peak, current) {
@@ -685,27 +471,27 @@ func (rm *ResourceMonitor) RecordAllocation(bytes int64) {
 }
 
 // RecordDeallocation records a deallocation of the specified size
-func (rm *ResourceMonitor) RecordDeallocation(bytes int64) {
+func (rm *resourceMonitor) RecordDeallocation(bytes int64) {
 	atomic.AddInt64(&rm.freedBytes, bytes)
 }
 
 // RecordPoolHit records a pool cache hit
-func (rm *ResourceMonitor) RecordPoolHit() {
+func (rm *resourceMonitor) RecordPoolHit() {
 	atomic.AddInt64(&rm.poolHits, 1)
 }
 
 // RecordPoolMiss records a pool cache miss
-func (rm *ResourceMonitor) RecordPoolMiss() {
+func (rm *resourceMonitor) RecordPoolMiss() {
 	atomic.AddInt64(&rm.poolMisses, 1)
 }
 
 // RecordPoolEviction records a pool eviction
-func (rm *ResourceMonitor) RecordPoolEviction() {
+func (rm *resourceMonitor) RecordPoolEviction() {
 	atomic.AddInt64(&rm.poolEvictions, 1)
 }
 
 // RecordOperation records an operation with its duration
-func (rm *ResourceMonitor) RecordOperation(duration time.Duration) {
+func (rm *resourceMonitor) RecordOperation(duration time.Duration) {
 	atomic.AddInt64(&rm.totalOperations, 1)
 
 	newTime := duration.Nanoseconds()
@@ -719,7 +505,7 @@ func (rm *ResourceMonitor) RecordOperation(duration time.Duration) {
 }
 
 // CheckForLeaks checks for potential resource leaks
-func (rm *ResourceMonitor) CheckForLeaks() []string {
+func (rm *resourceMonitor) CheckForLeaks() []string {
 	for {
 		now := time.Now().Unix()
 		lastCheck := atomic.LoadInt64(&rm.lastLeakCheck)
@@ -739,7 +525,7 @@ func (rm *ResourceMonitor) CheckForLeaks() []string {
 	freed := atomic.LoadInt64(&rm.freedBytes)
 	netMemory := allocated - freed
 
-	if netMemory > 100*1024*1024 {
+	if netMemory > highMemoryThreshold {
 		issues = append(issues, "High memory usage detected")
 	}
 
@@ -751,23 +537,23 @@ func (rm *ResourceMonitor) CheckForLeaks() []string {
 		atomic.StoreInt64(&rm.maxGoroutines, currentGoroutines)
 	}
 
-	if currentGoroutines > 1000 {
+	if currentGoroutines > highGoroutineThreshold {
 		issues = append(issues, "High goroutine count detected")
 	}
 
 	hits := atomic.LoadInt64(&rm.poolHits)
 	misses := atomic.LoadInt64(&rm.poolMisses)
 
-	if hits+misses > 1000 && hits < misses {
+	if hits+misses > minPoolOperationsForEfficiencyCheck && hits < misses {
 		issues = append(issues, "Poor pool cache efficiency")
 	}
 
 	return issues
 }
 
-// GetStats returns current resource statistics
-func (rm *ResourceMonitor) GetStats() ResourceStats {
-	return ResourceStats{
+// getStats returns current resource statistics
+func (rm *resourceMonitor) getStats() resourceStats {
+	return resourceStats{
 		AllocatedBytes:    atomic.LoadInt64(&rm.allocatedBytes),
 		FreedBytes:        atomic.LoadInt64(&rm.freedBytes),
 		PeakMemoryUsage:   atomic.LoadInt64(&rm.peakMemoryUsage),
@@ -781,22 +567,8 @@ func (rm *ResourceMonitor) GetStats() ResourceStats {
 	}
 }
 
-// ResourceStats represents resource usage statistics
-type ResourceStats struct {
-	AllocatedBytes    int64         `json:"allocated_bytes"`
-	FreedBytes        int64         `json:"freed_bytes"`
-	PeakMemoryUsage   int64         `json:"peak_memory_usage"`
-	PoolHits          int64         `json:"pool_hits"`
-	PoolMisses        int64         `json:"pool_misses"`
-	PoolEvictions     int64         `json:"pool_evictions"`
-	MaxGoroutines     int64         `json:"max_goroutines"`
-	CurrentGoroutines int64         `json:"current_goroutines"`
-	AvgResponseTime   time.Duration `json:"avg_response_time"`
-	TotalOperations   int64         `json:"total_operations"`
-}
-
 // Reset resets all resource statistics
-func (rm *ResourceMonitor) Reset() {
+func (rm *resourceMonitor) Reset() {
 	atomic.StoreInt64(&rm.allocatedBytes, 0)
 	atomic.StoreInt64(&rm.freedBytes, 0)
 	atomic.StoreInt64(&rm.peakMemoryUsage, 0)
@@ -810,8 +582,9 @@ func (rm *ResourceMonitor) Reset() {
 	atomic.StoreInt64(&rm.lastLeakCheck, time.Now().Unix())
 }
 
-// GetMemoryEfficiency returns the memory efficiency percentage
-func (rm *ResourceMonitor) GetMemoryEfficiency() float64 {
+// GetDeallocationRatio returns the ratio of freed bytes to allocated bytes as a percentage.
+// Values > 100% indicate the same memory was reused multiple times via pooling.
+func (rm *resourceMonitor) GetDeallocationRatio() float64 {
 	allocated := atomic.LoadInt64(&rm.allocatedBytes)
 	freed := atomic.LoadInt64(&rm.freedBytes)
 
@@ -823,7 +596,14 @@ func (rm *ResourceMonitor) GetMemoryEfficiency() float64 {
 }
 
 // GetPoolEfficiency returns the pool efficiency percentage
-func (rm *ResourceMonitor) GetPoolEfficiency() float64 {
+// This is the hit ratio of the pool cache
+func (rm *resourceMonitor) GetPoolEfficiency() float64 {
+	return rm.GetPoolHitRatio()
+}
+
+// GetPoolHitRatio returns the pool cache hit ratio as a percentage.
+// This is an alias for GetPoolEfficiency with consistent naming.
+func (rm *resourceMonitor) GetPoolHitRatio() float64 {
 	hits := atomic.LoadInt64(&rm.poolHits)
 	misses := atomic.LoadInt64(&rm.poolMisses)
 	total := hits + misses
@@ -883,56 +663,117 @@ func (ve *ValidationError) Error() string {
 	return fmt.Sprintf("validation error: %s", ve.Message)
 }
 
-// TypeSafeResult represents a type-safe operation result
-type TypeSafeResult[T any] struct {
-	Value  T
-	Exists bool
-	Error  error
+// =============================================================================
+// Unified Result Type - Result[T]
+// =============================================================================
+
+// Result represents a type-safe operation result with comprehensive error handling.
+// This is the unified type for all type-safe operations.
+//
+// Example:
+//
+//	result := json.GetResult[string](data, "user.name")
+//	if result.Ok() {
+//	    name := result.Unwrap()
+//	}
+//	// Or with default
+//	name := json.GetResult[string](data, "user.name").UnwrapOr("unknown")
+type Result[T any] struct {
+	Value  T     // The result value (exported for backward compatibility)
+	Exists bool  // Whether the path exists
+	Error  error // Error if any
 }
 
-// Ok returns true if the result is valid (no error and exists)
-func (r TypeSafeResult[T]) Ok() bool {
-	return r.Error == nil && r.Exists
+// NewResult creates a new Result with the given value.
+func NewResult[T any](value T, exists bool, err error) Result[T] {
+	return Result[T]{Value: value, Exists: exists, Error: err}
 }
 
-// Unwrap returns the value or zero value if there's an error
-// For panic behavior, use UnwrapOrPanic instead
-func (r TypeSafeResult[T]) Unwrap() T {
-	if r.Error != nil {
+// Ok returns true if the result is valid (no error and exists).
+func (r Result[T]) Ok() bool { return r.Error == nil && r.Exists }
+
+// Unwrap returns the value or zero value if there's an error or value doesn't exist.
+// For panic behavior, use Must() instead.
+func (r Result[T]) Unwrap() T {
+	if r.Error != nil || !r.Exists {
 		var zero T
 		return zero
 	}
 	return r.Value
 }
 
-// UnwrapOrPanic returns the value or panics if there's an error
-// Use this only when you're certain the operation succeeded
-func (r TypeSafeResult[T]) UnwrapOrPanic() T {
-	if r.Error != nil {
-		panic(fmt.Sprintf("unwrap called on result with error: %v", r.Error))
-	}
-	return r.Value
-}
-
-// UnwrapOr returns the value or the provided default if there's an error or value doesn't exist
-func (r TypeSafeResult[T]) UnwrapOr(defaultValue T) T {
+// UnwrapOr returns the value or the provided default if there's an error or value doesn't exist.
+func (r Result[T]) UnwrapOr(defaultValue T) T {
 	if r.Error != nil || !r.Exists {
 		return defaultValue
 	}
 	return r.Value
 }
 
-// TypeSafeAccessResult represents the result of a type-safe access operation
-type TypeSafeAccessResult struct {
-	Value  any
-	Exists bool
-	Type   string
+// =============================================================================
+// AccessResult - For dynamic type access with conversion methods
+// =============================================================================
+
+// AccessResult represents the result of a dynamic access operation.
+// It extends Result[any] with type conversion methods for safe type handling.
+//
+// Example:
+//
+//	result := processor.SafeGet(data, "user.age")
+//	age, err := result.AsInt()
+//	name, err := result.AsString()
+type AccessResult struct {
+	Value  any    // The result value (exported for backward compatibility)
+	Exists bool   // Whether the path exists
+	Type   string // Runtime type info (for debugging)
+}
+
+// NewAccessResult creates a new AccessResult.
+func NewAccessResult(value any, exists bool) AccessResult {
+	var typeStr string
+	if value != nil {
+		typeStr = fmt.Sprintf("%T", value)
+	}
+	return AccessResult{Value: value, Exists: exists, Type: typeStr}
+}
+
+// Ok returns true if the value exists.
+func (r AccessResult) Ok() bool { return r.Exists }
+
+// Unwrap returns the value or nil if it doesn't exist.
+func (r AccessResult) Unwrap() any {
+	if !r.Exists {
+		return nil
+	}
+	return r.Value
+}
+
+// UnwrapOr returns the value or the provided default if it doesn't exist.
+func (r AccessResult) UnwrapOr(defaultValue any) any {
+	if !r.Exists {
+		return defaultValue
+	}
+	return r.Value
+}
+
+// As safely converts the result to type T.
+// Returns error if the type doesn't match.
+func As[T any](r AccessResult) (T, error) {
+	if !r.Exists {
+		var zero T
+		return zero, ErrPathNotFound
+	}
+	if v, ok := r.Value.(T); ok {
+		return v, nil
+	}
+	var zero T
+	return zero, fmt.Errorf("cannot convert %T to %T", r.Value, zero)
 }
 
 // AsString safely converts the result to string.
 // Returns ErrTypeMismatch if the value is not a string type.
 // Use AsStringConverted() for explicit type conversion with formatting.
-func (r TypeSafeAccessResult) AsString() (string, error) {
+func (r AccessResult) AsString() (string, error) {
 	if !r.Exists {
 		return "", ErrPathNotFound
 	}
@@ -946,7 +787,7 @@ func (r TypeSafeAccessResult) AsString() (string, error) {
 // AsStringConverted converts the result to string using fmt.Sprintf formatting.
 // Use this when you explicitly want string representation of any type.
 // For strict type checking, use AsString() instead.
-func (r TypeSafeAccessResult) AsStringConverted() (string, error) {
+func (r AccessResult) AsStringConverted() (string, error) {
 	if !r.Exists {
 		return "", ErrPathNotFound
 	}
@@ -957,157 +798,52 @@ func (r TypeSafeAccessResult) AsStringConverted() (string, error) {
 	return fmt.Sprintf("%v", r.Value), nil
 }
 
-// AsInt safely converts the result to int with overflow and precision checks
-func (r TypeSafeAccessResult) AsInt() (int, error) {
+// AsInt safely converts the result to int with overflow and precision checks.
+// Unlike ConvertToInt, this method is stricter and does NOT convert bool to int.
+// Use ConvertToInt directly if you need more permissive conversion.
+func (r AccessResult) AsInt() (int, error) {
 	if !r.Exists {
 		return 0, ErrPathNotFound
 	}
 
-	switch v := r.Value.(type) {
-	case int:
-		return v, nil
-	case int8:
-		return int(v), nil
-	case int16:
-		return int(v), nil
-	case int32:
-		return int(v), nil
-	case int64:
-		// SECURITY: Check for overflow when converting int64 to int
-		if v > int64(1<<(strconv.IntSize-1)-1) || v < int64(-1<<(strconv.IntSize-1)) {
-			return 0, fmt.Errorf("value %d overflows int on %d-bit system", v, strconv.IntSize)
-		}
-		return int(v), nil
-	case uint:
-		// SECURITY: Check for overflow when converting uint to int
-		if v > uint(1<<(strconv.IntSize-1)-1) {
-			return 0, fmt.Errorf("value %d overflows int on %d-bit system", v, strconv.IntSize)
-		}
-		return int(v), nil
-	case uint8:
-		return int(v), nil
-	case uint16:
-		return int(v), nil
-	case uint32:
-		// SECURITY: Check for overflow when converting uint32 to int
-		// On 32-bit systems, MaxInt32 = 2147483647, on 64-bit systems it's much larger
-		// uint32 max is 4294967295, so on 32-bit systems we need to check
-		if strconv.IntSize == 32 && v > math.MaxInt32 {
-			return 0, fmt.Errorf("value %d overflows int on %d-bit system", v, strconv.IntSize)
-		}
-		return int(v), nil
-	case uint64:
-		// SECURITY: Check for overflow when converting uint64 to int
-		// uint64 can hold values larger than MaxInt64
-		if v > uint64(math.MaxInt64) {
-			return 0, fmt.Errorf("value %d overflows int on %d-bit system", v, strconv.IntSize)
-		}
-		// Additional check for 32-bit systems
-		if strconv.IntSize == 32 && v > math.MaxInt32 {
-			return 0, fmt.Errorf("value %d overflows int on %d-bit system", v, strconv.IntSize)
-		}
-		return int(v), nil
-	case float32:
-		// SECURITY: Check for overflow and precision loss
-		if v > float32(1<<(strconv.IntSize-1)-1) || v < float32(-1<<(strconv.IntSize-1)) {
-			return 0, fmt.Errorf("value %v overflows int", v)
-		}
-		if v != float32(int32(v)) {
-			return 0, fmt.Errorf("value %v is not an integer", v)
-		}
-		return int(v), nil
-	case float64:
-		// SECURITY: Check for overflow and precision loss
-		maxInt := float64(1<<(strconv.IntSize-1) - 1)
-		minInt := float64(-1 << (strconv.IntSize - 1))
-		if v > maxInt || v < minInt {
-			return 0, fmt.Errorf("value %v overflows int on %d-bit system", v, strconv.IntSize)
-		}
-		if v != float64(int64(v)) {
-			return 0, fmt.Errorf("value %v is not an integer", v)
-		}
-		return int(v), nil
-	case string:
-		// Try parsing as integer first
-		if i, err := strconv.ParseInt(v, 10, 64); err == nil {
-			// Check for overflow
-			if i > int64(1<<(strconv.IntSize-1)-1) || i < int64(-1<<(strconv.IntSize-1)) {
-				return 0, fmt.Errorf("value %s overflows int on %d-bit system", v, strconv.IntSize)
-			}
-			return int(i), nil
-		}
-		// Try parsing as float (e.g., "123.0")
-		if f, err := strconv.ParseFloat(v, 64); err == nil {
-			if f != float64(int64(f)) {
-				return 0, fmt.Errorf("value %s is not an integer", v)
-			}
-			return int(f), nil
-		}
-		return 0, fmt.Errorf("cannot convert %q to int", v)
-	case Number:
-		// Handle Number type (defined in encoding.go)
-		if i, err := v.Int64(); err == nil {
-			if i > int64(1<<(strconv.IntSize-1)-1) || i < int64(-1<<(strconv.IntSize-1)) {
-				return 0, fmt.Errorf("value %s overflows int on %d-bit system", v, strconv.IntSize)
-			}
-			return int(i), nil
-		}
-		return 0, fmt.Errorf("cannot convert Number %s to int", v)
-	default:
-		return 0, fmt.Errorf("cannot convert %T to int", v)
+	// Strict type check: bool should not convert to int
+	switch r.Value.(type) {
+	case bool:
+		return 0, fmt.Errorf("cannot convert bool to int")
 	}
+
+	result, ok := ConvertToInt(r.Value)
+	if !ok {
+		return 0, fmt.Errorf("cannot convert %T to int", r.Value)
+	}
+	return result, nil
 }
 
-// AsFloat64 safely converts the result to float64 with precision checks
-func (r TypeSafeAccessResult) AsFloat64() (float64, error) {
+// AsFloat64 safely converts the result to float64 with precision checks.
+// Unlike ConvertToFloat64, this method is stricter and does NOT convert bool to float64.
+// Use ConvertToFloat64 directly if you need more permissive conversion.
+func (r AccessResult) AsFloat64() (float64, error) {
 	if !r.Exists {
 		return 0, ErrPathNotFound
 	}
 
-	switch v := r.Value.(type) {
-	case float64:
-		return v, nil
-	case float32:
-		return float64(v), nil
-	case int:
-		return float64(v), nil
-	case int8:
-		return float64(v), nil
-	case int16:
-		return float64(v), nil
-	case int32:
-		return float64(v), nil
-	case int64:
-		return float64(v), nil
-	case uint:
-		return float64(v), nil
-	case uint8:
-		return float64(v), nil
-	case uint16:
-		return float64(v), nil
-	case uint32:
-		return float64(v), nil
-	case uint64:
-		return float64(v), nil
-	case string:
-		f, err := strconv.ParseFloat(v, 64)
-		if err != nil {
-			return 0, fmt.Errorf("cannot convert %q to float64: %w", v, err)
-		}
-		return f, nil
-	case Number:
-		f, err := v.Float64()
-		if err != nil {
-			return 0, fmt.Errorf("cannot convert Number %s to float64: %w", v, err)
-		}
-		return f, nil
-	default:
-		return 0, fmt.Errorf("cannot convert %T to float64", v)
+	// Strict type check: bool should not convert to float64
+	switch r.Value.(type) {
+	case bool:
+		return 0, fmt.Errorf("cannot convert bool to float64")
 	}
+
+	result, ok := ConvertToFloat64(r.Value)
+	if !ok {
+		return 0, fmt.Errorf("cannot convert %T to float64", r.Value)
+	}
+	return result, nil
 }
 
-// AsBool safely converts the result to bool
-func (r TypeSafeAccessResult) AsBool() (bool, error) {
+// AsBool safely converts the result to bool.
+// Unlike ConvertToBool, this method is stricter and only accepts bool and string types.
+// Use ConvertToBool directly if you need more permissive conversion (e.g., int to bool).
+func (r AccessResult) AsBool() (bool, error) {
 	if !r.Exists {
 		return false, ErrPathNotFound
 	}
@@ -1116,56 +852,120 @@ func (r TypeSafeAccessResult) AsBool() (bool, error) {
 	case bool:
 		return v, nil
 	case string:
-		return strconv.ParseBool(v)
+		result, err := strconv.ParseBool(v)
+		if err != nil {
+			return false, fmt.Errorf("cannot convert %q to bool: %w", v, err)
+		}
+		return result, nil
 	default:
-		return false, fmt.Errorf("cannot convert %T to bool", v)
+		return false, fmt.Errorf("cannot convert %T to bool", r.Value)
 	}
 }
 
-// DefaultSchema returns a default schema configuration
+// DefaultSchema returns a default schema configuration.
+// All zero values are omitted for brevity; only non-zero defaults are set.
 func DefaultSchema() *Schema {
 	return &Schema{
-		Type:                 "",
 		Properties:           make(map[string]*Schema),
-		Items:                nil,
 		Required:             []string{},
-		MinLength:            0,
-		MaxLength:            0,
-		Minimum:              0,
-		Maximum:              0,
-		Pattern:              "",
-		Format:               "",
 		AdditionalProperties: true,
-		MinItems:             0,
-		MaxItems:             0,
 	}
 }
 
-// SetMinLength sets the minimum length constraint
-func (s *Schema) SetMinLength(minLength int) *Schema {
-	s.MinLength = minLength
-	s.hasMinLength = true
-	return s
+// SchemaConfig provides configuration options for creating a Schema.
+// This follows the Config pattern as required by the design guidelines.
+type SchemaConfig struct {
+	Type                 string
+	Properties           map[string]*Schema
+	Items                *Schema
+	Required             []string
+	MinLength            *int
+	MaxLength            *int
+	Minimum              *float64
+	Maximum              *float64
+	Pattern              string
+	Format               string
+	AdditionalProperties *bool
+	MinItems             *int
+	MaxItems             *int
+	UniqueItems          bool
+	Enum                 []any
+	Const                any
+	MultipleOf           *float64
+	ExclusiveMinimum     *bool
+	ExclusiveMaximum     *bool
+	Title                string
+	Description          string
+	Default              any
+	Examples             []any
 }
 
-// SetMaxLength sets the maximum length constraint
-func (s *Schema) SetMaxLength(maxLength int) *Schema {
-	s.MaxLength = maxLength
-	s.hasMaxLength = true
-	return s
-}
+// NewSchemaWithConfig creates a new Schema with the provided configuration.
+// This is the recommended way to create configured Schema instances.
+func NewSchemaWithConfig(cfg SchemaConfig) *Schema {
+	s := &Schema{
+		Type:        cfg.Type,
+		Properties:  cfg.Properties,
+		Items:       cfg.Items,
+		Required:    cfg.Required,
+		Pattern:     cfg.Pattern,
+		Format:      cfg.Format,
+		UniqueItems: cfg.UniqueItems,
+		Enum:        cfg.Enum,
+		Const:       cfg.Const,
+		Title:       cfg.Title,
+		Description: cfg.Description,
+		Default:     cfg.Default,
+		Examples:    cfg.Examples,
+	}
 
-// SetMinimum sets the minimum value constraint
-func (s *Schema) SetMinimum(minimum float64) *Schema {
-	s.Minimum = minimum
-	s.hasMinimum = true
-	return s
-}
+	if cfg.Properties == nil {
+		s.Properties = make(map[string]*Schema)
+	}
+	if cfg.Required == nil {
+		s.Required = []string{}
+	}
 
-// SetMaximum sets the maximum value constraint
-func (s *Schema) SetMaximum(maximum float64) *Schema {
-	s.Maximum = maximum
-	s.hasMaximum = true
+	// Set optional fields with their has* flags
+	if cfg.MinLength != nil {
+		s.MinLength = *cfg.MinLength
+		s.hasMinLength = true
+	}
+	if cfg.MaxLength != nil {
+		s.MaxLength = *cfg.MaxLength
+		s.hasMaxLength = true
+	}
+	if cfg.Minimum != nil {
+		s.Minimum = *cfg.Minimum
+		s.hasMinimum = true
+	}
+	if cfg.Maximum != nil {
+		s.Maximum = *cfg.Maximum
+		s.hasMaximum = true
+	}
+	if cfg.AdditionalProperties != nil {
+		s.AdditionalProperties = *cfg.AdditionalProperties
+	} else {
+		s.AdditionalProperties = true
+	}
+	if cfg.MinItems != nil {
+		s.MinItems = *cfg.MinItems
+		s.hasMinItems = true
+	}
+	if cfg.MaxItems != nil {
+		s.MaxItems = *cfg.MaxItems
+		s.hasMaxItems = true
+	}
+	if cfg.MultipleOf != nil {
+		s.MultipleOf = *cfg.MultipleOf
+	}
+	if cfg.ExclusiveMinimum != nil {
+		s.ExclusiveMinimum = *cfg.ExclusiveMinimum
+	}
+	if cfg.ExclusiveMaximum != nil {
+		s.ExclusiveMaximum = *cfg.ExclusiveMaximum
+	}
+
 	return s
 }
 
@@ -1189,20 +989,6 @@ func (s *Schema) HasMaximum() bool {
 	return s.hasMaximum
 }
 
-// SetMinItems sets the minimum items constraint for arrays
-func (s *Schema) SetMinItems(minItems int) *Schema {
-	s.MinItems = minItems
-	s.hasMinItems = true
-	return s
-}
-
-// SetMaxItems sets the maximum items constraint for arrays
-func (s *Schema) SetMaxItems(maxItems int) *Schema {
-	s.MaxItems = maxItems
-	s.hasMaxItems = true
-	return s
-}
-
 // HasMinItems returns true if MinItems constraint is explicitly set
 func (s *Schema) HasMinItems() bool {
 	return s.hasMinItems
@@ -1213,14 +999,29 @@ func (s *Schema) HasMaxItems() bool {
 	return s.hasMaxItems
 }
 
-// SetExclusiveMinimum sets the exclusive minimum flag
-func (s *Schema) SetExclusiveMinimum(exclusive bool) *Schema {
-	s.ExclusiveMinimum = exclusive
-	return s
-}
+// ============================================================================
+// MERGE CONFIGURATION
+// Configuration types for JSON merge operations with union/intersection/difference modes.
+// ============================================================================
 
-// SetExclusiveMaximum sets the exclusive maximum flag
-func (s *Schema) SetExclusiveMaximum(exclusive bool) *Schema {
-	s.ExclusiveMaximum = exclusive
-	return s
-}
+// MergeMode defines the merge strategy for combining JSON objects and arrays.
+// This is a type alias to internal.MergeMode to ensure consistency across the codebase.
+type MergeMode = internal.MergeMode
+
+// Merge mode constants - re-exported from internal package for public API
+const (
+	// MergeUnion performs union merge - combines all keys/elements (default)
+	// For objects: all keys from both, conflicts resolved by override value
+	// For arrays: all elements from both with deduplication
+	MergeUnion = internal.MergeUnion
+
+	// MergeIntersection performs intersection merge - only common keys/elements
+	// For objects: only keys present in both, values from override
+	// For arrays: only elements present in both arrays
+	MergeIntersection = internal.MergeIntersection
+
+	// MergeDifference performs difference merge - keys/elements only in base
+	// For objects: keys in base but not in override
+	// For arrays: elements in base but not in override
+	MergeDifference = internal.MergeDifference
+)

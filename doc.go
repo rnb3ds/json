@@ -25,21 +25,30 @@
 // Type-safe operations:
 //
 //	name, err := json.GetString(jsonStr, "user.name")
-//	age, err := json.GetInt(jsonStr, "user.age")
+//	age, err := json.GetAsInt(jsonStr, "user.age")
 //
 // Advanced processor for complex operations:
 //
-//	processor := json.New() // Use default config
+//	processor, err := json.New() // Use default config
+//	if err != nil {
+//	    // handle error
+//	}
 //	defer processor.Close()
 //	value, err := processor.Get(jsonStr, "complex.path[0].field")
 //
 // # Configuration
 //
-// Use NewWithConfig for custom configuration:
+// Use DefaultConfig and optional parameters for custom configuration:
 //
-//	cfg := json.NewConfig()
+//	cfg := json.DefaultConfig()
 //	cfg.EnableCache = true
-//	processor := json.NewWithConfig(cfg)
+//	processor, err := json.New(cfg)
+//	if err != nil {
+//	    // handle error
+//	}
+//	defer processor.Close()
+//
+//
 //	defer processor.Close()
 //
 // # Key Features
@@ -56,9 +65,8 @@
 // The package is organized with all public API in the root package:
 //
 //   - Core types: Processor, Config, ProcessorOptions, EncodeConfig
-//   - Path types: PathSegment, PathInfo, PropertyAccessResult
 //   - Error types: JsonsError, various error constructors
-//   - Encoding types: Number, NumberPreservingDecoder, CustomEncoder
+//   - Encoding types: Number
 //
 // Implementation details are in the internal/ package:
 //
@@ -71,7 +79,7 @@
 //
 // Core types are organized in the following files:
 //
-//   - types.go: All type definitions (Config, ProcessorOptions, Stats, PathSegment, etc.)
+//   - types.go: All type definitions (Config, ProcessorOptions, Stats, etc.)
 //   - processor.go: Processor struct and all methods
 //   - ops.go: Internal operation implementations
 //   - path.go: Path parsing and navigation

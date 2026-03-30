@@ -2,6 +2,7 @@ package internal
 
 import (
 	"fmt"
+	"reflect"
 	"strconv"
 	"strings"
 )
@@ -112,26 +113,28 @@ func HasComplexSegments(segments []PathSegment) bool {
 	return false
 }
 
-// IsDistributedOperationPath checks if a path contains distributed operation patterns
-func IsDistributedOperationPath(path string) bool {
-	distributedPatterns := []string{
+// IsExtractionPath checks if a path contains extraction patterns that trigger
+// multi-container (distributed) operations: }[, }:, }{, {flat:
+func IsExtractionPath(path string) bool {
+	extractionPatterns := []string{
 		"}[",
 		"}:",
 		"}{",
+		"{flat:",
 	}
 
-	for _, pattern := range distributedPatterns {
+	for _, pattern := range extractionPatterns {
 		if strings.Contains(path, pattern) {
 			return true
 		}
 	}
 
-	return strings.Contains(path, "{flat:")
+	return false
 }
 
-// IsDistributedOperationSegment checks if a segment triggers distributed operations
-func IsDistributedOperationSegment(segment PathSegment) bool {
-	return segment.Key != ""
+// IsExtractionSegment checks if a segment triggers extraction operations
+func IsExtractionSegment(segment PathSegment) bool {
+	return segment.Type == ExtractSegment
 }
 
 // ParsePathSegment parses a single path segment and appends to segments slice
@@ -182,7 +185,7 @@ func ParseArraySegment(part string, segments []PathSegment) []PathSegment {
 
 	if strings.Contains(bracketContent, ":") {
 		var start, end, step int
-		var flags uint8
+		var flags PathSegmentFlags
 
 		parts := strings.Split(bracketContent, ":")
 		if len(parts) >= 2 {
@@ -216,15 +219,22 @@ func ParseArraySegment(part string, segments []PathSegment) []PathSegment {
 			Flags: flags,
 		})
 	} else {
-		segment := PathSegment{
-			Type: ArrayIndexSegment,
-		}
+		// Check for append syntax [+]
+		if bracketContent == "+" {
+			segments = append(segments, PathSegment{
+				Type: AppendSegment,
+			})
+		} else {
+			segment := PathSegment{
+				Type: ArrayIndexSegment,
+			}
 
-		if index, err := strconv.Atoi(bracketContent); err == nil {
-			segment.Index = index
-		}
+			if index, err := strconv.Atoi(bracketContent); err == nil {
+				segment.Index = index
+			}
 
-		segments = append(segments, segment)
+			segments = append(segments, segment)
+		}
 	}
 
 	if closeBracket+1 < len(part) {
@@ -260,7 +270,7 @@ func ParseExtractionSegment(part string, segments []PathSegment) []PathSegment {
 
 	braceContent := part[openBrace+1 : closeBrace]
 
-	var flags uint8
+	var flags PathSegmentFlags
 	var key string
 	if strings.HasPrefix(braceContent, "flat:") {
 		key = braceContent[5:]
@@ -287,9 +297,7 @@ func ParseExtractionSegment(part string, segments []PathSegment) []PathSegment {
 
 // SplitPathIntoSegments splits a path into segments by dots
 func SplitPathIntoSegments(path string, segments []PathSegment) []PathSegment {
-	parts := strings.Split(path, ".")
-
-	for _, part := range parts {
+	for part := range strings.SplitSeq(path, ".") {
 		if part == "" {
 			continue
 		}
@@ -420,13 +428,18 @@ func IsObjectType(data any) bool {
 	}
 }
 
-// IsMapType checks if data is a map type
-func IsMapType(data any) bool {
+// IsSliceType checks if data is a slice type using reflection
+// This handles any slice type, not just []any
+func IsSliceType(data any) bool {
+	if data == nil {
+		return false
+	}
 	switch data.(type) {
-	case map[string]any, map[any]any:
+	case []any:
 		return true
 	default:
-		return false
+		// Use reflection for other slice types
+		return reflect.ValueOf(data).Kind() == reflect.Slice
 	}
 }
 

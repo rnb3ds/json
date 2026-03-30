@@ -19,6 +19,20 @@ type CacheConfig interface {
 	GetCacheTTL() time.Duration
 }
 
+// Cache memory limits - configurable based on system resources
+const (
+	// DefaultMaxCacheMemory is the default maximum memory for cache (256MB)
+	// This is more conservative than 2GB to work well on all systems including containers
+	DefaultMaxCacheMemory = 256 * 1024 * 1024
+	// CacheHighWatermarkPercent is the percentage of max memory at which proactive eviction begins
+	CacheHighWatermarkPercent = 80
+
+	// Memory bounds for cache size estimation
+	minCacheMemoryBytes = 64 * 1024 * 1024   // 64MB minimum
+	maxCacheMemoryBytes = 1024 * 1024 * 1024 // 1GB maximum
+	cacheSizeMultiplier = 4                  // Multiplier for overhead estimation
+)
+
 // Global cleanup semaphore to limit concurrent cleanup goroutines
 var (
 	cleanupSem     chan struct{}
@@ -33,6 +47,18 @@ func getCleanupSem() chan struct{} {
 	return cleanupSem
 }
 
+// calculateMaxCacheMemory returns the maximum cache memory based on configuration
+// If config provides MaxCacheSize, we estimate a reasonable memory limit
+func calculateMaxCacheMemory(maxCacheSize int) int64 {
+	// Base the memory limit on the cache size configuration
+	// Assume each cache entry averages 1KB, so max entries * 1KB * multiplier for overhead
+	estimated := int64(maxCacheSize) * 1024 * cacheSizeMultiplier
+	// Clamp to reasonable bounds
+	estimated = max(estimated, minCacheMemoryBytes)
+	estimated = min(estimated, maxCacheMemoryBytes)
+	return estimated
+}
+
 // CacheManager handles all caching operations with performance and memory management
 type CacheManager struct {
 	shards      []*cacheShard
@@ -44,6 +70,9 @@ type CacheManager struct {
 	shardCount  int
 	shardMask   uint64
 	entryPool   *sync.Pool // Pool for lruEntry structs
+	// Memory management
+	maxMemory     int64 // Maximum memory for cache
+	highWatermark int64 // Memory threshold for proactive eviction (80% of max)
 	// Lifecycle management for cleanup goroutines
 	ctx        context.Context
 	cancelFunc context.CancelFunc
@@ -101,13 +130,15 @@ func NewCacheManager(config CacheConfig) *CacheManager {
 	if config == nil || !config.IsCacheEnabled() {
 		// Return disabled cache manager
 		return &CacheManager{
-			shards:     []*cacheShard{newCacheShard(1)},
-			config:     nil,
-			shardCount: 1,
-			shardMask:  0,
-			entryPool:  entryPool,
-			ctx:        ctx,
-			cancelFunc: cancel,
+			shards:        []*cacheShard{newCacheShard(1)},
+			config:        nil,
+			shardCount:    1,
+			shardMask:     0,
+			entryPool:     entryPool,
+			ctx:           ctx,
+			cancelFunc:    cancel,
+			maxMemory:     DefaultMaxCacheMemory,
+			highWatermark: int64(DefaultMaxCacheMemory * CacheHighWatermarkPercent / 100),
 		}
 	}
 
@@ -116,22 +147,26 @@ func NewCacheManager(config CacheConfig) *CacheManager {
 	shardCount = nextPowerOf2(shardCount)
 	shards := make([]*cacheShard, shardCount)
 	shardSize := config.GetMaxCacheSize() / shardCount
-	if shardSize < 1 {
-		shardSize = 1
-	}
+	shardSize = max(shardSize, 1)
 
 	for i := range shards {
 		shards[i] = newCacheShard(shardSize)
 	}
 
+	// Calculate memory limits based on configuration
+	maxMem := calculateMaxCacheMemory(config.GetMaxCacheSize())
+	highWater := int64(maxMem * int64(CacheHighWatermarkPercent) / 100)
+
 	return &CacheManager{
-		shards:     shards,
-		config:     config,
-		shardCount: shardCount,
-		shardMask:  uint64(shardCount - 1),
-		entryPool:  entryPool,
-		ctx:        ctx,
-		cancelFunc: cancel,
+		shards:        shards,
+		config:        config,
+		shardCount:    shardCount,
+		shardMask:     uint64(shardCount - 1),
+		entryPool:     entryPool,
+		ctx:           ctx,
+		cancelFunc:    cancel,
+		maxMemory:     maxMem,
+		highWatermark: highWater,
 	}
 }
 
@@ -306,12 +341,21 @@ func (cm *CacheManager) Set(key string, value any) {
 		cm.evictLRU(shard)
 	}
 
+	// SECURITY: Check total memory usage to prevent unbounded growth
+	// Proactively evict if approaching memory limit (highWatermark is 80% of max)
+	currentMemory := atomic.LoadInt64(&cm.memoryUsage)
+	if currentMemory+int64(entrySize) > cm.highWatermark {
+		// Proactively evict to prevent memory exhaustion
+		for i := 0; i < 3 && atomic.LoadInt64(&cm.memoryUsage)+int64(entrySize) > cm.highWatermark; i++ {
+			cm.evictLRU(shard)
+		}
+	}
+
 	// Store entry - OPTIMIZED: Update existing entry in-place to avoid pool churn
 	if oldElement, exists := shard.items[key]; exists {
 		oldEntry := oldElement.Value.(*lruEntry)
 		atomic.AddInt64(&cm.memoryUsage, int64(entrySize)-int64(oldEntry.size))
-		// SECURITY FIX: Update existing entry in-place instead of pool swap
-		// This avoids potential race conditions with pool reuse
+		// Update existing entry in-place to avoid pool churn and race conditions
 		oldEntry.value = value
 		oldEntry.timestamp = now
 		oldEntry.accessTime = now
@@ -492,19 +536,9 @@ func (cm *CacheManager) getShard(key string) *cacheShard {
 	return cm.shards[hash&cm.shardMask]
 }
 
-// hashKey generates a hash for the key using inline FNV-1a (no allocations)
+// hashKey generates a hash for the key using FNV-1a (no allocations)
 func (cm *CacheManager) hashKey(key string) uint64 {
-	// Inline FNV-1a hash - no heap allocations
-	const (
-		offsetBasis = 14695981039346656037
-		prime       = 1099511628211
-	)
-	h := uint64(offsetBasis)
-	for i := 0; i < len(key); i++ {
-		h ^= uint64(key[i])
-		h *= prime
-	}
-	return h
+	return HashStringFNV1a(key)
 }
 
 // evictLRU evicts entries using frequency-aware LRU strategy
@@ -590,64 +624,73 @@ func (cm *CacheManager) cleanupShard(shard *cacheShard) {
 	}
 }
 
+// safeMultiply performs overflow-safe multiplication for size estimation.
+// Returns (maxVal, false) if overflow would occur, otherwise (a*b, true).
+func safeMultiply(a, b, maxVal int64) (int64, bool) {
+	if a == 0 || b == 0 {
+		return 0, true
+	}
+	if a > maxVal/b {
+		return maxVal, false
+	}
+	return a * b, true
+}
+
+// safeAdd performs overflow-safe addition for size estimation.
+// Returns (maxVal, false) if result would exceed maxVal, otherwise (a+b, true).
+func safeAdd(a, b, maxVal int64) (int64, bool) {
+	result := a + b
+	if result > maxVal || result < a { // second check handles actual overflow
+		return maxVal, false
+	}
+	return result, true
+}
+
 // estimateSize estimates the memory size of a value more accurately
 // Uses int64 for intermediate calculations to prevent overflow
-// SECURITY FIX: Pre-check multiplication overflow to prevent incorrect estimates
 func (cm *CacheManager) estimateSize(value any) int {
-	const maxEstimate = 1 << 30 // 1GB max estimate to prevent overflow
+	const maxEstimate int64 = 1 << 30 // 1GB max estimate to prevent overflow
 
 	switch v := value.(type) {
 	case string:
 		// String header (16 bytes) + data
-		result := int64(16) + int64(len(v))
-		if result > maxEstimate {
-			return maxEstimate
+		if result, ok := safeAdd(16, int64(len(v)), maxEstimate); ok {
+			return int(result)
 		}
-		return int(result)
+		return int(maxEstimate)
 	case []byte:
 		// Slice header (24 bytes) + data
-		result := int64(24) + int64(len(v))
-		if result > maxEstimate {
-			return maxEstimate
+		if result, ok := safeAdd(24, int64(len(v)), maxEstimate); ok {
+			return int(result)
 		}
-		return int(result)
+		return int(maxEstimate)
 	case map[string]any:
-		// Map overhead + estimated per-entry cost
-		// Each entry: key (string) + value (interface) + hash table overhead
-		// SECURITY FIX: Check overflow before multiplication
+		// Map overhead (48 bytes) + per-entry cost (64 bytes each)
 		mapLen := int64(len(v))
-		if mapLen > (maxEstimate-48)/64 {
-			return maxEstimate
+		if entryCost, ok := safeMultiply(mapLen, 64, maxEstimate); ok {
+			if result, ok := safeAdd(48, entryCost, maxEstimate); ok {
+				return int(result)
+			}
 		}
-		result := int64(48) + mapLen*64
-		if result > maxEstimate {
-			return maxEstimate
-		}
-		return int(result)
+		return int(maxEstimate)
 	case []any:
-		// Slice header + per-element interface overhead
-		// SECURITY FIX: Check overflow before multiplication
+		// Slice header (24 bytes) + per-element interface overhead (16 bytes each)
 		sliceLen := int64(len(v))
-		if sliceLen > (maxEstimate-24)/16 {
-			return maxEstimate
+		if elemCost, ok := safeMultiply(sliceLen, 16, maxEstimate); ok {
+			if result, ok := safeAdd(24, elemCost, maxEstimate); ok {
+				return int(result)
+			}
 		}
-		result := int64(24) + sliceLen*16
-		if result > maxEstimate {
-			return maxEstimate
-		}
-		return int(result)
+		return int(maxEstimate)
 	case []PathSegment:
-		// Slice header + per-element struct size
-		// SECURITY FIX: Check overflow before multiplication
+		// Slice header (24 bytes) + per-element struct size (128 bytes each)
 		pathLen := int64(len(v))
-		if pathLen > (maxEstimate-24)/128 {
-			return maxEstimate
+		if elemCost, ok := safeMultiply(pathLen, 128, maxEstimate); ok {
+			if result, ok := safeAdd(24, elemCost, maxEstimate); ok {
+				return int(result)
+			}
 		}
-		result := int64(24) + pathLen*128
-		if result > maxEstimate {
-			return maxEstimate
-		}
-		return int(result)
+		return int(maxEstimate)
 	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
 		return 8
 	case float32, float64:
@@ -673,10 +716,7 @@ func truncateCacheKey(key string) string {
 	// This ensures different long keys produce different truncated keys
 	hashSuffixLen := 16                                // Length of hash suffix
 	prefixLen := MaxCacheKeyLength - hashSuffixLen - 3 // 3 for "..." separator
-
-	if prefixLen < 0 {
-		prefixLen = 0
-	}
+	prefixLen = max(prefixLen, 0)
 
 	// Calculate hash of the full key for uniqueness
 	hash := sha256.Sum256([]byte(key))

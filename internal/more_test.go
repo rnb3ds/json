@@ -624,36 +624,6 @@ func TestMergeObjects(t *testing.T) {
 	})
 }
 
-// TestFlattenArray tests the FlattenArray function
-func TestFlattenArray(t *testing.T) {
-	t.Run("flat array", func(t *testing.T) {
-		arr := []any{1, 2, 3}
-		result := FlattenArray(arr)
-
-		if len(result) != 3 {
-			t.Errorf("length = %d, want 3", len(result))
-		}
-	})
-
-	t.Run("nested array", func(t *testing.T) {
-		arr := []any{1, []any{2, 3}, 4}
-		result := FlattenArray(arr)
-
-		if len(result) != 4 {
-			t.Errorf("length = %d, want 4", len(result))
-		}
-	})
-
-	t.Run("deeply nested array", func(t *testing.T) {
-		arr := []any{1, []any{2, []any{3, 4}}, 5}
-		result := FlattenArray(arr)
-
-		if len(result) != 5 {
-			t.Errorf("length = %d, want 5", len(result))
-		}
-	})
-}
-
 // TestDeepMerge tests the DeepMerge function
 func TestDeepMerge(t *testing.T) {
 	t.Run("merge non-overlapping", func(t *testing.T) {
@@ -752,41 +722,6 @@ func TestDetectConsecutiveExtractions(t *testing.T) {
 }
 
 // ============================================================================
-// UNIQUE ARRAY TESTS (merged UniqueArray and UniqueArrayOptimized)
-// ============================================================================
-
-// TestUniqueArray tests both UniqueArray and UniqueArrayOptimized functions
-func TestUniqueArray(t *testing.T) {
-	tests := []struct {
-		name     string
-		input    []any
-		expected int
-	}{
-		{"empty", []any{}, 0},
-		{"single", []any{1}, 1},
-		{"no duplicates", []any{1, 2, 3}, 3},
-		{"with duplicates", []any{1, 2, 1, 3, 2}, 3},
-		{"all same", []any{1, 1, 1}, 1},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// Test UniqueArray
-			result := UniqueArray(tt.input)
-			if len(result) != tt.expected {
-				t.Errorf("UniqueArray returned %d items, want %d", len(result), tt.expected)
-			}
-
-			// Test UniqueArrayOptimized
-			resultOpt := UniqueArrayOptimized(tt.input)
-			if len(resultOpt) != tt.expected {
-				t.Errorf("UniqueArrayOptimized returned %d items, want %d", len(resultOpt), tt.expected)
-			}
-		})
-	}
-}
-
-// ============================================================================
 // FLATTEN ARRAY OPTIMIZED TESTS
 // ============================================================================
 
@@ -847,40 +782,29 @@ func TestChunkArrayOptimized(t *testing.T) {
 // REVERSE ARRAY TESTS (merged ReverseArray and ReverseArrayOptimized)
 // ============================================================================
 
-// TestReverseArray tests both ReverseArray and ReverseArrayOptimized functions
+// TestReverseArray tests the ReverseArrayOptimized function
 func TestReverseArray(t *testing.T) {
 	t.Run("empty array", func(t *testing.T) {
-		arr1 := []any{}
-		arr2 := []any{}
-		ReverseArray(arr1)
-		ReverseArrayOptimized(arr2)
-		if len(arr1) != 0 || len(arr2) != 0 {
+		arr := []any{}
+		ReverseArrayOptimized(arr)
+		if len(arr) != 0 {
 			t.Error("empty array should remain empty")
 		}
 	})
 
 	t.Run("single element", func(t *testing.T) {
-		arr1 := []any{1}
-		arr2 := []any{1}
-		ReverseArray(arr1)
-		ReverseArrayOptimized(arr2)
-		if arr1[0] != 1 || arr2[0] != 1 {
-			t.Errorf("single element should remain, got %v and %v", arr1[0], arr2[0])
+		arr := []any{1}
+		ReverseArrayOptimized(arr)
+		if arr[0] != 1 {
+			t.Errorf("single element should remain, got %v", arr[0])
 		}
 	})
 
 	t.Run("multiple elements", func(t *testing.T) {
-		arr1 := []any{1, 2, 3, 4, 5}
-		arr2 := []any{1, 2, 3, 4, 5}
-		ReverseArray(arr1)
-		ReverseArrayOptimized(arr2)
+		arr := []any{1, 2, 3, 4, 5}
+		ReverseArrayOptimized(arr)
 		expected := []any{5, 4, 3, 2, 1}
-		for i, v := range arr1 {
-			if v != expected[i] {
-				t.Errorf("ReverseArray arr[%d] = %v, want %v", i, v, expected[i])
-			}
-		}
-		for i, v := range arr2 {
+		for i, v := range arr {
 			if v != expected[i] {
 				t.Errorf("ReverseArrayOptimized arr[%d] = %v, want %v", i, v, expected[i])
 			}

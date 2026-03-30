@@ -233,8 +233,8 @@ func TestMapArrayOptimized(t *testing.T) {
 	}
 }
 
-// TestisNilOrEmptyFast tests the isNilOrEmptyFast helper
-func TestIsNilOrEmptyFast(t *testing.T) {
+// TestIsNilOrEmpty tests the IsNilOrEmpty helper
+func TestIsNilOrEmpty(t *testing.T) {
 	tests := []struct {
 		name     string
 		input    any
@@ -253,9 +253,9 @@ func TestIsNilOrEmptyFast(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := isNilOrEmptyFast(tt.input)
+			result := IsNilOrEmpty(tt.input)
 			if result != tt.expected {
-				t.Errorf("isNilOrEmptyFast(%v) = %v, want %v", tt.input, result, tt.expected)
+				t.Errorf("IsNilOrEmpty(%v) = %v, want %v", tt.input, result, tt.expected)
 			}
 		})
 	}

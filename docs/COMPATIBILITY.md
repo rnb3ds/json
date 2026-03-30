@@ -135,13 +135,12 @@ if syntaxErr, ok := err.(*json.SyntaxError); ok {
 Beyond 100% compatibility, our library also provides:
 
 - **Advanced Path Operations**: `json.Get()`, `json.Set()`, `json.Delete()`
-- **Type-Safe Generics**: `json.GetTyped[T]()`, `json.TypeSafeConvert[T]()`
+- **Type-Safe Generics**: `json.GetTyped[T]()`, `json.GetTypedOr[T]()`
 - **Performance Optimizations**: Caching, memory pools, string interning
 - **Thread Safety**: Concurrent-safe operations with atomic operations
 - **Rich Query Syntax**: Dot notation, array slicing, JSON Pointer
 - **Streaming Processing**: `json.NewStreamingProcessor()`, `json.StreamArrayFilter()`
 - **JSONL Support**: `json.NewJSONLProcessor()`, `json.ParseJSONL()`, `json.ToJSONL()`
-- **Lazy Parsing**: `json.NewLazyJSON()` for on-demand parsing
 - **Advanced Encoding**: `json.EncodeStream()`, `json.EncodeBatch()`, `json.EncodeFields()`
 - **File Operations**: `json.LoadFromFile()`, `json.SaveToFile()`, `json.MarshalToFile()`
 - **Schema Validation**: `json.ValidateSchema()` with comprehensive schema support

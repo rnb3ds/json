@@ -6,14 +6,13 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
-	"time"
 
 	"github.com/cybergodev/json/internal"
 )
 
-// UnifiedResourceManager consolidates all resource management for optimal performance
+// unifiedResourceManager consolidates all resource management for optimal performance
 // sync.Pool is inherently thread-safe, no additional locks needed for pool operations
-type UnifiedResourceManager struct {
+type unifiedResourceManager struct {
 	stringBuilderPool *sync.Pool
 	pathSegmentPool   *sync.Pool
 	bufferPool        *sync.Pool
@@ -26,18 +25,27 @@ type UnifiedResourceManager struct {
 	allocatedBuffers  int64
 	allocatedOptions  int64
 	allocatedMaps     int64
-
-	lastCleanup     int64
-	cleanupInterval int64
 }
 
-// NewUnifiedResourceManager creates a new unified resource manager
-func NewUnifiedResourceManager() *UnifiedResourceManager {
-	return &UnifiedResourceManager{
+// drainPool removes potentially corrupted items from a sync.Pool
+// This is called when pool corruption is detected to prevent repeated failures
+// PERFORMANCE: Drains up to 8 items to balance recovery vs overhead
+func drainPool(pool *sync.Pool) {
+	for i := 0; i < 8; i++ {
+		// Non-blocking drain - Get returns nil if pool is empty
+		if pool.Get() == nil {
+			break
+		}
+	}
+}
+
+// newUnifiedResourceManager creates a new unified resource manager
+func newUnifiedResourceManager() *unifiedResourceManager {
+	return &unifiedResourceManager{
 		stringBuilderPool: &sync.Pool{
 			New: func() any {
 				sb := &strings.Builder{}
-				sb.Grow(512)
+				sb.Grow(1024) // PERFORMANCE: Increased from 512 to reduce grow() calls
 				return sb
 			},
 		},
@@ -53,8 +61,8 @@ func NewUnifiedResourceManager() *UnifiedResourceManager {
 		},
 		optionsPool: &sync.Pool{
 			New: func() any {
-				opts := DefaultOptionsClone() // Use clone for pool objects
-				return opts
+				opts := DefaultConfig()
+				return &opts
 			},
 		},
 		mapPool: &sync.Pool{
@@ -62,31 +70,31 @@ func NewUnifiedResourceManager() *UnifiedResourceManager {
 				return make(map[string]any, 8)
 			},
 		},
-		cleanupInterval: 300,
-		lastCleanup:     time.Now().Unix(),
 	}
 }
 
-func (urm *UnifiedResourceManager) GetStringBuilder() *strings.Builder {
+func (urm *unifiedResourceManager) GetStringBuilder() *strings.Builder {
 	obj := urm.stringBuilderPool.Get()
 	sb, ok := obj.(*strings.Builder)
 	if !ok {
 		// Pool corruption detected: type assertion failed
 		// Log this rare event for debugging purposes
-		slog.Debug("pool corruption detected: string builder type assertion failed", "type", fmt.Sprintf("%T", obj))
+		slog.Debug("pool corruption detected: string builder type assertion failed, draining pool", "type", fmt.Sprintf("%T", obj))
+		// RECOVERY: Drain corrupted pool to prevent repeated failures
+		drainPool(urm.stringBuilderPool)
 		// Fallback: create new builder if type assertion fails
 		sb = &strings.Builder{}
-		sb.Grow(512)
+		sb.Grow(1024) // PERFORMANCE: Match pool initial capacity
 	}
 	sb.Reset()
 	atomic.AddInt64(&urm.allocatedBuilders, 1)
 	return sb
 }
 
-func (urm *UnifiedResourceManager) PutStringBuilder(sb *strings.Builder) {
+func (urm *unifiedResourceManager) PutStringBuilder(sb *strings.Builder) {
 	// Use consistent size limits from constants.go
-	const maxBuilderCap = MaxPoolBufferSize // 8192 - consistent with constants
-	const minBuilderCap = MinPoolBufferSize // 256 - consistent with constants
+	const maxBuilderCap = maxPoolBufferSize // 32768 - consistent with constants
+	const minBuilderCap = minPoolBufferSize // 256 - consistent with constants
 
 	if sb == nil {
 		return
@@ -103,13 +111,15 @@ func (urm *UnifiedResourceManager) PutStringBuilder(sb *strings.Builder) {
 	atomic.AddInt64(&urm.allocatedBuilders, -1)
 }
 
-func (urm *UnifiedResourceManager) GetPathSegments() []internal.PathSegment {
+func (urm *unifiedResourceManager) GetPathSegments() []internal.PathSegment {
 	obj := urm.pathSegmentPool.Get()
 	segments, ok := obj.([]internal.PathSegment)
 	if !ok {
 		// Pool corruption detected: type assertion failed
 		// Log this rare event for debugging purposes
-		slog.Debug("pool corruption detected: path segments type assertion failed", "type", fmt.Sprintf("%T", obj))
+		slog.Debug("pool corruption detected: path segments type assertion failed, draining pool", "type", fmt.Sprintf("%T", obj))
+		// RECOVERY: Drain corrupted pool to prevent repeated failures
+		drainPool(urm.pathSegmentPool)
 		// Fallback: create new slice if type assertion fails
 		segments = make([]internal.PathSegment, 0, 8)
 	}
@@ -118,7 +128,7 @@ func (urm *UnifiedResourceManager) GetPathSegments() []internal.PathSegment {
 	return segments
 }
 
-func (urm *UnifiedResourceManager) PutPathSegments(segments []internal.PathSegment) {
+func (urm *unifiedResourceManager) PutPathSegments(segments []internal.PathSegment) {
 	// Stricter segment pool limits
 	const maxSegmentCap = 32 // Reduced from 64
 	const minSegmentCap = 4  // Keep minimum
@@ -137,13 +147,15 @@ func (urm *UnifiedResourceManager) PutPathSegments(segments []internal.PathSegme
 	atomic.AddInt64(&urm.allocatedSegments, -1)
 }
 
-func (urm *UnifiedResourceManager) GetBuffer() []byte {
+func (urm *unifiedResourceManager) GetBuffer() []byte {
 	obj := urm.bufferPool.Get()
 	buf, ok := obj.([]byte)
 	if !ok {
 		// Pool corruption detected: type assertion failed
 		// Log this rare event for debugging purposes
-		slog.Debug("pool corruption detected: buffer type assertion failed", "type", fmt.Sprintf("%T", obj))
+		slog.Debug("pool corruption detected: buffer type assertion failed, draining pool", "type", fmt.Sprintf("%T", obj))
+		// RECOVERY: Drain corrupted pool to prevent repeated failures
+		drainPool(urm.bufferPool)
 		// Fallback: create new buffer if type assertion fails
 		buf = make([]byte, 0, 1024)
 	}
@@ -152,10 +164,10 @@ func (urm *UnifiedResourceManager) GetBuffer() []byte {
 	return buf
 }
 
-func (urm *UnifiedResourceManager) PutBuffer(buf []byte) {
+func (urm *unifiedResourceManager) PutBuffer(buf []byte) {
 	// Use consistent size limits from constants.go
-	const maxBufferCap = MaxPoolBufferSize // 8192 - consistent with constants
-	const minBufferCap = MinPoolBufferSize // 256 - consistent with constants
+	const maxBufferCap = maxPoolBufferSize // 32768 - consistent with constants
+	const minBufferCap = minPoolBufferSize // 256 - consistent with constants
 
 	if buf == nil {
 		return
@@ -171,35 +183,26 @@ func (urm *UnifiedResourceManager) PutBuffer(buf []byte) {
 	atomic.AddInt64(&urm.allocatedBuffers, -1)
 }
 
-// GetOptions gets a ProcessorOptions from the pool
-func (urm *UnifiedResourceManager) GetOptions() *ProcessorOptions {
+// GetOptions gets a Config from the pool
+func (urm *unifiedResourceManager) GetOptions() *Config {
 	obj := urm.optionsPool.Get()
-	opts, ok := obj.(*ProcessorOptions)
+	opts, ok := obj.(*Config)
 	if !ok {
 		// Pool corruption detected: type assertion failed
 		// Log this rare event for debugging purposes
 		slog.Debug("pool corruption detected: options type assertion failed", "type", fmt.Sprintf("%T", obj))
 		// Fallback: create new options if type assertion fails
-		opts = DefaultOptionsClone()
+		cfg := DefaultConfig()
+		opts = &cfg
 	}
-	// Reset to default values
-	*opts = ProcessorOptions{
-		CacheResults:    true,
-		StrictMode:      false,
-		MaxDepth:        50,
-		AllowComments:   false,
-		PreserveNumbers: false,
-		CreatePaths:     false,
-		CleanupNulls:    false,
-		CompactArrays:   false,
-		ContinueOnError: false,
-	}
+	// Reset to default configuration
+	*opts = DefaultConfig()
 	atomic.AddInt64(&urm.allocatedOptions, 1)
 	return opts
 }
 
-// PutOptions returns a ProcessorOptions to the pool
-func (urm *UnifiedResourceManager) PutOptions(opts *ProcessorOptions) {
+// PutOptions returns a Config to the pool
+func (urm *unifiedResourceManager) PutOptions(opts *Config) {
 	if opts != nil {
 		defer atomic.AddInt64(&urm.allocatedOptions, -1)
 		// Clear context to prevent memory leaks
@@ -210,7 +213,7 @@ func (urm *UnifiedResourceManager) PutOptions(opts *ProcessorOptions) {
 
 // GetMap gets a map from the pool
 // PERFORMANCE: Reusable maps for JSON object operations
-func (urm *UnifiedResourceManager) GetMap() map[string]any {
+func (urm *unifiedResourceManager) GetMap() map[string]any {
 	obj := urm.mapPool.Get()
 	m, ok := obj.(map[string]any)
 	if !ok {
@@ -224,7 +227,11 @@ func (urm *UnifiedResourceManager) GetMap() map[string]any {
 }
 
 // PutMap returns a map to the pool
-func (urm *UnifiedResourceManager) PutMap(m map[string]any) {
+// RESOURCE FIX: Always decrement counter regardless of pooling decision
+func (urm *unifiedResourceManager) PutMap(m map[string]any) {
+	// Always decrement counter first to prevent counter leaks
+	defer atomic.AddInt64(&urm.allocatedMaps, -1)
+
 	if m == nil {
 		return
 	}
@@ -233,54 +240,34 @@ func (urm *UnifiedResourceManager) PutMap(m map[string]any) {
 	if len(m) <= maxMapSize {
 		urm.mapPool.Put(m)
 	}
-	atomic.AddInt64(&urm.allocatedMaps, -1)
 }
 
-// PerformMaintenance performs periodic cleanup
-// sync.Pool automatically handles cleanup via GC
-func (urm *UnifiedResourceManager) PerformMaintenance() {
-	now := time.Now().Unix()
-	lastCleanup := atomic.LoadInt64(&urm.lastCleanup)
-
-	if now-lastCleanup < urm.cleanupInterval {
-		return
-	}
-
-	if !atomic.CompareAndSwapInt64(&urm.lastCleanup, lastCleanup, now) {
-		return
-	}
-
-	atomic.StoreInt64(&urm.lastCleanup, now)
-}
-
-func (urm *UnifiedResourceManager) GetStats() ResourceManagerStats {
-	return ResourceManagerStats{
-		AllocatedBuilders: atomic.LoadInt64(&urm.allocatedBuilders),
-		AllocatedSegments: atomic.LoadInt64(&urm.allocatedSegments),
-		AllocatedBuffers:  atomic.LoadInt64(&urm.allocatedBuffers),
-		AllocatedOptions:  atomic.LoadInt64(&urm.allocatedOptions),
-		AllocatedMaps:     atomic.LoadInt64(&urm.allocatedMaps),
-		LastCleanup:       atomic.LoadInt64(&urm.lastCleanup),
+func (urm *unifiedResourceManager) getStats() resourceManagerStats {
+	return resourceManagerStats{
+		allocatedBuilders: atomic.LoadInt64(&urm.allocatedBuilders),
+		allocatedSegments: atomic.LoadInt64(&urm.allocatedSegments),
+		allocatedBuffers:  atomic.LoadInt64(&urm.allocatedBuffers),
+		allocatedOptions:  atomic.LoadInt64(&urm.allocatedOptions),
+		allocatedMaps:     atomic.LoadInt64(&urm.allocatedMaps),
 	}
 }
 
-type ResourceManagerStats struct {
-	AllocatedBuilders int64 `json:"allocated_builders"`
-	AllocatedSegments int64 `json:"allocated_segments"`
-	AllocatedBuffers  int64 `json:"allocated_buffers"`
-	AllocatedOptions  int64 `json:"allocated_options"`
-	AllocatedMaps     int64 `json:"allocated_maps"`
-	LastCleanup       int64 `json:"last_cleanup"`
+type resourceManagerStats struct {
+	allocatedBuilders int64
+	allocatedSegments int64
+	allocatedBuffers  int64
+	allocatedOptions  int64
+	allocatedMaps     int64
 }
 
 var (
-	globalResourceManager     *UnifiedResourceManager
+	globalResourceManager     *unifiedResourceManager
 	globalResourceManagerOnce sync.Once
 )
 
-func getGlobalResourceManager() *UnifiedResourceManager {
+func getGlobalResourceManager() *unifiedResourceManager {
 	globalResourceManagerOnce.Do(func() {
-		globalResourceManager = NewUnifiedResourceManager()
+		globalResourceManager = newUnifiedResourceManager()
 	})
 	return globalResourceManager
 }

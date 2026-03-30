@@ -23,41 +23,34 @@ import (
 // - Path cache warmup
 // - Performance optimization techniques
 //
-// Run: go run examples/14_batch_operations.go
+// Run: go run -tags=example examples/14_batch_operations.go
 
 func main() {
-	fmt.Println("Batch Operations - JSON Library")
-	fmt.Println("================================\n ")
+	fmt.Println("⚡ JSON Library - Batch Operations")
+	fmt.Println("==================================\n ")
 
 	// 1. PROCESSBATCH FOR MIXED OPERATIONS
-	fmt.Println("1. ProcessBatch for Mixed Operations")
-	fmt.Println("-------------------------------------")
 	demonstrateProcessBatch()
 
 	// 2. CACHE WARMUP
-	fmt.Println("\n2. Cache Warmup")
-	fmt.Println("----------------")
 	demonstrateCacheWarmup()
 
 	// 3. BULK PROCESSOR
-	fmt.Println("\n3. Bulk Processor")
-	fmt.Println("------------------")
 	demonstrateBulkProcessor()
 
 	// 4. ENCODE STREAM/BATCH/FIELDS
-	fmt.Println("\n4. Encode Stream/Batch/Fields")
-	fmt.Println("------------------------------")
 	demonstrateEncodeFunctions()
 
 	// 5. PERFORMANCE COMPARISON
-	fmt.Println("\n5. Performance Comparison")
-	fmt.Println("--------------------------")
 	demonstrateBatchPerformance()
 
 	fmt.Println("\nBatch operations examples complete!")
 }
 
 func demonstrateProcessBatch() {
+	fmt.Println("1. ProcessBatch for Mixed Operations")
+	fmt.Println("-------------------------------------")
+
 	jsonStr := `{
 		"user": {
 			"name": "Alice",
@@ -71,14 +64,14 @@ func demonstrateProcessBatch() {
 		"version": 1
 	}`
 
-	// Define batch operations
+	// Define batch operations with JSONStr for each operation
 	operations := []json.BatchOperation{
-		{Type: "get", Path: "user.name", ID: "op1"},
-		{Type: "get", Path: "user.age", ID: "op2"},
-		{Type: "get", Path: "settings.theme", ID: "op3"},
-		{Type: "set", Path: "user.age", Value: 31, ID: "op4"},
-		{Type: "get", Path: "user.age", ID: "op5"},
-		{Type: "get", Path: "nonexistent", ID: "op6"},
+		{Type: "get", JSONStr: jsonStr, Path: "user.name", ID: "op1"},
+		{Type: "get", JSONStr: jsonStr, Path: "user.age", ID: "op2"},
+		{Type: "get", JSONStr: jsonStr, Path: "settings.theme", ID: "op3"},
+		{Type: "set", JSONStr: jsonStr, Path: "user.age", Value: 31, ID: "op4"},
+		{Type: "get", JSONStr: jsonStr, Path: "user.age", ID: "op5"},
+		{Type: "get", JSONStr: jsonStr, Path: "nonexistent", ID: "op6"},
 	}
 
 	// Execute batch
@@ -98,7 +91,7 @@ func demonstrateProcessBatch() {
 	}
 
 	// Using with processor for more control
-	processor := json.New(json.DefaultConfig())
+	processor, _ := json.New(json.DefaultConfig())
 	defer processor.Close()
 
 	// Note: BatchOperation also supports JSONStr field for different JSON inputs
@@ -120,6 +113,9 @@ func demonstrateProcessBatch() {
 }
 
 func demonstrateCacheWarmup() {
+	fmt.Println("\n2. Cache Warmup")
+	fmt.Println("----------------")
+
 	jsonStr := `{
 		"users": [
 			{"id": 1, "name": "Alice", "active": true},
@@ -175,7 +171,10 @@ func demonstrateCacheWarmup() {
 }
 
 func demonstrateBulkProcessor() {
-	processor := json.New(json.DefaultConfig())
+	fmt.Println("\n3. Bulk Processor")
+	fmt.Println("------------------")
+
+	processor, _ := json.New(json.DefaultConfig())
 	defer processor.Close()
 
 	// Create bulk processor with batch size
@@ -215,6 +214,9 @@ func demonstrateBulkProcessor() {
 }
 
 func demonstrateEncodeFunctions() {
+	fmt.Println("\n4. Encode Stream/Batch/Fields")
+	fmt.Println("------------------------------")
+
 	// EncodeStream - encode a slice as JSON array
 	users := []map[string]any{
 		{"id": 1, "name": "Alice"},
@@ -222,7 +224,10 @@ func demonstrateEncodeFunctions() {
 		{"id": 3, "name": "Charlie"},
 	}
 
-	streamJSON, err := json.EncodeStream(users, true)
+	opts := json.DefaultConfig()
+	opts.Pretty = true
+
+	streamJSON, err := json.EncodeStream(users, opts)
 	if err != nil {
 		fmt.Printf("   EncodeStream error: %v\n", err)
 	} else {
@@ -237,7 +242,7 @@ func demonstrateEncodeFunctions() {
 		"count": 2,
 	}
 
-	batchJSON, err := json.EncodeBatch(pairs, true)
+	batchJSON, err := json.EncodeBatch(pairs, opts)
 	if err != nil {
 		fmt.Printf("   EncodeBatch error: %v\n", err)
 	} else {
@@ -264,7 +269,7 @@ func demonstrateEncodeFunctions() {
 
 	// Only encode safe fields
 	fieldsToEncode := []string{"id", "name", "email", "role"}
-	fieldsJSON, err := json.EncodeFields(user, fieldsToEncode, true)
+	fieldsJSON, err := json.EncodeFields(user, fieldsToEncode, opts)
 	if err != nil {
 		fmt.Printf("   EncodeFields error: %v\n", err)
 	} else {
@@ -274,6 +279,9 @@ func demonstrateEncodeFunctions() {
 }
 
 func demonstrateBatchPerformance() {
+	fmt.Println("\n5. Performance Comparison")
+	fmt.Println("--------------------------")
+
 	jsonStr := `{
 		"user": {
 			"id": 1001,
@@ -294,12 +302,12 @@ func demonstrateBatchPerformance() {
 	fmt.Println("   Performance comparison (1000 operations):")
 
 	// Without cache optimization
-	configNoCache := &json.Config{
+	configNoCache := json.Config{
 		EnableCache:  false,
 		MaxJSONSize:  10 * 1024 * 1024,
 		MaxBatchSize: 1000,
 	}
-	procNoCache := json.New(configNoCache)
+	procNoCache, _ := json.New(configNoCache)
 	defer procNoCache.Close()
 
 	start := time.Now()
@@ -309,14 +317,14 @@ func demonstrateBatchPerformance() {
 	noCacheDuration := time.Since(start)
 
 	// With cache optimization
-	configCache := &json.Config{
+	configCache := json.Config{
 		EnableCache:  true,
 		MaxCacheSize: 1000,
 		CacheTTL:     10 * time.Minute,
 		MaxJSONSize:  10 * 1024 * 1024,
 		MaxBatchSize: 1000,
 	}
-	procCache := json.New(configCache)
+	procCache, _ := json.New(configCache)
 	defer procCache.Close()
 
 	start = time.Now()

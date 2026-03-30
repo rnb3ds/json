@@ -185,7 +185,7 @@ func generateLargeJSONObject(size int) string {
 
 func BenchmarkLargeJSONArray_Parse_1000(b *testing.B) {
 	jsonStr := generateLargeJSONArray(1000)
-	processor := New()
+	processor, _ := New()
 	defer processor.Close()
 
 	b.ResetTimer()
@@ -196,7 +196,7 @@ func BenchmarkLargeJSONArray_Parse_1000(b *testing.B) {
 
 func BenchmarkLargeJSONArray_Parse_10000(b *testing.B) {
 	jsonStr := generateLargeJSONArray(10000)
-	processor := New()
+	processor, _ := New()
 	defer processor.Close()
 
 	b.ResetTimer()
@@ -207,7 +207,7 @@ func BenchmarkLargeJSONArray_Parse_10000(b *testing.B) {
 
 func BenchmarkLargeJSONObject_Parse_1000(b *testing.B) {
 	jsonStr := generateLargeJSONObject(1000)
-	processor := New()
+	processor, _ := New()
 	defer processor.Close()
 
 	b.ResetTimer()
@@ -221,7 +221,7 @@ func BenchmarkLargeJSONObject_Parse_1000(b *testing.B) {
 // ----------------------------------------------------------------------------
 
 func BenchmarkIterator_SmallArray(b *testing.B) {
-	processor := New()
+	processor, _ := New()
 	defer processor.Close()
 
 	jsonStr := `[1,2,3,4,5,6,7,8,9,10]`
@@ -230,7 +230,7 @@ func BenchmarkIterator_SmallArray(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		data, _ := processor.Get(jsonStr, ".")
 		if arr, ok := data.([]any); ok {
-			it := NewPooledSliceIterator(arr)
+			it := newPooledSliceIterator(arr)
 			for it.Next() {
 				_ = it.Value()
 			}
@@ -240,7 +240,7 @@ func BenchmarkIterator_SmallArray(b *testing.B) {
 }
 
 func BenchmarkIterator_LargeArray(b *testing.B) {
-	processor := New()
+	processor, _ := New()
 	defer processor.Close()
 
 	jsonStr := generateLargeJSONArray(1000)
@@ -249,7 +249,7 @@ func BenchmarkIterator_LargeArray(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		data, _ := processor.Get(jsonStr, ".")
 		if arr, ok := data.([]any); ok {
-			it := NewPooledSliceIterator(arr)
+			it := newPooledSliceIterator(arr)
 			for it.Next() {
 				_ = it.Value()
 			}
@@ -259,7 +259,7 @@ func BenchmarkIterator_LargeArray(b *testing.B) {
 }
 
 func BenchmarkIterator_SmallObject(b *testing.B) {
-	processor := New()
+	processor, _ := New()
 	defer processor.Close()
 
 	jsonStr := `{"a":1,"b":2,"c":3,"d":4,"e":5}`
@@ -268,7 +268,7 @@ func BenchmarkIterator_SmallObject(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		data, _ := processor.Get(jsonStr, ".")
 		if obj, ok := data.(map[string]any); ok {
-			it := NewPooledMapIterator(obj)
+			it := newPooledMapIterator(obj)
 			for it.Next() {
 				_, _ = it.Key(), it.Value()
 			}
@@ -278,7 +278,7 @@ func BenchmarkIterator_SmallObject(b *testing.B) {
 }
 
 func BenchmarkIterator_LargeObject(b *testing.B) {
-	processor := New()
+	processor, _ := New()
 	defer processor.Close()
 
 	jsonStr := generateLargeJSONObject(100)
@@ -287,7 +287,7 @@ func BenchmarkIterator_LargeObject(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		data, _ := processor.Get(jsonStr, ".")
 		if obj, ok := data.(map[string]any); ok {
-			it := NewPooledMapIterator(obj)
+			it := newPooledMapIterator(obj)
 			for it.Next() {
 				_, _ = it.Key(), it.Value()
 			}
@@ -392,17 +392,16 @@ func BenchmarkPathParsing_Extract(b *testing.B) {
 
 func BenchmarkPathParsing_WithCache(b *testing.B) {
 	path := "users.profile.settings.theme"
-	cache := getPathCache()
 
 	// Pre-populate cache
 	segments, _ := internal.ParsePath(path)
-	cache.Set(path, segments)
+	internal.GlobalPathIntern.Set(path, segments)
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if _, ok := cache.Get(path); !ok {
+		if _, ok := internal.GlobalPathIntern.Get(path); !ok {
 			segments, _ := internal.ParsePath(path)
-			cache.Set(path, segments)
+			internal.GlobalPathIntern.Set(path, segments)
 		}
 	}
 }
@@ -448,7 +447,7 @@ func BenchmarkIntToStringFast_Large(b *testing.B) {
 // ----------------------------------------------------------------------------
 
 func BenchmarkConcurrent_Get(b *testing.B) {
-	processor := New()
+	processor, _ := New()
 	defer processor.Close()
 
 	jsonStr := `{"a":1,"b":2,"c":3,"d":4,"e":5}`
@@ -461,7 +460,7 @@ func BenchmarkConcurrent_Get(b *testing.B) {
 }
 
 func BenchmarkConcurrent_Set(b *testing.B) {
-	processor := New()
+	processor, _ := New()
 	defer processor.Close()
 
 	jsonStr := `{"a":1,"b":2,"c":3,"d":4,"e":5}`
@@ -476,7 +475,7 @@ func BenchmarkConcurrent_Set(b *testing.B) {
 }
 
 func BenchmarkConcurrent_Marshal(b *testing.B) {
-	processor := New()
+	processor, _ := New()
 	defer processor.Close()
 
 	data := map[string]any{
@@ -510,7 +509,7 @@ func generateDeepNestedJSON(depth int) string {
 
 func BenchmarkDeepNesting_Parse_10(b *testing.B) {
 	jsonStr := generateDeepNestedJSON(10)
-	processor := New()
+	processor, _ := New()
 	defer processor.Close()
 
 	b.ResetTimer()
@@ -521,7 +520,7 @@ func BenchmarkDeepNesting_Parse_10(b *testing.B) {
 
 func BenchmarkDeepNesting_Parse_50(b *testing.B) {
 	jsonStr := generateDeepNestedJSON(50)
-	processor := New()
+	processor, _ := New()
 	defer processor.Close()
 
 	b.ResetTimer()
@@ -532,7 +531,7 @@ func BenchmarkDeepNesting_Parse_50(b *testing.B) {
 
 func BenchmarkDeepNesting_Navigate_10(b *testing.B) {
 	jsonStr := generateDeepNestedJSON(10)
-	processor := New()
+	processor, _ := New()
 	defer processor.Close()
 
 	path := "level0.level1.level2.level3.level4.level5.level6.level7.level8.level9"
@@ -548,7 +547,7 @@ func BenchmarkDeepNesting_Navigate_10(b *testing.B) {
 // ----------------------------------------------------------------------------
 
 func BenchmarkBatchSet_Small(b *testing.B) {
-	processor := New()
+	processor, _ := New()
 	defer processor.Close()
 
 	jsonStr := `{"a":1,"b":2,"c":3}`
@@ -565,7 +564,7 @@ func BenchmarkBatchSet_Small(b *testing.B) {
 }
 
 func BenchmarkBatchSet_Large(b *testing.B) {
-	processor := New()
+	processor, _ := New()
 	defer processor.Close()
 
 	// Generate large JSON
@@ -593,7 +592,7 @@ func BenchmarkBatchSet_Large(b *testing.B) {
 }
 
 func BenchmarkFastGetMultiple_Small(b *testing.B) {
-	processor := New()
+	processor, _ := New()
 	defer processor.Close()
 
 	jsonStr := `{"a":1,"b":2,"c":3,"d":4,"e":5}`
@@ -606,7 +605,7 @@ func BenchmarkFastGetMultiple_Small(b *testing.B) {
 }
 
 func BenchmarkFastGetMultiple_Large(b *testing.B) {
-	processor := New()
+	processor, _ := New()
 	defer processor.Close()
 
 	// Generate large JSON
@@ -668,7 +667,7 @@ func BenchmarkComparison_Marshal_Simple(b *testing.B) {
 	}
 
 	b.Run("cybergodev/json", func(b *testing.B) {
-		processor := New()
+		processor, _ := New()
 		defer processor.Close()
 
 		b.ResetTimer()
@@ -689,7 +688,7 @@ func BenchmarkComparison_Unmarshal_Simple(b *testing.B) {
 	jsonStr := `{"name":"test","age":30,"active":true}`
 
 	b.Run("cybergodev/json", func(b *testing.B) {
-		processor := New()
+		processor, _ := New()
 		defer processor.Close()
 
 		b.ResetTimer()
@@ -718,7 +717,7 @@ func BenchmarkComparison_Marshal_Large(b *testing.B) {
 	}
 
 	b.Run("cybergodev/json", func(b *testing.B) {
-		processor := New()
+		processor, _ := New()
 		defer processor.Close()
 
 		b.ResetTimer()
@@ -792,12 +791,12 @@ func BenchmarkIterableValue_GetTyped(b *testing.B) {
 }
 
 // ----------------------------------------------------------------------------
-// ADDITIONAL PERFORMANCE BENCHMARKS (from performance_test.go)
+// ADDITIONAL PERFORMANCE BENCHMARKS
 // ----------------------------------------------------------------------------
 
 // BenchmarkFastSet_Simple compares FastSet vs Set performance
 func BenchmarkFastSet_Simple(b *testing.B) {
-	processor := New()
+	processor, _ := New()
 	defer processor.Close()
 
 	jsonStr := `{"name":"test","age":30,"active":true}`
@@ -810,7 +809,7 @@ func BenchmarkFastSet_Simple(b *testing.B) {
 
 // BenchmarkSet_Simple for comparison with FastSet
 func BenchmarkSet_Simple(b *testing.B) {
-	processor := New()
+	processor, _ := New()
 	defer processor.Close()
 
 	jsonStr := `{"name":"test","age":30,"active":true}`
@@ -823,7 +822,7 @@ func BenchmarkSet_Simple(b *testing.B) {
 
 // BenchmarkFastDelete_Simple compares FastDelete vs Delete performance
 func BenchmarkFastDelete_Simple(b *testing.B) {
-	processor := New()
+	processor, _ := New()
 	defer processor.Close()
 
 	jsonStr := `{"name":"test","age":30,"active":true}`
@@ -836,7 +835,7 @@ func BenchmarkFastDelete_Simple(b *testing.B) {
 
 // BenchmarkDelete_Simple for comparison with FastDelete
 func BenchmarkDelete_Simple(b *testing.B) {
-	processor := New()
+	processor, _ := New()
 	defer processor.Close()
 
 	jsonStr := `{"name":"test","age":30,"active":true}`
@@ -849,7 +848,7 @@ func BenchmarkDelete_Simple(b *testing.B) {
 
 // BenchmarkBatchSetOptimized benchmarks the BatchSetOptimized method
 func BenchmarkBatchSetOptimized(b *testing.B) {
-	processor := New()
+	processor, _ := New()
 	defer processor.Close()
 
 	jsonStr := `{"a":1,"b":2,"c":3,"d":4,"e":5}`
@@ -867,7 +866,7 @@ func BenchmarkBatchSetOptimized(b *testing.B) {
 
 // BenchmarkFastGetMultiple benchmarks the FastGetMultiple method
 func BenchmarkFastGetMultiple(b *testing.B) {
-	processor := New()
+	processor, _ := New()
 	defer processor.Close()
 
 	jsonStr := `{"a":1,"b":2,"c":3,"d":4,"e":5}`
@@ -888,7 +887,7 @@ func BenchmarkPooledSliceIterator(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		it := NewPooledSliceIterator(data)
+		it := newPooledSliceIterator(data)
 		for it.Next() {
 			_ = it.Value()
 		}
@@ -920,7 +919,7 @@ func BenchmarkPooledMapIterator(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		it := NewPooledMapIterator(data)
+		it := newPooledMapIterator(data)
 		for it.Next() {
 			_, _ = it.Key(), it.Value()
 		}
@@ -957,9 +956,9 @@ func BenchmarkLargeBufferPool(b *testing.B) {
 func BenchmarkEncodeBufferPool(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		buf := GetEncodeBuffer()
+		buf := getEncodeBuffer()
 		buf = append(buf, make([]byte, 512)...)
-		PutEncodeBuffer(buf)
+		putEncodeBuffer(buf)
 	}
 }
 

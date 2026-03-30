@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -15,26 +16,49 @@ import (
 	"github.com/cybergodev/json/internal"
 )
 
+// Processor state constants for lifecycle management
+const (
+	processorStateActive  int32 = iota // 0: Processor is active and accepting operations
+	processorStateClosing              // 1: Processor is closing, no new operations
+	processorStateClosed               // 2: Processor is fully closed
+)
+
 // Processor is the main JSON processing engine with thread safety and performance optimization
 type Processor struct {
-	config            *Config
+	config            Config
 	cache             *internal.CacheManager
 	state             int32
 	cleanupOnce       sync.Once
 	resources         *processorResources
 	metrics           *processorMetrics
-	resourceMonitor   *ResourceMonitor
+	resourceMonitor   *resourceMonitor
 	logger            atomic.Value // *slog.Logger - thread-safe logger storage
-	securityValidator *SecurityValidator
-	// Cached RecursiveProcessor for reuse across operations (performance optimization)
-	recursiveProcessor *RecursiveProcessor
+	securityValidator *securityValidator
+	// Cached recursiveProcessor for reuse across operations (performance optimization)
+	recursiveProcessor *recursiveProcessor
 	// Wait group for tracking active operations during Close()
 	activeOps sync.WaitGroup
 	// OPTIMIZED: Hash cache for large JSON strings to avoid repeated hash calculations
-	hashCache     map[string]uint64
-	hashCacheMu   sync.RWMutex
-	hashCacheSize int
+	// Uses uint64 keys directly instead of hex strings for memory efficiency
+	hashCache   map[uint64]*hashCacheEntry
+	hashCacheMu sync.RWMutex
+	// Extension points for hooks
+	hooks []Hook
 }
+
+// hashCacheEntry stores a cached hash with its last access time for LRU eviction
+type hashCacheEntry struct {
+	hash       uint64 // The actual hash value of the JSON string
+	lastAccess int64  // Last access timestamp for LRU eviction
+	expiresAt  int64  // Expiration timestamp for TTL-based cleanup
+}
+
+// hashCacheTTL is the time-to-live for hash cache entries (5 minutes)
+// Entries older than this are recomputed on next access
+const hashCacheTTL = int64(5 * 60 * 1000 * 1000 * 1000) // 5 minutes in nanoseconds
+
+// hashCacheMaxSize is the maximum number of entries in the hash cache
+const hashCacheMaxSize = 64
 
 type processorResources struct {
 	lastPoolReset   int64
@@ -52,37 +76,44 @@ type processorMetrics struct {
 	enabled              bool // Flag to enable/disable metrics collection
 }
 
-// New creates a new JSON processor with optimized configuration.
+// New creates a new JSON processor with the given configuration.
 // If no configuration is provided, uses default configuration.
-// This function follows the explicit config pattern as required by the design guidelines.
-func New(config ...*Config) *Processor {
-	var cfg *Config
-	if len(config) > 0 && config[0] != nil {
-		cfg = config[0].Clone() // Use clone to prevent external modifications
+// Returns an error if the configuration is invalid.
+//
+// Example:
+//
+//	// Using default configuration
+//	processor, err := json.New()
+//
+//	// With custom configuration
+//	cfg := json.DefaultConfig()
+//	cfg.CreatePaths = true
+//	processor, err := json.New(cfg)
+//
+//	// Using preset configuration
+//	processor, err := json.New(json.SecurityConfig())
+func New(cfg ...Config) (*Processor, error) {
+	var config Config
+	if len(cfg) > 0 {
+		config = cfg[0]
 	} else {
-		cfg = DefaultConfig()
+		config = DefaultConfig()
 	}
 
 	// Validate configuration and apply corrections for invalid values
-	// ValidateConfig modifies the config in-place to fix invalid values
-	// Only replace with default config if validation fails for critical errors
-	if err := ValidateConfig(cfg); err != nil {
-		// Log warning about validation failure but continue with corrected config
-		// The ValidateConfig function already applies corrections to invalid values
-		// We don't discard the entire config, just log the issue
-		slog.Default().With("component", "json-processor").Warn("configuration validation warning, corrections applied",
-			"error", err.Error())
+	if err := config.Validate(); err != nil {
+		return nil, fmt.Errorf("invalid configuration: %w", err)
 	}
 
 	p := &Processor{
-		config:          cfg,
-		cache:           internal.NewCacheManager(cfg),
-		resourceMonitor: NewResourceMonitor(),
-		securityValidator: NewSecurityValidator(
-			cfg.MaxJSONSize,
+		config:          config,
+		cache:           internal.NewCacheManager(&config),
+		resourceMonitor: newResourceMonitor(),
+		securityValidator: newSecurityValidator(
+			config.MaxJSONSize,
 			MaxPathLength,
-			cfg.MaxNestingDepthSecurity,
-			cfg.FullSecurityScan,
+			config.MaxNestingDepthSecurity,
+			config.FullSecurityScan,
 		),
 		resources: &processorResources{
 			lastPoolReset:   0,
@@ -91,34 +122,33 @@ func New(config ...*Config) *Processor {
 		},
 		metrics: &processorMetrics{
 			operationWindow:      0, // Disabled by default for better performance
-			concurrencySemaphore: make(chan struct{}, cfg.MaxConcurrency),
-			enabled:              cfg.EnableMetrics,
+			concurrencySemaphore: make(chan struct{}, config.MaxConcurrency),
+			enabled:              config.EnableMetrics,
 		},
 		// OPTIMIZED: Initialize hash cache for large JSON strings
-		hashCache:     make(map[string]uint64, 64),
-		hashCacheSize: 64,
+		hashCache: make(map[uint64]*hashCacheEntry, hashCacheMaxSize),
 	}
 
 	// Initialize logger atomically for thread safety
 	p.logger.Store(slog.Default().With("component", "json-processor"))
 
 	// Only create metrics collector if metrics are enabled
-	if cfg.EnableMetrics {
+	if config.EnableMetrics {
 		p.metrics.collector = internal.NewMetricsCollector()
 	}
 
-	// Initialize cached RecursiveProcessor for reuse
-	p.recursiveProcessor = &RecursiveProcessor{processor: p}
+	// Initialize cached recursiveProcessor for reuse
+	p.recursiveProcessor = newRecursiveProcessor(p)
 
-	return p
+	return p, nil
 }
 
 // Close closes the processor and cleans up resources
 // This method is idempotent and thread-safe
 func (p *Processor) Close() error {
 	p.cleanupOnce.Do(func() {
-		// Mark as closing (state 1) to prevent new operations
-		atomic.StoreInt32(&p.state, 1)
+		// Mark as closing to prevent new operations
+		atomic.StoreInt32(&p.state, processorStateClosing)
 
 		// Wait for all active operations to complete with timeout
 		done := make(chan struct{})
@@ -130,7 +160,7 @@ func (p *Processor) Close() error {
 		select {
 		case <-done:
 			// All operations completed normally
-		case <-time.After(5 * time.Second):
+		case <-time.After(closeOperationTimeout):
 			// Timeout waiting for operations
 			// Log warning if logger is available (non-blocking)
 			if logger, ok := p.logger.Load().(*slog.Logger); ok && logger != nil {
@@ -139,13 +169,17 @@ func (p *Processor) Close() error {
 		}
 
 		// Drain the concurrency semaphore to release any waiting goroutines
-		// Use a separate goroutine with timeout to prevent indefinite blocking
+		// Use context cancellation for clean goroutine termination
 		if p.metrics != nil && p.metrics.concurrencySemaphore != nil {
+			drainCtx, drainCancel := context.WithTimeout(context.Background(), semaphoreDrainTimeout)
 			drainDone := make(chan struct{})
 			go func() {
 				defer close(drainDone)
 				for {
 					select {
+					case <-drainCtx.Done():
+						// Context cancelled - exit cleanly
+						return
 					case <-p.metrics.concurrencySemaphore:
 						// Drained one slot
 					default:
@@ -158,14 +192,15 @@ func (p *Processor) Close() error {
 			select {
 			case <-drainDone:
 				// Drain completed
-			case <-time.After(1 * time.Second):
+			case <-drainCtx.Done():
 				// Timeout on drain - continue with cleanup
 			}
+			drainCancel() // Ensure context is cancelled to stop goroutine
 		}
 
-		// Safely clear cache with nil check
+		// Safely close cache: cancels cleanup goroutines and clears data
 		if p.cache != nil {
-			p.cache.Clear()
+			p.cache.Close()
 		}
 
 		// Reset resource tracking
@@ -175,19 +210,41 @@ func (p *Processor) Close() error {
 			atomic.StoreInt64(&p.resources.lastPoolReset, 0)
 		}
 
-		// Mark as fully closed (state 2)
-		atomic.StoreInt32(&p.state, 2)
+		// Mark as fully closed
+		atomic.StoreInt32(&p.state, processorStateClosed)
 	})
 	return nil
 }
 
 // IsClosed returns true if the processor has been closed
 func (p *Processor) IsClosed() bool {
-	return atomic.LoadInt32(&p.state) == 2
+	return atomic.LoadInt32(&p.state) == processorStateClosed
+}
+
+// AddHook adds an operation hook to the processor.
+// Hooks are called before and after each operation.
+// Multiple hooks can be added and are executed in order (Before) and reverse order (After).
+//
+// Example:
+//
+//	type LoggingHook struct{}
+//	func (h *LoggingHook) Before(ctx json.HookContext) error {
+//	    log.Printf("before %s", ctx.Operation)
+//	    return nil
+//	}
+//	func (h *LoggingHook) After(ctx json.HookContext, result any, err error) (any, error) {
+//	    log.Printf("after %s", ctx.Operation)
+//	    return result, err
+//	}
+//
+//	p := json.MustNew()
+//	p.AddHook(&LoggingHook{})
+func (p *Processor) AddHook(hook Hook) {
+	p.hooks = append(p.hooks, hook)
 }
 
 // ProcessBatch processes multiple operations in a single batch
-func (p *Processor) ProcessBatch(operations []BatchOperation, opts ...*ProcessorOptions) ([]BatchResult, error) {
+func (p *Processor) ProcessBatch(operations []BatchOperation, opts ...Config) ([]BatchResult, error) {
 	if err := p.checkClosed(); err != nil {
 		return nil, err
 	}
@@ -218,7 +275,9 @@ func (p *Processor) ProcessBatch(operations []BatchOperation, opts ...*Processor
 		case "delete":
 			result.Result, result.Error = p.Delete(op.JSONStr, op.Path, opts...)
 		case "validate":
-			result.Result, result.Error = p.Valid(op.JSONStr, opts...)
+			valid, err := p.Valid(op.JSONStr, opts...)
+			result.Result = map[string]any{"valid": valid}
+			result.Error = err
 		default:
 			result.Error = fmt.Errorf("unknown operation type: %s", op.Type)
 		}
@@ -237,7 +296,7 @@ func (p *Processor) ClearCache() {
 }
 
 // WarmupCache pre-loads commonly used paths into cache to improve first-access performance
-func (p *Processor) WarmupCache(jsonStr string, paths []string, opts ...*ProcessorOptions) (*WarmupResult, error) {
+func (p *Processor) WarmupCache(jsonStr string, paths []string, opts ...Config) (*WarmupResult, error) {
 	if err := p.checkClosed(); err != nil {
 		return nil, err
 	}
@@ -301,7 +360,13 @@ func (p *Processor) WarmupCache(jsonStr string, paths []string, opts ...*Process
 		}
 
 		// Try to get the value (this will cache it if successful)
-		_, err := p.Get(jsonStr, path, options)
+		// Handle nil options to prevent nil pointer dereference
+		var err error
+		if options != nil {
+			_, err = p.Get(jsonStr, path, *options)
+		} else {
+			_, err = p.Get(jsonStr, path)
+		}
 		if err != nil {
 			errorCount++
 			failedPaths = append(failedPaths, path)
@@ -342,209 +407,73 @@ func (p *Processor) WarmupCache(jsonStr string, paths []string, opts ...*Process
 	return result, nil
 }
 
-// warmupCacheWithSampleData pre-loads paths using sample JSON data for better cache preparation
-func (p *Processor) warmupCacheWithSampleData(sampleData map[string]string, opts ...*ProcessorOptions) (*WarmupResult, error) {
-	if err := p.checkClosed(); err != nil {
-		return nil, err
-	}
-
-	if !p.config.EnableCache {
-		return nil, &JsonsError{
-			Op:      "warmup_cache_sample",
-			Message: "cache is disabled, cannot warmup cache",
-			Err:     ErrCacheDisabled,
-		}
-	}
-
-	if len(sampleData) == 0 {
-		return &WarmupResult{
-			TotalPaths:  0,
-			Successful:  0,
-			Failed:      0,
-			SuccessRate: 100.0,
-			FailedPaths: nil,
-		}, nil // Nothing to warmup
-	}
-
-	totalPaths := 0
-	successCount := 0
-	errorCount := 0
-	var lastError error
-	var allFailedPaths []string
-
-	// Process each JSON sample with its associated paths
-	for jsonStr, pathsStr := range sampleData {
-		// Parse paths (comma-separated)
-		paths := strings.Split(pathsStr, ",")
-		for i, path := range paths {
-			paths[i] = strings.TrimSpace(path)
-		}
-
-		totalPaths += len(paths)
-
-		// Warmup cache for this JSON with these paths
-		result, err := p.WarmupCache(jsonStr, paths, opts...)
-		if err != nil {
-			errorCount += len(paths)
-			lastError = err
-			// Add all paths as failed if the entire warmup failed
-			allFailedPaths = append(allFailedPaths, paths...)
-		} else if result != nil {
-			successCount += result.Successful
-			errorCount += result.Failed
-			allFailedPaths = append(allFailedPaths, result.FailedPaths...)
-		}
-	}
-
-	// Create warmup result
-	successRate := 100.0
-	if totalPaths > 0 {
-		successRate = float64(successCount) / float64(totalPaths) * 100
-	}
-
-	result := &WarmupResult{
-		TotalPaths:  totalPaths,
-		Successful:  successCount,
-		Failed:      errorCount,
-		SuccessRate: successRate,
-		FailedPaths: allFailedPaths,
-	}
-
-	// Return error if all operations failed
-	if successCount == 0 && errorCount > 0 {
-		return result, &JsonsError{
-			Op:      "warmup_cache_sample",
-			Message: fmt.Sprintf("sample data cache warmup failed for all %d paths, last error: %v", totalPaths, lastError),
-			Err:     lastError,
-		}
-	}
-
-	return result, nil
-}
-
-// hashStringToUint64 generates a fast 64-bit hash using inline FNV-1a (no allocations)
-// PERFORMANCE: For large strings (> 4KB), uses sampling to avoid full scan
+// hashStringToUint64 generates a fast 64-bit hash using FNV-1a.
+// Delegates to internal package for consistent implementation.
+// PERFORMANCE: For large strings (> 4KB), uses sampling to avoid full scan.
 func hashStringToUint64(s string) uint64 {
-	// Inline FNV-1a hash - no heap allocations
-	const (
-		offsetBasis = 14695981039346656037
-		prime       = 1099511628211
-	)
-	h := uint64(offsetBasis)
-
-	// PERFORMANCE: For large strings, sample instead of scanning entire string
-	// This provides a good enough hash for cache purposes while being much faster
-	if len(s) > 4096 {
-		// Include length in hash
-		length := len(s)
-		h ^= uint64(length)
-		h *= prime
-		h ^= uint64(length >> 8)
-		h *= prime
-
-		// Sample: first 512 bytes, middle 256 bytes, last 512 bytes
-		// This covers most structural variations in JSON
-		sampleSize := 512
-		middleSample := 256
-
-		// First sample
-		end := sampleSize
-		if end > len(s) {
-			end = len(s)
-		}
-		for i := 0; i < end; i++ {
-			h ^= uint64(s[i])
-			h *= prime
-		}
-
-		// Middle sample
-		midStart := len(s)/2 - middleSample/2
-		if midStart > sampleSize {
-			midEnd := midStart + middleSample
-			if midEnd > len(s) {
-				midEnd = len(s)
-			}
-			for i := midStart; i < midEnd; i++ {
-				h ^= uint64(s[i])
-				h *= prime
-			}
-		}
-
-		// Last sample
-		start := len(s) - sampleSize
-		if start < end {
-			start = end
-		}
-		for i := start; i < len(s); i++ {
-			h ^= uint64(s[i])
-			h *= prime
-		}
-
-		return h
+	if len(s) > internal.LargeStringHashThreshold {
+		return internal.HashStringFNV1aSampled(s)
 	}
-
-	// Small string: full hash
-	for i := 0; i < len(s); i++ {
-		h ^= uint64(s[i])
-		h *= prime
-	}
-	return h
+	return internal.HashStringFNV1a(s)
 }
 
-// computeHashCacheKey computes a strong cache lookup key for large JSON strings
-// PERFORMANCE: Uses FNV-1a on first 1KB + last 1KB + length for better distribution
-// This avoids collisions from just first/last 4 bytes
+// computeHashCacheKey computes a cache lookup key for JSON strings.
+// Delegates to hashStringToUint64 for consistent implementation.
+// PERFORMANCE: Uses sampled FNV-1a hash for large strings.
 func computeHashCacheKey(s string) uint64 {
-	const (
-		offsetBasis = 14695981039346656037
-		prime       = 1099511628211
-	)
-
-	h := uint64(offsetBasis)
-	lenS := len(s)
-
-	// Hash first 1KB
-	endFirst := 1024
-	if endFirst > lenS {
-		endFirst = lenS
-	}
-	for i := 0; i < endFirst; i++ {
-		h ^= uint64(s[i])
-		h *= prime
-	}
-
-	// Hash last 1KB
-	startLast := lenS - 1024
-	if startLast < endFirst {
-		startLast = endFirst
-	}
-	for i := startLast; i < lenS; i++ {
-		h ^= uint64(s[i])
-		h *= prime
-	}
-
-	// Include length to prevent prefix/suffix collisions
-	h ^= uint64(lenS)
-	h *= prime
-
-	return h
+	return hashStringToUint64(s)
 }
 
-// evictOldestHashCacheEntries removes a portion of entries from the hash cache
-// PERFORMANCE: Incremental eviction prevents cache thrashing and maintains consistent performance
-func (p *Processor) evictOldestHashCacheEntries(count int) {
-	removed := 0
-	for key := range p.hashCache {
-		delete(p.hashCache, key)
-		removed++
-		if removed >= count {
-			break
+// evictOldestHashCacheEntriesLocked removes the oldest entries from the hash cache using LRU strategy.
+// PERFORMANCE: LRU eviction keeps frequently accessed entries in cache for better hit rate.
+// CONCURRENCY: Must be called with hashCacheMu.Lock() held.
+func (p *Processor) evictOldestHashCacheEntriesLocked(count int) {
+	if count <= 0 || len(p.hashCache) == 0 {
+		return
+	}
+
+	// Collect entries with their access times for LRU eviction
+	type entryWithTime struct {
+		key        uint64
+		lastAccess int64
+	}
+
+	entries := make([]entryWithTime, 0, len(p.hashCache))
+	for key, entry := range p.hashCache {
+		entries = append(entries, entryWithTime{key: key, lastAccess: entry.lastAccess})
+	}
+
+	// Sort by lastAccess ascending (oldest first)
+	// For small counts, use simple selection instead of full sort
+	if count < len(entries)/2 {
+		// Partial selection sort - find the oldest 'count' entries
+		for i := 0; i < count && i < len(entries); i++ {
+			oldestIdx := i
+			for j := i + 1; j < len(entries); j++ {
+				if entries[j].lastAccess < entries[oldestIdx].lastAccess {
+					oldestIdx = j
+				}
+			}
+			entries[i], entries[oldestIdx] = entries[oldestIdx], entries[i]
 		}
+	} else {
+		// Full sort for larger evictions
+		sort.Slice(entries, func(i, j int) bool {
+			return entries[i].lastAccess < entries[j].lastAccess
+		})
+	}
+
+	// Remove the oldest entries
+	for i := 0; i < count && i < len(entries); i++ {
+		delete(p.hashCache, entries[i].key)
 	}
 }
 
 // getOrCacheHash gets a cached hash for a JSON string, or computes and caches it
 // OPTIMIZED: Caches hashes for large JSON strings to avoid repeated calculations
+// Uses uint64 keys directly instead of hex strings for memory efficiency
+// CONCURRENCY FIX: Uses double-checked locking to avoid TOCTOU race condition
+// where multiple goroutines could compute the same hash simultaneously
 func (p *Processor) getOrCacheHash(jsonStr string) uint64 {
 	// For small strings, just compute directly (no caching overhead)
 	if len(jsonStr) <= 4096 {
@@ -555,29 +484,55 @@ func (p *Processor) getOrCacheHash(jsonStr string) uint64 {
 	// PERFORMANCE: Use strong FNV-1a hash of first/last 1KB + length for cache key
 	cacheLookupKey := computeHashCacheKey(jsonStr)
 
-	// Convert uint64 to string key using formatUint64HexString
-	cacheLookupKeyStr := formatUint64HexString(cacheLookupKey)
-
-	// Fast path: read lock lookup
+	// Fast path: read lock lookup with TTL check
 	p.hashCacheMu.RLock()
-	if h, ok := p.hashCache[cacheLookupKeyStr]; ok {
+	if entry, ok := p.hashCache[cacheLookupKey]; ok {
+		// Check if entry has expired
+		if now := time.Now().UnixNano(); now > entry.expiresAt {
+			p.hashCacheMu.RUnlock()
+			// Entry expired, compute fresh hash (will replace in slow path)
+			h := hashStringToUint64(jsonStr)
+			// Try to update cache with new entry
+			p.hashCacheMu.Lock()
+			// Double-check after acquiring write lock
+			if e, exists := p.hashCache[cacheLookupKey]; exists && e.expiresAt == entry.expiresAt {
+				p.hashCache[cacheLookupKey] = &hashCacheEntry{
+					hash:       h,
+					lastAccess: now,
+					expiresAt:  now + hashCacheTTL,
+				}
+			}
+			p.hashCacheMu.Unlock()
+			return h
+		}
+		hash := entry.hash
 		p.hashCacheMu.RUnlock()
-		return h
+		return hash
 	}
 	p.hashCacheMu.RUnlock()
 
-	// Slow path: compute and cache
+	// Slow path: compute hash outside of lock to avoid blocking other goroutines
 	h := hashStringToUint64(jsonStr)
+	now := time.Now().UnixNano()
+
+	// Double-checked locking: re-verify under write lock
+	// This prevents multiple goroutines from computing and storing the same hash
+	p.hashCacheMu.Lock()
+	// Check if another goroutine already stored this hash
+	if entry, ok := p.hashCache[cacheLookupKey]; ok {
+		p.hashCacheMu.Unlock()
+		return entry.hash
+	}
 
 	// Cache the result with size limit
-	p.hashCacheMu.Lock()
-	if len(p.hashCache) < p.hashCacheSize {
-		p.hashCache[cacheLookupKeyStr] = h
-	} else if len(p.hashCache) >= p.hashCacheSize*2 {
-		// PERFORMANCE: Incremental eviction (25%) instead of complete clear
-		// This prevents cache thrashing and maintains more consistent performance
-		p.evictOldestHashCacheEntries(len(p.hashCache) / 4)
-		p.hashCache[cacheLookupKeyStr] = h
+	if len(p.hashCache) >= hashCacheMaxSize {
+		// Evict 25% to make room using LRU
+		p.evictOldestHashCacheEntriesLocked(len(p.hashCache) / 4)
+	}
+	p.hashCache[cacheLookupKey] = &hashCacheEntry{
+		hash:       h,
+		lastAccess: now,
+		expiresAt:  now + hashCacheTTL,
 	}
 	p.hashCacheMu.Unlock()
 
@@ -587,7 +542,7 @@ func (p *Processor) getOrCacheHash(jsonStr string) uint64 {
 // createCacheKey creates a cache key with optimized efficiency
 // Uses direct hash values instead of hex strings for better performance
 // OPTIMIZED: Uses cached hash for large JSON strings
-func (p *Processor) createCacheKey(operation, jsonStr, path string, options *ProcessorOptions) string {
+func (p *Processor) createCacheKey(operation, jsonStr, path string, options *Config) string {
 	// OPTIMIZED: Use cached hash for large JSON strings
 	jsonHash := p.getOrCacheHash(jsonStr)
 	return p.createCacheKeyWithHash(operation, jsonHash, path, options)
@@ -595,7 +550,7 @@ func (p *Processor) createCacheKey(operation, jsonStr, path string, options *Pro
 
 // createCacheKeyWithHash creates a cache key using a pre-computed hash
 // PERFORMANCE: Allows hash reuse across multiple cache key creations
-func (p *Processor) createCacheKeyWithHash(operation string, jsonHash uint64, path string, options *ProcessorOptions) string {
+func (p *Processor) createCacheKeyWithHash(operation string, jsonHash uint64, path string, options *Config) string {
 	// Use a fixed-size array buffer for small keys to avoid allocations
 	// Most cache keys are < 128 bytes
 	var buf [128]byte
@@ -667,37 +622,9 @@ func formatUint64HexString(v uint64) string {
 	return string(buf[:])
 }
 
-// pathSegmentPool is a global pool for PathSegment slices
-var pathSegmentPool = sync.Pool{
-	New: func() any {
-		// Pre-allocate a slice with reasonable capacity
-		s := make([]internal.PathSegment, 0, 8)
-		return &s
-	},
-}
-
-// getPathSegmentSlice gets a PathSegment slice from the pool
-func getPathSegmentSlice() *[]internal.PathSegment {
-	return pathSegmentPool.Get().(*[]internal.PathSegment)
-}
-
-// putPathSegmentSlice returns a PathSegment slice to the pool
-func putPathSegmentSlice(s *[]internal.PathSegment) {
-	if s == nil {
-		return
-	}
-	// Reset slice but keep capacity
-	*s = (*s)[:0]
-	// Don't pool very large slices
-	if cap(*s) > 64 {
-		return
-	}
-	pathSegmentPool.Put(s)
-}
-
-// createCacheKey creates a cache key with stack-allocated buffer for small keys
-// This avoids heap allocation for common case of small paths
-func createCacheKey(prefix, data string) string {
+// createSimpleCacheKey creates a simple "prefix:data" format cache key
+// Uses stack-allocated buffer for small keys to avoid heap allocation
+func createSimpleCacheKey(prefix, data string) string {
 	totalLen := len(prefix) + 1 + len(data) // prefix + ":" + data
 
 	// Use stack-allocated buffer for small keys (up to 256 bytes)
@@ -722,7 +649,7 @@ func (p *Processor) getCachedPathSegments(path string) ([]internal.PathSegment, 
 	// Use unified cache manager
 	if p.config.EnableCache {
 		// PERFORMANCE: Create cache key once for both lookup and storage
-		cacheKey := createCacheKey("path", path)
+		cacheKey := createSimpleCacheKey("path", path)
 		if cached, ok := p.cache.Get(cacheKey); ok {
 			if segments, ok := cached.([]internal.PathSegment); ok {
 				// PERFORMANCE: Return cached segments directly - they are immutable after creation
@@ -737,7 +664,7 @@ func (p *Processor) getCachedPathSegments(path string) ([]internal.PathSegment, 
 		}
 
 		// Cache the result using unified cache - reuse the cache key
-		if atomic.LoadInt32(&p.state) == 0 {
+		if atomic.LoadInt32(&p.state) == processorStateActive {
 			cached := make([]internal.PathSegment, len(segments))
 			copy(cached, segments)
 			p.cache.Set(cacheKey, cached)
@@ -755,53 +682,6 @@ func (p *Processor) getCachedPathSegments(path string) ([]internal.PathSegment, 
 	return segments, nil
 }
 
-// getCachedParsedJSON gets parsed JSON using unified cache
-// OPTIMIZED: Support caching for larger JSON files with tiered limits
-func (p *Processor) getCachedParsedJSON(jsonStr string) (any, error) {
-	jsonLen := len(jsonStr)
-
-	// Determine cache eligibility based on size
-	// Small JSON: always cache with full key
-	// Medium JSON: cache with hash-based key
-	// Large JSON: cache with hash-based key (up to LargeJSONCacheLimit)
-	canCache := p.config.EnableCache && jsonLen <= LargeJSONCacheLimit
-
-	if canCache {
-		// Use hash-based key for larger JSON to reduce memory usage
-		var cacheKey string
-		if jsonLen <= SmallJSONCacheLimit {
-			cacheKey = createCacheKey("json", jsonStr)
-		} else {
-			// For medium/large JSON, use hash-based key
-			cacheKey = createCacheKey("jsonh", formatUint64HexString(hashStringToUint64(jsonStr)))
-		}
-
-		if cached, ok := p.cache.Get(cacheKey); ok {
-			return cached, nil
-		}
-	}
-
-	// Parse JSON
-	var data any
-	err := p.Parse(jsonStr, &data)
-	if err != nil {
-		return nil, err
-	}
-
-	// Cache parsed JSON based on size limits
-	if canCache && atomic.LoadInt32(&p.state) == 0 {
-		var cacheKey string
-		if jsonLen <= SmallJSONCacheLimit {
-			cacheKey = createCacheKey("json", jsonStr)
-		} else {
-			cacheKey = createCacheKey("jsonh", formatUint64HexString(hashStringToUint64(jsonStr)))
-		}
-		p.cache.Set(cacheKey, data)
-	}
-
-	return data, nil
-}
-
 // getCachedResult retrieves a cached result if available
 func (p *Processor) getCachedResult(key string) (any, bool) {
 	if !p.config.EnableCache {
@@ -811,7 +691,7 @@ func (p *Processor) getCachedResult(key string) (any, bool) {
 }
 
 // setCachedResult stores a result in cache with security validation
-func (p *Processor) setCachedResult(key string, result any, options ...*ProcessorOptions) {
+func (p *Processor) setCachedResult(key string, result any, options ...*Config) {
 	if !p.config.EnableCache {
 		return
 	}
@@ -851,124 +731,20 @@ func (p *Processor) setCachedResultInternal(key string, result any) {
 }
 
 // containsSensitiveData checks if the result contains sensitive information
-// SECURITY: Uses recursive detection with depth limit to prevent DoS
+// SECURITY: Delegates to securityValidator for consistent detection logic
 func (p *Processor) containsSensitiveData(result any) bool {
-	return p.containsSensitiveDataRecursive(result, 0, 10) // max depth of 10
-}
-
-// containsSensitiveDataRecursive recursively checks for sensitive data with depth limit
-func (p *Processor) containsSensitiveDataRecursive(result any, depth, maxDepth int) bool {
-	// SECURITY: Enforce depth limit to prevent DoS
-	if depth > maxDepth {
-		return false
-	}
-
-	if result == nil {
-		return false
-	}
-
-	// Fast path for primitive types - they cannot contain sensitive field names
-	switch result.(type) {
-	case int, int8, int16, int32, int64,
-		uint, uint8, uint16, uint32, uint64,
-		float32, float64, bool:
-		return false
-	}
-
-	// Check string values for sensitive patterns
-	if str, ok := result.(string); ok {
-		return p.containsSensitivePatterns(str)
-	}
-
-	// For maps, check keys and recursively check values
-	if m, ok := result.(map[string]any); ok {
-		for key, value := range m {
-			// Check key for sensitive patterns
-			if p.containsSensitivePatterns(key) {
-				return true
-			}
-			// Recursively check value
-			if p.containsSensitiveDataRecursive(value, depth+1, maxDepth) {
-				return true
-			}
-		}
-		return false
-	}
-
-	// For slices, recursively check elements with limit
-	if arr, ok := result.([]any); ok {
-		// Only check first 50 elements to avoid performance hit on large arrays
-		checkLimit := len(arr)
-		if checkLimit > 50 {
-			checkLimit = 50
-		}
-		for i := 0; i < checkLimit; i++ {
-			if p.containsSensitiveDataRecursive(arr[i], depth+1, maxDepth) {
-				return true
-			}
-		}
-		return false
-	}
-
-	return false
-}
-
-// containsSensitivePatterns checks if a string contains sensitive patterns
-// SECURITY: Extended pattern list for comprehensive sensitive data detection
-// PERFORMANCE: Uses package-level sensitivePatterns slice to avoid allocation
-func (p *Processor) containsSensitivePatterns(s string) bool {
-	// Fast lowercase conversion and check
-	s = strings.ToLower(s)
-	for _, pattern := range sensitivePatterns {
-		if strings.Contains(s, pattern) {
-			return true
-		}
-	}
-	return false
+	return p.securityValidator.ContainsSensitiveData(result)
 }
 
 // isValidCacheKey validates cache key format
-// Optimized: uses single-pass byte range check instead of individual byte iteration
+// Delegates to internal package for consistent implementation
 func (p *Processor) isValidCacheKey(key string) bool {
-	keyLen := len(key)
-	// Use unified constant from internal package for consistency
-	if keyLen > internal.MaxCacheKeyLength {
-		return false
-	}
-
-	// Fast path for empty keys
-	if keyLen == 0 {
-		return true
-	}
-
-	// Check for null bytes and control characters using optimized scanning
-	// Most cache keys are generated internally and won't have these issues
-	// So we do a quick check for the most common problematic characters first
-	if strings.IndexByte(key, 0) != -1 {
-		return false
-	}
-
-	// Check for other control characters (1-31, 127)
-	// This is still faster than iterating byte by byte for most keys
-	for i := 0; i < keyLen; i++ {
-		c := key[i]
-		if c < 32 || c == 127 {
-			return false
-		}
-	}
-
-	return true
-}
-
-// parseSliceComponents parses slice syntax using unified array utilities
-func (p *Processor) parseSliceComponents(slicePart string) (start, end, step *int, err error) {
-	return internal.ParseSliceComponents(slicePart)
+	return internal.IsValidCacheKey(key)
 }
 
 // GetConfig returns a copy of the processor configuration
-func (p *Processor) GetConfig() *Config {
-	configCopy := *p.config
-	return &configCopy
+func (p *Processor) GetConfig() Config {
+	return *p.config.Clone()
 }
 
 // SetLogger sets a custom structured logger for the processor
@@ -991,8 +767,8 @@ func (p *Processor) getLogger() *slog.Logger {
 // checkClosed returns an error if the processor is closed or closing
 func (p *Processor) checkClosed() error {
 	state := atomic.LoadInt32(&p.state)
-	if state != 0 {
-		if state == 1 {
+	if state != processorStateActive {
+		if state == processorStateClosing {
 			return &JsonsError{
 				Op:      "check_closed",
 				Message: "processor is closing",
@@ -1008,25 +784,63 @@ func (p *Processor) checkClosed() error {
 	return nil
 }
 
-// prepareOptions prepares and validates processor options
-func (p *Processor) prepareOptions(opts ...*ProcessorOptions) (*ProcessorOptions, error) {
-	var options *ProcessorOptions
-	if len(opts) > 0 && opts[0] != nil {
-		options = opts[0]
-	} else {
-		options = DefaultOptions()
-	}
+// configPool pools Config objects to reduce allocations in hot paths
+// PERFORMANCE: Reduces ~6GB allocations from prepareOptions calls
+var configPool = sync.Pool{
+	New: func() any {
+		cfg := DefaultConfig()
+		return &cfg
+	},
+}
 
-	// Valid options
-	if err := ValidateOptions(options); err != nil {
+// getConfig gets a Config from the pool, applies defaults or provided config, and validates
+func (p *Processor) getConfig(opts ...Config) (*Config, error) {
+	cfg := configPool.Get().(*Config)
+	if len(opts) > 0 {
+		*cfg = opts[0]
+	} else {
+		*cfg = DefaultConfig()
+	}
+	if err := cfg.Validate(); err != nil {
+		configPool.Put(cfg)
 		return nil, err
 	}
+	return cfg, nil
+}
 
-	return options, nil
+// putConfig returns a Config to the pool after clearing sensitive data
+func (p *Processor) putConfig(cfg *Config) {
+	if cfg == nil {
+		return
+	}
+	// Clear sensitive fields to prevent memory leaks
+	cfg.Context = nil
+	configPool.Put(cfg)
+}
+
+// prepareOptions prepares and validates processor options
+// Accepts Config values and returns a pointer for internal use
+// PERFORMANCE: Uses pooled Config objects to reduce allocations
+func (p *Processor) prepareOptions(opts ...Config) (*Config, error) {
+	return p.getConfig(opts...)
+}
+
+// mergeOptionsWithOverride creates a new Config with overrides applied.
+// Returns a Config value (not pointer) to prevent accidental mutation
+// and encourage the caller to work with their own copy.
+func mergeOptionsWithOverride(opts []Config, override func(*Config)) Config {
+	var result Config
+	if len(opts) > 0 {
+		result = *(&opts[0]).Clone()
+	} else {
+		result = DefaultConfig()
+	}
+	override(&result)
+	return result
 }
 
 // Delete removes a value from JSON at the specified path
-func (p *Processor) Delete(jsonStr, path string, opts ...*ProcessorOptions) (string, error) {
+func (p *Processor) Delete(jsonStr, path string, opts ...Config) (string, error) {
 	if err := p.checkClosed(); err != nil {
 		return "", err
 	}
@@ -1113,12 +927,14 @@ func (p *Processor) isArrayDeletePath(path string) bool {
 	return false
 }
 
-// DeleteWithCleanNull removes a value from JSON and cleans up null values
-// Returns:
-//   - On success: modified JSON string and nil error
-//   - On failure: original unmodified JSON string and error information
-func (p *Processor) DeleteWithCleanNull(jsonStr, path string, opts ...*ProcessorOptions) (string, error) {
-	cleanupOpts := mergeOptionsWithOverride(opts, func(o *ProcessorOptions) {
+// DeleteClean removes a value from JSON and cleans up null placeholders.
+// This is the unified API for delete-with-cleanup operations.
+//
+// Example:
+//
+//	result, err := processor.DeleteClean(data, "users[0].profile")
+func (p *Processor) DeleteClean(jsonStr, path string, opts ...Config) (string, error) {
+	cleanupOpts := mergeOptionsWithOverride(opts, func(o *Config) {
 		o.CleanupNulls = true
 		o.CompactArrays = true
 	})
@@ -1131,7 +947,7 @@ func (p *Processor) Foreach(jsonStr string, fn func(key any, item *IterableValue
 		return
 	}
 
-	data, err := p.Get(jsonStr, ".", nil)
+	data, err := p.Get(jsonStr, ".")
 	if err != nil {
 		return
 	}
@@ -1146,7 +962,7 @@ func (p *Processor) ForeachWithPath(jsonStr, path string, fn func(key any, item 
 		return err
 	}
 
-	data, err := p.Get(jsonStr, path, nil)
+	data, err := p.Get(jsonStr, path)
 	if err != nil {
 		return err
 	}
@@ -1161,7 +977,7 @@ func (p *Processor) ForeachWithPathAndIterator(jsonStr, path string, fn func(key
 		return err
 	}
 
-	data, err := p.Get(jsonStr, path, nil)
+	data, err := p.Get(jsonStr, path)
 	if err != nil {
 		return err
 	}
@@ -1175,7 +991,7 @@ func (p *Processor) ForeachWithPathAndControl(jsonStr, path string, fn func(key 
 		return err
 	}
 
-	data, err := p.Get(jsonStr, path, nil)
+	data, err := p.Get(jsonStr, path)
 	if err != nil {
 		return err
 	}
@@ -1190,7 +1006,7 @@ func (p *Processor) ForeachReturn(jsonStr string, fn func(key any, item *Iterabl
 		return "", err
 	}
 
-	data, err := p.Get(jsonStr, ".", nil)
+	data, err := p.Get(jsonStr, ".")
 	if err != nil {
 		return "", err
 	}
@@ -1209,7 +1025,7 @@ func (p *Processor) ForeachNested(jsonStr string, fn func(key any, item *Iterabl
 		return
 	}
 
-	data, err := p.Get(jsonStr, ".", nil)
+	data, err := p.Get(jsonStr, ".")
 	if err != nil {
 		return
 	}
@@ -1218,19 +1034,19 @@ func (p *Processor) ForeachNested(jsonStr string, fn func(key any, item *Iterabl
 }
 
 // SafeGet performs a type-safe get operation with comprehensive error handling
-func (p *Processor) SafeGet(jsonStr, path string) TypeSafeAccessResult {
+func (p *Processor) SafeGet(jsonStr, path string) AccessResult {
 	// Validate inputs
 	if jsonStr == "" {
-		return TypeSafeAccessResult{Exists: false}
+		return AccessResult{Exists: false}
 	}
 	if path == "" {
-		return TypeSafeAccessResult{Exists: false}
+		return AccessResult{Exists: false}
 	}
 
 	// Perform the get operation
 	value, err := p.Get(jsonStr, path)
 	if err != nil {
-		return TypeSafeAccessResult{Exists: false}
+		return AccessResult{Exists: false}
 	}
 
 	// Determine the type
@@ -1241,47 +1057,15 @@ func (p *Processor) SafeGet(jsonStr, path string) TypeSafeAccessResult {
 		valueType = fmt.Sprintf("%T", value)
 	}
 
-	return TypeSafeAccessResult{
+	return AccessResult{
 		Value:  value,
 		Exists: true,
 		Type:   valueType,
 	}
 }
 
-// SafeGetTypedWithProcessor performs a type-safe get operation with generic type constraints
-func SafeGetTypedWithProcessor[T any](p *Processor, jsonStr, path string) TypeSafeResult[T] {
-	var zero T
-
-	// Validate inputs
-	if jsonStr == "" || path == "" {
-		return TypeSafeResult[T]{Value: zero, Exists: false, Error: ErrPathNotFound}
-	}
-
-	// Perform the get operation
-	value, err := p.Get(jsonStr, path)
-	if err != nil {
-		return TypeSafeResult[T]{Value: zero, Exists: false, Error: err}
-	}
-
-	// Type assertion with safety
-	if typedValue, ok := value.(T); ok {
-		return TypeSafeResult[T]{Value: typedValue, Exists: true, Error: nil}
-	}
-
-	// Attempt type conversion
-	if converted, err := TypeSafeConvert[T](value); err == nil {
-		return TypeSafeResult[T]{Value: converted, Exists: true, Error: nil}
-	}
-
-	return TypeSafeResult[T]{
-		Value:  zero,
-		Exists: true,
-		Error:  fmt.Errorf("type mismatch: expected %T, got %T", zero, value),
-	}
-}
-
 // Get retrieves a value from JSON using a path expression with performance
-func (p *Processor) Get(jsonStr, path string, opts ...*ProcessorOptions) (any, error) {
+func (p *Processor) Get(jsonStr, path string, opts ...Config) (any, error) {
 	// Check rate limiting for security
 	if err := p.checkRateLimit(); err != nil {
 		return nil, err
@@ -1383,8 +1167,7 @@ func (p *Processor) Get(jsonStr, path string, opts ...*ProcessorOptions) (any, e
 		data = cachedData
 	} else {
 		// Parse JSON with error context
-		var parseErr error
-		parseErr = p.Parse(jsonStr, &data, opts...)
+		parseErr := p.Parse(jsonStr, &data, opts...)
 		if parseErr != nil {
 			p.incrementErrorCount()
 			recordMetrics(false)
@@ -1400,7 +1183,7 @@ func (p *Processor) Get(jsonStr, path string, opts ...*ProcessorOptions) (any, e
 	}
 
 	// Use unified recursive processor for all paths (cached instance)
-	result, err := p.recursiveProcessor.ProcessRecursively(data, path, OpGet, nil)
+	result, err := p.recursiveProcessor.ProcessRecursively(data, path, opGet, nil)
 	if err != nil {
 		p.incrementErrorCount()
 		recordMetrics(false)
@@ -1433,7 +1216,7 @@ func (p *Processor) Get(jsonStr, path string, opts ...*ProcessorOptions) (any, e
 //	if err != nil { return err }
 //	value1, _ := processor.GetFromParsed(parsed, "path1")
 //	value2, _ := processor.GetFromParsed(parsed, "path2")
-func (p *Processor) PreParse(jsonStr string, opts ...*ProcessorOptions) (*ParsedJSON, error) {
+func (p *Processor) PreParse(jsonStr string, opts ...Config) (*ParsedJSON, error) {
 	if err := p.checkClosed(); err != nil {
 		return nil, err
 	}
@@ -1479,7 +1262,7 @@ func (p *Processor) PreParse(jsonStr string, opts ...*ProcessorOptions) (*Parsed
 // This is significantly faster than Get() for repeated queries on the same JSON.
 //
 // OPTIMIZED: Skips JSON parsing, goes directly to path navigation.
-func (p *Processor) GetFromParsed(parsed *ParsedJSON, path string, opts ...*ProcessorOptions) (any, error) {
+func (p *Processor) GetFromParsed(parsed *ParsedJSON, path string, opts ...Config) (any, error) {
 	if parsed == nil {
 		return nil, &JsonsError{
 			Op:      "get_from_parsed",
@@ -1502,7 +1285,7 @@ func (p *Processor) GetFromParsed(parsed *ParsedJSON, path string, opts ...*Proc
 	}
 
 	// Use unified recursive processor for path navigation
-	result, err := p.recursiveProcessor.ProcessRecursively(parsed.data, path, OpGet, nil)
+	result, err := p.recursiveProcessor.ProcessRecursively(parsed.data, path, opGet, nil)
 	if err != nil {
 		return nil, &JsonsError{
 			Op:      "get_from_parsed",
@@ -1525,7 +1308,7 @@ func (p *Processor) GetFromParsed(parsed *ParsedJSON, path string, opts ...*Proc
 // Returns a new ParsedJSON with the modified data (original is not modified).
 //
 // OPTIMIZED: Skips JSON parsing, works directly on parsed data.
-func (p *Processor) SetFromParsed(parsed *ParsedJSON, path string, value any, opts ...*ProcessorOptions) (*ParsedJSON, error) {
+func (p *Processor) SetFromParsed(parsed *ParsedJSON, path string, value any, opts ...Config) (*ParsedJSON, error) {
 	if parsed == nil {
 		return nil, &JsonsError{
 			Op:      "set_from_parsed",
@@ -1548,10 +1331,13 @@ func (p *Processor) SetFromParsed(parsed *ParsedJSON, path string, value any, op
 	}
 
 	// Deep copy the data before modification
-	dataCopy := p.deepCopyData(parsed.data)
+	dataCopy, err := p.deepCopyData(parsed.data)
+	if err != nil {
+		return nil, &JsonsError{Op: "set_from_parsed", Path: path, Err: err}
+	}
 
 	// Use unified recursive processor for path navigation and modification
-	result, err := p.recursiveProcessor.ProcessRecursivelyWithOptions(dataCopy, path, OpSet, value, options.CreatePaths)
+	result, err := p.recursiveProcessor.ProcessRecursivelyWithOptions(dataCopy, path, opSet, value, options.CreatePaths)
 	if err != nil {
 		return nil, &JsonsError{
 			Op:      "set_from_parsed",
@@ -1570,100 +1356,77 @@ func (p *Processor) SetFromParsed(parsed *ParsedJSON, path string, value any, op
 }
 
 // GetString retrieves a string value from JSON at the specified path
-func (p *Processor) GetString(jsonStr, path string, opts ...*ProcessorOptions) (string, error) {
-	return GetTypedWithProcessor[string](p, jsonStr, path, opts...)
+func (p *Processor) GetString(jsonStr, path string, opts ...Config) (string, error) {
+	return getTypedWithProcessor[string](p, jsonStr, path, opts...)
 }
 
 // GetInt retrieves an int value from JSON at the specified path
-func (p *Processor) GetInt(jsonStr, path string, opts ...*ProcessorOptions) (int, error) {
-	return GetTypedWithProcessor[int](p, jsonStr, path, opts...)
+func (p *Processor) GetInt(jsonStr, path string, opts ...Config) (int, error) {
+	return getTypedWithProcessor[int](p, jsonStr, path, opts...)
 }
 
-// GetFloat64 retrieves a float64 value from JSON at the specified path
-func (p *Processor) GetFloat64(jsonStr, path string, opts ...*ProcessorOptions) (float64, error) {
-	return GetTypedWithProcessor[float64](p, jsonStr, path, opts...)
+// GetFloat retrieves a float64 value from JSON at the specified path
+func (p *Processor) GetFloat(jsonStr, path string, opts ...Config) (float64, error) {
+	return getTypedWithProcessor[float64](p, jsonStr, path, opts...)
 }
 
 // GetBool retrieves a bool value from JSON at the specified path
-func (p *Processor) GetBool(jsonStr, path string, opts ...*ProcessorOptions) (bool, error) {
-	return GetTypedWithProcessor[bool](p, jsonStr, path, opts...)
+func (p *Processor) GetBool(jsonStr, path string, opts ...Config) (bool, error) {
+	return getTypedWithProcessor[bool](p, jsonStr, path, opts...)
 }
 
 // GetArray retrieves an array value from JSON at the specified path
-func (p *Processor) GetArray(jsonStr, path string, opts ...*ProcessorOptions) ([]any, error) {
-	return GetTypedWithProcessor[[]any](p, jsonStr, path, opts...)
+func (p *Processor) GetArray(jsonStr, path string, opts ...Config) ([]any, error) {
+	return getTypedWithProcessor[[]any](p, jsonStr, path, opts...)
 }
 
 // GetObject retrieves an object value from JSON at the specified path
-func (p *Processor) GetObject(jsonStr, path string, opts ...*ProcessorOptions) (map[string]any, error) {
-	return GetTypedWithProcessor[map[string]any](p, jsonStr, path, opts...)
+func (p *Processor) GetObject(jsonStr, path string, opts ...Config) (map[string]any, error) {
+	return getTypedWithProcessor[map[string]any](p, jsonStr, path, opts...)
 }
 
-// GetWithDefault retrieves a value from JSON with a default fallback
-func (p *Processor) GetWithDefault(jsonStr, path string, defaultValue any, opts ...*ProcessorOptions) any {
-	value, err := p.Get(jsonStr, path, opts...)
-	if err != nil || value == nil {
-		return defaultValue
-	}
-	return value
-}
-
-// GetStringWithDefault retrieves a string value from JSON with a default fallback
-func (p *Processor) GetStringWithDefault(jsonStr, path, defaultValue string, opts ...*ProcessorOptions) string {
-	value, err := p.GetString(jsonStr, path, opts...)
+// GetStringOr retrieves a string value from JSON at the specified path with a default fallback.
+// Returns defaultValue if: path not found, value is null, or type conversion fails.
+func (p *Processor) GetStringOr(jsonStr, path string, defaultValue string, opts ...Config) string {
+	result, err := p.GetString(jsonStr, path, opts...)
 	if err != nil {
 		return defaultValue
 	}
-	return value
+	return result
 }
 
-// GetIntWithDefault retrieves an int value from JSON with a default fallback
-func (p *Processor) GetIntWithDefault(jsonStr, path string, defaultValue int, opts ...*ProcessorOptions) int {
-	value, err := p.GetInt(jsonStr, path, opts...)
+// GetIntOr retrieves an int value from JSON at the specified path with a default fallback.
+// Returns defaultValue if: path not found, value is null, or type conversion fails.
+func (p *Processor) GetIntOr(jsonStr, path string, defaultValue int, opts ...Config) int {
+	result, err := p.GetInt(jsonStr, path, opts...)
 	if err != nil {
 		return defaultValue
 	}
-	return value
+	return result
 }
 
-// GetFloat64WithDefault retrieves a float64 value from JSON with a default fallback
-func (p *Processor) GetFloat64WithDefault(jsonStr, path string, defaultValue float64, opts ...*ProcessorOptions) float64 {
-	value, err := p.GetFloat64(jsonStr, path, opts...)
+// GetFloatOr retrieves a float64 value from JSON at the specified path with a default fallback.
+// Returns defaultValue if: path not found, value is null, or type conversion fails.
+func (p *Processor) GetFloatOr(jsonStr, path string, defaultValue float64, opts ...Config) float64 {
+	result, err := p.GetFloat(jsonStr, path, opts...)
 	if err != nil {
 		return defaultValue
 	}
-	return value
+	return result
 }
 
-// GetBoolWithDefault retrieves a bool value from JSON with a default fallback
-func (p *Processor) GetBoolWithDefault(jsonStr, path string, defaultValue bool, opts ...*ProcessorOptions) bool {
-	value, err := p.GetBool(jsonStr, path, opts...)
+// GetBoolOr retrieves a bool value from JSON at the specified path with a default fallback.
+// Returns defaultValue if: path not found, value is null, or type conversion fails.
+func (p *Processor) GetBoolOr(jsonStr, path string, defaultValue bool, opts ...Config) bool {
+	result, err := p.GetBool(jsonStr, path, opts...)
 	if err != nil {
 		return defaultValue
 	}
-	return value
-}
-
-// GetArrayWithDefault retrieves an array value from JSON with a default fallback
-func (p *Processor) GetArrayWithDefault(jsonStr, path string, defaultValue []any, opts ...*ProcessorOptions) []any {
-	value, err := p.GetArray(jsonStr, path, opts...)
-	if err != nil {
-		return defaultValue
-	}
-	return value
-}
-
-// GetObjectWithDefault retrieves an object value from JSON with a default fallback
-func (p *Processor) GetObjectWithDefault(jsonStr, path string, defaultValue map[string]any, opts ...*ProcessorOptions) map[string]any {
-	value, err := p.GetObject(jsonStr, path, opts...)
-	if err != nil {
-		return defaultValue
-	}
-	return value
+	return result
 }
 
 // GetMultiple retrieves multiple values from JSON using multiple path expressions
-func (p *Processor) GetMultiple(jsonStr string, paths []string, opts ...*ProcessorOptions) (map[string]any, error) {
+func (p *Processor) GetMultiple(jsonStr string, paths []string, opts ...Config) (map[string]any, error) {
 	if err := p.checkClosed(); err != nil {
 		return nil, err
 	}
@@ -1695,7 +1458,7 @@ func (p *Processor) GetMultiple(jsonStr string, paths []string, opts ...*Process
 		}
 
 		// Use cached recursive processor
-		result, err := p.recursiveProcessor.ProcessRecursively(data, path, OpGet, nil)
+		result, err := p.recursiveProcessor.ProcessRecursively(data, path, opGet, nil)
 
 		if err != nil {
 			// Continue with other paths, store error as result
@@ -1706,89 +1469,6 @@ func (p *Processor) GetMultiple(jsonStr string, paths []string, opts ...*Process
 	}
 
 	return results, nil
-}
-
-// getMultipleParallel processes multiple paths in parallel
-func (p *Processor) getMultipleParallel(data any, paths []string, _ *ProcessorOptions) (map[string]any, error) {
-	results := make(map[string]any, len(paths)) // Pre-allocate with known size
-	var mu sync.RWMutex                         // Use RWMutex for better read performance
-	var wg sync.WaitGroup
-
-	// Create semaphore to limit concurrency
-	semaphore := make(chan struct{}, p.config.MaxConcurrency)
-
-	// Create context with timeout to prevent goroutine leaks
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	for _, path := range paths {
-		wg.Add(1)
-		go func(currentPath string) {
-			defer wg.Done()
-
-			// Check for context cancellation
-			select {
-			case <-ctx.Done():
-				mu.Lock()
-				results[currentPath] = nil
-				mu.Unlock()
-				return
-			case semaphore <- struct{}{}:
-				// Acquired semaphore, continue
-			}
-			defer func() { <-semaphore }()
-
-			// Valid path
-			if err := p.validatePath(currentPath); err != nil {
-				mu.Lock()
-				results[currentPath] = nil
-				mu.Unlock()
-				return
-			}
-
-			// Navigate to path with context check
-			select {
-			case <-ctx.Done():
-				mu.Lock()
-				results[currentPath] = nil
-				mu.Unlock()
-				return
-			default:
-				// Use cached recursive processor for consistency
-				var result any
-				var err error
-
-				result, err = p.recursiveProcessor.ProcessRecursively(data, currentPath, OpGet, nil)
-
-				// Store result
-				mu.Lock()
-				if err != nil {
-					results[currentPath] = nil
-				} else {
-					results[currentPath] = result
-				}
-				mu.Unlock()
-			}
-		}(path)
-	}
-
-	// Wait for completion or timeout
-	done := make(chan struct{})
-	go func() {
-		wg.Wait()
-		close(done)
-	}()
-
-	select {
-	case <-done:
-		return results, nil
-	case <-ctx.Done():
-		return results, &JsonsError{
-			Op:      "get_multiple_parallel",
-			Message: "operation timed out",
-			Err:     ErrOperationFailed,
-		}
-	}
 }
 
 // incrementOperationCount atomically increments the operation counter with rate limiting
@@ -1865,14 +1545,7 @@ func sanitizePath(path string) string {
 	// Remove potential sensitive patterns but keep structure
 	// Use case-insensitive matching for better security
 	lowerPath := strings.ToLower(path)
-	sensitivePatterns := []string{
-		"password", "passwd", "pwd",
-		"token", "bearer",
-		"key", "apikey", "api_key", "api-key",
-		"secret", "credential", "cred",
-		"auth", "authorization",
-		"session", "cookie",
-	}
+	// Use package-level sensitivePatterns from security.go for consistency
 	for _, pattern := range sensitivePatterns {
 		if strings.Contains(lowerPath, pattern) {
 			return "[REDACTED_PATH]"
@@ -1920,9 +1593,9 @@ func (p *Processor) logOperation(ctx context.Context, operation, path string, du
 		slog.String("processor_id", p.getProcessorID()),
 	}
 
-	if duration > SlowOperationThreshold {
+	if duration > slowOperationThreshold {
 		// Log as warning for slow operations
-		attrs := append(commonAttrs, slog.Int64("threshold_ms", SlowOperationThreshold.Milliseconds()))
+		attrs := append(commonAttrs, slog.Int64("threshold_ms", slowOperationThreshold.Milliseconds()))
 		logger.LogAttrs(ctx, slog.LevelWarn, "Slow JSON operation detected", attrs...)
 	} else {
 		// Log as debug for normal operations
@@ -1936,83 +1609,13 @@ func (p *Processor) getProcessorID() string {
 	return fmt.Sprintf("proc_%p", p)
 }
 
-// executeWithConcurrencyControl executes an operation with timeout control
-func (p *Processor) executeWithConcurrencyControl(
-	operation func() error,
-	timeout time.Duration,
-) error {
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
-
-	// Use buffered channel to ensure goroutine can always send result
-	// This prevents goroutine leak when timeout occurs
-	errChan := make(chan error, 1)
-
-	go func() {
-		// Recover from panics to prevent goroutine leak
-		defer func() {
-			if r := recover(); r != nil {
-				select {
-				case errChan <- fmt.Errorf("operation panic: %v", r):
-				default:
-				}
-			}
-		}()
-		errChan <- operation()
-	}()
-
-	select {
-	case err := <-errChan:
-		return err
-	case <-ctx.Done():
-		// Drain the channel in a separate goroutine to prevent sender from blocking
-		// The result will be discarded since we've already timed out
-		go func() {
-			<-errChan
-		}()
-		return fmt.Errorf("operation timeout after %v", timeout)
-	}
-}
-
-// executeOperation executes an operation with metrics tracking and error handling
-func (p *Processor) executeOperation(operationName string, operation func() error) error {
-	if err := p.checkClosed(); err != nil {
-		return err
-	}
-
-	// Record operation start
-	atomic.AddInt64(&p.metrics.operationCount, 1)
-	start := time.Now()
-
-	// Execute with concurrency control
-	err := p.executeWithConcurrencyControl(operation, 30*time.Second)
-
-	// Record metrics
-	if p.resourceMonitor != nil {
-		p.resourceMonitor.RecordOperation(time.Since(start))
-	}
-
-	if err != nil {
-		atomic.AddInt64(&p.metrics.errorCount, 1)
-		if p.getLogger() != nil {
-			p.getLogger().Error("Operation failed",
-				"operation", operationName,
-				"error", err,
-				"duration", time.Since(start),
-			)
-		}
-	}
-
-	return err
-}
-
 // getPathSegments gets a path segments slice from the unified resource manager
-func (p *Processor) getPathSegments() []PathSegment {
+func (p *Processor) getPathSegments() []internal.PathSegment {
 	return getGlobalResourceManager().GetPathSegments()
 }
 
 // putPathSegments returns a path segments slice to the unified resource manager
-func (p *Processor) putPathSegments(segments []PathSegment) {
+func (p *Processor) putPathSegments(segments []internal.PathSegment) {
 	getGlobalResourceManager().PutPathSegments(segments)
 }
 
@@ -2026,41 +1629,11 @@ func (p *Processor) putStringBuilder(sb *strings.Builder) {
 	getGlobalResourceManager().PutStringBuilder(sb)
 }
 
-// performMaintenance performs periodic maintenance tasks
-func (p *Processor) performMaintenance() {
-	if p.isClosing() {
-		return // Skip maintenance if closing
-	}
-
-	// Clean expired cache entries
-	if p.cache != nil {
-		p.cache.CleanExpiredCache()
-	}
-
-	// Perform unified resource manager maintenance
-	getGlobalResourceManager().PerformMaintenance()
-
-	// Perform leak detection
-	if p.resourceMonitor != nil {
-		if issues := p.resourceMonitor.CheckForLeaks(); len(issues) > 0 {
-			for _, issue := range issues {
-				p.getLogger().Warn("Resource issue detected", "issue", issue)
-			}
-		}
-	}
-}
-
-// isClosing returns true if the processor is in the process of closing
-func (p *Processor) isClosing() bool {
-	state := atomic.LoadInt32(&p.state)
-	return state == 1 || state == 2
-}
-
 // Set sets a value in JSON at the specified path
 // Returns:
 //   - On success: modified JSON string and nil error
 //   - On failure: original unmodified JSON string and error information
-func (p *Processor) Set(jsonStr, path string, value any, opts ...*ProcessorOptions) (string, error) {
+func (p *Processor) Set(jsonStr, path string, value any, opts ...Config) (string, error) {
 	if err := p.checkClosed(); err != nil {
 		return jsonStr, err
 	}
@@ -2105,7 +1678,7 @@ func (p *Processor) Set(jsonStr, path string, value any, opts ...*ProcessorOptio
 	if err != nil {
 		// Return original data and detailed error information
 		var setError *JsonsError
-		if _, ok := err.(*RootDataTypeConversionError); ok && createPaths {
+		if _, ok := err.(*rootDataTypeConversionError); ok && createPaths {
 			setError = &JsonsError{
 				Op:      "set",
 				Path:    path,
@@ -2142,7 +1715,7 @@ func (p *Processor) Set(jsonStr, path string, value any, opts ...*ProcessorOptio
 // Returns:
 //   - On success: modified JSON string and nil error
 //   - On failure: original unmodified JSON string and error information
-func (p *Processor) SetMultiple(jsonStr string, updates map[string]any, opts ...*ProcessorOptions) (string, error) {
+func (p *Processor) SetMultiple(jsonStr string, updates map[string]any, opts ...Config) (string, error) {
 	if err := p.checkClosed(); err != nil {
 		return jsonStr, err
 	}
@@ -2210,21 +1783,18 @@ func (p *Processor) SetMultiple(jsonStr string, updates map[string]any, opts ...
 	// Apply all updates on the copy
 	var lastError error
 	successCount := 0
-	// Pre-allocate with capacity for potential failures (typically few)
-	failedPaths := make([]string, 0, min(len(updates), 10))
 
 	for path, value := range updates {
 		err := p.setValueAtPathWithOptions(dataCopy, path, value, createPaths)
 		if err != nil {
 			// Handle root data type conversion errors
-			if _, ok := err.(*RootDataTypeConversionError); ok && createPaths {
+			if _, ok := err.(*rootDataTypeConversionError); ok && createPaths {
 				lastError = &JsonsError{
 					Op:      "set_multiple",
 					Path:    path,
 					Message: fmt.Sprintf("root data type conversion failed for path '%s': %v", path, err),
 					Err:     err,
 				}
-				failedPaths = append(failedPaths, path)
 				if !options.ContinueOnError {
 					return jsonStr, lastError
 				}
@@ -2235,7 +1805,6 @@ func (p *Processor) SetMultiple(jsonStr string, updates map[string]any, opts ...
 					Message: fmt.Sprintf("failed to set path '%s': %v", path, err),
 					Err:     err,
 				}
-				failedPaths = append(failedPaths, path)
 				if !options.ContinueOnError {
 					return jsonStr, lastError
 				}
@@ -2254,12 +1823,6 @@ func (p *Processor) SetMultiple(jsonStr string, updates map[string]any, opts ...
 		}
 	}
 
-	// If some updates failed but we're continuing on error, log the failures
-	if len(failedPaths) > 0 && options.ContinueOnError {
-		// Could log warnings here if logger is available
-		// For now, we continue silently as requested
-	}
-
 	// Convert modified data back to JSON string
 	resultBytes, err := json.Marshal(dataCopy)
 	if err != nil {
@@ -2274,41 +1837,30 @@ func (p *Processor) SetMultiple(jsonStr string, updates map[string]any, opts ...
 	return string(resultBytes), nil
 }
 
-// SetWithAdd sets a value with automatic path creation
-// Returns:
-//   - On success: modified JSON string and nil error
-//   - On failure: original unmodified JSON string and error information
-func (p *Processor) SetWithAdd(jsonStr, path string, value any, opts ...*ProcessorOptions) (string, error) {
-	addOpts := mergeOptionsWithOverride(opts, func(o *ProcessorOptions) {
+// SetCreate sets a value at the specified path, creating intermediate paths as needed.
+// This is the unified API for set-with-path-creation operations.
+//
+// Example:
+//
+//	result, err := processor.SetCreate(data, "users[0].profile.name", "Alice")
+func (p *Processor) SetCreate(jsonStr, path string, value any, opts ...Config) (string, error) {
+	addOpts := mergeOptionsWithOverride(opts, func(o *Config) {
 		o.CreatePaths = true
 	})
 	return p.Set(jsonStr, path, value, addOpts)
 }
 
-// SetMultipleWithAdd sets multiple values with automatic path creation
-// Returns:
-//   - On success: modified JSON string and nil error
-//   - On failure: original unmodified JSON string and error information
-func (p *Processor) SetMultipleWithAdd(jsonStr string, updates map[string]any, opts ...*ProcessorOptions) (string, error) {
-	addOpts := mergeOptionsWithOverride(opts, func(o *ProcessorOptions) {
+// SetMultipleCreate sets multiple values, creating intermediate paths as needed.
+// This is the unified API for batch set-with-path-creation operations.
+//
+// Example:
+//
+//	result, err := processor.SetMultipleCreate(data, map[string]any{"user.name": "Alice", "user.age": 30})
+func (p *Processor) SetMultipleCreate(jsonStr string, updates map[string]any, opts ...Config) (string, error) {
+	addOpts := mergeOptionsWithOverride(opts, func(o *Config) {
 		o.CreatePaths = true
 	})
 	return p.SetMultiple(jsonStr, updates, addOpts)
-}
-
-func calculateSuccessRateInternal(successful, total int64) float64 {
-	if total == 0 {
-		return 0.0
-	}
-	return float64(successful) / float64(total) * 100.0
-}
-
-func calculateHitRatioInternal(hits, misses int64) float64 {
-	total := hits + misses
-	if total == 0 {
-		return 0.0
-	}
-	return float64(hits) / float64(total) * 100.0
 }
 
 // GetStats returns processor performance statistics
@@ -2328,52 +1880,6 @@ func (p *Processor) GetStats() Stats {
 		MemoryEfficiency: cacheStats.MemoryEfficiency,
 		OperationCount:   atomic.LoadInt64(&p.metrics.operationCount),
 		ErrorCount:       atomic.LoadInt64(&p.metrics.errorCount),
-	}
-}
-
-// getDetailedStats returns detailed performance statistics
-func (p *Processor) getDetailedStats() DetailedStats {
-	stats := p.GetStats()
-	resourceStats := getGlobalResourceManager().GetStats()
-
-	return DetailedStats{
-		Stats:          stats,
-		state:          atomic.LoadInt32(&p.state),
-		configSnapshot: *p.config,
-		resourcePoolStats: ResourcePoolStats{
-			StringBuilderPoolActive: resourceStats.AllocatedBuilders > 0,
-			PathSegmentPoolActive:   resourceStats.AllocatedSegments > 0,
-		},
-	}
-}
-
-// getMetrics returns comprehensive processor metrics for internal use
-func (p *Processor) getMetrics() ProcessorMetrics {
-	if p.metrics == nil {
-		// Return empty metrics if collector is not initialized
-		return ProcessorMetrics{}
-	}
-	internalMetrics := p.metrics.collector.GetMetrics()
-	// Convert internal.Metrics to ProcessorMetrics
-	return ProcessorMetrics{
-		TotalOperations:       internalMetrics.TotalOperations,
-		SuccessfulOperations:  internalMetrics.SuccessfulOps,
-		FailedOperations:      internalMetrics.FailedOps,
-		SuccessRate:           calculateSuccessRateInternal(internalMetrics.SuccessfulOps, internalMetrics.TotalOperations),
-		CacheHits:             internalMetrics.CacheHits,
-		CacheMisses:           internalMetrics.CacheMisses,
-		CacheHitRate:          calculateHitRatioInternal(internalMetrics.CacheHits, internalMetrics.CacheMisses),
-		AverageProcessingTime: internalMetrics.AvgProcessingTime,
-		MaxProcessingTime:     internalMetrics.MaxProcessingTime,
-		MinProcessingTime:     internalMetrics.MinProcessingTime,
-		TotalMemoryAllocated:  internalMetrics.TotalMemoryAllocated,
-		PeakMemoryUsage:       internalMetrics.PeakMemoryUsage,
-		CurrentMemoryUsage:    internalMetrics.CurrentMemoryUsage,
-		ActiveConcurrentOps:   internalMetrics.ActiveConcurrentOps,
-		MaxConcurrentOps:      internalMetrics.MaxConcurrentOps,
-		runtimeMemStats:       internalMetrics.RuntimeMemStats,
-		uptime:                internalMetrics.Uptime,
-		errorsByType:          internalMetrics.ErrorsByType,
 	}
 }
 
@@ -2581,26 +2087,6 @@ func CreateEmptyContainer(containerType string) any {
 	}
 }
 
-// mergeObjects merges two objects, with the second object taking precedence (internal use)
-func mergeObjects(obj1, obj2 map[string]any) map[string]any {
-	return internal.MergeObjects(obj1, obj2)
-}
-
-// flattenArray flattens a nested array structure (internal use)
-func flattenArray(arr []any) []any {
-	return internal.FlattenArray(arr)
-}
-
-// uniqueArray removes duplicate values from an array (internal use)
-func uniqueArray(arr []any) []any {
-	return internal.UniqueArray(arr)
-}
-
-// reverseArray reverses an array in place (internal use)
-func reverseArray(arr []any) {
-	internal.ReverseArray(arr)
-}
-
 // ConvertToString converts a value to string
 func (u *processorUtils) ConvertToString(value any) string {
 	if value == nil {
@@ -2644,390 +2130,10 @@ func (p *Processor) validateInput(jsonString string) error {
 	return p.securityValidator.ValidateJSONInput(jsonString)
 }
 
-// isASCIIOnly checks if string contains only ASCII characters (fast path optimization)
-func isASCIIOnly(s string) bool {
-	for i := 0; i < len(s); i++ {
-		if s[i] > 127 {
-			return false
-		}
-	}
-	return true
-}
-
-// isValidNumberStart checks if character can start a valid JSON number
-func isValidNumberStart(c byte) bool {
-	return (c >= '0' && c <= '9') || c == '-'
-}
-
 // validatePath validates a JSON path string with enhanced security and efficiency
 func (p *Processor) validatePath(path string) error {
 	// Use the cached security validator instead of creating a new one each time
 	return p.securityValidator.ValidatePathInput(path)
-}
-
-// validateSingleSegment validates a single path segment
-func (p *Processor) validateSingleSegment(segment string) error {
-	// Check for unmatched brackets or braces first
-	if strings.Contains(segment, "[") && !strings.Contains(segment, "]") {
-		return &JsonsError{
-			Op:      "validate_path",
-			Path:    segment,
-			Message: "unclosed bracket '[' in path segment",
-			Err:     ErrInvalidPath,
-		}
-	}
-
-	if strings.Contains(segment, "]") && !strings.Contains(segment, "[") {
-		return &JsonsError{
-			Op:      "validate_path",
-			Path:    segment,
-			Message: "unmatched bracket ']' in path segment",
-			Err:     ErrInvalidPath,
-		}
-	}
-
-	if strings.Contains(segment, "{") && !strings.Contains(segment, "}") {
-		return &JsonsError{
-			Op:      "validate_path",
-			Path:    segment,
-			Message: "unclosed brace '{' in path segment",
-			Err:     ErrInvalidPath,
-		}
-	}
-
-	if strings.Contains(segment, "}") && !strings.Contains(segment, "{") {
-		return &JsonsError{
-			Op:      "validate_path",
-			Path:    segment,
-			Message: "unmatched brace '}' in path segment",
-			Err:     ErrInvalidPath,
-		}
-	}
-
-	// Check for valid identifier or array index (optimized without regex)
-	if isSimpleProperty(segment) {
-		return nil
-	}
-
-	if isNumericIndex(segment) {
-		return nil
-	}
-
-	// Check for array access syntax
-	if strings.Contains(segment, "[") && strings.Contains(segment, "]") {
-		return p.validateArrayAccess(segment)
-	}
-
-	// Check for pure slice syntax (starts with [ and contains :)
-	if strings.HasPrefix(segment, "[") && strings.Contains(segment, ":") && strings.HasSuffix(segment, "]") {
-		return p.validateSliceSyntax(segment)
-	}
-
-	// Check for extraction syntax
-	if strings.Contains(segment, "{") && strings.Contains(segment, "}") {
-		return p.validateExtractionSyntax(segment)
-	}
-
-	return &JsonsError{
-		Op:      "validate_path",
-		Path:    segment,
-		Message: "invalid path segment format",
-		Err:     ErrInvalidPath,
-	}
-}
-
-// validateArrayAccess validates array access syntax
-func (p *Processor) validateArrayAccess(segment string) error {
-	// Check for unmatched brackets
-	openCount := strings.Count(segment, "[")
-	closeCount := strings.Count(segment, "]")
-	if openCount != closeCount {
-		return &JsonsError{
-			Op:      "validate_path",
-			Path:    segment,
-			Message: "unmatched brackets in array access",
-			Err:     ErrInvalidPath,
-		}
-	}
-
-	// Find bracket positions
-	start := strings.Index(segment, "[")
-	end := strings.LastIndex(segment, "]")
-	if start == -1 || end == -1 || end <= start {
-		return &JsonsError{
-			Op:      "validate_path",
-			Path:    segment,
-			Message: "malformed bracket syntax",
-			Err:     ErrInvalidPath,
-		}
-	}
-
-	indexPart := segment[start+1 : end]
-
-	// Check if it's a slice (contains colon)
-	if strings.Contains(indexPart, ":") {
-		return p.validateSliceSyntax(segment)
-	}
-
-	// Valid simple array index
-	if indexPart == "" {
-		return &JsonsError{
-			Op:      "validate_path",
-			Path:    segment,
-			Message: "empty array index",
-			Err:     ErrInvalidPath,
-		}
-	}
-
-	// Check for wildcard
-	if indexPart == "*" {
-		return nil // Wildcard is valid
-	}
-
-	// Check if it's a valid number (including negative)
-	if _, err := strconv.Atoi(indexPart); err != nil {
-		return &JsonsError{
-			Op:      "validate_path",
-			Path:    segment,
-			Message: fmt.Sprintf("invalid array index '%s': must be a number or '*'", indexPart),
-			Err:     ErrInvalidPath,
-		}
-	}
-
-	return nil
-}
-
-// validateSliceSyntax validates array slice syntax like [1:3], [::2], [::-1]
-func (p *Processor) validateSliceSyntax(segment string) error {
-	// Extract the slice part between brackets
-	start := strings.Index(segment, "[")
-	end := strings.LastIndex(segment, "]")
-	if start == -1 || end == -1 || end <= start {
-		return &JsonsError{
-			Op:      "validate_path",
-			Path:    segment,
-			Message: "malformed slice syntax",
-			Err:     ErrInvalidPath,
-		}
-	}
-
-	slicePart := segment[start+1 : end]
-
-	// Parse slice components
-	_, _, _, err := p.parseSliceComponents(slicePart)
-	if err != nil {
-		return &JsonsError{
-			Op:      "validate_path",
-			Path:    segment,
-			Message: fmt.Sprintf("invalid slice syntax: %v", err),
-			Err:     ErrInvalidPath,
-		}
-	}
-
-	return nil
-}
-
-// validateExtractionSyntax validates extraction syntax like {name}
-func (p *Processor) validateExtractionSyntax(segment string) error {
-	// Check for unmatched braces
-	openCount := strings.Count(segment, "{")
-	closeCount := strings.Count(segment, "}")
-	if openCount != closeCount {
-		return &JsonsError{
-			Op:      "validate_path",
-			Path:    segment,
-			Message: "unmatched braces in extraction syntax",
-			Err:     ErrInvalidPath,
-		}
-	}
-
-	// Find brace positions
-	start := strings.Index(segment, "{")
-	end := strings.LastIndex(segment, "}")
-	if start == -1 || end == -1 || end <= start {
-		return &JsonsError{
-			Op:      "validate_path",
-			Path:    segment,
-			Message: "malformed extraction syntax",
-			Err:     ErrInvalidPath,
-		}
-	}
-
-	fieldName := segment[start+1 : end]
-	if fieldName == "" {
-		return &JsonsError{
-			Op:      "validate_path",
-			Path:    segment,
-			Message: "empty field name in extraction syntax",
-			Err:     ErrInvalidPath,
-		}
-	}
-
-	// Check for unsupported conditional filter syntax
-	if strings.HasPrefix(fieldName, "?") {
-		return &JsonsError{
-			Op:      "validate_path",
-			Path:    segment,
-			Message: fmt.Sprintf("conditional filter syntax '{%s}' is not supported. Use standard extraction syntax like '{fieldName}' instead", fieldName),
-			Err:     ErrInvalidPath,
-		}
-	}
-
-	// Check for other unsupported query-like syntax patterns
-	if strings.Contains(fieldName, "=") || strings.Contains(fieldName, ">") || strings.Contains(fieldName, "<") || strings.Contains(fieldName, "&") || strings.Contains(fieldName, "|") {
-		return &JsonsError{
-			Op:      "validate_path",
-			Path:    segment,
-			Message: fmt.Sprintf("query syntax '{%s}' is not supported. Use standard extraction syntax like '{fieldName}' instead", fieldName),
-			Err:     ErrInvalidPath,
-		}
-	}
-
-	return nil
-}
-
-// validateJSONPointerPath validates JSON Pointer format paths
-func (p *Processor) validateJSONPointerPath(path string) error {
-	// Basic JSON Pointer validation
-	if !strings.HasPrefix(path, "/") {
-		return &JsonsError{
-			Op:      "validate_path",
-			Path:    path,
-			Message: "JSON Pointer must start with /",
-			Err:     ErrInvalidPath,
-		}
-	}
-
-	// Check for trailing slash (invalid except for root "/")
-	if len(path) > 1 && strings.HasSuffix(path, "/") {
-		return &JsonsError{
-			Op:      "validate_path",
-			Path:    path,
-			Message: "JSON Pointer cannot end with trailing slash",
-			Err:     ErrInvalidPath,
-		}
-	}
-
-	// Check for proper escaping
-	segments := strings.Split(path[1:], "/")
-	for _, segment := range segments {
-		if strings.Contains(segment, "~") {
-			// Valid escape sequences
-			if !p.isValidJSONPointerEscape(segment) {
-				return &JsonsError{
-					Op:      "validate_path",
-					Path:    path,
-					Message: "invalid JSON Pointer escape sequence",
-					Err:     ErrInvalidPath,
-				}
-			}
-		}
-	}
-
-	return nil
-}
-
-// validateDotNotationPath validates dot notation format paths
-func (p *Processor) validateDotNotationPath(path string) error {
-	// Check for consecutive dots
-	if strings.Contains(path, "..") {
-		return &JsonsError{
-			Op:      "validate_path",
-			Path:    path,
-			Message: "path contains consecutive dots",
-			Err:     ErrInvalidPath,
-		}
-	}
-
-	// Check for leading/trailing dots
-	if strings.HasPrefix(path, ".") || strings.HasSuffix(path, ".") {
-		return &JsonsError{
-			Op:      "validate_path",
-			Path:    path,
-			Message: "path has leading or trailing dots",
-			Err:     ErrInvalidPath,
-		}
-	}
-
-	// Split path into segments and validate each one
-	segments := strings.Split(path, ".")
-	for _, segment := range segments {
-		if segment == "" {
-			continue // Skip empty segments (shouldn't happen after above checks)
-		}
-
-		if err := p.validateSingleSegment(segment); err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
-// isValidJSONPointerEscape validates JSON Pointer escape sequences
-func (p *Processor) isValidJSONPointerEscape(segment string) bool {
-	i := 0
-	for i < len(segment) {
-		if segment[i] == '~' {
-			if i+1 >= len(segment) {
-				return false // Incomplete escape
-			}
-			next := segment[i+1]
-			if next != '0' && next != '1' {
-				return false // Invalid escape
-			}
-			i += 2
-		} else {
-			i++
-		}
-	}
-	return true
-}
-
-// isSimpleProperty checks if a string is a simple property name without using regex
-func isSimpleProperty(s string) bool {
-	if len(s) == 0 {
-		return false
-	}
-
-	// First character must be letter or underscore
-	first := s[0]
-	if !((first >= 'a' && first <= 'z') || (first >= 'A' && first <= 'Z') || first == '_') {
-		return false
-	}
-
-	// Remaining characters must be letters, digits, or underscores
-	for i := 1; i < len(s); i++ {
-		c := s[i]
-		if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_') {
-			return false
-		}
-	}
-
-	return true
-}
-
-// isNumericIndex checks if a string represents a numeric index without using regex
-func isNumericIndex(s string) bool {
-	if len(s) == 0 {
-		return false
-	}
-
-	start := 0
-	if s[0] == '-' {
-		if len(s) == 1 {
-			return false
-		}
-		start = 1
-	}
-
-	for i := start; i < len(s); i++ {
-		if s[i] < '0' || s[i] > '9' {
-			return false
-		}
-	}
-
-	return true
 }
 
 // ============================================================================

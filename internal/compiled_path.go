@@ -66,7 +66,7 @@ func CompilePath(path string) (*CompiledPath, error) {
 	copy(cp.segments, segments)
 
 	// Compute hash for caching
-	cp.hash = computePathHash(path)
+	cp.hash = HashStringFNV1a(path)
 
 	return cp, nil
 }
@@ -90,7 +90,7 @@ func CompilePathUnsafe(path string) (*CompiledPath, error) {
 	}
 	copy(cp.segments, segments)
 
-	cp.hash = computePathHash(path)
+	cp.hash = HashStringFNV1a(path)
 
 	return cp, nil
 }
@@ -134,17 +134,6 @@ func (cp *CompiledPath) Len() int {
 // IsEmpty returns true if the path has no segments
 func (cp *CompiledPath) IsEmpty() bool {
 	return len(cp.segments) == 0
-}
-
-// computePathHash computes a fast hash of the path string
-func computePathHash(path string) uint64 {
-	// FNV-1a hash
-	h := uint64(14695981039346656037)
-	for i := 0; i < len(path); i++ {
-		h ^= uint64(path[i])
-		h *= 1099511628211
-	}
-	return h
 }
 
 // ============================================================================
@@ -340,6 +329,7 @@ func (e *CompiledPathError) Unwrap() error {
 // CompiledPathCache caches compiled paths for reuse
 type CompiledPathCache struct {
 	paths map[string]*CompiledPath
+	order []string // insertion order for FIFO eviction
 	mu    sync.RWMutex
 	max   int
 }
@@ -351,48 +341,81 @@ var globalCompiledPathCache = NewCompiledPathCache(1000)
 func NewCompiledPathCache(max int) *CompiledPathCache {
 	return &CompiledPathCache{
 		paths: make(map[string]*CompiledPath, max),
+		order: make([]string, 0, max),
 		max:   max,
 	}
 }
 
-// Get retrieves a compiled path from the cache, compiling it if not found
+// Get retrieves a compiled path from the cache, compiling it if not found.
+// The returned *CompiledPath is an independent copy; callers must call Release()
+// when done to return it to the pool. Eviction of a cached entry does not affect
+// previously returned copies.
 func (c *CompiledPathCache) Get(path string) (*CompiledPath, error) {
-	// Check cache first
-	c.mu.RLock()
-	if cp, ok := c.paths[path]; ok {
-		c.mu.RUnlock()
-		return cp, nil
-	}
-	c.mu.RUnlock()
+	c.mu.Lock()
 
-	// Compile the path
+	// Check cache first
+	if cp, ok := c.paths[path]; ok {
+		result := cloneCompiledPathLocked(cp)
+		c.mu.Unlock()
+		return result, nil
+	}
+
+	c.mu.Unlock()
+
+	// Compile the path outside the lock (parsing is expensive)
 	cp, err := CompilePath(path)
 	if err != nil {
 		return nil, err
 	}
 
-	// Store in cache
 	c.mu.Lock()
 	// Check if another goroutine already cached it
 	if existing, ok := c.paths[path]; ok {
 		c.mu.Unlock()
 		cp.Release()
-		return existing, nil
+		// Re-acquire lock for safe clone to prevent TOCTOU race with concurrent eviction
+		c.mu.Lock()
+		result := cloneCompiledPathLocked(existing)
+		c.mu.Unlock()
+		return result, nil
 	}
 
-	// Evict if at capacity
+	// Evict if at capacity using FIFO
 	if len(c.paths) >= c.max {
-		// Simple eviction: remove a random entry
-		for k := range c.paths {
-			delete(c.paths, k)
-			break
-		}
+		evictKey := c.order[0]
+		copy(c.order, c.order[1:])
+		c.order = c.order[:len(c.order)-1]
+		// Let GC handle evicted entry to prevent TOCTOU race
+		delete(c.paths, evictKey)
 	}
 
 	c.paths[path] = cp
+	c.order = append(c.order, path)
+
+	// Return an independent copy so the caller's Release() doesn't affect the cache
+	result := cloneCompiledPathLocked(cp)
 	c.mu.Unlock()
 
-	return cp, nil
+	return result, nil
+}
+
+// cloneCompiledPathLocked creates an independent copy of a CompiledPath.
+// SECURITY: Caller MUST hold c.mu write lock to prevent TOCTOU race condition
+// where the source object could be evicted and reused during cloning.
+// The lock must be held for the entire clone operation to ensure atomicity.
+func cloneCompiledPathLocked(src *CompiledPath) *CompiledPath {
+	dst := compiledPathPool.Get().(*CompiledPath)
+	dst.segments = dst.segments[:0]
+	dst.path = src.path
+	dst.hash = src.hash
+
+	if cap(dst.segments) < len(src.segments) {
+		dst.segments = make([]PathSegment, len(src.segments))
+	} else {
+		dst.segments = dst.segments[:len(src.segments)]
+	}
+	copy(dst.segments, src.segments)
+	return dst
 }
 
 // GetGlobalCompiledPathCache returns the global compiled path cache
@@ -404,6 +427,7 @@ func GetGlobalCompiledPathCache() *CompiledPathCache {
 func (c *CompiledPathCache) Clear() {
 	c.mu.Lock()
 	c.paths = make(map[string]*CompiledPath, c.max)
+	c.order = c.order[:0]
 	c.mu.Unlock()
 }
 

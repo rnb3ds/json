@@ -2,6 +2,7 @@ package json
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -13,47 +14,63 @@ import (
 	"github.com/cybergodev/json/internal"
 )
 
-// PathType represents the complexity level of a path
-type PathType int
+// pathType represents the complexity level of a path
+type pathType int
 
 const (
-	// PathTypeSimple indicates a single key with no dots or brackets
-	PathTypeSimple PathType = iota
-	// PathTypeComplex indicates a path containing dots or brackets
-	PathTypeComplex
+	// pathTypeSimple indicates a single key with no dots or brackets
+	pathTypeSimple pathType = iota
+	// pathTypeComplex indicates a path containing dots or brackets
+	pathTypeComplex
+)
+
+// IteratorControl represents control flags for iteration operations.
+// Used by Foreach* functions to control iteration flow.
+type IteratorControl int
+
+const (
+	// IteratorNormal continues iteration normally
+	IteratorNormal IteratorControl = iota
+	// IteratorContinue skips the current item and continues iteration
+	IteratorContinue
+	// IteratorBreak stops iteration entirely
+	IteratorBreak
 )
 
 // pathTypeCacheShard represents a single shard of the path type cache
 // PERFORMANCE: Sharding reduces lock contention for concurrent access
+// SECURITY: Added size limit with LRU-style eviction to prevent unbounded growth
 type pathTypeCacheShard struct {
 	mu      sync.RWMutex
-	entries map[string]PathType
+	entries map[string]pathType
+	size    int
 }
 
 // pathTypeCacheShards is a sharded cache for path type results
 // Using 16 shards for good distribution with minimal overhead
 var pathTypeCacheShards [16]pathTypeCacheShard
 
+// maxEntriesPerShard limits the number of entries per shard to prevent memory exhaustion
+const maxEntriesPerShard = 256
+
 // init initializes the path type cache shards
 func init() {
 	for i := range pathTypeCacheShards {
-		pathTypeCacheShards[i].entries = make(map[string]PathType, 64)
+		pathTypeCacheShards[i].entries = make(map[string]pathType, 64)
+		pathTypeCacheShards[i].size = 0
 	}
 }
 
 // getPathTypeShard returns the shard for a path using FNV-1a hash
 func getPathTypeShard(path string) *pathTypeCacheShard {
-	h := uint64(14695981039346656037)
-	for i := 0; i < len(path); i++ {
-		h ^= uint64(path[i])
-		h *= 1099511628211
-	}
+	h := internal.HashStringFNV1a(path)
 	return &pathTypeCacheShards[h&15]
 }
 
-// GetPathType determines if a path is simple or complex
+// getPathType determines if a path is simple or complex
 // Simple paths are single keys with no dots or brackets
-func GetPathType(path string) PathType {
+// SECURITY: Added size limit with eviction to prevent unbounded memory growth
+func getPathType(path string) pathType {
 	// Check cache first (only for short paths to avoid memory bloat)
 	if len(path) <= 64 {
 		shard := getPathTypeShard(path)
@@ -64,33 +81,48 @@ func GetPathType(path string) PathType {
 		}
 		shard.mu.RUnlock()
 
-		var pt PathType
+		var pt pathType
 		if strings.ContainsAny(path, ".[]") {
-			pt = PathTypeComplex
+			pt = pathTypeComplex
 		} else {
-			pt = PathTypeSimple
+			pt = pathTypeSimple
 		}
 
-		// Cache short paths
+		// Cache short paths with size limit
 		shard.mu.Lock()
+		// Evict entries if shard is full (simple random eviction)
+		if shard.size >= maxEntriesPerShard {
+			// Remove approximately half the entries
+			evictCount := maxEntriesPerShard / 2
+			count := 0
+			for k := range shard.entries {
+				if count >= evictCount {
+					break
+				}
+				delete(shard.entries, k)
+				count++
+			}
+			shard.size -= count
+		}
 		shard.entries[path] = pt
+		shard.size++
 		shard.mu.Unlock()
 
 		return pt
 	}
 
-	var pt PathType
+	var pt pathType
 	if strings.ContainsAny(path, ".[]") {
-		pt = PathTypeComplex
+		pt = pathTypeComplex
 	} else {
-		pt = PathTypeSimple
+		pt = pathTypeSimple
 	}
 
 	return pt
 }
 
-// SafeTypeAssert performs a safe type assertion with generics
-func SafeTypeAssert[T any](value any) (T, bool) {
+// safeTypeAssert performs a safe type assertion with generics
+func safeTypeAssert[T any](value any) (T, bool) {
 	var zero T
 
 	if value == nil {
@@ -116,43 +148,38 @@ func SafeTypeAssert[T any](value any) (T, bool) {
 
 // Iterator represents an iterator over JSON data
 type Iterator struct {
-	processor *Processor
-	data      any
-	options   *ProcessorOptions
-	position  int
-	keys      []string // Cached keys for map iteration
-	keysInit  bool     // Flag for lazy initialization
+	data     any
+	position int
+	keys     []string // Cached keys for map iteration
+	keysOnce sync.Once
 }
 
-// NewIterator creates a new Iterator
-func NewIterator(processor *Processor, data any, opts *ProcessorOptions) *Iterator {
+// NewIterator creates a new Iterator over the provided data.
+// Simplified API: creates an iterator for traversing arrays and objects.
+// Note: The opts parameter is reserved for future use and currently ignored.
+func NewIterator(data any, opts ...Config) *Iterator {
 	return &Iterator{
-		processor: processor,
-		data:      data,
-		options:   opts,
-		position:  0,
+		data:     data,
+		position: 0,
 	}
 }
 
-// initKeysOnce lazily initializes cached keys for map iteration
-// PERFORMANCE: Avoids allocating a new slice on every Next() call
-// Uses key interning to reduce memory for repeated keys
+// initKeysOnce lazily initializes cached keys for map iteration.
+// Thread-safe via sync.Once; avoids allocating a new slice on every Next() call.
 func (it *Iterator) initKeysOnce() {
-	if it.keysInit {
-		return
-	}
-	if obj, ok := it.data.(map[string]any); ok {
-		// Reuse existing slice if capacity is sufficient
-		if cap(it.keys) < len(obj) {
-			it.keys = make([]string, 0, len(obj))
-		} else {
-			it.keys = it.keys[:0]
+	it.keysOnce.Do(func() {
+		if obj, ok := it.data.(map[string]any); ok {
+			// Reuse existing slice if capacity is sufficient
+			if cap(it.keys) < len(obj) {
+				it.keys = make([]string, 0, len(obj))
+			} else {
+				it.keys = it.keys[:0]
+			}
+			for k := range obj {
+				it.keys = append(it.keys, internal.InternKey(k))
+			}
 		}
-		for k := range obj {
-			it.keys = append(it.keys, internal.InternKey(k))
-		}
-	}
-	it.keysInit = true
+	})
 }
 
 // iterableValuePool pools IterableValue objects to reduce allocations
@@ -265,8 +292,8 @@ func (iv *IterableValue) Get(path string) any {
 // Supports path navigation with dot notation and array indices (e.g., "user.address.city" or "users[0].name")
 func (iv *IterableValue) GetString(key string) string {
 	// PERFORMANCE: Use cached path type check instead of strings.ContainsAny
-	switch GetPathType(key) {
-	case PathTypeComplex:
+	switch getPathType(key) {
+	case pathTypeComplex:
 		val := iv.Get(key)
 		if val == nil {
 			return ""
@@ -275,7 +302,7 @@ func (iv *IterableValue) GetString(key string) string {
 			return str
 		}
 		return ConvertToString(val)
-	case PathTypeSimple:
+	case pathTypeSimple:
 		obj, ok := iv.data.(map[string]any)
 		if !ok {
 			return ""
@@ -299,8 +326,8 @@ func (iv *IterableValue) GetString(key string) string {
 // Supports path navigation with dot notation and array indices (e.g., "user.age" or "users[0].id")
 func (iv *IterableValue) GetInt(key string) int {
 	// PERFORMANCE: Use cached path type check instead of strings.ContainsAny
-	switch GetPathType(key) {
-	case PathTypeComplex:
+	switch getPathType(key) {
+	case pathTypeComplex:
 		val := iv.Get(key)
 		if val == nil {
 			return 0
@@ -309,7 +336,7 @@ func (iv *IterableValue) GetInt(key string) int {
 			return result
 		}
 		return 0
-	case PathTypeSimple:
+	case pathTypeSimple:
 		obj, ok := iv.data.(map[string]any)
 		if !ok {
 			return 0
@@ -331,8 +358,8 @@ func (iv *IterableValue) GetInt(key string) int {
 // Supports path navigation with dot notation and array indices
 func (iv *IterableValue) GetFloat64(key string) float64 {
 	// PERFORMANCE: Use cached path type check instead of strings.ContainsAny
-	switch GetPathType(key) {
-	case PathTypeComplex:
+	switch getPathType(key) {
+	case pathTypeComplex:
 		val := iv.Get(key)
 		if val == nil {
 			return 0
@@ -341,7 +368,7 @@ func (iv *IterableValue) GetFloat64(key string) float64 {
 			return result
 		}
 		return 0
-	case PathTypeSimple:
+	case pathTypeSimple:
 		obj, ok := iv.data.(map[string]any)
 		if !ok {
 			return 0
@@ -363,8 +390,8 @@ func (iv *IterableValue) GetFloat64(key string) float64 {
 // Supports path navigation with dot notation and array indices
 func (iv *IterableValue) GetBool(key string) bool {
 	// PERFORMANCE: Use cached path type check instead of strings.ContainsAny
-	switch GetPathType(key) {
-	case PathTypeComplex:
+	switch getPathType(key) {
+	case pathTypeComplex:
 		val := iv.Get(key)
 		if val == nil {
 			return false
@@ -373,7 +400,7 @@ func (iv *IterableValue) GetBool(key string) bool {
 			return result
 		}
 		return false
-	case PathTypeSimple:
+	case pathTypeSimple:
 		obj, ok := iv.data.(map[string]any)
 		if !ok {
 			return false
@@ -395,8 +422,8 @@ func (iv *IterableValue) GetBool(key string) bool {
 // Supports path navigation with dot notation and array indices
 func (iv *IterableValue) GetArray(key string) []any {
 	// PERFORMANCE: Use cached path type check instead of strings.ContainsAny
-	switch GetPathType(key) {
-	case PathTypeComplex:
+	switch getPathType(key) {
+	case pathTypeComplex:
 		val := iv.Get(key)
 		if val == nil {
 			return nil
@@ -405,7 +432,7 @@ func (iv *IterableValue) GetArray(key string) []any {
 			return arr
 		}
 		return nil
-	case PathTypeSimple:
+	case pathTypeSimple:
 		obj, ok := iv.data.(map[string]any)
 		if !ok {
 			return nil
@@ -427,8 +454,8 @@ func (iv *IterableValue) GetArray(key string) []any {
 // Supports path navigation with dot notation and array indices
 func (iv *IterableValue) GetObject(key string) map[string]any {
 	// PERFORMANCE: Use cached path type check instead of strings.ContainsAny
-	switch GetPathType(key) {
-	case PathTypeComplex:
+	switch getPathType(key) {
+	case pathTypeComplex:
 		val := iv.Get(key)
 		if val == nil {
 			return nil
@@ -437,7 +464,7 @@ func (iv *IterableValue) GetObject(key string) map[string]any {
 			return result
 		}
 		return nil
-	case PathTypeSimple:
+	case pathTypeSimple:
 		obj, ok := iv.data.(map[string]any)
 		if !ok {
 			return nil
@@ -459,14 +486,14 @@ func (iv *IterableValue) GetObject(key string) map[string]any {
 // Supports path navigation with dot notation and array indices
 func (iv *IterableValue) GetWithDefault(key string, defaultValue any) any {
 	// PERFORMANCE: Use cached path type check instead of strings.ContainsAny
-	switch GetPathType(key) {
-	case PathTypeComplex:
+	switch getPathType(key) {
+	case pathTypeComplex:
 		val := iv.Get(key)
 		if val == nil {
 			return defaultValue
 		}
 		return val
-	case PathTypeSimple:
+	case pathTypeSimple:
 		obj, ok := iv.data.(map[string]any)
 		if !ok {
 			return defaultValue
@@ -486,8 +513,8 @@ func (iv *IterableValue) GetWithDefault(key string, defaultValue any) any {
 // Supports path navigation with dot notation and array indices
 func (iv *IterableValue) GetStringWithDefault(key string, defaultValue string) string {
 	// PERFORMANCE: Use cached path type check instead of strings.ContainsAny
-	switch GetPathType(key) {
-	case PathTypeComplex:
+	switch getPathType(key) {
+	case pathTypeComplex:
 		val := iv.Get(key)
 		if val == nil {
 			return defaultValue
@@ -496,7 +523,7 @@ func (iv *IterableValue) GetStringWithDefault(key string, defaultValue string) s
 			return str
 		}
 		return defaultValue
-	case PathTypeSimple:
+	case pathTypeSimple:
 		obj, ok := iv.data.(map[string]any)
 		if !ok {
 			return defaultValue
@@ -518,8 +545,8 @@ func (iv *IterableValue) GetStringWithDefault(key string, defaultValue string) s
 // Supports path navigation with dot notation and array indices
 func (iv *IterableValue) GetIntWithDefault(key string, defaultValue int) int {
 	// PERFORMANCE: Use cached path type check instead of strings.ContainsAny
-	switch GetPathType(key) {
-	case PathTypeComplex:
+	switch getPathType(key) {
+	case pathTypeComplex:
 		val := iv.Get(key)
 		if val == nil {
 			return defaultValue
@@ -528,7 +555,7 @@ func (iv *IterableValue) GetIntWithDefault(key string, defaultValue int) int {
 			return result
 		}
 		return defaultValue
-	case PathTypeSimple:
+	case pathTypeSimple:
 		obj, ok := iv.data.(map[string]any)
 		if !ok {
 			return defaultValue
@@ -550,8 +577,8 @@ func (iv *IterableValue) GetIntWithDefault(key string, defaultValue int) int {
 // Supports path navigation with dot notation and array indices
 func (iv *IterableValue) GetFloat64WithDefault(key string, defaultValue float64) float64 {
 	// PERFORMANCE: Use cached path type check instead of strings.ContainsAny
-	switch GetPathType(key) {
-	case PathTypeComplex:
+	switch getPathType(key) {
+	case pathTypeComplex:
 		val := iv.Get(key)
 		if val == nil {
 			return defaultValue
@@ -560,7 +587,7 @@ func (iv *IterableValue) GetFloat64WithDefault(key string, defaultValue float64)
 			return result
 		}
 		return defaultValue
-	case PathTypeSimple:
+	case pathTypeSimple:
 		obj, ok := iv.data.(map[string]any)
 		if !ok {
 			return defaultValue
@@ -582,8 +609,8 @@ func (iv *IterableValue) GetFloat64WithDefault(key string, defaultValue float64)
 // Supports path navigation with dot notation and array indices
 func (iv *IterableValue) GetBoolWithDefault(key string, defaultValue bool) bool {
 	// PERFORMANCE: Use cached path type check instead of strings.ContainsAny
-	switch GetPathType(key) {
-	case PathTypeComplex:
+	switch getPathType(key) {
+	case pathTypeComplex:
 		val := iv.Get(key)
 		if val == nil {
 			return defaultValue
@@ -592,7 +619,7 @@ func (iv *IterableValue) GetBoolWithDefault(key string, defaultValue bool) bool 
 			return result
 		}
 		return defaultValue
-	case PathTypeSimple:
+	case pathTypeSimple:
 		obj, ok := iv.data.(map[string]any)
 		if !ok {
 			return defaultValue
@@ -614,10 +641,10 @@ func (iv *IterableValue) GetBoolWithDefault(key string, defaultValue bool) bool 
 // Supports path navigation with dot notation and array indices
 func (iv *IterableValue) Exists(key string) bool {
 	// PERFORMANCE: Use cached path type check instead of strings.ContainsAny
-	switch GetPathType(key) {
-	case PathTypeComplex:
+	switch getPathType(key) {
+	case pathTypeComplex:
 		return iv.Get(key) != nil
-	case PathTypeSimple:
+	case pathTypeSimple:
 		obj, ok := iv.data.(map[string]any)
 		if !ok {
 			return false
@@ -638,11 +665,11 @@ func (iv *IterableValue) IsNullData() bool {
 // Supports path navigation with dot notation and array indices
 func (iv *IterableValue) IsNull(key string) bool {
 	// PERFORMANCE: Use cached path type check instead of strings.ContainsAny
-	switch GetPathType(key) {
-	case PathTypeComplex:
+	switch getPathType(key) {
+	case pathTypeComplex:
 		val := iv.Get(key)
 		return val == nil
-	case PathTypeSimple:
+	case pathTypeSimple:
 		obj, ok := iv.data.(map[string]any)
 		if !ok {
 			return true
@@ -680,8 +707,8 @@ func (iv *IterableValue) IsEmptyData() bool {
 // Supports path navigation with dot notation and array indices
 func (iv *IterableValue) IsEmpty(key string) bool {
 	// PERFORMANCE: Use cached path type check instead of strings.ContainsAny
-	switch GetPathType(key) {
-	case PathTypeComplex:
+	switch getPathType(key) {
+	case pathTypeComplex:
 		val := iv.Get(key)
 		if val == nil {
 			return true
@@ -696,7 +723,7 @@ func (iv *IterableValue) IsEmpty(key string) bool {
 		default:
 			return false
 		}
-	case PathTypeSimple:
+	case pathTypeSimple:
 		obj, ok := iv.data.(map[string]any)
 		if !ok {
 			return true
@@ -740,6 +767,9 @@ func (iv *IterableValue) ForeachNested(path string, fn func(key any, item *Itera
 // This is the 3-parameter version used by most code
 func ForeachWithPathAndControl(jsonStr, path string, fn func(key any, value any) IteratorControl) error {
 	processor := getDefaultProcessor()
+	if processor == nil {
+		return ErrInternalError
+	}
 
 	data, err := processor.Get(jsonStr, path)
 	if err != nil {
@@ -752,6 +782,9 @@ func ForeachWithPathAndControl(jsonStr, path string, fn func(key any, value any)
 // Foreach iterates over JSON arrays or objects with simplified signature (for test compatibility)
 func Foreach(jsonStr string, fn func(key any, item *IterableValue)) {
 	processor := getDefaultProcessor()
+	if processor == nil {
+		return
+	}
 
 	data, err := processor.Get(jsonStr, ".")
 	if err != nil {
@@ -787,6 +820,9 @@ func foreachWithIterableValue(data any, fn func(key any, item *IterableValue)) {
 // ForeachWithPath iterates over JSON arrays or objects with simplified signature (for test compatibility)
 func ForeachWithPath(jsonStr, path string, fn func(key any, item *IterableValue)) error {
 	processor := getDefaultProcessor()
+	if processor == nil {
+		return ErrInternalError
+	}
 
 	data, err := processor.Get(jsonStr, path)
 	if err != nil {
@@ -835,6 +871,9 @@ func foreachWithPathIterableValue(data any, currentPath string, fn func(key any,
 // ForeachReturn is a variant that returns error (for compatibility with test expectations)
 func ForeachReturn(jsonStr string, fn func(key any, item *IterableValue)) (string, error) {
 	processor := getDefaultProcessor()
+	if processor == nil {
+		return "", ErrInternalError
+	}
 
 	data, err := processor.Get(jsonStr, ".")
 	if err != nil {
@@ -873,6 +912,9 @@ func foreachOnValue(data any, fn func(key any, value any) IteratorControl) error
 // ForeachNested iterates over nested JSON structures
 func ForeachNested(jsonStr string, fn func(key any, item *IterableValue)) {
 	processor := getDefaultProcessor()
+	if processor == nil {
+		return
+	}
 
 	data, err := processor.Get(jsonStr, ".")
 	if err != nil {
@@ -1149,8 +1191,8 @@ func (soi *StreamObjectIterator) Err() error {
 // POOLED SLICE ITERATOR - For in-memory iteration with reduced allocations
 // ============================================================================
 
-// PooledSliceIterator uses pooled slices for efficient array iteration
-type PooledSliceIterator struct {
+// pooledSliceIterator uses pooled slices for efficient array iteration
+type pooledSliceIterator struct {
 	data    []any
 	index   int
 	current any
@@ -1158,15 +1200,15 @@ type PooledSliceIterator struct {
 
 var sliceIteratorPool = sync.Pool{
 	New: func() any {
-		return &PooledSliceIterator{
+		return &pooledSliceIterator{
 			index: -1,
 		}
 	},
 }
 
-// NewPooledSliceIterator creates a pooled slice iterator
-func NewPooledSliceIterator(data []any) *PooledSliceIterator {
-	it := sliceIteratorPool.Get().(*PooledSliceIterator)
+// newPooledSliceIterator creates a pooled slice iterator
+func newPooledSliceIterator(data []any) *pooledSliceIterator {
+	it := sliceIteratorPool.Get().(*pooledSliceIterator)
 	it.data = data
 	it.index = -1
 	it.current = nil
@@ -1174,7 +1216,7 @@ func NewPooledSliceIterator(data []any) *PooledSliceIterator {
 }
 
 // Next advances to the next element
-func (it *PooledSliceIterator) Next() bool {
+func (it *pooledSliceIterator) Next() bool {
 	it.index++
 	if it.index >= len(it.data) {
 		return false
@@ -1184,17 +1226,17 @@ func (it *PooledSliceIterator) Next() bool {
 }
 
 // Value returns the current element
-func (it *PooledSliceIterator) Value() any {
+func (it *pooledSliceIterator) Value() any {
 	return it.current
 }
 
 // Index returns the current index
-func (it *PooledSliceIterator) Index() int {
+func (it *pooledSliceIterator) Index() int {
 	return it.index
 }
 
 // Release returns the iterator to the pool
-func (it *PooledSliceIterator) Release() {
+func (it *pooledSliceIterator) Release() {
 	it.data = nil
 	it.current = nil
 	it.index = -1
@@ -1205,8 +1247,8 @@ func (it *PooledSliceIterator) Release() {
 // POOLED MAP ITERATOR - For efficient object iteration
 // ============================================================================
 
-// PooledMapIterator uses pooled slices for efficient map iteration
-type PooledMapIterator struct {
+// pooledMapIterator uses pooled slices for efficient map iteration
+type pooledMapIterator struct {
 	data    map[string]any
 	keys    []string
 	index   int
@@ -1216,23 +1258,31 @@ type PooledMapIterator struct {
 
 var mapIteratorPool = sync.Pool{
 	New: func() any {
-		return &PooledMapIterator{
+		return &pooledMapIterator{
 			keys:  make([]string, 0, 16),
 			index: -1,
 		}
 	},
 }
 
-// NewPooledMapIterator creates a pooled map iterator
-func NewPooledMapIterator(m map[string]any) *PooledMapIterator {
-	it := mapIteratorPool.Get().(*PooledMapIterator)
+// newPooledMapIterator creates a pooled map iterator
+func newPooledMapIterator(m map[string]any) *pooledMapIterator {
+	it := mapIteratorPool.Get().(*pooledMapIterator)
 	it.data = m
 	it.index = -1
 	it.key = ""
 	it.current = nil
 
-	// Pre-populate keys
-	it.keys = it.keys[:0]
+	// PERFORMANCE: Ensure keys slice has sufficient capacity
+	// This avoids repeated slice growth during append
+	mapLen := len(m)
+	if cap(it.keys) < mapLen {
+		it.keys = make([]string, 0, mapLen)
+	} else {
+		it.keys = it.keys[:0]
+	}
+
+	// Pre-populate keys without interning (faster for one-time iteration)
 	for k := range m {
 		it.keys = append(it.keys, k)
 	}
@@ -1241,7 +1291,7 @@ func NewPooledMapIterator(m map[string]any) *PooledMapIterator {
 }
 
 // Next advances to the next key-value pair
-func (it *PooledMapIterator) Next() bool {
+func (it *pooledMapIterator) Next() bool {
 	it.index++
 	if it.index >= len(it.keys) {
 		return false
@@ -1252,17 +1302,17 @@ func (it *PooledMapIterator) Next() bool {
 }
 
 // Key returns the current key
-func (it *PooledMapIterator) Key() string {
+func (it *pooledMapIterator) Key() string {
 	return it.key
 }
 
 // Value returns the current value
-func (it *PooledMapIterator) Value() any {
+func (it *pooledMapIterator) Value() any {
 	return it.current
 }
 
 // Release returns the iterator to the pool
-func (it *PooledMapIterator) Release() {
+func (it *pooledMapIterator) Release() {
 	it.data = nil
 	it.key = ""
 	it.current = nil
@@ -1274,50 +1324,6 @@ func (it *PooledMapIterator) Release() {
 		it.keys = it.keys[:0]
 	}
 	mapIteratorPool.Put(it)
-}
-
-// ============================================================================
-// LAZY JSON DECODER - Parse JSON on-demand
-// ============================================================================
-
-// LazyJSONDecoder provides lazy parsing for nested structures
-type LazyJSONDecoder struct {
-	raw    []byte
-	parsed any
-	err    error
-}
-
-// NewLazyJSONDecoder creates a lazy JSON decoder
-func NewLazyJSONDecoder(data []byte) *LazyJSONDecoder {
-	return &LazyJSONDecoder{
-		raw: data,
-	}
-}
-
-// Parse parses the JSON data if not already parsed
-func (l *LazyJSONDecoder) Parse() (any, error) {
-	if l.parsed != nil || l.err != nil {
-		return l.parsed, l.err
-	}
-	l.err = json.Unmarshal(l.raw, &l.parsed)
-	return l.parsed, l.err
-}
-
-// GetPath gets a value at the specified path with lazy parsing
-func (l *LazyJSONDecoder) GetPath(path string) (any, error) {
-	_, err := l.Parse()
-	if err != nil {
-		return nil, err
-	}
-
-	// Use processor for path navigation
-	p := getDefaultProcessor()
-	return p.Get(string(l.raw), path)
-}
-
-// Raw returns the raw JSON bytes
-func (l *LazyJSONDecoder) Raw() []byte {
-	return l.raw
 }
 
 // ============================================================================
@@ -1423,11 +1429,28 @@ func NewParallelIterator(data []any, workers int) *ParallelIterator {
 // The function receives the index and value of each element
 // Returns the first error encountered, or nil if all operations succeed
 func (it *ParallelIterator) ForEach(fn func(int, any) error) error {
+	return it.ForEachWithContext(context.Background(), fn)
+}
+
+// ForEachWithContext processes each element in parallel with context support for cancellation
+// The function receives the index and value of each element
+// Returns the first error encountered, or ctx.Err() if context is cancelled
+// RESOURCE FIX: Added context support for graceful goroutine termination
+func (it *ParallelIterator) ForEachWithContext(ctx context.Context, fn func(int, any) error) error {
 	errCh := make(chan error, 1)
 	var wg sync.WaitGroup
 	var hasError int32
 
 	for i, item := range it.data {
+		// Check context cancellation
+		select {
+		case <-ctx.Done():
+			// Wait for already-started goroutines to finish
+			wg.Wait()
+			return ctx.Err()
+		default:
+		}
+
 		// Check if we already have an error
 		if atomic.LoadInt32(&hasError) == 1 {
 			break
@@ -1439,6 +1462,13 @@ func (it *ParallelIterator) ForEach(fn func(int, any) error) error {
 		go func(idx int, val any) {
 			defer wg.Done()
 			defer func() { <-it.sem }() // Release semaphore
+
+			// Check context and error state
+			select {
+			case <-ctx.Done():
+				return
+			default:
+			}
 
 			if atomic.LoadInt32(&hasError) == 1 {
 				return
@@ -1468,6 +1498,13 @@ func (it *ParallelIterator) ForEach(fn func(int, any) error) error {
 // ForEachBatch processes elements in batches in parallel
 // Each batch is processed by a single goroutine
 func (it *ParallelIterator) ForEachBatch(batchSize int, fn func(int, []any) error) error {
+	return it.ForEachBatchWithContext(context.Background(), batchSize, fn)
+}
+
+// ForEachBatchWithContext processes elements in batches with context support for cancellation
+// Each batch is processed by a single goroutine
+// RESOURCE FIX: Added context support for graceful goroutine termination
+func (it *ParallelIterator) ForEachBatchWithContext(ctx context.Context, batchSize int, fn func(int, []any) error) error {
 	if batchSize <= 0 {
 		batchSize = 100
 	}
@@ -1487,6 +1524,14 @@ func (it *ParallelIterator) ForEachBatch(batchSize int, fn func(int, []any) erro
 	var hasError int32
 
 	for batchIdx, batch := range batches {
+		// Check context cancellation
+		select {
+		case <-ctx.Done():
+			wg.Wait()
+			return ctx.Err()
+		default:
+		}
+
 		if atomic.LoadInt32(&hasError) == 1 {
 			break
 		}
@@ -1497,6 +1542,13 @@ func (it *ParallelIterator) ForEachBatch(batchSize int, fn func(int, []any) erro
 		go func(idx int, b []any) {
 			defer wg.Done()
 			defer func() { <-it.sem }()
+
+			// Check context and error state
+			select {
+			case <-ctx.Done():
+				return
+			default:
+			}
 
 			if atomic.LoadInt32(&hasError) == 1 {
 				return
@@ -1573,17 +1625,14 @@ func (it *ParallelIterator) Filter(predicate func(int, any) bool) []any {
 	return result
 }
 
-// ============================================================================
-// ITERABLE VALUE POOL - Reduces allocations for IterableValue
-// PERFORMANCE: Pooling reduces GC pressure for frequent iterations
-// NOTE: iterableValuePool is declared earlier in the file (near line 159)
-// ============================================================================
-
-// NewPooledIterableValue creates an IterableValue from the pool
-func NewPooledIterableValue(data any) *IterableValue {
-	iv := iterableValuePool.Get().(*IterableValue)
-	iv.data = data
-	return iv
+// Close releases resources associated with the ParallelIterator.
+// RESOURCE FIX: Added for API consistency and to document proper cleanup patterns.
+// The semaphore channel is automatically garbage collected when the iterator
+// is no longer referenced.
+func (it *ParallelIterator) Close() {
+	// Semaphore channel will be garbage collected with the iterator
+	// No explicit close needed as it could cause panics in concurrent use
+	// This method exists for API consistency and future extensibility
 }
 
 // Release returns the IterableValue to the pool

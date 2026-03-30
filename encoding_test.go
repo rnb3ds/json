@@ -10,10 +10,10 @@ import (
 
 // TestEncodingAdvanced tests advanced encoding features
 func TestEncodingAdvanced(t *testing.T) {
-	helper := NewTestHelper(t)
+	helper := newTestHelper(t)
 
 	t.Run("EncodeWithConfig", func(t *testing.T) {
-		processor := New(DefaultConfig())
+		processor, _ := New(DefaultConfig())
 		defer processor.Close()
 
 		type User struct {
@@ -33,7 +33,7 @@ func TestEncodingAdvanced(t *testing.T) {
 		}
 
 		t.Run("PrettyEncoding", func(t *testing.T) {
-			config := DefaultEncodeConfig()
+			config := DefaultConfig()
 			config.Pretty = true
 			config.Indent = "  "
 
@@ -44,7 +44,7 @@ func TestEncodingAdvanced(t *testing.T) {
 		})
 
 		t.Run("CompactEncoding", func(t *testing.T) {
-			config := DefaultEncodeConfig()
+			config := DefaultConfig()
 			config.Pretty = false
 
 			result, err := processor.EncodeWithConfig(user, config)
@@ -53,7 +53,7 @@ func TestEncodingAdvanced(t *testing.T) {
 		})
 
 		t.Run("SortKeys", func(t *testing.T) {
-			config := DefaultEncodeConfig()
+			config := DefaultConfig()
 			config.SortKeys = true
 
 			result, err := processor.EncodeWithConfig(user, config)
@@ -81,7 +81,7 @@ func TestEncodingAdvanced(t *testing.T) {
 				Port: 8080,
 			}
 
-			encodeConfig := DefaultEncodeConfig()
+			encodeConfig := DefaultConfig()
 			encodeConfig.Pretty = true
 
 			result, err := processor.EncodeWithConfig(config, encodeConfig)
@@ -101,7 +101,7 @@ func TestEncodingAdvanced(t *testing.T) {
 			data := Data{Value: 3.141592653589793}
 
 			t.Run("Precision2", func(t *testing.T) {
-				config := DefaultEncodeConfig()
+				config := DefaultConfig()
 				config.FloatPrecision = 2
 
 				result, err := processor.EncodeWithConfig(data, config)
@@ -110,7 +110,7 @@ func TestEncodingAdvanced(t *testing.T) {
 			})
 
 			t.Run("Precision4", func(t *testing.T) {
-				config := DefaultEncodeConfig()
+				config := DefaultConfig()
 				config.FloatPrecision = 4
 
 				result, err := processor.EncodeWithConfig(data, config)
@@ -125,116 +125,42 @@ func TestEncodingAdvanced(t *testing.T) {
 				Value float64 `json:"value"`
 			}
 
-			t.Run("TruncateVsRound_Pi", func(t *testing.T) {
-				data := Data{Value: 3.141592653589793}
+			tests := []struct {
+				name           string
+				value          float64
+				precision      int
+				truncate       bool
+				expectedSubstr string
+			}{
+				{"TruncateVsRound_Pi_Truncate", 3.141592653589793, 4, true, "3.1415"},
+				{"TruncateVsRound_Pi_Round", 3.141592653589793, 4, false, "3.1416"},
+				{"Truncate_Precision2", 3.149, 2, true, "3.14"},
+				{"Truncate_NegativeNumber", -3.141592653589793, 4, true, "-3.1415"},
+				{"Truncate_Precision0", 3.999, 0, true, ":3"},
+				{"Truncate_SmallNumber", 0.123456789, 3, true, "0.123"},
+				{"Truncate_LargePrecision", 1.5, 5, true, "1.50000"},
+				{"Truncate_IntegerValue", 42.0, 3, true, "42.000"},
+				{"Truncate_VerySmallNumber", 0.00000123456, 8, true, "0.00000123"},
+			}
 
-				// Test rounding (default behavior)
-				configRound := DefaultEncodeConfig()
-				configRound.FloatPrecision = 4
-				configRound.FloatTruncate = false
+			for _, tt := range tests {
+				t.Run(tt.name, func(t *testing.T) {
+					data := Data{Value: tt.value}
+					config := DefaultConfig()
+					config.FloatPrecision = tt.precision
+					config.FloatTruncate = tt.truncate
 
-				resultRound, err := processor.EncodeWithConfig(data, configRound)
-				helper.AssertNoError(err)
-				helper.AssertTrue(strings.Contains(resultRound, "3.1416"), "Expected 3.1416 (rounded)")
-
-				// Test truncation
-				configTrunc := DefaultEncodeConfig()
-				configTrunc.FloatPrecision = 4
-				configTrunc.FloatTruncate = true
-
-				resultTrunc, err := processor.EncodeWithConfig(data, configTrunc)
-				helper.AssertNoError(err)
-				helper.AssertTrue(strings.Contains(resultTrunc, "3.1415"), "Expected 3.1415 (truncated)")
-			})
-
-			t.Run("Truncate_Precision2", func(t *testing.T) {
-				data := Data{Value: 3.149} // Should truncate to 3.14, not round to 3.15
-
-				config := DefaultEncodeConfig()
-				config.FloatPrecision = 2
-				config.FloatTruncate = true
-
-				result, err := processor.EncodeWithConfig(data, config)
-				helper.AssertNoError(err)
-				helper.AssertTrue(strings.Contains(result, "3.14"), "Expected 3.14 (truncated)")
-			})
-
-			t.Run("Truncate_NegativeNumber", func(t *testing.T) {
-				data := Data{Value: -3.141592653589793}
-
-				config := DefaultEncodeConfig()
-				config.FloatPrecision = 4
-				config.FloatTruncate = true
-
-				result, err := processor.EncodeWithConfig(data, config)
-				helper.AssertNoError(err)
-				helper.AssertTrue(strings.Contains(result, "-3.1415"), "Expected -3.1415 (truncated)")
-			})
-
-			t.Run("Truncate_Precision0", func(t *testing.T) {
-				data := Data{Value: 3.999}
-
-				config := DefaultEncodeConfig()
-				config.FloatPrecision = 0
-				config.FloatTruncate = true
-
-				result, err := processor.EncodeWithConfig(data, config)
-				helper.AssertNoError(err)
-				helper.AssertTrue(strings.Contains(result, ":3"), "Expected 3 (truncated to integer)")
-			})
-
-			t.Run("Truncate_SmallNumber", func(t *testing.T) {
-				data := Data{Value: 0.123456789}
-
-				config := DefaultEncodeConfig()
-				config.FloatPrecision = 3
-				config.FloatTruncate = true
-
-				result, err := processor.EncodeWithConfig(data, config)
-				helper.AssertNoError(err)
-				helper.AssertTrue(strings.Contains(result, "0.123"), "Expected 0.123 (truncated)")
-			})
-
-			t.Run("Truncate_LargePrecision", func(t *testing.T) {
-				data := Data{Value: 1.5} // Only 1 decimal place
-
-				config := DefaultEncodeConfig()
-				config.FloatPrecision = 5
-				config.FloatTruncate = true
-
-				result, err := processor.EncodeWithConfig(data, config)
-				helper.AssertNoError(err)
-				helper.AssertTrue(strings.Contains(result, "1.50000"), "Expected 1.50000 (padded with zeros)")
-			})
-
-			t.Run("Truncate_IntegerValue", func(t *testing.T) {
-				data := Data{Value: 42.0}
-
-				config := DefaultEncodeConfig()
-				config.FloatPrecision = 3
-				config.FloatTruncate = true
-
-				result, err := processor.EncodeWithConfig(data, config)
-				helper.AssertNoError(err)
-				helper.AssertTrue(strings.Contains(result, "42.000"), "Expected 42.000 (padded with zeros)")
-			})
-
-			t.Run("Truncate_VerySmallNumber", func(t *testing.T) {
-				data := Data{Value: 0.00000123456}
-
-				config := DefaultEncodeConfig()
-				config.FloatPrecision = 8
-				config.FloatTruncate = true
-
-				result, err := processor.EncodeWithConfig(data, config)
-				helper.AssertNoError(err)
-				helper.AssertTrue(strings.Contains(result, "0.00000123"), "Expected 0.00000123 (truncated)")
-			})
+					result, err := processor.EncodeWithConfig(data, config)
+					helper.AssertNoError(err)
+					helper.AssertTrue(strings.Contains(result, tt.expectedSubstr),
+						"Expected %q in result, got %q", tt.expectedSubstr, result)
+				})
+			}
 		})
 	})
 
 	t.Run("HTMLEscaping", func(t *testing.T) {
-		processor := New(DefaultConfig())
+		processor, _ := New(DefaultConfig())
 		defer processor.Close()
 
 		type Data struct {
@@ -244,7 +170,7 @@ func TestEncodingAdvanced(t *testing.T) {
 		data := Data{HTML: `<script>alert("XSS")</script>`}
 
 		t.Run("EscapeHTML", func(t *testing.T) {
-			config := DefaultEncodeConfig()
+			config := DefaultConfig()
 			config.EscapeHTML = true
 
 			result, err := processor.EncodeWithConfig(data, config)
@@ -255,7 +181,7 @@ func TestEncodingAdvanced(t *testing.T) {
 		})
 
 		t.Run("NoEscapeHTML", func(t *testing.T) {
-			config := DefaultEncodeConfig()
+			config := DefaultConfig()
 			config.EscapeHTML = false
 
 			result, err := processor.EncodeWithConfig(data, config)
@@ -266,7 +192,7 @@ func TestEncodingAdvanced(t *testing.T) {
 	})
 
 	t.Run("UnicodeEscaping", func(t *testing.T) {
-		processor := New(DefaultConfig())
+		processor, _ := New(DefaultConfig())
 		defer processor.Close()
 
 		type Data struct {
@@ -276,7 +202,7 @@ func TestEncodingAdvanced(t *testing.T) {
 		data := Data{Text: "Hello 世界 🌍"}
 
 		t.Run("EscapeUnicode", func(t *testing.T) {
-			config := DefaultEncodeConfig()
+			config := DefaultConfig()
 			config.EscapeUnicode = true
 
 			result, err := processor.EncodeWithConfig(data, config)
@@ -286,7 +212,7 @@ func TestEncodingAdvanced(t *testing.T) {
 		})
 
 		t.Run("NoEscapeUnicode", func(t *testing.T) {
-			config := DefaultEncodeConfig()
+			config := DefaultConfig()
 			config.EscapeUnicode = false
 
 			result, err := processor.EncodeWithConfig(data, config)
@@ -298,7 +224,7 @@ func TestEncodingAdvanced(t *testing.T) {
 	})
 
 	t.Run("IncludeNulls", func(t *testing.T) {
-		processor := New(DefaultConfig())
+		processor, _ := New(DefaultConfig())
 		defer processor.Close()
 
 		type Data struct {
@@ -314,7 +240,7 @@ func TestEncodingAdvanced(t *testing.T) {
 		}
 
 		t.Run("IncludeNullsTrue", func(t *testing.T) {
-			config := DefaultEncodeConfig()
+			config := DefaultConfig()
 			config.IncludeNulls = true
 			config.Pretty = true
 
@@ -325,7 +251,7 @@ func TestEncodingAdvanced(t *testing.T) {
 		})
 
 		t.Run("IncludeNullsFalse", func(t *testing.T) {
-			config := DefaultEncodeConfig()
+			config := DefaultConfig()
 			config.IncludeNulls = false
 			config.Pretty = true
 
@@ -339,9 +265,9 @@ func TestEncodingAdvanced(t *testing.T) {
 
 // TestEncodingTypes tests encoding of various Go types
 func TestEncodingTypes(t *testing.T) {
-	helper := NewTestHelper(t)
+	helper := newTestHelper(t)
 
-	processor := New(DefaultConfig())
+	processor, _ := New(DefaultConfig())
 	defer processor.Close()
 
 	t.Run("BasicTypes", func(t *testing.T) {
@@ -379,7 +305,7 @@ func TestEncodingTypes(t *testing.T) {
 
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
-				result, err := processor.EncodeWithConfig(tt.value, DefaultEncodeConfig())
+				result, err := processor.EncodeWithConfig(tt.value, DefaultConfig())
 				helper.AssertNoError(err)
 				helper.AssertTrue(tt.check(result))
 			})
@@ -394,7 +320,7 @@ func TestEncodingTypes(t *testing.T) {
 				"admin": true,
 			}
 
-			result, err := processor.EncodeWithConfig(data, DefaultEncodeConfig())
+			result, err := processor.EncodeWithConfig(data, DefaultConfig())
 			helper.AssertNoError(err)
 			helper.AssertTrue(strings.Contains(result, "\"name\""))
 			helper.AssertTrue(strings.Contains(result, "\"age\""))
@@ -404,7 +330,7 @@ func TestEncodingTypes(t *testing.T) {
 		t.Run("Slice", func(t *testing.T) {
 			data := []interface{}{1, "two", 3.0, true}
 
-			result, err := processor.EncodeWithConfig(data, DefaultEncodeConfig())
+			result, err := processor.EncodeWithConfig(data, DefaultConfig())
 			helper.AssertNoError(err)
 			helper.AssertTrue(strings.HasPrefix(result, "["))
 			helper.AssertTrue(strings.HasSuffix(result, "]"))
@@ -429,7 +355,7 @@ func TestEncodingTypes(t *testing.T) {
 				},
 			}
 
-			result, err := processor.EncodeWithConfig(user, DefaultEncodeConfig())
+			result, err := processor.EncodeWithConfig(user, DefaultConfig())
 			helper.AssertNoError(err)
 			helper.AssertTrue(strings.Contains(result, "\"name\""))
 			helper.AssertTrue(strings.Contains(result, "\"address\""))
@@ -440,7 +366,7 @@ func TestEncodingTypes(t *testing.T) {
 	t.Run("Time", func(t *testing.T) {
 		now := time.Now()
 
-		result, err := processor.EncodeWithConfig(now, DefaultEncodeConfig())
+		result, err := processor.EncodeWithConfig(now, DefaultConfig())
 		helper.AssertNoError(err)
 
 		// Should be RFC3339 format
@@ -452,9 +378,9 @@ func TestEncodingTypes(t *testing.T) {
 
 // TestEncodingStreams tests stream encoding
 func TestEncodingStreams(t *testing.T) {
-	helper := NewTestHelper(t)
+	helper := newTestHelper(t)
 
-	processor := New(DefaultConfig())
+	processor, _ := New(DefaultConfig())
 	defer processor.Close()
 
 	t.Run("EncodeStream", func(t *testing.T) {
@@ -465,13 +391,17 @@ func TestEncodingStreams(t *testing.T) {
 		}
 
 		t.Run("Pretty", func(t *testing.T) {
-			result, err := processor.EncodeStream(data, true, nil)
+			cfg := DefaultConfig()
+			cfg.Pretty = true
+			result, err := processor.EncodeStream(data, cfg)
 			helper.AssertNoError(err)
 			helper.AssertTrue(strings.Contains(result, "\n"))
 		})
 
 		t.Run("Compact", func(t *testing.T) {
-			result, err := processor.EncodeStream(data, false, nil)
+			cfg := DefaultConfig()
+			cfg.Pretty = false
+			result, err := processor.EncodeStream(data, cfg)
 			helper.AssertNoError(err)
 			helper.AssertFalse(strings.Contains(result, "\n"))
 		})
@@ -485,7 +415,9 @@ func TestEncodingStreams(t *testing.T) {
 			"active": true,
 		}
 
-		result, err := processor.EncodeBatch(pairs, true, nil)
+		cfg := DefaultConfig()
+		cfg.Pretty = true
+		result, err := processor.EncodeBatch(pairs, cfg)
 		helper.AssertNoError(err)
 
 		// Should contain all keys
@@ -512,7 +444,9 @@ func TestEncodingStreams(t *testing.T) {
 		// Only encode specific fields
 		fields := []string{"id", "name"}
 
-		result, err := processor.EncodeFields(user, fields, true, nil)
+		cfg := DefaultConfig()
+		cfg.Pretty = true
+		result, err := processor.EncodeFields(user, fields, cfg)
 		helper.AssertNoError(err)
 
 		helper.AssertTrue(strings.Contains(result, "\"id\""))
@@ -524,7 +458,7 @@ func TestEncodingStreams(t *testing.T) {
 
 // TestEncodingCompatibility tests compatibility with encoding/json
 func TestEncodingCompatibility(t *testing.T) {
-	helper := NewTestHelper(t)
+	helper := newTestHelper(t)
 
 	t.Run("MarshalUnmarshal", func(t *testing.T) {
 		type User struct {
@@ -535,7 +469,7 @@ func TestEncodingCompatibility(t *testing.T) {
 		original := User{Name: "Alice", Age: 30}
 
 		// Marshal with our processor
-		processor := New(DefaultConfig())
+		processor, _ := New(DefaultConfig())
 		defer processor.Close()
 
 		jsonBytes, err := processor.Marshal(original)
@@ -561,16 +495,16 @@ func TestEncodingCompatibility(t *testing.T) {
 			"object": map[string]interface{}{"nested": "value"},
 		}
 
-		processor := New(DefaultConfig())
+		processor, _ := New(DefaultConfig())
 		defer processor.Close()
 
 		// Encode
-		encoded, err := processor.EncodeWithConfig(data, DefaultEncodeConfig())
+		encoded, err := processor.EncodeWithConfig(data, DefaultConfig())
 		helper.AssertNoError(err)
 
 		// Decode
 		var decoded map[string]interface{}
-		err = processor.Unmarshal([]byte(encoded), &decoded, nil)
+		err = processor.Unmarshal([]byte(encoded), &decoded)
 		helper.AssertNoError(err)
 
 		// Verify
@@ -582,21 +516,21 @@ func TestEncodingCompatibility(t *testing.T) {
 
 // TestEncodingErrors tests encoding error conditions
 func TestEncodingErrors(t *testing.T) {
-	helper := NewTestHelper(t)
+	helper := newTestHelper(t)
 
-	processor := New(DefaultConfig())
+	processor, _ := New(DefaultConfig())
 	defer processor.Close()
 
 	t.Run("ClosedProcessor", func(t *testing.T) {
 		processor.Close()
 
 		data := map[string]string{"key": "value"}
-		_, err := processor.EncodeWithConfig(data, DefaultEncodeConfig())
+		_, err := processor.EncodeWithConfig(data, DefaultConfig())
 		helper.AssertError(err)
 	})
 
 	t.Run("DepthLimit", func(t *testing.T) {
-		config := DefaultEncodeConfig()
+		config := DefaultConfig()
 		config.MaxDepth = 2
 
 		// Create deeply nested structure
@@ -608,7 +542,7 @@ func TestEncodingErrors(t *testing.T) {
 			},
 		}
 
-		_, err := processor.EncodeWithOptions(deepData, config, nil)
+		_, err := processor.EncodeWithConfig(deepData, config)
 		helper.AssertError(err)
 	})
 
@@ -617,16 +551,16 @@ func TestEncodingErrors(t *testing.T) {
 		ch := make(chan int)
 		defer close(ch)
 
-		_, err := processor.EncodeWithConfig(ch, DefaultEncodeConfig())
+		_, err := processor.EncodeWithConfig(ch, DefaultConfig())
 		helper.AssertError(err)
 	})
 }
 
 // TestEncodeDecodeIntegration tests encode/decode integration
 func TestEncodeDecodeIntegration(t *testing.T) {
-	helper := NewTestHelper(t)
+	helper := newTestHelper(t)
 
-	processor := New(DefaultConfig())
+	processor, _ := New(DefaultConfig())
 	defer processor.Close()
 
 	t.Run("FullCycle", func(t *testing.T) {
@@ -651,12 +585,12 @@ func TestEncodeDecodeIntegration(t *testing.T) {
 		}
 
 		// Encode
-		encoded, err := processor.EncodeWithConfig(original, DefaultEncodeConfig())
+		encoded, err := processor.EncodeWithConfig(original, DefaultConfig())
 		helper.AssertNoError(err)
 
 		// Decode
 		var decoded User
-		err = processor.Unmarshal([]byte(encoded), &decoded, nil)
+		err = processor.Unmarshal([]byte(encoded), &decoded)
 		helper.AssertNoError(err)
 
 		// Verify
@@ -684,7 +618,7 @@ func TestEncodeDecodeIntegration(t *testing.T) {
 
 		// Decode from buffer using Unmarshal
 		var decoded map[string]interface{}
-		err = processor.Unmarshal(buf.Bytes(), &decoded, nil)
+		err = processor.Unmarshal(buf.Bytes(), &decoded)
 		helper.AssertNoError(err)
 
 		helper.AssertEqual(data["message"], decoded["message"])
@@ -699,7 +633,7 @@ func TestEncodeDecodeIntegration(t *testing.T) {
 
 // TestProcessorValidateSchema tests Processor.ValidateSchema method
 func TestProcessorValidateSchema(t *testing.T) {
-	processor := New()
+	processor, _ := New()
 	defer processor.Close()
 
 	t.Run("valid object with schema", func(t *testing.T) {
@@ -795,9 +729,10 @@ func TestProcessorValidateSchema(t *testing.T) {
 	t.Run("array min items violation", func(t *testing.T) {
 		jsonStr := `[1]`
 		schema := &Schema{
-			Type: "array",
+			Type:     "array",
+			MinItems: 2,
 		}
-		schema.SetMinItems(2) // Use setter to set hasMinItems flag
+		schema.hasMinItems = true
 
 		errors, err := processor.ValidateSchema(jsonStr, schema)
 		if err != nil {
@@ -811,9 +746,10 @@ func TestProcessorValidateSchema(t *testing.T) {
 	t.Run("array max items violation", func(t *testing.T) {
 		jsonStr := `[1, 2, 3, 4, 5]`
 		schema := &Schema{
-			Type: "array",
+			Type:     "array",
+			MaxItems: 3,
 		}
-		schema.SetMaxItems(3) // Use setter to set hasMaxItems flag
+		schema.hasMaxItems = true
 
 		errors, err := processor.ValidateSchema(jsonStr, schema)
 		if err != nil {
@@ -1044,65 +980,24 @@ func TestProcessorValidateSchema(t *testing.T) {
 	})
 }
 
-// TestSchemaMethods tests Schema setter methods
-func TestSchemaMethods(t *testing.T) {
-	schema := &Schema{}
-
-	t.Run("SetMinLength", func(t *testing.T) {
-		schema.SetMinLength(5)
-		if schema.MinLength != 5 {
-			t.Errorf("MinLength = %d, want 5", schema.MinLength)
-		}
-	})
-
-	t.Run("SetMaxLength", func(t *testing.T) {
-		schema.SetMaxLength(100)
-		if schema.MaxLength != 100 {
-			t.Errorf("MaxLength = %d, want 100", schema.MaxLength)
-		}
-	})
-
-	t.Run("SetMinimum", func(t *testing.T) {
-		schema.SetMinimum(0.0)
-		if schema.Minimum != 0.0 {
-			t.Errorf("Minimum = %v, want 0.0", schema.Minimum)
-		}
-	})
-
-	t.Run("SetMaximum", func(t *testing.T) {
-		schema.SetMaximum(100.0)
-		if schema.Maximum != 100.0 {
-			t.Errorf("Maximum = %v, want 100.0", schema.Maximum)
-		}
-	})
-
-	t.Run("SetMinItems", func(t *testing.T) {
-		schema.SetMinItems(1)
-		if schema.MinItems != 1 {
-			t.Errorf("MinItems = %d, want 1", schema.MinItems)
-		}
-	})
-
-	t.Run("SetMaxItems", func(t *testing.T) {
-		schema.SetMaxItems(10)
-		if schema.MaxItems != 10 {
-			t.Errorf("MaxItems = %d, want 10", schema.MaxItems)
-		}
-	})
-
-	t.Run("SetExclusiveMinimum", func(t *testing.T) {
-		schema.SetExclusiveMinimum(true)
-		if !schema.ExclusiveMinimum {
-			t.Error("ExclusiveMinimum should be true")
-		}
-	})
-
-	t.Run("SetExclusiveMaximum", func(t *testing.T) {
-		schema.SetExclusiveMaximum(true)
-		if !schema.ExclusiveMaximum {
-			t.Error("ExclusiveMaximum should be true")
-		}
-	})
+// TestSchemaHasMethods tests Schema Has* methods for constraint tracking
+func TestSchemaHasMethods(t *testing.T) {
+	schema := &Schema{
+		MinLength:        5,
+		MaxLength:        100,
+		Minimum:          0.0,
+		Maximum:          100.0,
+		MinItems:         1,
+		MaxItems:         10,
+		ExclusiveMinimum: true,
+		ExclusiveMaximum: true,
+	}
+	schema.hasMinLength = true
+	schema.hasMaxLength = true
+	schema.hasMinimum = true
+	schema.hasMaximum = true
+	schema.hasMinItems = true
+	schema.hasMaxItems = true
 
 	t.Run("HasMinLength", func(t *testing.T) {
 		if !schema.HasMinLength() {

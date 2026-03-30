@@ -4,59 +4,13 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"reflect"
 	"strconv"
 	"strings"
-	"sync"
 
 	"github.com/cybergodev/json/internal"
 )
 
-// smallIntStrings contains pre-computed string representations for integers 0-99
-// PERFORMANCE: Avoids strconv.Itoa allocations for common array indices
-var smallIntStrings = [100]string{
-	"0", "1", "2", "3", "4", "5", "6", "7", "8", "9",
-	"10", "11", "12", "13", "14", "15", "16", "17", "18", "19",
-	"20", "21", "22", "23", "24", "25", "26", "27", "28", "29",
-	"30", "31", "32", "33", "34", "35", "36", "37", "38", "39",
-	"40", "41", "42", "43", "44", "45", "46", "47", "48", "49",
-	"50", "51", "52", "53", "54", "55", "56", "57", "58", "59",
-	"60", "61", "62", "63", "64", "65", "66", "67", "68", "69",
-	"70", "71", "72", "73", "74", "75", "76", "77", "78", "79",
-	"80", "81", "82", "83", "84", "85", "86", "87", "88", "89",
-	"90", "91", "92", "93", "94", "95", "96", "97", "98", "99",
-}
-
-// intToStringFast converts an integer to string using pre-computed values for small integers
-// PERFORMANCE: Avoids strconv.Itoa allocations for values 0-99
-func intToStringFast(n int) string {
-	if n >= 0 && n < 100 {
-		return smallIntStrings[n]
-	}
-	return strconv.Itoa(n)
-}
-
-func (p *Processor) isArrayType(data any) bool {
-	return internal.IsArrayType(data)
-}
-
-func (p *Processor) isObjectType(data any) bool {
-	return internal.IsObjectType(data)
-}
-
-func (p *Processor) isMapType(data any) bool {
-	return internal.IsMapType(data)
-}
-
-func (p *Processor) isSliceType(data any) bool {
-	if data == nil {
-		return false
-	}
-
-	v := reflect.ValueOf(data)
-	return v.Kind() == reflect.Slice
-}
-
+// isPrimitiveType checks if data is a JSON primitive type
 func (p *Processor) isPrimitiveType(data any) bool {
 	switch data.(type) {
 	case string, int, int8, int16, int32, int64,
@@ -68,13 +22,8 @@ func (p *Processor) isPrimitiveType(data any) bool {
 	}
 }
 
-// isNilOrEmpty checks if a value is nil or empty
-func (p *Processor) isNilOrEmpty(data any) bool {
-	return internal.IsNilOrEmpty(data)
-}
-
 // Parse parses a JSON string into the provided target with improved error handling
-func (p *Processor) Parse(jsonStr string, target any, opts ...*ProcessorOptions) error {
+func (p *Processor) Parse(jsonStr string, target any, opts ...Config) error {
 	if err := p.checkClosed(); err != nil {
 		return err
 	}
@@ -98,8 +47,8 @@ func (p *Processor) Parse(jsonStr string, target any, opts ...*ProcessorOptions)
 
 	// Parse with number preservation to maintain original format
 	if options.PreserveNumbers {
-		// Use NumberPreservingDecoder to keep json.Number as-is
-		decoder := NewNumberPreservingDecoder(true)
+		// Use numberPreservingDecoder to keep json.Number as-is
+		decoder := newNumberPreservingDecoder(true)
 		data, err := decoder.DecodeToAny(jsonStr)
 		if err != nil {
 			return &JsonsError{
@@ -116,10 +65,10 @@ func (p *Processor) Parse(jsonStr string, target any, opts ...*ProcessorOptions)
 		}
 
 		// For other types, use custom encoder/decoder to preserve numbers
-		config := NewPrettyConfig()
+		config := PrettyConfig()
 		config.PreserveNumbers = true
 
-		encoder := NewCustomEncoder(config)
+		encoder := newCustomEncoder(config)
 		defer encoder.Close()
 
 		encodedJson, err := encoder.Encode(data)
@@ -132,7 +81,7 @@ func (p *Processor) Parse(jsonStr string, target any, opts ...*ProcessorOptions)
 		}
 
 		// Use number-preserving unmarshal for final conversion
-		if err := PreservingUnmarshal(stringToBytes(encodedJson), target, true); err != nil {
+		if err := preservingUnmarshal(stringToBytes(encodedJson), target, true); err != nil {
 			return &JsonsError{
 				Op:      "parse",
 				Message: fmt.Sprintf("invalid JSON for target type %T: %v", target, err),
@@ -141,7 +90,7 @@ func (p *Processor) Parse(jsonStr string, target any, opts ...*ProcessorOptions)
 		}
 	} else {
 		// Standard parsing without number preservation
-		if err := PreservingUnmarshal(stringToBytes(jsonStr), target, false); err != nil {
+		if err := preservingUnmarshal(stringToBytes(jsonStr), target, false); err != nil {
 			return &JsonsError{
 				Op:      "parse",
 				Message: fmt.Sprintf("invalid JSON for target type %T: %v", target, err),
@@ -153,8 +102,27 @@ func (p *Processor) Parse(jsonStr string, target any, opts ...*ProcessorOptions)
 	return nil
 }
 
+// ParseAny parses a JSON string and returns the result as any.
+// This method provides the same behavior as the package-level Parse function.
+// Use Parse when you need to unmarshal into a specific target type.
+//
+// Example:
+//
+//	data, err := processor.ParseAny(`{"name": "Alice"}`)
+func (p *Processor) ParseAny(jsonStr string, opts ...Config) (any, error) {
+	if err := p.checkClosed(); err != nil {
+		return nil, err
+	}
+
+	var data any
+	if err := p.Parse(jsonStr, &data, opts...); err != nil {
+		return nil, err
+	}
+	return data, nil
+}
+
 // Valid validates JSON format without parsing the entire structure
-func (p *Processor) Valid(jsonStr string, opts ...*ProcessorOptions) (bool, error) {
+func (p *Processor) Valid(jsonStr string, opts ...Config) (bool, error) {
 	if err := p.checkClosed(); err != nil {
 		return false, err
 	}
@@ -176,7 +144,7 @@ func (p *Processor) Valid(jsonStr string, opts ...*ProcessorOptions) (bool, erro
 	}
 
 	// Valid JSON by attempting to parse
-	decoder := NewNumberPreservingDecoder(options.PreserveNumbers)
+	decoder := newNumberPreservingDecoder(options.PreserveNumbers)
 	_, err = decoder.DecodeToAny(jsonStr)
 
 	if err != nil {
@@ -210,35 +178,24 @@ func stringToBytes(s string) []byte {
 	return internal.StringToBytes(s)
 }
 
-func (p *Processor) splitPath(path string, segments []PathSegment) []PathSegment {
+func (p *Processor) splitPath(path string, segments []internal.PathSegment) []internal.PathSegment {
 	segments = segments[:0]
 
-	if !p.needsPathPreprocessing(path) {
-		return p.splitPathIntoSegments(path, segments)
+	// Direct call to internal package - reduces method call overhead
+	if !internal.NeedsPathPreprocessing(path) {
+		return internal.SplitPathIntoSegments(path, segments)
 	}
 
 	sb := p.getStringBuilder()
 	defer p.putStringBuilder(sb)
 
-	processedPath := p.preprocessPath(path, sb)
-
-	return p.splitPathIntoSegments(processedPath, segments)
+	processedPath := internal.PreprocessPath(path, sb)
+	return internal.SplitPathIntoSegments(processedPath, segments)
 }
 
-func (p *Processor) needsPathPreprocessing(path string) bool {
-	return internal.NeedsPathPreprocessing(path)
-}
-
+// preprocessPath preprocesses a path string (exported for testing)
 func (p *Processor) preprocessPath(path string, sb *strings.Builder) string {
 	return internal.PreprocessPath(path, sb)
-}
-
-func (p *Processor) splitPathIntoSegments(path string, segments []PathSegment) []PathSegment {
-	return internal.SplitPathIntoSegments(path, segments)
-}
-
-func (p *Processor) parsePathSegment(part string, segments []PathSegment) []PathSegment {
-	return internal.ParsePathSegment(part, segments)
 }
 
 func (p *Processor) parsePath(path string) ([]string, error) {
@@ -264,33 +221,34 @@ func (p *Processor) parsePath(path string) ([]string, error) {
 }
 
 func (p *Processor) isDistributedOperationPath(path string) bool {
-	return internal.IsDistributedOperationPath(path)
+	return internal.IsExtractionPath(path)
 }
 
-func (p *Processor) isDistributedOperationSegment(segment PathSegment) bool {
-	return internal.IsDistributedOperationSegment(segment)
+func (p *Processor) isDistributedOperationSegment(segment internal.PathSegment) bool {
+	return internal.IsExtractionSegment(segment)
 }
 
-func (p *Processor) handleDistributedOperation(data any, segments []PathSegment) (any, error) {
+func (p *Processor) handleDistributedOperation(data any, segments []internal.PathSegment) (any, error) {
 	return p.getValueWithDistributedOperation(data, p.reconstructPath(segments))
 }
 
-func (p *Processor) reconstructPath(segments []PathSegment) string {
+func (p *Processor) reconstructPath(segments []internal.PathSegment) string {
 	return internal.ReconstructPath(segments)
 }
 
 // parseArraySegment parses array access segments like [0], [1:3], etc.
-func (p *Processor) parseArraySegment(part string, segments []PathSegment) []PathSegment {
+func (p *Processor) parseArraySegment(part string, segments []internal.PathSegment) []internal.PathSegment {
 	return internal.ParseArraySegment(part, segments)
 }
 
 // parseExtractionSegment parses extraction segments like {key}, {flat:key}, etc.
-func (p *Processor) parseExtractionSegment(part string, segments []PathSegment) []PathSegment {
+func (p *Processor) parseExtractionSegment(part string, segments []internal.PathSegment) []internal.PathSegment {
 	return internal.ParseExtractionSegment(part, segments)
 }
 
-// FormatPretty formats JSON string with indentation
-func (p *Processor) FormatPretty(jsonStr string, opts ...*ProcessorOptions) (string, error) {
+// Prettify formats JSON string with indentation.
+// This is the recommended method for formatting JSON strings.
+func (p *Processor) Prettify(jsonStr string, opts ...Config) (string, error) {
 	if err := p.checkClosed(); err != nil {
 		return "", err
 	}
@@ -311,7 +269,7 @@ func (p *Processor) FormatPretty(jsonStr string, opts ...*ProcessorOptions) (str
 	}
 
 	// Parse with number preservation to maintain original number types
-	decoder := NewNumberPreservingDecoder(options.PreserveNumbers)
+	decoder := newNumberPreservingDecoder(options.PreserveNumbers)
 	data, err := decoder.DecodeToAny(jsonStr)
 	if err != nil {
 		return "", &JsonsError{
@@ -322,10 +280,17 @@ func (p *Processor) FormatPretty(jsonStr string, opts ...*ProcessorOptions) (str
 	}
 
 	// Use custom encoder with pretty formatting to preserve number types
-	config := NewPrettyConfig()
+	config := PrettyConfig()
 	config.PreserveNumbers = options.PreserveNumbers
+	// Respect caller's Indent/Prefix if explicitly provided via options
+	if options.Indent != "" {
+		config.Indent = options.Indent
+	}
+	if options.Prefix != "" {
+		config.Prefix = options.Prefix
+	}
 
-	encoder := NewCustomEncoder(config)
+	encoder := newCustomEncoder(config)
 	defer encoder.Close()
 
 	result, err := encoder.Encode(data)
@@ -344,7 +309,7 @@ func (p *Processor) FormatPretty(jsonStr string, opts ...*ProcessorOptions) (str
 }
 
 // Compact removes whitespace from JSON string
-func (p *Processor) Compact(jsonStr string, opts ...*ProcessorOptions) (string, error) {
+func (p *Processor) Compact(jsonStr string, opts ...Config) (string, error) {
 	if err := p.checkClosed(); err != nil {
 		return "", err
 	}
@@ -365,7 +330,7 @@ func (p *Processor) Compact(jsonStr string, opts ...*ProcessorOptions) (string, 
 	}
 
 	// Parse with number preservation to maintain original number types
-	decoder := NewNumberPreservingDecoder(options.PreserveNumbers)
+	decoder := newNumberPreservingDecoder(options.PreserveNumbers)
 	data, err := decoder.DecodeToAny(jsonStr)
 	if err != nil {
 		return "", &JsonsError{
@@ -376,10 +341,10 @@ func (p *Processor) Compact(jsonStr string, opts ...*ProcessorOptions) (string, 
 	}
 
 	// Use custom encoder with compact formatting to preserve number types
-	config := DefaultEncodeConfig()
+	config := DefaultConfig()
 	config.PreserveNumbers = options.PreserveNumbers
 
-	encoder := NewCustomEncoder(config)
+	encoder := newCustomEncoder(config)
 	defer encoder.Close()
 
 	result, err := encoder.Encode(data)
@@ -398,13 +363,19 @@ func (p *Processor) Compact(jsonStr string, opts ...*ProcessorOptions) (string, 
 }
 
 // FormatCompact removes whitespace from JSON string (alias for Compact)
-func (p *Processor) FormatCompact(jsonStr string, opts ...*ProcessorOptions) (string, error) {
+func (p *Processor) FormatCompact(jsonStr string, opts ...Config) (string, error) {
+	return p.Compact(jsonStr, opts...)
+}
+
+// CompactString removes whitespace from JSON string.
+// This is an alias for Compact for consistency with the package-level CompactString function.
+func (p *Processor) CompactString(jsonStr string, opts ...Config) (string, error) {
 	return p.Compact(jsonStr, opts...)
 }
 
 // CompactBuffer appends to dst the JSON-encoded src with insignificant space characters elided.
-// Compatible with encoding/json.Compact with optional ProcessorOptions support.
-func (p *Processor) CompactBuffer(dst *bytes.Buffer, src []byte, opts ...*ProcessorOptions) error {
+// Compatible with encoding/json.Compact with optional Config support.
+func (p *Processor) CompactBuffer(dst *bytes.Buffer, src []byte, opts ...Config) error {
 	compacted, err := p.Compact(string(src), opts...)
 	if err != nil {
 		return err
@@ -414,8 +385,8 @@ func (p *Processor) CompactBuffer(dst *bytes.Buffer, src []byte, opts ...*Proces
 }
 
 // IndentBuffer appends to dst an indented form of the JSON-encoded src.
-// Compatible with encoding/json.Indent with optional ProcessorOptions support.
-func (p *Processor) IndentBuffer(dst *bytes.Buffer, src []byte, prefix, indent string, opts ...*ProcessorOptions) error {
+// Compatible with encoding/json.Indent with optional Config support.
+func (p *Processor) IndentBuffer(dst *bytes.Buffer, src []byte, prefix, indent string, opts ...Config) error {
 	var data any
 	if err := p.Unmarshal(src, &data, opts...); err != nil {
 		return err
@@ -428,19 +399,46 @@ func (p *Processor) IndentBuffer(dst *bytes.Buffer, src []byte, prefix, indent s
 	return err
 }
 
+// CompactBytes appends to dst the JSON-encoded src with insignificant space characters elided.
+// This is an alias for CompactBuffer without optional Config, providing encoding/json.Compact compatibility.
+// Use this method when you need the exact encoding/json.Compact signature.
+//
+// Example:
+//
+//	var buf bytes.Buffer
+//	err := processor.CompactBytes(&buf, []byte(`{"name": "Alice"}`))
+func (p *Processor) CompactBytes(dst *bytes.Buffer, src []byte) error {
+	return p.CompactBuffer(dst, src)
+}
+
+// IndentBytes appends to dst an indented form of the JSON-encoded src.
+// This is an alias for IndentBuffer without optional Config, providing encoding/json.Indent compatibility.
+// Use this method when you need the exact encoding/json.Indent signature.
+//
+// Example:
+//
+//	var buf bytes.Buffer
+//	err := processor.IndentBytes(&buf, []byte(`{"name":"Alice"}`), "", "  ")
+func (p *Processor) IndentBytes(dst *bytes.Buffer, src []byte, prefix, indent string) error {
+	return p.IndentBuffer(dst, src, prefix, indent)
+}
+
 // HTMLEscapeBuffer appends to dst the JSON-encoded src with HTML-safe escaping.
 // Replaces &, <, and > with \u0026, \u003c, and \u003e for safe HTML embedding.
-// Compatible with encoding/json.HTMLEscape with optional ProcessorOptions support.
-func (p *Processor) HTMLEscapeBuffer(dst *bytes.Buffer, src []byte, opts ...*ProcessorOptions) {
+// Compatible with encoding/json.HTMLEscape with optional Config support.
+func (p *Processor) HTMLEscapeBuffer(dst *bytes.Buffer, src []byte, opts ...Config) {
 	var data any
 	if err := p.Unmarshal(src, &data, opts...); err != nil {
 		dst.Write(src)
 		return
 	}
 
-	config := DefaultEncodeConfig()
+	config := DefaultConfig()
+	if len(opts) > 0 {
+		config = opts[0]
+	}
 	config.EscapeHTML = true
-	escaped, err := p.EncodeWithConfig(data, config, opts...)
+	escaped, err := p.EncodeWithConfig(data, config)
 	if err != nil {
 		dst.Write(src)
 		return
@@ -469,7 +467,8 @@ func (p *Processor) navigateDotNotation(data any, path string) (any, error) {
 
 	segments = p.splitPath(path, segments)
 
-	for i, segment := range segments {
+	for i := 0; i < len(segments); i++ {
+		segment := segments[i]
 		if p.isDistributedOperationSegment(segment) {
 			return p.handleDistributedOperation(current, segments[i:])
 		}
@@ -477,24 +476,24 @@ func (p *Processor) navigateDotNotation(data any, path string) (any, error) {
 		switch segment.TypeString() {
 		case "property":
 			result := p.handlePropertyAccess(current, segment.Key)
-			if !result.Exists {
+			if !result.exists {
 				return nil, ErrPathNotFound
 			}
-			current = result.Value
+			current = result.value
 
 		case "array":
 			result := p.handleArrayAccess(current, segment)
-			if !result.Exists {
+			if !result.exists {
 				return nil, ErrPathNotFound
 			}
-			current = result.Value
+			current = result.value
 
 		case "slice":
 			result := p.handleArraySlice(current, segment)
-			if !result.Exists {
+			if !result.exists {
 				return nil, ErrPathNotFound
 			}
-			current = result.Value
+			current = result.value
 
 		case "extract":
 			extractResult, err := p.handleExtraction(current, segment)
@@ -509,19 +508,19 @@ func (p *Processor) navigateDotNotation(data any, path string) (any, error) {
 					if segment.IsFlatExtract() {
 						if nextSegment.TypeString() == "slice" {
 							result := p.handleArraySlice(current, nextSegment)
-							if result.Exists {
-								current = result.Value
+							if result.exists {
+								current = result.value
 							}
 						} else {
 							result := p.handleArrayAccess(current, nextSegment)
-							if result.Exists {
-								current = result.Value
+							if result.exists {
+								current = result.value
 							}
 						}
 					} else {
 						current = p.handlePostExtractionArrayAccess(current, nextSegment)
 					}
-					i++
+					i++ // Skip the next segment since we just processed it
 				}
 			}
 
@@ -553,10 +552,10 @@ func (p *Processor) navigateJSONPointer(data any, path string) (any, error) {
 		}
 
 		result := p.handlePropertyAccess(current, segment)
-		if !result.Exists {
+		if !result.exists {
 			return nil, ErrPathNotFound
 		}
-		current = result.Value
+		current = result.value
 	}
 
 	return current, nil
@@ -567,64 +566,56 @@ func (p *Processor) unescapeJSONPointer(segment string) string {
 	return internal.UnescapeJSONPointer(segment)
 }
 
-func (p *Processor) handlePropertyAccess(data any, property string) PropertyAccessResult {
+func (p *Processor) handlePropertyAccess(data any, property string) propertyAccessResult {
 	switch v := data.(type) {
 	case map[string]any:
 		if val, exists := v[property]; exists {
-			return PropertyAccessResult{Value: val, Exists: true}
+			return propertyAccessResult{value: val, exists: true}
 		}
-		return PropertyAccessResult{Exists: false}
+		return propertyAccessResult{exists: false}
 
 	case map[any]any:
 		if val, exists := v[property]; exists {
-			return PropertyAccessResult{Value: val, Exists: true}
+			return propertyAccessResult{value: val, exists: true}
 		}
-		return PropertyAccessResult{Exists: false}
+		return propertyAccessResult{exists: false}
 
 	case []any:
 		if index := p.parseArrayIndex(property); index >= 0 && index < len(v) {
-			return PropertyAccessResult{Value: v[index], Exists: true}
+			return propertyAccessResult{value: v[index], exists: true}
 		}
-		return PropertyAccessResult{Exists: false}
+		return propertyAccessResult{exists: false}
 
 	default:
 		if structValue := p.handleStructAccess(data, property); structValue != nil {
-			return PropertyAccessResult{Value: structValue, Exists: true}
+			return propertyAccessResult{value: structValue, exists: true}
 		}
-		return PropertyAccessResult{Exists: false}
+		return propertyAccessResult{exists: false}
 	}
 }
 
 func (p *Processor) handlePropertyAccessValue(data any, property string) any {
 	result := p.handlePropertyAccess(data, property)
-	if result.Exists {
-		return result.Value
+	if result.exists {
+		return result.value
 	}
 	return nil
 }
 
-// NumberPreservingDecoder provides JSON decoding with optimized number format preservation
-type NumberPreservingDecoder struct {
+// numberPreservingDecoder provides JSON decoding with optimized number format preservation
+type numberPreservingDecoder struct {
 	preserveNumbers bool
-
-	// bufferPool is used for efficient string formatting operations
-	bufferPool *sync.Pool
 }
 
-// NewNumberPreservingDecoder creates a new decoder with performance and number preservation
-func NewNumberPreservingDecoder(preserveNumbers bool) *NumberPreservingDecoder {
-	return &NumberPreservingDecoder{
+// newNumberPreservingDecoder creates a new decoder with performance and number preservation
+func newNumberPreservingDecoder(preserveNumbers bool) *numberPreservingDecoder {
+	return &numberPreservingDecoder{
 		preserveNumbers: preserveNumbers,
-		bufferPool: &sync.Pool{
-			New: func() any {
-				return make([]byte, 0, 1024) // Pre-allocate 1KB buffer
-			},
-		},
 	}
 }
 
 // DecodeToAny decodes JSON string to any type with performance and number preservation
-func (d *NumberPreservingDecoder) DecodeToAny(jsonStr string) (any, error) {
+func (d *numberPreservingDecoder) DecodeToAny(jsonStr string) (any, error) {
 	if !d.preserveNumbers {
 		// Fast path: use standard JSON decoding without number preservation
 		var result any
@@ -643,16 +634,16 @@ func (d *NumberPreservingDecoder) DecodeToAny(jsonStr string) (any, error) {
 		return nil, err
 	}
 
-	// Convert json.Number to our Number type for compatibility
+	// Convert json.Number to our Number type for encoding/json.UseNumber compatibility
 	result = d.convertStdJSONNumbers(result)
 	return result, nil
 }
 
-// convertStdJSONNumbers converts standard library json.Number to our Number type
-func (d *NumberPreservingDecoder) convertStdJSONNumbers(value any) any {
+// convertStdJSONNumbers converts standard library json.Number to our Number type.
+// This preserves the original number representation for UseNumber() compatibility.
+func (d *numberPreservingDecoder) convertStdJSONNumbers(value any) any {
 	switch v := value.(type) {
 	case json.Number:
-		// Convert standard library json.Number to our Number type
 		return Number(string(v))
 	case map[string]any:
 		result := make(map[string]any, len(v))
@@ -671,8 +662,9 @@ func (d *NumberPreservingDecoder) convertStdJSONNumbers(value any) any {
 	}
 }
 
-// convertNumbers recursively converts json.Number
-func (d *NumberPreservingDecoder) convertNumbers(value any) any {
+// convertNumbers recursively converts json.Number to native types (int, float64) when possible,
+// falling back to Number type for very large numbers. Used by preservingUnmarshal.
+func (d *numberPreservingDecoder) convertNumbers(value any) any {
 	switch v := value.(type) {
 	case json.Number:
 		return d.convertJSONNumber(v)
@@ -697,7 +689,7 @@ func (d *NumberPreservingDecoder) convertNumbers(value any) any {
 
 // convertJSONNumber converts json.Number with precision handling
 // PERFORMANCE: Optimized to minimize allocations and use manual parsing where possible
-func (d *NumberPreservingDecoder) convertJSONNumber(num json.Number) any {
+func (d *numberPreservingDecoder) convertJSONNumber(num json.Number) any {
 	numStr := string(num)
 	numLen := len(numStr)
 
@@ -712,7 +704,7 @@ func (d *NumberPreservingDecoder) convertJSONNumber(num json.Number) any {
 	// PERFORMANCE: Single scan to detect number format
 	hasDecimal := false
 	hasScientific := false
-	for i := 0; i < numLen; i++ {
+	for i := range numLen {
 		c := numStr[i]
 		if c == '.' {
 			hasDecimal = true
@@ -770,8 +762,8 @@ func (d *NumberPreservingDecoder) convertJSONNumber(num json.Number) any {
 			return u
 		}
 
-		// Number too large for standard types, preserve as string
-		return numStr
+		// Number too large for standard types, preserve as Number for type safety
+		return Number(numStr)
 	}
 
 	// Handle "clean" floats (ending with .0)
@@ -787,8 +779,8 @@ func (d *NumberPreservingDecoder) convertJSONNumber(num json.Number) any {
 		if f, err := strconv.ParseFloat(numStr, 64); err == nil {
 			return f
 		}
-		// Last resort: return as string
-		return numStr
+		// Last resort: return as Number to maintain numeric type identity
+		return Number(numStr)
 	}
 
 	// Handle decimal numbers with precision checking
@@ -798,8 +790,8 @@ func (d *NumberPreservingDecoder) convertJSONNumber(num json.Number) any {
 			// Precision checking is less important than type consistency
 			return f
 		}
-		// If parsing fails, return as string
-		return numStr
+		// If parsing fails, return as Number to maintain numeric type identity
+		return Number(numStr)
 	}
 
 	// Handle scientific notation
@@ -809,27 +801,12 @@ func (d *NumberPreservingDecoder) convertJSONNumber(num json.Number) any {
 		}
 	}
 
-	// Fallback: return as string
-	return numStr
+	// Fallback: return as Number to maintain numeric type identity
+	return Number(numStr)
 }
 
-// containsAnyByte checks if string contains any of the specified bytes (faster than strings.ContainsAny)
-func containsAnyByte(s, chars string) bool {
-	return internal.ContainsAnyByte(s, chars)
-}
-
-// checkFloatPrecision quickly checks if float64 preserves the original string representation
-func (d *NumberPreservingDecoder) checkFloatPrecision(f float64, original string) bool {
-	// Use buffer from pool for efficient string formatting
-	buf := d.bufferPool.Get().([]byte)
-	defer d.bufferPool.Put(buf[:0])
-
-	formatted := strconv.AppendFloat(buf, f, 'f', -1, 64)
-	return string(formatted) == original
-}
-
-// PreservingUnmarshal unmarshals JSON with number preservation
-func PreservingUnmarshal(data []byte, v any, preserveNumbers bool) error {
+// preservingUnmarshal unmarshals JSON with number preservation
+func preservingUnmarshal(data []byte, v any, preserveNumbers bool) error {
 	if !preserveNumbers {
 		return json.Unmarshal(data, v)
 	}
@@ -845,7 +822,7 @@ func PreservingUnmarshal(data []byte, v any, preserveNumbers bool) error {
 	}
 
 	// Convert numbers and then marshal/unmarshal to target type
-	converted := NewNumberPreservingDecoder(true).convertNumbers(temp)
+	converted := newNumberPreservingDecoder(true).convertNumbers(temp)
 
 	// Marshal the converted data and unmarshal to target
 	convertedBytes, err := json.Marshal(converted)
@@ -856,140 +833,8 @@ func PreservingUnmarshal(data []byte, v any, preserveNumbers bool) error {
 	return json.Unmarshal(convertedBytes, v)
 }
 
-// SmartNumberConversion provides intelligent number type conversion
-func SmartNumberConversion(value any) any {
-	switch v := value.(type) {
-	case json.Number:
-		decoder := NewNumberPreservingDecoder(true)
-		return decoder.convertJSONNumber(v)
-	case string:
-		// Try to parse string as number
-		if num := json.Number(v); num.String() == v {
-			decoder := NewNumberPreservingDecoder(true)
-			return decoder.convertJSONNumber(num)
-		}
-		return v
-	default:
-		return v
-	}
-}
-
-// IsLargeNumber checks if a string represents a number that's too large for standard numeric types
-func IsLargeNumber(numStr string) bool {
-	// Remove leading/trailing whitespace
-	numStr = strings.TrimSpace(numStr)
-
-	// Check if it's a valid number format
-	if !isValidNumberString(numStr) {
-		return false
-	}
-
-	// If it's an integer (no decimal point)
-	if !strings.Contains(numStr, ".") && !strings.ContainsAny(numStr, "eE") {
-		// Try parsing as int64 and uint64
-		_, errInt := strconv.ParseInt(numStr, 10, 64)
-		_, errUint := strconv.ParseUint(numStr, 10, 64)
-		// If both fail, it's too large
-		return errInt != nil && errUint != nil
-	}
-
-	return false
-}
-
-// isValidNumberString checks if a string represents a valid number
-func isValidNumberString(s string) bool {
-	return internal.IsValidNumberString(s)
-}
-
-// IsScientificNotation checks if a string represents a number in scientific notation
-func IsScientificNotation(s string) bool {
-	return strings.ContainsAny(s, "eE")
-}
-
-// ConvertFromScientific converts a scientific notation string to regular number format
-func ConvertFromScientific(s string) (string, error) {
-	if !IsScientificNotation(s) {
-		return s, nil
-	}
-
-	f, err := strconv.ParseFloat(s, 64)
-	if err != nil {
-		return s, err
-	}
-
-	// Format without scientific notation
-	return FormatNumber(f), nil
-}
-
-func (p *Processor) deepCopyData(data any) any {
-	switch v := data.(type) {
-	case map[string]any:
-		return p.deepCopyStringMap(v)
-	case map[any]any:
-		return p.deepCopyAnyMap(v)
-	case []any:
-		return p.deepCopyArray(v)
-	case string, int, int8, int16, int32, int64,
-		uint, uint8, uint16, uint32, uint64,
-		float32, float64, bool:
-		return v
-	default:
-		return p.deepCopyReflection(data)
-	}
-}
-
-func (p *Processor) deepCopyStringMap(data map[string]any) map[string]any {
-	// Pre-allocate capacity to avoid map growth during copy
-	result := make(map[string]any, len(data))
-	for key, value := range data {
-		result[key] = p.deepCopyData(value)
-	}
-	return result
-}
-
-func (p *Processor) deepCopyAnyMap(data map[any]any) map[any]any {
-	// Pre-allocate capacity to avoid map growth during copy
-	result := make(map[any]any, len(data))
-	for key, value := range data {
-		result[key] = p.deepCopyData(value)
-	}
-	return result
-}
-
-func (p *Processor) deepCopyArray(data []any) []any {
-	// Pre-allocate exact capacity since we know the length
-	result := make([]any, len(data))
-	for i, value := range data {
-		result[i] = p.deepCopyData(value)
-	}
-	return result
-}
-
-func (p *Processor) deepCopyReflection(data any) any {
-	if data == nil {
-		return nil
-	}
-
-	v := reflect.ValueOf(data)
-	switch v.Kind() {
-	case reflect.Ptr:
-		if v.IsNil() {
-			return nil
-		}
-		newPtr := reflect.New(v.Elem().Type())
-		newPtr.Elem().Set(reflect.ValueOf(p.deepCopyReflection(v.Elem().Interface())))
-		return newPtr.Interface()
-	case reflect.Struct:
-		newStruct := reflect.New(v.Type()).Elem()
-		for i := 0; i < v.NumField(); i++ {
-			if v.Field(i).CanInterface() {
-				newStruct.Field(i).Set(reflect.ValueOf(p.deepCopyReflection(v.Field(i).Interface())))
-			}
-		}
-		return newStruct.Interface()
-	default:
-		return data
-	}
+func (p *Processor) deepCopyData(data any) (any, error) {
+	return DeepCopy(data)
 }
 
 func (p *Processor) escapeJSONPointer(segment string) string {
@@ -1041,8 +886,4 @@ func (p *Processor) isValidArrayIndex(index string) bool {
 
 func (p *Processor) isValidSliceRange(rangeStr string) bool {
 	return internal.IsValidSliceRange(rangeStr)
-}
-
-func (p *Processor) wrapError(err error, context string) error {
-	return internal.WrapError(err, context)
 }

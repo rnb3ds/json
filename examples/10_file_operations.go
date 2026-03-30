@@ -21,7 +21,7 @@ import (
 // - Automatic directory creation
 // - Pretty vs compact file output
 //
-// Run: go run examples/10_file_operations.go
+// Run: go run -tags=example examples/10_file_operations.go
 
 func main() {
 	fmt.Println("📁 JSON Library - File Operations")
@@ -38,34 +38,27 @@ func main() {
 	fmt.Printf("Using temp directory: %s\n\n", tempDir)
 
 	// 1. SAVE TO FILE
-	fmt.Println("1️⃣  Save to File")
-	fmt.Println("─────────────────")
 	demonstrateSaveToFile(tempDir)
 
 	// 2. LOAD FROM FILE
-	fmt.Println("\n2️⃣  Load from File")
-	fmt.Println("───────────────────")
 	demonstrateLoadFromFile(tempDir)
 
 	// 3. MARSHAL TO FILE
-	fmt.Println("\n3️⃣  Marshal to File")
-	fmt.Println("────────────────────")
 	demonstrateMarshalToFile(tempDir)
 
 	// 4. UNMARSHAL FROM FILE
-	fmt.Println("\n4️⃣  Unmarshal from File")
-	fmt.Println("───────────────────────")
 	demonstrateUnmarshalFromFile(tempDir)
 
 	// 5. READ-MODIFY-WRITE
-	fmt.Println("\n5️⃣  Read-Modify-Write Pattern")
-	fmt.Println("────────────────────────────")
 	demonstrateReadModifyWrite(tempDir)
 
 	fmt.Println("\n✅ File operations examples complete!")
 }
 
 func demonstrateSaveToFile(tempDir string) {
+	fmt.Println("1️⃣  Save to File")
+	fmt.Println("─────────────────")
+
 	// Sample data
 	config := map[string]interface{}{
 		"version": "1.0.0",
@@ -78,7 +71,9 @@ func demonstrateSaveToFile(tempDir string) {
 
 	// Save with pretty formatting
 	prettyPath := filepath.Join(tempDir, "config_pretty.json")
-	err := json.SaveToFile(prettyPath, config, true)
+	opts := json.DefaultConfig()
+	opts.Pretty = true
+	err := json.SaveToFile(prettyPath, config, opts)
 	if err != nil {
 		fmt.Printf("   Error saving pretty JSON: %v\n", err)
 		return
@@ -87,7 +82,7 @@ func demonstrateSaveToFile(tempDir string) {
 
 	// Save with compact formatting
 	compactPath := filepath.Join(tempDir, "config_compact.json")
-	err = json.SaveToFile(compactPath, config, false)
+	err = json.SaveToFile(compactPath, config, json.DefaultConfig())
 	if err != nil {
 		fmt.Printf("   Error saving compact JSON: %v\n", err)
 		return
@@ -105,6 +100,9 @@ func demonstrateSaveToFile(tempDir string) {
 }
 
 func demonstrateLoadFromFile(tempDir string) {
+	fmt.Println("\n2️⃣  Load from File")
+	fmt.Println("───────────────────")
+
 	// First create a file
 	data := `{
 		"user": "Alice",
@@ -131,6 +129,9 @@ func demonstrateLoadFromFile(tempDir string) {
 }
 
 func demonstrateMarshalToFile(tempDir string) {
+	fmt.Println("\n3️⃣  Marshal to File")
+	fmt.Println("────────────────────")
+
 	type User struct {
 		ID     int      `json:"id"`
 		Name   string   `json:"name"`
@@ -149,7 +150,9 @@ func demonstrateMarshalToFile(tempDir string) {
 
 	// Marshal to file with pretty formatting
 	filePath := filepath.Join(tempDir, "user_marshal.json")
-	err := json.MarshalToFile(filePath, user, true)
+	opts := json.DefaultConfig()
+	opts.Pretty = true
+	err := json.MarshalToFile(filePath, user, opts)
 	if err != nil {
 		fmt.Printf("   Error marshaling to file: %v\n", err)
 		return
@@ -163,6 +166,9 @@ func demonstrateMarshalToFile(tempDir string) {
 }
 
 func demonstrateUnmarshalFromFile(tempDir string) {
+	fmt.Println("\n4️⃣  Unmarshal from File")
+	fmt.Println("───────────────────────")
+
 	// First create a file with JSON data
 	data := `{
 		"id": 2,
@@ -201,6 +207,9 @@ func demonstrateUnmarshalFromFile(tempDir string) {
 }
 
 func demonstrateReadModifyWrite(tempDir string) {
+	fmt.Println("\n5️⃣  Read-Modify-Write Pattern")
+	fmt.Println("────────────────────────────")
+
 	// Create initial config file
 	initialConfig := `{
 		"version": "1.0.0",
@@ -232,11 +241,15 @@ func demonstrateReadModifyWrite(tempDir string) {
 	updated, _ = json.Set(updated, "server.port", 9090)
 	updated, _ = json.Set(updated, "debug", true)
 
-	// Add new field
-	updated, _ = json.SetWithAdd(updated, "server.ssl", true)
+	// Add new field with automatic path creation using fluent config
+	cfg := json.DefaultConfig()
+	cfg.CreatePaths = true
+	updated, _ = json.Set(updated, "server.ssl", true, cfg)
 
 	// Save back
-	err = json.SaveToFile(configPath, updated, true)
+	opts := json.DefaultConfig()
+	opts.Pretty = true
+	err = json.SaveToFile(configPath, updated, opts)
 	if err != nil {
 		fmt.Printf("   Error saving: %v\n", err)
 		return
