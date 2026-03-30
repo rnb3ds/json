@@ -1358,6 +1358,46 @@ func (p *Processor) GetObject(jsonStr, path string, opts ...Config) (map[string]
 	return getTypedWithProcessor[map[string]any](p, jsonStr, path, opts...)
 }
 
+// GetStringOr retrieves a string value from JSON at the specified path with a default fallback.
+// Returns defaultValue if: path not found, value is null, or type conversion fails.
+func (p *Processor) GetStringOr(jsonStr, path string, defaultValue string, opts ...Config) string {
+	result, err := p.GetString(jsonStr, path, opts...)
+	if err != nil {
+		return defaultValue
+	}
+	return result
+}
+
+// GetIntOr retrieves an int value from JSON at the specified path with a default fallback.
+// Returns defaultValue if: path not found, value is null, or type conversion fails.
+func (p *Processor) GetIntOr(jsonStr, path string, defaultValue int, opts ...Config) int {
+	result, err := p.GetInt(jsonStr, path, opts...)
+	if err != nil {
+		return defaultValue
+	}
+	return result
+}
+
+// GetFloatOr retrieves a float64 value from JSON at the specified path with a default fallback.
+// Returns defaultValue if: path not found, value is null, or type conversion fails.
+func (p *Processor) GetFloatOr(jsonStr, path string, defaultValue float64, opts ...Config) float64 {
+	result, err := p.GetFloat(jsonStr, path, opts...)
+	if err != nil {
+		return defaultValue
+	}
+	return result
+}
+
+// GetBoolOr retrieves a bool value from JSON at the specified path with a default fallback.
+// Returns defaultValue if: path not found, value is null, or type conversion fails.
+func (p *Processor) GetBoolOr(jsonStr, path string, defaultValue bool, opts ...Config) bool {
+	result, err := p.GetBool(jsonStr, path, opts...)
+	if err != nil {
+		return defaultValue
+	}
+	return result
+}
+
 // GetMultiple retrieves multiple values from JSON using multiple path expressions
 func (p *Processor) GetMultiple(jsonStr string, paths []string, opts ...Config) (map[string]any, error) {
 	if err := p.checkClosed(); err != nil {

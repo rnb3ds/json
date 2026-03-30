@@ -468,39 +468,43 @@ func GetTypedOr[T any](jsonStr, path string, defaultValue T, cfg ...Config) T {
 }
 
 // GetStringOr retrieves a string value from JSON at the specified path with a default fallback.
+// Returns defaultValue if: path not found, value is null, or type conversion fails.
 func GetStringOr(jsonStr, path string, defaultValue string, cfg ...Config) string {
-	result, err := GetString(jsonStr, path, cfg...)
+	p, err := getProcessorOrFail()
 	if err != nil {
 		return defaultValue
 	}
-	return result
+	return p.GetStringOr(jsonStr, path, defaultValue, cfg...)
 }
 
 // GetIntOr retrieves an int value from JSON at the specified path with a default fallback.
+// Returns defaultValue if: path not found, value is null, or type conversion fails.
 func GetIntOr(jsonStr, path string, defaultValue int, cfg ...Config) int {
-	result, err := GetInt(jsonStr, path, cfg...)
+	p, err := getProcessorOrFail()
 	if err != nil {
 		return defaultValue
 	}
-	return result
+	return p.GetIntOr(jsonStr, path, defaultValue, cfg...)
 }
 
 // GetFloatOr retrieves a float64 value from JSON at the specified path with a default fallback.
+// Returns defaultValue if: path not found, value is null, or type conversion fails.
 func GetFloatOr(jsonStr, path string, defaultValue float64, cfg ...Config) float64 {
-	result, err := GetFloat(jsonStr, path, cfg...)
+	p, err := getProcessorOrFail()
 	if err != nil {
 		return defaultValue
 	}
-	return result
+	return p.GetFloatOr(jsonStr, path, defaultValue, cfg...)
 }
 
 // GetBoolOr retrieves a bool value from JSON at the specified path with a default fallback.
+// Returns defaultValue if: path not found, value is null, or type conversion fails.
 func GetBoolOr(jsonStr, path string, defaultValue bool, cfg ...Config) bool {
-	result, err := GetBool(jsonStr, path, cfg...)
+	p, err := getProcessorOrFail()
 	if err != nil {
 		return defaultValue
 	}
-	return result
+	return p.GetBoolOr(jsonStr, path, defaultValue, cfg...)
 }
 
 // GetMultiple retrieves multiple values from JSON at the specified paths
@@ -640,11 +644,7 @@ func HTMLEscapeBuffer(dst *bytes.Buffer, src []byte, cfg ...Config) {
 // For configuration options, use EncodeWithConfig.
 func Encode(value any, cfg ...Config) (string, error) {
 	return withProcessor(func(p *Processor) (string, error) {
-		var c Config
-		if len(cfg) > 0 {
-			c = cfg[0]
-		}
-		return p.EncodeWithConfig(value, c)
+		return p.EncodeWithConfig(value, cfg...)
 	})
 }
 
@@ -652,6 +652,9 @@ func Encode(value any, cfg ...Config) (string, error) {
 // This is the recommended way to encode JSON with configuration.
 //
 // Example:
+//
+//	// Default configuration
+//	result, err := json.EncodeWithConfig(data)
 //
 //	// Pretty output
 //	result, err := json.EncodeWithConfig(data, json.PrettyConfig())
@@ -664,9 +667,9 @@ func Encode(value any, cfg ...Config) (string, error) {
 //	cfg.Pretty = true
 //	cfg.SortKeys = true
 //	result, err := json.EncodeWithConfig(data, cfg)
-func EncodeWithConfig(value any, cfg Config, opts ...Config) (string, error) {
+func EncodeWithConfig(value any, cfg ...Config) (string, error) {
 	return withProcessor(func(p *Processor) (string, error) {
-		return p.EncodeWithConfig(value, cfg, opts...)
+		return p.EncodeWithConfig(value, cfg...)
 	})
 }
 

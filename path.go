@@ -399,6 +399,30 @@ func (p *Processor) IndentBuffer(dst *bytes.Buffer, src []byte, prefix, indent s
 	return err
 }
 
+// CompactBytes appends to dst the JSON-encoded src with insignificant space characters elided.
+// This is an alias for CompactBuffer without optional Config, providing encoding/json.Compact compatibility.
+// Use this method when you need the exact encoding/json.Compact signature.
+//
+// Example:
+//
+//	var buf bytes.Buffer
+//	err := processor.CompactBytes(&buf, []byte(`{"name": "Alice"}`))
+func (p *Processor) CompactBytes(dst *bytes.Buffer, src []byte) error {
+	return p.CompactBuffer(dst, src)
+}
+
+// IndentBytes appends to dst an indented form of the JSON-encoded src.
+// This is an alias for IndentBuffer without optional Config, providing encoding/json.Indent compatibility.
+// Use this method when you need the exact encoding/json.Indent signature.
+//
+// Example:
+//
+//	var buf bytes.Buffer
+//	err := processor.IndentBytes(&buf, []byte(`{"name":"Alice"}`), "", "  ")
+func (p *Processor) IndentBytes(dst *bytes.Buffer, src []byte, prefix, indent string) error {
+	return p.IndentBuffer(dst, src, prefix, indent)
+}
+
 // HTMLEscapeBuffer appends to dst the JSON-encoded src with HTML-safe escaping.
 // Replaces &, <, and > with \u0026, \u003c, and \u003e for safe HTML embedding.
 // Compatible with encoding/json.HTMLEscape with optional Config support.
@@ -410,8 +434,11 @@ func (p *Processor) HTMLEscapeBuffer(dst *bytes.Buffer, src []byte, opts ...Conf
 	}
 
 	config := DefaultConfig()
+	if len(opts) > 0 {
+		config = opts[0]
+	}
 	config.EscapeHTML = true
-	escaped, err := p.EncodeWithConfig(data, config, opts...)
+	escaped, err := p.EncodeWithConfig(data, config)
 	if err != nil {
 		dst.Write(src)
 		return

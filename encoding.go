@@ -666,57 +666,6 @@ func marshalJSON(value any, pretty bool, prefix, indent string) (string, error) 
 	return internal.MarshalJSON(value, pretty, prefix, indent)
 }
 
-// EncodeWithOptions converts any Go value to JSON string with advanced options
-func (p *Processor) EncodeWithOptions(value any, encOpts Config, opts ...Config) (string, error) {
-	if err := p.checkClosed(); err != nil {
-		return "", err
-	}
-
-	// Use encOpts directly (already a value)
-
-	// Valid depth
-	if encOpts.MaxDepth > 0 {
-		if err := p.validateDepth(value, encOpts.MaxDepth, 0); err != nil {
-			return "", err
-		}
-	}
-
-	var result string
-	var err error
-
-	// Check if we need to use custom encoding features
-	needsCustomEncoding := needsCustomEncodingOpts(encOpts)
-
-	if needsCustomEncoding {
-		// Use custom encoder for advanced options
-		encoder := newCustomEncoder(encOpts)
-		defer encoder.Close() // Ensure buffers are returned to pool
-		result, err = encoder.Encode(value)
-	} else {
-		// Use standard JSON encoding for basic options
-		result, err = marshalJSON(value, encOpts.Pretty, encOpts.Prefix, encOpts.Indent)
-	}
-
-	if err != nil {
-		return "", &JsonsError{
-			Op:      "encode_with_options",
-			Message: fmt.Sprintf("failed to encode value: %v", err),
-			Err:     ErrOperationFailed,
-		}
-	}
-
-	// Check size limit
-	if int64(len(result)) > p.config.MaxJSONSize {
-		return "", &JsonsError{
-			Op:      "encode_with_options",
-			Message: fmt.Sprintf("encoded JSON size %d exceeds maximum %d", len(result), p.config.MaxJSONSize),
-			Err:     ErrSizeLimit,
-		}
-	}
-
-	return result, nil
-}
-
 // validateDepth checks if the data structure exceeds maximum depth
 func (p *Processor) validateDepth(value any, maxDepth, currentDepth int) error {
 	if currentDepth > maxDepth {
@@ -768,24 +717,34 @@ func needsCustomEncodingOpts(cfg Config) bool {
 }
 
 // ToJsonString converts any Go value to JSON string with HTML escaping (safe for web)
-func (p *Processor) ToJsonString(value any, opts ...Config) (string, error) {
+func (p *Processor) ToJsonString(value any, cfg ...Config) (string, error) {
 	config := DefaultConfig()
+	if len(cfg) > 0 {
+		config = cfg[0]
+	}
 	config.Pretty = false
 	config.EscapeHTML = true
-	return p.EncodeWithConfig(value, config, opts...)
+	return p.EncodeWithConfig(value, config)
 }
 
 // ToJsonStringPretty converts any Go value to pretty JSON string with HTML escaping
-func (p *Processor) ToJsonStringPretty(value any, opts ...Config) (string, error) {
+func (p *Processor) ToJsonStringPretty(value any, cfg ...Config) (string, error) {
 	config := DefaultConfig()
+	if len(cfg) > 0 {
+		config = cfg[0]
+	}
 	config.Pretty = true
 	config.EscapeHTML = true
-	return p.EncodeWithConfig(value, config, opts...)
+	return p.EncodeWithConfig(value, config)
 }
 
 // ToJsonStringStandard converts any Go value to compact JSON string without HTML escaping
-func (p *Processor) ToJsonStringStandard(value any, opts ...Config) (string, error) {
-	return p.EncodeWithConfig(value, DefaultConfig(), opts...)
+func (p *Processor) ToJsonStringStandard(value any, cfg ...Config) (string, error) {
+	config := DefaultConfig()
+	if len(cfg) > 0 {
+		config = cfg[0]
+	}
+	return p.EncodeWithConfig(value, config)
 }
 
 // Marshal converts any Go value to JSON bytes (similar to json.Marshal)
@@ -812,13 +771,16 @@ func (p *Processor) Marshal(value any, opts ...Config) ([]byte, error) {
 }
 
 // MarshalIndent converts any Go value to indented JSON bytes (similar to json.MarshalIndent)
-func (p *Processor) MarshalIndent(value any, prefix, indent string, opts ...Config) ([]byte, error) {
+func (p *Processor) MarshalIndent(value any, prefix, indent string, cfg ...Config) ([]byte, error) {
 	encOpts := DefaultConfig()
+	if len(cfg) > 0 {
+		encOpts = cfg[0]
+	}
 	encOpts.Pretty = true
 	encOpts.Prefix = prefix
 	encOpts.Indent = indent
 
-	jsonStr, err := p.EncodeWithConfig(value, encOpts, opts...)
+	jsonStr, err := p.EncodeWithConfig(value, encOpts)
 	if err != nil {
 		return nil, err
 	}
@@ -858,16 +820,6 @@ func (p *Processor) EncodeStream(values any, cfg ...Config) (string, error) {
 		config = cfg[0]
 	}
 	return p.EncodeWithConfig(values, config)
-}
-
-// EncodeStreamWithOptions encodes multiple values as a JSON array stream with advanced options
-func (p *Processor) EncodeStreamWithOptions(values any, encOpts Config, opts ...Config) (string, error) {
-	if err := p.checkClosed(); err != nil {
-		return "", err
-	}
-
-	// Encode as array with options
-	return p.EncodeWithConfig(values, encOpts, opts...)
 }
 
 // EncodeBatch encodes multiple key-value pairs as a JSON object.
@@ -933,16 +885,30 @@ func (p *Processor) EncodeFields(value any, fields []string, cfg ...Config) (str
 	return processor.EncodeWithConfig(filtered, finalConfig)
 }
 
-// EncodeWithConfig converts any Go value to JSON string with full configuration control
-// PERFORMANCE: Uses FastEncoder for simple types to avoid reflection overhead
-func (p *Processor) EncodeWithConfig(value any, config Config, opts ...Config) (string, error) {
+// EncodeWithConfig converts any Go value to JSON string with full configuration control.
+// PERFORMANCE: Uses FastEncoder for simple types to avoid reflection overhead.
+//
+// Example:
+//
+//	// Default configuration
+//	result, err := processor.EncodeWithConfig(data)
+//
+//	// With custom configuration
+//	cfg := json.DefaultConfig()
+//	cfg.Pretty = true
+//	result, err := processor.EncodeWithConfig(data, cfg)
+//
+//	// With preset configuration
+//	result, err := processor.EncodeWithConfig(data, json.PrettyConfig())
+func (p *Processor) EncodeWithConfig(value any, cfg ...Config) (string, error) {
 	if err := p.checkClosed(); err != nil {
 		return "", err
 	}
 
-	// Use default config if zero value
-	if config.MaxJSONSize == 0 {
-		config = DefaultConfig()
+	// Get config from variadic parameter
+	config := DefaultConfig()
+	if len(cfg) > 0 {
+		config = cfg[0]
 	}
 
 	// PERFORMANCE: Fast path for simple types without special encoding needs
@@ -1071,6 +1037,18 @@ func (p *Processor) EncodePretty(value any, config ...Config) (string, error) {
 		cfg = PrettyConfig()
 	}
 	return p.EncodeWithConfig(value, cfg)
+}
+
+// EncodeWithOptions converts any Go value to JSON string with configuration.
+// Deprecated: Use EncodeWithConfig instead. This method is kept for backward compatibility.
+func (p *Processor) EncodeWithOptions(value any, cfg Config) (string, error) {
+	return p.EncodeWithConfig(value, cfg)
+}
+
+// EncodeStreamWithOptions encodes multiple values as a JSON array stream with configuration.
+// Deprecated: Use EncodeStream instead. This method is kept for backward compatibility.
+func (p *Processor) EncodeStreamWithOptions(values any, cfg Config) (string, error) {
+	return p.EncodeStream(values, cfg)
 }
 
 // customEncoder provides advanced JSON encoding with configurable options
