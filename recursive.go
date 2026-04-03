@@ -642,6 +642,11 @@ func (urp *recursiveProcessor) handleExtractSegmentUnified(data any, segment int
 		actualKey = strings.TrimPrefix(actualKey, "flat:")
 	}
 
+	// Check for multi-field extraction (comma-separated fields)
+	if strings.Contains(actualKey, ",") {
+		return urp.handleMultiFieldExtractSegment(data, actualKey, isFlat, segments, segmentIndex, isLastSegment, op, value, createPaths)
+	}
+
 	switch container := data.(type) {
 	case []any:
 		// Extract from each array element
@@ -851,6 +856,78 @@ func (urp *recursiveProcessor) handleExtractSegmentUnified(data any, segment int
 		}
 		return nil, fmt.Errorf("cannot extract from type %T", data)
 	}
+}
+
+// handleMultiFieldExtractSegment handles multi-field extraction (e.g., {id,name})
+// Returns a new object (or array of objects) containing only the specified fields
+func (urp *recursiveProcessor) handleMultiFieldExtractSegment(data any, fieldsStr string, isFlat bool, segments []internal.PathSegment, segmentIndex int, isLastSegment bool, op operation, value any, createPaths bool) (any, error) {
+	fields := strings.Split(fieldsStr, ",")
+
+	// Trim whitespace from field names
+	for i, f := range fields {
+		fields[i] = strings.TrimSpace(f)
+	}
+
+	switch container := data.(type) {
+	case []any:
+		// Extract from each array element
+		results := make([]any, 0, len(container))
+
+		for _, item := range container {
+			if itemMap, ok := item.(map[string]any); ok {
+				extracted := urp.extractMultipleFieldsFromMap(itemMap, fields)
+				if extracted != nil {
+					results = append(results, extracted)
+				}
+			}
+		}
+
+		// If not last segment, continue processing
+		if !isLastSegment && len(results) > 0 {
+			return urp.processRecursivelyAtSegmentsWithOptions(results, segments, segmentIndex+1, op, value, createPaths)
+		}
+
+		return results, nil
+
+	case map[string]any:
+		extracted := urp.extractMultipleFieldsFromMap(container, fields)
+		if extracted == nil {
+			return nil, nil
+		}
+
+		// If not last segment, continue processing
+		if !isLastSegment {
+			return urp.processRecursivelyAtSegmentsWithOptions(extracted, segments, segmentIndex+1, op, value, createPaths)
+		}
+
+		return extracted, nil
+
+	default:
+		if op == opGet {
+			return nil, nil // Cannot extract from non-object/array
+		}
+		return nil, fmt.Errorf("cannot extract from type %T", data)
+	}
+}
+
+// extractMultipleFieldsFromMap extracts specified fields from a map
+// Returns a new map containing only the specified fields that exist in the source
+func (urp *recursiveProcessor) extractMultipleFieldsFromMap(source map[string]any, fields []string) map[string]any {
+	result := make(map[string]any, len(fields))
+
+	for _, field := range fields {
+		if field == "" {
+			continue
+		}
+		if value, exists := source[field]; exists {
+			result[field] = value
+		}
+	}
+
+	if len(result) == 0 {
+		return nil
+	}
+	return result
 }
 
 // handleExtractThenSlice handles the special case of {extract}[slice] pattern

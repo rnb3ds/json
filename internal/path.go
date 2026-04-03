@@ -718,9 +718,27 @@ func parseComplexSegment(part string) ([]PathSegment, error) {
 				actualExtract = strings.TrimPrefix(extractPart, "flat:")
 			}
 
-			// Validate extraction field name
+			// Validate extraction field name(s)
 			if actualExtract == "" {
 				return nil, fmt.Errorf("empty extraction field in '%s'", remaining[:braceEnd+1])
+			}
+
+			// Validate and normalize multi-field extraction (e.g., {id,name,email})
+			if strings.Contains(actualExtract, ",") {
+				fields := strings.Split(actualExtract, ",")
+				validatedFields := make([]string, 0, len(fields))
+				for _, field := range fields {
+					field = strings.TrimSpace(field)
+					if field == "" {
+						return nil, fmt.Errorf("empty field name in extraction '%s'", remaining[:braceEnd+1])
+					}
+					if !isValidFieldName(field) {
+						return nil, fmt.Errorf("invalid field name '%s' in extraction", field)
+					}
+					validatedFields = append(validatedFields, field)
+				}
+				// Rebuild with trimmed and validated fields
+				actualExtract = strings.Join(validatedFields, ",")
 			}
 
 			var flags PathSegmentFlags
@@ -1061,6 +1079,11 @@ func validateArrayIndexContent(content string, maxIndex int) error {
 		return nil
 	}
 
+	// Handle append syntax [+] - append to array
+	if content == "+" {
+		return nil
+	}
+
 	// Fast path: scan for colon without allocation
 	hasColon := false
 	for i := 0; i < len(content); i++ {
@@ -1143,6 +1166,27 @@ func validateNumericIndex(s string, maxIndex int) error {
 	}
 
 	return nil
+}
+
+// isValidFieldName validates if a string is a valid JSON field name
+// Allows alphanumeric characters, underscores, and hyphens
+func isValidFieldName(name string) bool {
+	if len(name) == 0 {
+		return false
+	}
+	// First character must be letter, underscore, or digit
+	c := name[0]
+	if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_' || (c >= '0' && c <= '9')) {
+		return false
+	}
+	// Check remaining characters
+	for i := 1; i < len(name); i++ {
+		c := name[i]
+		if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '-') {
+			return false
+		}
+	}
+	return true
 }
 
 // String returns a string representation of the path segment

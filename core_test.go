@@ -1985,6 +1985,176 @@ func TestExtractionOperations(t *testing.T) {
 	})
 }
 
+// TestMultiFieldExtraction tests multi-field extraction syntax {field1,field2}
+func TestMultiFieldExtraction(t *testing.T) {
+	processor, _ := New()
+	defer processor.Close()
+
+	t.Run("extract multiple fields from single object", func(t *testing.T) {
+		jsonStr := `{"user": {"id": 1001, "name": "Alice", "email": "alice@example.com", "password": "secret"}}`
+		result, err := processor.Get(jsonStr, "user{id,name}")
+		if err != nil {
+			t.Fatalf("Get error: %v", err)
+		}
+
+		obj, ok := result.(map[string]any)
+		if !ok {
+			t.Fatalf("Expected map[string]any, got %T", result)
+		}
+
+		// Should have exactly 2 fields
+		if len(obj) != 2 {
+			t.Errorf("Expected 2 fields, got %d", len(obj))
+		}
+
+		// Verify id field
+		if id, exists := obj["id"]; !exists {
+			t.Error("Missing 'id' field")
+		} else if id.(float64) != 1001 {
+			t.Errorf("Expected id=1001, got %v", id)
+		}
+
+		// Verify name field
+		if name, exists := obj["name"]; !exists {
+			t.Error("Missing 'name' field")
+		} else if name != "Alice" {
+			t.Errorf("Expected name='Alice', got %v", name)
+		}
+
+		// Should NOT have email or password
+		if _, exists := obj["email"]; exists {
+			t.Error("Should not have 'email' field")
+		}
+		if _, exists := obj["password"]; exists {
+			t.Error("Should not have 'password' field")
+		}
+	})
+
+	t.Run("extract multiple fields with whitespace", func(t *testing.T) {
+		jsonStr := `{"data": {"a": 1, "b": 2, "c": 3}}`
+		result, err := processor.Get(jsonStr, "data{a, b, c}")
+		if err != nil {
+			t.Fatalf("Get error: %v", err)
+		}
+
+		obj, ok := result.(map[string]any)
+		if !ok {
+			t.Fatalf("Expected map[string]any, got %T", result)
+		}
+
+		if len(obj) != 3 {
+			t.Errorf("Expected 3 fields, got %d", len(obj))
+		}
+	})
+
+	t.Run("extract multiple fields from array of objects", func(t *testing.T) {
+		jsonStr := `{"users": [
+			{"id": 1, "name": "Alice", "email": "a@example.com"},
+			{"id": 2, "name": "Bob", "email": "b@example.com"}
+		]}`
+		result, err := processor.Get(jsonStr, "users{id,name}")
+		if err != nil {
+			t.Fatalf("Get error: %v", err)
+		}
+
+		arr, ok := result.([]any)
+		if !ok {
+			t.Fatalf("Expected []any, got %T", result)
+		}
+
+		if len(arr) != 2 {
+			t.Fatalf("Expected 2 items, got %d", len(arr))
+		}
+
+		// Verify first item
+		obj1, ok := arr[0].(map[string]any)
+		if !ok {
+			t.Fatalf("Expected map, got %T", arr[0])
+		}
+		if len(obj1) != 2 {
+			t.Errorf("Expected 2 fields in first item, got %d", len(obj1))
+		}
+
+		// Verify second item
+		obj2, ok := arr[1].(map[string]any)
+		if !ok {
+			t.Fatalf("Expected map, got %T", arr[1])
+		}
+		if len(obj2) != 2 {
+			t.Errorf("Expected 2 fields in second item, got %d", len(obj2))
+		}
+	})
+
+	t.Run("extract with non-existent field", func(t *testing.T) {
+		jsonStr := `{"data": {"a": 1, "b": 2}}`
+		result, err := processor.Get(jsonStr, "data{a,nonexistent}")
+		if err != nil {
+			t.Fatalf("Get error: %v", err)
+		}
+
+		obj, ok := result.(map[string]any)
+		if !ok {
+			t.Fatalf("Expected map[string]any, got %T", result)
+		}
+
+		// Should only have 'a' field
+		if len(obj) != 1 {
+			t.Errorf("Expected 1 field, got %d", len(obj))
+		}
+		if _, exists := obj["a"]; !exists {
+			t.Error("Missing 'a' field")
+		}
+	})
+
+	t.Run("single field extraction returns value (backward compatible)", func(t *testing.T) {
+		jsonStr := `{"user": {"id": 1001, "name": "Alice"}}`
+		result, err := processor.Get(jsonStr, "user{id}")
+		if err != nil {
+			t.Fatalf("Get error: %v", err)
+		}
+
+		// Single field should return the value, not a map
+		id, ok := result.(float64)
+		if !ok {
+			t.Fatalf("Expected numeric value, got %T", result)
+		}
+		if id != 1001 {
+			t.Errorf("Expected id=1001, got %v", id)
+		}
+	})
+
+	t.Run("extract three fields", func(t *testing.T) {
+		jsonStr := `{"user": {"id": 1, "name": "Test", "email": "test@example.com", "age": 30}}`
+		result, err := processor.Get(jsonStr, "user{id,name,email}")
+		if err != nil {
+			t.Fatalf("Get error: %v", err)
+		}
+
+		obj, ok := result.(map[string]any)
+		if !ok {
+			t.Fatalf("Expected map[string]any, got %T", result)
+		}
+
+		if len(obj) != 3 {
+			t.Errorf("Expected 3 fields, got %d: %v", len(obj), obj)
+		}
+
+		// Verify all fields present
+		if _, exists := obj["id"]; !exists {
+			t.Error("Missing 'id' field")
+		}
+		if _, exists := obj["name"]; !exists {
+			t.Error("Missing 'name' field")
+		}
+		if _, exists := obj["email"]; !exists {
+			t.Error("Missing 'email' field")
+		}
+		if _, exists := obj["age"]; exists {
+			t.Error("Should not have 'age' field")
+		}
+	})
+}
+
 // TestFastDelete tests the FastDelete function
 func TestFastDelete(t *testing.T) {
 	processor, _ := New()
@@ -6140,5 +6310,87 @@ func TestWarmupCache(t *testing.T) {
 
 	if result == nil {
 		t.Error("Expected warmup result, got nil")
+	}
+}
+
+// TestMultiFieldPathParsing tests parsing of multi-field extraction paths
+func TestMultiFieldPathParsing(t *testing.T) {
+	processor, _ := New()
+	defer processor.Close()
+
+	tests := []struct {
+		name          string
+		path          string
+		expectLen     int
+		expectType    string
+		expectKey     string
+	}{
+		{
+			name:       "single_field_extract",
+			path:       "user{id}",
+			expectLen:  2,
+			expectType: "extract",
+			expectKey:  "id",
+		},
+		{
+			name:       "multi_field_extract",
+			path:       "user{id,name}",
+			expectLen:  2,
+			expectType: "extract",
+			expectKey:  "id,name",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			segments := processor.getPathSegments()
+			defer processor.putPathSegments(segments)
+			
+			segments = processor.splitPath(tt.path, segments)
+			
+			if len(segments) != tt.expectLen {
+				t.Errorf("Expected %d segments, got %d", tt.expectLen, len(segments))
+				for i, s := range segments {
+					t.Logf("  Segment %d: Type=%v Key=%q", i, s.Type, s.Key)
+				}
+				return
+			}
+			
+			lastSeg := segments[len(segments)-1]
+			if lastSeg.TypeString() != tt.expectType {
+				t.Errorf("Expected type %s, got %s", tt.expectType, lastSeg.TypeString())
+			}
+			if lastSeg.Key != tt.expectKey {
+				t.Errorf("Expected key %q, got %q", tt.expectKey, lastSeg.Key)
+			}
+		})
+	}
+}
+
+// TestMultiFieldExtractionDebug debug test
+func TestMultiFieldExtractionDebug(t *testing.T) {
+	processor, _ := New()
+	defer processor.Close()
+
+	// Test the extraction directly
+	data := map[string]any{
+		"id":   float64(1001),
+		"name": "Alice",
+	}
+	
+	segment := internal.PathSegment{
+		Type: internal.ExtractSegment,
+		Key:  "id,name",
+	}
+	
+	result, err := processor.handleExtraction(data, segment)
+	if err != nil {
+		t.Fatalf("handleExtraction error: %v", err)
+	}
+	
+	t.Logf("Result: %v (type: %T)", result, result)
+	
+	if result == nil {
+		t.Error("Expected non-nil result")
 	}
 }

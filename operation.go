@@ -818,6 +818,11 @@ func (p *Processor) handleExtraction(data any, segment internal.PathSegment) (an
 		return nil, fmt.Errorf("invalid extraction syntax: %s", segment.String())
 	}
 
+	// Check for multi-field extraction (comma-separated fields)
+	if strings.Contains(field, ",") {
+		return p.handleMultiFieldExtraction(data, field, segment.IsFlatExtract())
+	}
+
 	// Handle array extraction with pre-allocated results slice and flattening
 	if arr, ok := data.([]any); ok {
 		results := make([]any, 0, len(arr)) // Pre-allocate with array length
@@ -847,6 +852,57 @@ func (p *Processor) handleExtraction(data any, segment internal.PathSegment) (an
 	// For non-extractable types (strings, numbers, etc.), return nil without error
 	// This matches the expected behavior in tests
 	return nil, nil
+}
+
+// handleMultiFieldExtraction handles extraction of multiple fields from an object or array
+// Returns a new object (or array of objects) containing only the specified fields
+func (p *Processor) handleMultiFieldExtraction(data any, fieldsStr string, isFlat bool) (any, error) {
+	fields := strings.Split(fieldsStr, ",")
+
+	// Handle array extraction
+	if arr, ok := data.([]any); ok {
+		results := make([]any, 0, len(arr))
+		for _, item := range arr {
+			extracted := p.extractFieldsFromObject(item, fields)
+			if extracted != nil {
+				if isFlat {
+					// For flat extraction, flatten nested arrays
+					p.flattenValue(extracted, &results)
+				} else {
+					results = append(results, extracted)
+				}
+			}
+		}
+		return results, nil
+	}
+
+	// Handle single object extraction
+	return p.extractFieldsFromObject(data, fields), nil
+}
+
+// extractFieldsFromObject extracts specified fields from a single object
+// Returns a new map containing only the specified fields that exist in the source
+func (p *Processor) extractFieldsFromObject(data any, fields []string) map[string]any {
+	obj, ok := data.(map[string]any)
+	if !ok {
+		return nil
+	}
+
+	result := make(map[string]any, len(fields))
+	for _, field := range fields {
+		field = strings.TrimSpace(field)
+		if field == "" {
+			continue
+		}
+		if value, exists := obj[field]; exists {
+			result[field] = value
+		}
+	}
+
+	if len(result) == 0 {
+		return nil
+	}
+	return result
 }
 
 func (p *Processor) flattenValue(value any, results *[]any) {
