@@ -156,6 +156,59 @@ func UnescapeJSONPointer(s string) string {
 	return sb.String()
 }
 
+// HasEscapeSequence checks if path contains backslash escape sequences
+// PERFORMANCE: Single scan, returns early on first match
+func HasEscapeSequence(path string) bool {
+	pathLen := len(path)
+	for i := 0; i < pathLen; i++ {
+		if path[i] == '\\' && i+1 < pathLen {
+			next := path[i+1]
+			// Support escaping: . \ [ ] { }
+			if next == '.' || next == '\\' || next == '[' || next == ']' || next == '{' || next == '}' {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// UnescapePathSegment unescapes special characters in a path segment
+// Handles: \. \\ \[ \] \{ \}
+// PERFORMANCE: Fast path for segments without backslash
+func UnescapePathSegment(segment string) string {
+	segmentLen := len(segment)
+	// Fast path: scan for backslash first
+	hasBackslash := false
+	for i := 0; i < segmentLen; i++ {
+		if segment[i] == '\\' {
+			hasBackslash = true
+			break
+		}
+	}
+	if !hasBackslash {
+		return segment
+	}
+
+	// Slow path: unescape
+	var sb strings.Builder
+	sb.Grow(segmentLen)
+
+	for i := 0; i < segmentLen; i++ {
+		if segment[i] == '\\' && i+1 < segmentLen {
+			next := segment[i+1]
+			switch next {
+			case '.', '\\', '[', ']', '{', '}':
+				sb.WriteByte(next)
+				i++
+				continue
+			}
+		}
+		sb.WriteByte(segment[i])
+	}
+
+	return sb.String()
+}
+
 // PathSegmentFlags are bit flags for path segment options.
 // This type is exported for use by the public API.
 type PathSegmentFlags uint8
@@ -419,13 +472,15 @@ func ParseComplexSegment(part string) ([]PathSegment, error) {
 // parseDotNotation parses dot notation paths like "user.name" or "users[0].name"
 // PERFORMANCE: Pre-calculates segment count to avoid slice growth allocations
 // PERFORMANCE v2: Added fast paths for common simple cases (1-2 segments, no brackets)
+// ESCAPE: Handles \. \\ \[ \] \{ \} escape sequences
 // SECURITY: Enforces MaxPathParseDepth limit to prevent stack overflow attacks
 func parseDotNotation(path string) ([]PathSegment, error) {
 	pathLen := len(path)
 
-	// FAST PATH: Check for simple dot-separated properties (no brackets/braces)
+	// FAST PATH: Check for simple dot-separated properties (no brackets/braces/escapes)
 	// This handles cases like "user.name" or "a.b.c" efficiently
 	hasBrackets := false
+	hasEscape := false
 	dotPos := -1
 	dotCount := 0
 	for i := 0; i < pathLen; i++ {
@@ -433,6 +488,12 @@ func parseDotNotation(path string) ([]PathSegment, error) {
 		if c == '[' || c == '{' || c == '}' {
 			hasBrackets = true
 			break
+		}
+		if c == '\\' && i+1 < pathLen {
+			next := path[i+1]
+			if next == '.' || next == '\\' || next == '[' || next == ']' || next == '{' || next == '}' {
+				hasEscape = true
+			}
 		}
 		if c == '.' {
 			dotCount++
@@ -442,8 +503,8 @@ func parseDotNotation(path string) ([]PathSegment, error) {
 		}
 	}
 
-	// FAST PATH: Simple dot-separated path without brackets/braces
-	if !hasBrackets && dotCount > 0 && dotCount <= 8 {
+	// FAST PATH: Simple dot-separated path without brackets/braces/escapes
+	if !hasBrackets && !hasEscape && dotCount > 0 && dotCount <= 8 {
 		// SECURITY: Check depth
 		if dotCount+1 > MaxPathParseDepth {
 			return nil, fmt.Errorf("path too deep: %d segments (max %d)", dotCount+1, MaxPathParseDepth)
@@ -566,7 +627,7 @@ func parseDotNotation(path string) ([]PathSegment, error) {
 			} else {
 				segments = append(segments, PathSegment{
 					Type: PropertySegment,
-					Key:  part,
+					Key:  UnescapePathSegment(part),
 				})
 			}
 		}
@@ -578,6 +639,7 @@ func parseDotNotation(path string) ([]PathSegment, error) {
 // smartSplitPath splits path by dots while respecting extraction and array operation boundaries
 // Optimized version: uses byte index tracking instead of strings.Builder to reduce allocations
 // PERFORMANCE: Single-pass algorithm with pre-estimated capacity
+// ESCAPE: Handles \. \\ \[ \] \{ \} escape sequences
 func smartSplitPath(path string) []string {
 	pathLen := len(path)
 	if pathLen == 0 {
@@ -585,15 +647,25 @@ func smartSplitPath(path string) []string {
 	}
 
 	// Pre-estimate capacity: count dots outside brackets in single pass
+	// Also detect escape sequences and brackets/braces
 	dotCount := 0
 	braceDepth := 0
 	bracketDepth := 0
 	hasBrackets := false
 	hasBraces := false
+	hasEscape := false
 
 	for i := range pathLen {
 		c := path[i]
 		switch c {
+		case '\\':
+			// Check for escape sequence
+			if i+1 < pathLen {
+				next := path[i+1]
+				if next == '.' || next == '\\' || next == '[' || next == ']' || next == '{' || next == '}' {
+					hasEscape = true
+				}
+			}
 		case '{':
 			braceDepth++
 			hasBraces = true
@@ -611,9 +683,9 @@ func smartSplitPath(path string) []string {
 		}
 	}
 
-	// Fast path for simple paths (no brackets or braces) - use strings.Split
+	// Fast path for simple paths (no brackets, braces, or escapes) - use strings.Split
 	// PERFORMANCE: strings.Split is highly optimized for simple cases
-	if !hasBrackets && !hasBraces && dotCount > 0 {
+	if !hasBrackets && !hasBraces && !hasEscape && dotCount > 0 {
 		return strings.Split(path, ".")
 	}
 
@@ -628,9 +700,19 @@ func smartSplitPath(path string) []string {
 	braceDepth = 0
 	bracketDepth = 0
 
-	for i := range pathLen {
+	// Use traditional for loop so i++ can skip escaped characters
+	for i := 0; i < pathLen; i++ {
 		c := path[i]
 		switch c {
+		case '\\':
+			// Skip escaped character (don't treat as special)
+			if i+1 < pathLen {
+				next := path[i+1]
+				if next == '.' || next == '\\' || next == '[' || next == ']' || next == '{' || next == '}' {
+					i++ // Skip next character - works in traditional for loop
+					continue
+				}
+			}
 		case '{':
 			braceDepth++
 		case '}':
@@ -667,7 +749,7 @@ func parsePropertyWithArray(part string) ([]PathSegment, error) {
 		propertyName := part[:bracketIndex]
 		segments = append(segments, PathSegment{
 			Type: PropertySegment,
-			Key:  propertyName,
+			Key:  UnescapePathSegment(propertyName),
 		})
 	}
 

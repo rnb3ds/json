@@ -169,7 +169,7 @@ All notable changes to the cybergodev/json library will be documented in this fi
 - **Chinese Documentation**: Complete README_zh-CN.md translation with feature parity
 
 ### Changed
-- **MergeJson Behavior**: Implemented deep merge for nested objects and union merge with deduplication for arrays
+- **MergeJSON Behavior**: Implemented deep merge for nested objects and union merge with deduplication for arrays
 - **SaveToFile Behavior**: Now preprocesses string/[]byte inputs to prevent double-encoding (unified with package-level)
 - **LoadFromFile Return Type**: Returns `(string, error)` instead of `(any, error)` for consistency
   - Use `LoadFromFileAsData()` for previous `(any, error)` behavior

@@ -144,7 +144,7 @@ Beyond 100% compatibility, our library also provides:
 - **Advanced Encoding**: `json.EncodeStream()`, `json.EncodeBatch()`, `json.EncodeFields()`
 - **File Operations**: `json.LoadFromFile()`, `json.SaveToFile()`, `json.MarshalToFile()`
 - **Schema Validation**: `json.ValidateSchema()` with comprehensive schema support
-- **Data Utilities**: `json.DeepCopy()`, `json.CompareJson()`, `json.MergeJson()`
+- **Data Utilities**: `json.DeepCopy()`, `json.CompareJSON()`, `json.MergeJSON()`
 
 ## 🔒 Compatibility Guarantee
 

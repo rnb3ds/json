@@ -758,20 +758,20 @@ Creates a deep copy of JSON-compatible data.
 
 ---
 
-### CompareJson
+### CompareJSON
 
 ```go
-func CompareJson(json1, json2 string) (bool, error)
+func CompareJSON(json1, json2 string) (bool, error)
 ```
 
 Compares two JSON strings for semantic equality.
 
 ---
 
-### MergeJson
+### MergeJSON
 
 ```go
-func MergeJson(json1, json2 string, mode ...MergeMode) (string, error)
+func MergeJSON(json1, json2 string, mode ...MergeMode) (string, error)
 ```
 
 Merges two JSON objects using deep merge strategy. The optional mode parameter specifies the merge strategy (defaults to MergeUnion).
@@ -786,31 +786,31 @@ Merges two JSON objects using deep merge strategy. The optional mode parameter s
 **Example:**
 ```go
 // Union merge (default)
-result, err := json.MergeJson(a, b)
+result, err := json.MergeJSON(a, b)
 
 // Union merge (explicit)
-result, err := json.MergeJson(a, b, json.MergeUnion)
+result, err := json.MergeJSON(a, b, json.MergeUnion)
 
 // Intersection merge (only common keys)
-result, err := json.MergeJson(a, b, json.MergeIntersection)
+result, err := json.MergeJSON(a, b, json.MergeIntersection)
 
 // Difference merge (keys only in first)
-result, err := json.MergeJson(a, b, json.MergeDifference)
+result, err := json.MergeJSON(a, b, json.MergeDifference)
 ```
 
 ---
 
-### MergeJsonMany
+### MergeJSONMany
 
 ```go
-func MergeJsonMany(mode MergeMode, jsons ...string) (string, error)
+func MergeJSONMany(mode MergeMode, jsons ...string) (string, error)
 ```
 
 Merges multiple JSON objects with specified merge mode. Requires at least 2 JSON strings.
 
 **Example:**
 ```go
-result, err := json.MergeJsonMany(json.MergeUnion, config1, config2, config3)
+result, err := json.MergeJSONMany(json.MergeUnion, config1, config2, config3)
 ```
 
 ---

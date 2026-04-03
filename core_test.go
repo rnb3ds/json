@@ -6394,3 +6394,84 @@ func TestMultiFieldExtractionDebug(t *testing.T) {
 		t.Error("Expected non-nil result")
 	}
 }
+
+// TestPathEscapeIntegration tests the escape functionality with real JSON data
+
+// TestPathEscapeIntegration tests the escape functionality with real JSON data
+func TestPathEscapeIntegration(t *testing.T) {
+    processor, _ := New()
+    defer processor.Close()
+
+    t.Run("escaped dot in property name", func(t *testing.T) {
+        // JSON with a property name containing a literal dot
+        jsonStr := `{"user.name": "Alice"}`
+
+        // Access using escaped dot notation (backslash-dot)
+        result, err := GetString(jsonStr, `user\.name`)
+        if err != nil {
+            t.Fatalf("GetString error: %v", err)
+        }
+        if result != "Alice" {
+            t.Errorf("GetString(%q) = %q, want Alice", `user\.name`, result)
+        }
+    })
+
+    t.Run("multiple escaped dots", func(t *testing.T) {
+        jsonStr := `{"a.b.c": "nested"}`
+
+        // Access with multiple escaped dots
+        result, err := GetString(jsonStr, `a\.b\.c`)
+        if err != nil {
+            t.Fatalf("GetString error: %v", err)
+        }
+        if result != "nested" {
+            t.Errorf("GetString(%q) = %q, want nested", `a\.b\.c`, result)
+        }
+    })
+
+    t.Run("mixed escaped and normal", func(t *testing.T) {
+        jsonStr := `{"user.name": {"first": "John", "last": "Doe"}}`
+
+        // Access with escaped dot then normal property
+        result, err := GetString(jsonStr, `user\.name.first`)
+        if err != nil {
+            t.Fatalf("GetString error: %v", err)
+        }
+        if result != "John" {
+            t.Errorf("GetString(%q) = %q, want John", `user\.name.first`, result)
+        }
+    })
+
+    t.Run("set with escaped property", func(t *testing.T) {
+        jsonStr := `{"user.name": "Bob"}`
+
+        // Set value with escaped property
+        result, err := Set(jsonStr, `user\.name`, "Alice")
+        if err != nil {
+            t.Fatalf("Set error: %v", err)
+        }
+
+        // Verify the set worked
+        name, err := GetString(result, `user\.name`)
+        if err != nil {
+            t.Fatalf("GetString error: %v", err)
+        }
+        if name != "Alice" {
+            t.Errorf("Set did not update value correctly, got %q, want Alice", name)
+        }
+    })
+
+    t.Run("JSON Pointer alternative", func(t *testing.T) {
+        // Same test using JSON Pointer format (alternative approach)
+        jsonStr := `{"user.name": "Alice"}`
+
+        // Access using JSON Pointer format
+        result, err := GetString(jsonStr, "/user.name")
+        if err != nil {
+            t.Fatalf("GetString error: %v", err)
+        }
+        if result != "Alice" {
+            t.Errorf("GetString(%q) = %q, want Alice", "/user.name", result)
+        }
+    })
+}

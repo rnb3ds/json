@@ -121,9 +121,9 @@ func isDefaultConfig(cfg Config) bool {
 // in both comparison and hashing operations. This single source of truth prevents
 // the functions from getting out of sync.
 type configFieldAccessor struct {
-	name     string
-	equal    func(a, b Config) bool
-	hash     func(h uint64, cfg Config) uint64
+	name  string
+	equal func(a, b Config) bool
+	hash  func(h uint64, cfg Config) uint64
 }
 
 // configFieldList defines all Config fields that should be compared/hashed.
@@ -836,9 +836,9 @@ func LoadFromFile(filePath string, cfg ...Config) (string, error) {
 //   - cfg: optional Config for security validation and processing
 //
 // Returns error if file reading fails or JSON cannot be unmarshaled.
-func UnmarshalFromFile(path string, v any, cfg ...Config) error {
+func UnmarshalFromFile(filePath string, v any, cfg ...Config) error {
 	return withProcessorError(func(p *Processor) error {
-		return p.UnmarshalFromFile(path, v, cfg...)
+		return p.UnmarshalFromFile(filePath, v, cfg...)
 	})
 }
 
