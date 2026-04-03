@@ -454,7 +454,24 @@ func parseDotNotation(path string) ([]PathSegment, error) {
 		idx := 0
 		for i := 0; i <= pathLen; i++ {
 			if i == pathLen || path[i] == '.' {
-				segments[idx] = PathSegment{Type: PropertySegment, Key: path[start:i]}
+				part := path[start:i]
+				// Check if this is a numeric array index (supports negative indices)
+				if index, ok := fastParseInt(part); ok {
+					var flags PathSegmentFlags
+					if index < 0 {
+						flags |= FlagIsNegative
+					}
+					segments[idx] = PathSegment{
+						Type:  ArrayIndexSegment,
+						Index: index,
+						Flags: flags,
+					}
+				} else {
+					segments[idx] = PathSegment{
+						Type: PropertySegment,
+						Key:  part,
+					}
+				}
 				start = i + 1
 				idx++
 			}
