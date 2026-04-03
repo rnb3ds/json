@@ -47,6 +47,7 @@ func setCachedPathSegments(path string, segments []PathSegment) {
 // fastParseInt parses a string as an integer without allocation.
 // Returns the parsed integer and true if successful, 0 and false otherwise.
 // PERFORMANCE: Avoids strconv.Atoi's error allocation for invalid inputs.
+// SECURITY: Properly handles overflow for both positive and negative numbers.
 func fastParseInt(s string) (int, bool) {
 	if len(s) == 0 {
 		return 0, false
@@ -62,25 +63,41 @@ func fastParseInt(s string) (int, bool) {
 		}
 	}
 
-	// Fast path for overflow check and parsing
-	var n int
+	// Overflow bounds - use int64 for intermediate calculations
+	// Max int on 64-bit: 9223372036854775807
+	// Min int on 64-bit: -9223372036854775808
+	const maxInt = int64(1<<63 - 1)
+	const minInt = int64(-1 << 63)
+	const overflowThreshold = maxInt / 10
+
+	var n int64
 	for ; i < len(s); i++ {
 		c := s[i]
 		if c < '0' || c > '9' {
 			return 0, false
 		}
-		// Check overflow before multiplying
-		if n > (1<<31-1)/10 {
+		digit := int64(c - '0')
+		// Check overflow before multiplying and adding
+		if n > overflowThreshold || (n == overflowThreshold && digit > maxInt%10) {
 			return 0, false
 		}
-		n = n*10 + int(c-'0')
+		n = n*10 + digit
 	}
 
 	if neg {
 		n = -n
+		// Check negative overflow
+		if n < minInt {
+			return 0, false
+		}
 	}
 
-	return n, true
+	// Check if value fits in int (platform-dependent size)
+	if n > int64(1<<63-1) || n < int64(-1<<63) {
+		return 0, false
+	}
+
+	return int(n), true
 }
 
 // EscapeJSONPointer escapes special characters for JSON Pointer

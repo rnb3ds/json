@@ -235,15 +235,15 @@ func (e *FastEncoder) encodeSlow(v any) error {
 }
 
 // EncodeString encodes a JSON string
-// PERFORMANCE: Avoids reflection, uses inline escaping
+// PERFORMANCE: Avoids reflection, uses inline escaping with combined UTF-8 validation
 // SECURITY: Validates UTF-8 encoding per RFC 8259
 func (e *FastEncoder) EncodeString(s string) {
 	e.buf = append(e.buf, '"')
 
-	// Fast path: check if escaping is needed AND UTF-8 is valid
+	// Fast path: combined check for escape needs and UTF-8 validity
 	// SECURITY: RFC 8259 requires JSON strings to be valid UTF-8
-	// We must validate UTF-8 even in the fast path to prevent invalid output
-	if !needsEscape(s) && utf8.ValidString(s) {
+	// PERFORMANCE: Single pass validation instead of separate needsEscape + utf8.ValidString
+	if isSafeString(s) {
 		e.buf = append(e.buf, s...)
 		e.buf = append(e.buf, '"')
 		return
@@ -254,8 +254,68 @@ func (e *FastEncoder) EncodeString(s string) {
 	e.buf = append(e.buf, '"')
 }
 
-// needsEscape checks if a string needs JSON escaping
+// isSafeString checks if a string is safe for direct JSON output (no escaping needed AND valid UTF-8)
+// PERFORMANCE: Combined single-pass check that replaces separate needsEscape + utf8.ValidString calls
+// Returns true only if the string:
+// 1. Contains no characters that need JSON escaping (control chars, quotes, backslashes)
+// 2. Is valid UTF-8 (all high bytes are part of valid multi-byte sequences)
+func isSafeString(s string) bool {
+	n := len(s)
+	if n == 0 {
+		return true
+	}
+
+	// Process 8 bytes at a time using SWAR technique
+	for i := 0; i+8 <= n; i += 8 {
+		// Load 8 bytes
+		b0, b1, b2, b3 := s[i], s[i+1], s[i+2], s[i+3]
+		b4, b5, b6, b7 := s[i+4], s[i+5], s[i+6], s[i+7]
+
+		// Check for control characters (< 0x20) using bit manipulation
+		// A byte is a control char if (byte - 0x20) has the sign bit set
+		ctrlMask := ((b0 - 0x20) & 0x80) | ((b1 - 0x20) & 0x80) | ((b2 - 0x20) & 0x80) | ((b3 - 0x20) & 0x80) |
+			((b4 - 0x20) & 0x80) | ((b5 - 0x20) & 0x80) | ((b6 - 0x20) & 0x80) | ((b7 - 0x20) & 0x80)
+
+		// Quick check for common safe case: no control chars, no quotes, no backslashes
+		if ctrlMask != 0 ||
+			b0 == '"' || b1 == '"' || b2 == '"' || b3 == '"' ||
+			b4 == '"' || b5 == '"' || b6 == '"' || b7 == '"' ||
+			b0 == '\\' || b1 == '\\' || b2 == '\\' || b3 == '\\' ||
+			b4 == '\\' || b5 == '\\' || b6 == '\\' || b7 == '\\' {
+			// Found potential escape needed, verify with table lookup
+			if needsEscapeTable[b0] || needsEscapeTable[b1] || needsEscapeTable[b2] || needsEscapeTable[b3] ||
+				needsEscapeTable[b4] || needsEscapeTable[b5] || needsEscapeTable[b6] || needsEscapeTable[b7] {
+				return false
+			}
+		}
+
+		// UTF-8 validation: check for high bytes (>= 0x80)
+		// High bytes indicate multi-byte UTF-8 sequences which need validation
+		if (b0 | b1 | b2 | b3 | b4 | b5 | b6 | b7) >= 0x80 {
+			// Has high bytes - fall back to full UTF-8 validation
+			// This is slower but handles all UTF-8 edge cases correctly
+			return false
+		}
+	}
+
+	// Check remaining bytes (less than 8)
+	for i := n &^ 7; i < n; i++ {
+		c := s[i]
+		if needsEscapeTable[c] {
+			return false
+		}
+		// Check for high bytes in remainder
+		if c >= 0x80 {
+			return false
+		}
+	}
+
+	return true
+}
+
+// needsEscape checks if a string needs JSON escaping (without UTF-8 validation)
 // PERFORMANCE: Uses SWAR (SIMD Within A Register) technique for batch processing
+// Note: Use isSafeString for combined escape + UTF-8 check
 func needsEscape(s string) bool {
 	n := len(s)
 	if n == 0 {
@@ -375,7 +435,7 @@ func appendHex(buf []byte, c byte) []byte {
 }
 
 // EncodeInt encodes an integer
-// PERFORMANCE: Uses pre-computed lookup tables for integers -999 to 9999
+// PERFORMANCE: Uses pre-computed lookup tables for integers -9999 to 9999
 func (e *FastEncoder) EncodeInt(n int64) {
 	// Fast path for small positive integers (0-99)
 	if n >= 0 && n < 100 {
@@ -404,6 +464,12 @@ func (e *FastEncoder) EncodeInt(n int64) {
 	// Fast path for medium negative integers (-100 to -999)
 	if n <= -100 && n > -1000 {
 		e.buf = append(e.buf, mediumIntsNeg[-n-100]...)
+		return
+	}
+
+	// Fast path for large negative integers (-1000 to -9999)
+	if n <= -1000 && n > -10000 {
+		e.buf = append(e.buf, largeIntsNeg[-n-1000]...)
 		return
 	}
 
@@ -475,6 +541,10 @@ var smallIntsNeg [100][]byte
 // PERFORMANCE: Avoids strconv.AppendInt for common negative 3-digit integer range
 var mediumIntsNeg [900][]byte
 
+// largeIntsNeg contains pre-computed string representations of negative integers -1000 to -9999
+// PERFORMANCE: Avoids strconv.AppendInt for common negative 4-digit integer range
+var largeIntsNeg [9000][]byte
+
 // init initializes the medium and negative integer lookup tables and common floats
 func init() {
 	// Initialize medium integers (100-999)
@@ -507,6 +577,11 @@ func init() {
 	// Initialize medium negative integers (-100 to -999)
 	for i := range 900 {
 		mediumIntsNeg[i] = []byte("-" + string(mediumInts[i]))
+	}
+
+	// Initialize large negative integers (-1000 to -9999)
+	for i := range 9000 {
+		largeIntsNeg[i] = []byte("-" + string(largeInts[i]))
 	}
 
 	// Initialize common floats table

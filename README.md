@@ -3,7 +3,7 @@
 [![Go Version](https://img.shields.io/badge/Go-1.24+-00ADD8.svg)](https://golang.org)
 [![GoDoc](https://pkg.go.dev/badge/github.com/cybergodev/json.svg)](https://pkg.go.dev/github.com/cybergodev/json)
 [![MIT License](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
-[![Thread Safe](https://img.shields.io/badge/Thread_Safe-Yes-brightgreen.svg)]()
+[![Thread Safe](https://img.shields.io/badge/Thread_Safe-Yes-brightgreen.svg)](https://pkg.go.dev/github.com/cybergodev/json)
 [![Security](https://img.shields.io/badge/Security-Hardened-red.svg)](docs/SECURITY.md)
 [![Zero Deps](https://img.shields.io/badge/deps-zero-brightgreen.svg)](go.mod)
 
@@ -15,17 +15,18 @@
 ---
 
 ## Why cybergodev/json
+
 | Feature | encoding/json | cybergodev/json |
-|---------|-------------|---------------|
-| Path-based access | ❌ Manual unmarshal | ✅ `json.Get(data, "users[0].name")` |
-| Index value | ❌ | ✅ `items[-1]` gets last element |
-| Flatten nested arrays | ❌ | ✅ `users{flat:tags}` |
-| Type-safe defaults | ❌ | ✅ `GetStringOr(data, "path", "default")` |
-| Streaming large files | ❌ | ✅ Built-in streaming processors |
-| Schema validation | ❌ | ✅ JSON Schema validation |
-| Memory pooling | ❌ | ✅ `sync.Pool` for hot paths |
-| Caching | ❌ | ✅ Smart path cache with TTL |
-| 100% Compatibility | ✅ | ✅ Drop-in replacement |
+|---------|---------------|-----------------|
+| Path-based access | Manual unmarshal | `json.Get(data, "users[0].name")` |
+| Negative index | - | `items[-1]` gets last element |
+| Flatten nested arrays | - | `users{flat:tags}` |
+| Type-safe defaults | - | `GetStringOr(data, "path", "default")` |
+| Streaming large files | - | Built-in streaming processors |
+| Schema validation | - | JSON Schema validation |
+| Memory pooling | - | `sync.Pool` for hot paths |
+| Caching | - | Smart path cache with TTL |
+| 100% Compatibility | Native | Drop-in replacement |
 
 ---
 
@@ -98,14 +99,14 @@ func main() {
 
 | Syntax | Description | Example |
 |--------|-------------|---------|
-| `.property` | Access property | `user.name` → "Alice" |
-| `[n]` | Array index | `items[0]` → first element |
-| `[-n]` | Negative index (from end) | `items[-1]` → last element |
-| `[start:end]` | Array slice | `items[1:3]` → elements 1-2 |
-| `[start:end:step]` | Slice with step | `items[::2]` → every other element |
-| `[+]` | Append to array | `items[+]` → append position |
-| `{field}` | Extract field from all elements | `users{name}` → ["Alice", "Bob"] |
-| `{flat:field}` | Flatten nested arrays | `users{flat:tags}` → merge all tags |
+| `.property` | Access property | `user.name` - "Alice" |
+| `[n]` | Array index | `items[0]` - first element |
+| `[-n]` | Negative index (from end) | `items[-1]` - last element |
+| `[start:end]` | Array slice | `items[1:3]` - elements 1-2 |
+| `[start:end:step]` | Slice with step | `items[::2]` - every other element |
+| `[+]` | Append to array | `items[+]` - append position |
+| `{field}` | Extract field from all elements | `users{name}` - ["Alice", "Bob"] |
+| `{flat:field}` | Flatten nested arrays | `users{flat:tags}` - merge all tags |
 
 ---
 
@@ -210,8 +211,8 @@ strVal       := json.ConvertToString(value)
 
 // JSON utilities
 equal, _    := json.CompareJSON(json1, json2)
-merged, _   := json.MergeJSON(json1, json2)                       // union (default)
-merged, _   := json.MergeJSON(json1, json2, json.MergeIntersection) // intersection
+merged, _   := json.MergeJSON(json1, json2)                          // union (default)
+merged, _   := json.MergeJSON(json1, json2, json.MergeIntersection)  // intersection
 deepCopy, _ := json.DeepCopy(data)
 ```
 
@@ -308,6 +309,11 @@ err := jsonlProcessor.ProcessReader(reader, func(lineNum int, obj map[string]any
     // process each line
     return nil
 })
+
+// Streaming transformations (filter, map, reduce)
+filtered, _ := json.StreamArrayFilter(reader, func(item any) bool {
+    return item.(map[string]any)["active"] == true
+})
 ```
 
 ### Schema Validation
@@ -324,6 +330,19 @@ schema := &json.Schema{
 }
 
 errors, err := json.ValidateSchema(jsonStr, schema)
+```
+
+### Encode Utilities
+
+```go
+// EncodeStream - encode slice as JSON array
+streamJSON, _ := json.EncodeStream(users, json.PrettyConfig())
+
+// EncodeBatch - encode key-value pairs as JSON object
+batchJSON, _ := json.EncodeBatch(pairs, cfg)
+
+// EncodeFields - encode only specific fields (filter sensitive data)
+fieldsJSON, _ := json.EncodeFields(user, []string{"id", "name", "email"}, cfg)
 ```
 
 ---
@@ -455,8 +474,9 @@ defer processor.Close()
 | [14_batch_operations.go](examples/14_batch_operations.go) | Batch processing |
 
 ```bash
-# Run examples
+# Run individual examples
 go run -tags=example examples/1_basic_usage.go
+go run -tags=example examples/2_advanced_features.go
 ```
 
 ---
@@ -477,4 +497,4 @@ MIT License - See [LICENSE](LICENSE) file for details.
 
 ---
 
-If this project helps you, please give it a star! ⭐
+If this project helps you, please give it a star!

@@ -74,18 +74,17 @@ func demonstrateConfigurations(testData string) {
 
 	// 2. High-performance configuration
 	fmt.Println("\n   High-Performance Configuration:")
-	perfConfig := json.Config{
-		EnableCache:       true,
-		MaxCacheSize:      10000,
-		CacheTTL:          30 * time.Minute,
-		MaxJSONSize:       100 * 1024 * 1024, // 100MB
-		MaxPathDepth:      100,
-		MaxBatchSize:      2000,
-		MaxConcurrency:    100,
-		ParallelThreshold: 3,
-		EnableMetrics:     true,
-		EnableValidation:  false, // Skip validation for speed
-	}
+	perfConfig := json.DefaultConfig()
+	perfConfig.EnableCache = true
+	perfConfig.MaxCacheSize = 10000
+	perfConfig.CacheTTL = 30 * time.Minute
+	perfConfig.MaxJSONSize = 100 * 1024 * 1024 // 100MB
+	perfConfig.MaxPathDepth = 100
+	perfConfig.MaxBatchSize = 2000
+	perfConfig.MaxConcurrency = 100
+	perfConfig.ParallelThreshold = 3
+	perfConfig.EnableMetrics = true
+	perfConfig.EnableValidation = false // Skip validation for speed
 	perfProc, _ := json.New(perfConfig)
 	defer perfProc.Close()
 
@@ -179,16 +178,10 @@ func demonstratePerformance(testData string) {
 	fmt.Println("─────────────────────────────")
 
 	// Test with cache enabled
-	cacheConfig := json.Config{
-		EnableCache:       true,
-		MaxCacheSize:      1000,
-		CacheTTL:          10 * time.Minute,
-		MaxPathDepth:      50,
-		MaxJSONSize:       50 * 1024 * 1024,
-		MaxBatchSize:      500,
-		MaxConcurrency:    20,
-		ParallelThreshold: 5,
-	}
+	cacheConfig := json.DefaultConfig()
+	cacheConfig.EnableCache = true
+	cacheConfig.MaxCacheSize = 1000
+	cacheConfig.CacheTTL = 10 * time.Minute
 	cachedProc, _ := json.New(cacheConfig)
 	defer cachedProc.Close()
 
@@ -211,14 +204,8 @@ func demonstratePerformance(testData string) {
 	fmt.Printf("   ✓ Throughput: %.0f ops/sec\n", 1000.0/cachedDuration.Seconds())
 
 	// Test without cache for comparison
-	noCacheConfig := json.Config{
-		EnableCache:       false,
-		MaxPathDepth:      50,
-		MaxJSONSize:       50 * 1024 * 1024,
-		MaxBatchSize:      500,
-		MaxConcurrency:    20,
-		ParallelThreshold: 5,
-	}
+	noCacheConfig := json.DefaultConfig()
+	noCacheConfig.EnableCache = false
 	noCacheProc, _ := json.New(noCacheConfig)
 	defer noCacheProc.Close()
 
@@ -275,18 +262,12 @@ func demonstrateMonitoring(testData string) {
 	fmt.Println("\n5️⃣  Monitoring & Metrics")
 	fmt.Println("─────────────────────────")
 
-	config := json.Config{
-		EnableCache:       true,
-		MaxCacheSize:      1000,
-		CacheTTL:          10 * time.Minute,
-		EnableMetrics:     true,
-		EnableHealthCheck: true,
-		MaxPathDepth:      50,
-		MaxJSONSize:       50 * 1024 * 1024,
-		MaxBatchSize:      500,
-		MaxConcurrency:    20,
-		ParallelThreshold: 5,
-	}
+	config := json.DefaultConfig()
+	config.EnableCache = true
+	config.MaxCacheSize = 1000
+	config.CacheTTL = 10 * time.Minute
+	config.EnableMetrics = true
+	config.EnableHealthCheck = true
 	processor, _ := json.New(config)
 	defer processor.Close()
 

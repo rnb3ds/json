@@ -411,7 +411,7 @@ func (p *Processor) WarmupCache(jsonStr string, paths []string, opts ...Config) 
 // Delegates to internal package for consistent implementation.
 // PERFORMANCE: For large strings (> 4KB), uses sampling to avoid full scan.
 func hashStringToUint64(s string) uint64 {
-	if len(s) > internal.LargeStringHashThreshold {
+	if len(s) > largeStringHashThreshold {
 		return internal.HashStringFNV1aSampled(s)
 	}
 	return internal.HashStringFNV1a(s)

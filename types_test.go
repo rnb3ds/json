@@ -860,22 +860,23 @@ func TestConvertToUint64(t *testing.T) {
 	}
 }
 
-// TestIsDeletedMarker tests the IsDeletedMarker function
+// TestIsDeletedMarker tests the internal isDeletedMarker function
+// Note: isDeletedMarker is now private, tested indirectly through Delete operations
 func TestIsDeletedMarker(t *testing.T) {
-	// Test that IsDeletedMarker returns false for nil
-	if IsDeletedMarker(nil) {
-		t.Errorf("IsDeletedMarker(nil) should return false")
+	// Test that isDeletedMarker returns false for nil
+	if isDeletedMarker(nil) {
+		t.Errorf("isDeletedMarker(nil) should return false")
 	}
 
-	// Test that IsDeletedMarker returns false for regular values
-	if IsDeletedMarker(1) {
-		t.Errorf("IsDeletedMarker(1) should return false")
+	// Test that isDeletedMarker returns false for regular values
+	if isDeletedMarker(1) {
+		t.Errorf("isDeletedMarker(1) should return false")
 	}
-	if IsDeletedMarker("test") {
-		t.Errorf("IsDeletedMarker(\"test\") should return false")
+	if isDeletedMarker("test") {
+		t.Errorf("isDeletedMarker(\"test\") should return false")
 	}
-	if IsDeletedMarker(map[string]any{"key": "value"}) {
-		t.Errorf("IsDeletedMarker(map) should return false")
+	if isDeletedMarker(map[string]any{"key": "value"}) {
+		t.Errorf("isDeletedMarker(map) should return false")
 	}
 }
 

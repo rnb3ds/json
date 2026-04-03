@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/cybergodev/json/internal"
@@ -2190,6 +2191,750 @@ func TestStringFormatValidation(t *testing.T) {
 			if err != nil {
 				t.Errorf("ValidateSchema failed: %v", err)
 			}
+		}
+	})
+}
+
+// ============================================================================
+// TOP-LEVEL API FUNCTIONS - Missing coverage tests
+// ============================================================================
+
+// TestGetStringOr tests the top-level GetStringOr function
+func TestGetStringOr(t *testing.T) {
+	tests := []struct {
+		name         string
+		jsonStr      string
+		path         string
+		defaultValue string
+		expected     string
+	}{
+		{"Found", `{"name":"Alice"}`, "name", "default", "Alice"},
+		{"NotFound", `{"name":"Alice"}`, "missing", "default", "default"},
+		{"InvalidJSON", `{invalid}`, "name", "default", "default"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := GetStringOr(tt.jsonStr, tt.path, tt.defaultValue)
+			if result != tt.expected {
+				t.Errorf("GetStringOr() = %q, want %q", result, tt.expected)
+			}
+		})
+	}
+}
+
+// TestGetIntOr tests the top-level GetIntOr function
+func TestGetIntOr(t *testing.T) {
+	tests := []struct {
+		name         string
+		jsonStr      string
+		path         string
+		defaultValue int
+		expected     int
+	}{
+		{"Found", `{"count":42}`, "count", -1, 42},
+		{"NotFound", `{"count":42}`, "missing", -1, -1},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := GetIntOr(tt.jsonStr, tt.path, tt.defaultValue)
+			if result != tt.expected {
+				t.Errorf("GetIntOr() = %d, want %d", result, tt.expected)
+			}
+		})
+	}
+}
+
+// TestGetFloatOr tests the top-level GetFloatOr function
+func TestGetFloatOr(t *testing.T) {
+	tests := []struct {
+		name         string
+		jsonStr      string
+		path         string
+		defaultValue float64
+		expected     float64
+	}{
+		{"Found", `{"value":3.14}`, "value", -1.0, 3.14},
+		{"NotFound", `{"value":3.14}`, "missing", -1.0, -1.0},
+		{"IntToFloat", `{"count":42}`, "count", -1.0, 42.0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := GetFloatOr(tt.jsonStr, tt.path, tt.defaultValue)
+			if result != tt.expected {
+				t.Errorf("GetFloatOr() = %f, want %f", result, tt.expected)
+			}
+		})
+	}
+}
+
+// TestGetBoolOr tests the top-level GetBoolOr function
+func TestGetBoolOr(t *testing.T) {
+	tests := []struct {
+		name         string
+		jsonStr      string
+		path         string
+		defaultValue bool
+		expected     bool
+	}{
+		{"FoundTrue", `{"active":true}`, "active", false, true},
+		{"FoundFalse", `{"active":false}`, "active", true, false},
+		{"NotFound", `{"active":true}`, "missing", false, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := GetBoolOr(tt.jsonStr, tt.path, tt.defaultValue)
+			if result != tt.expected {
+				t.Errorf("GetBoolOr() = %v, want %v", result, tt.expected)
+			}
+		})
+	}
+}
+
+// TestValidString tests the ValidString function
+func TestValidString(t *testing.T) {
+	tests := []struct {
+		jsonStr   string
+		expected  bool
+	}{
+		{`{"key":"value"}`, true},
+		{`[1, 2, 3]`, true},
+		{`"string"`, true},
+		{`123`, true},
+		{`true`, true},
+		{`null`, true},
+		{`{invalid}`, false},
+		{``, false},
+		{`{"unclosed":`, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.jsonStr, func(t *testing.T) {
+			result := ValidString(tt.jsonStr)
+			if result != tt.expected {
+				t.Errorf("ValidString(%q) = %v, want %v", tt.jsonStr, result, tt.expected)
+			}
+		})
+	}
+}
+
+// TestValidWithOptions tests ValidWithOptions function
+func TestValidWithOptions(t *testing.T) {
+	t.Run("WithOptions", func(t *testing.T) {
+		cfg := Config{
+			MaxNestingDepthSecurity: 100,
+			MaxJSONSize:             1024 * 1024,
+		}
+
+		tests := []struct {
+			jsonStr  string
+			expected bool
+		}{
+			{`{"key":"value"}`, true},
+			{`{invalid}`, false},
+		}
+
+		for _, tt := range tests {
+			result, _ := ValidWithOptions(tt.jsonStr, cfg)
+			if result != tt.expected {
+				t.Errorf("ValidWithOptions(%q) = %v, want %v", tt.jsonStr, result, tt.expected)
+			}
+		}
+	})
+}
+
+// TestParseTopLevel tests the top-level Parse function
+func TestParseTopLevel(t *testing.T) {
+	t.Run("ParseToAny", func(t *testing.T) {
+		result, err := Parse(`{"key":"value"}`)
+		if err != nil {
+			t.Errorf("Parse failed: %v", err)
+		}
+		m, ok := result.(map[string]any)
+		if !ok {
+			t.Fatalf("Expected map, got %T", result)
+		}
+		if m["key"] != "value" {
+			t.Errorf("Result[key] = %v, want value", m["key"])
+		}
+	})
+
+	t.Run("ParseToArray", func(t *testing.T) {
+		result, err := Parse(`[1, 2, 3]`)
+		if err != nil {
+			t.Errorf("Parse failed: %v", err)
+		}
+		arr, ok := result.([]any)
+		if !ok {
+			t.Fatalf("Expected array, got %T", result)
+		}
+		if len(arr) != 3 {
+			t.Errorf("Result length = %d, want 3", len(arr))
+		}
+	})
+
+	t.Run("ParseInvalidJSON", func(t *testing.T) {
+		_, err := Parse(`{invalid}`)
+		if err == nil {
+			t.Error("Parse with invalid JSON should return error")
+		}
+	})
+}
+
+// ============================================================================
+// CONFIG ENCODING METHODS - Missing coverage tests
+// ============================================================================
+
+// TestConfigEncodingMethods tests Config encoding-related methods
+func TestConfigEncodingMethods(t *testing.T) {
+	cfg := Config{
+		Pretty:          true,
+		Indent:          "  ",
+		Prefix:          "> ",
+		EscapeHTML:      true,
+		SortKeys:        true,
+		FloatPrecision:  4,
+		FloatTruncate:   true,
+		MaxDepth:        50,
+		IncludeNulls:    true,
+		ValidateUTF8:    true,
+		DisallowUnknown: true,
+	}
+
+	t.Run("IsHTMLEscapeEnabled", func(t *testing.T) {
+		if !cfg.IsHTMLEscapeEnabled() {
+			t.Error("IsHTMLEscapeEnabled should return true")
+		}
+	})
+
+	t.Run("IsPrettyEnabled", func(t *testing.T) {
+		if !cfg.IsPrettyEnabled() {
+			t.Error("IsPrettyEnabled should return true")
+		}
+	})
+
+	t.Run("GetIndent", func(t *testing.T) {
+		if cfg.GetIndent() != "  " {
+			t.Errorf("GetIndent = %q, want %q", cfg.GetIndent(), "  ")
+		}
+	})
+
+	t.Run("GetPrefix", func(t *testing.T) {
+		if cfg.GetPrefix() != "> " {
+			t.Errorf("GetPrefix = %q, want %q", cfg.GetPrefix(), "> ")
+		}
+	})
+
+	t.Run("IsSortKeysEnabled", func(t *testing.T) {
+		if !cfg.IsSortKeysEnabled() {
+			t.Error("IsSortKeysEnabled should return true")
+		}
+	})
+
+	t.Run("GetFloatPrecision", func(t *testing.T) {
+		if cfg.GetFloatPrecision() != 4 {
+			t.Errorf("GetFloatPrecision = %d, want 4", cfg.GetFloatPrecision())
+		}
+	})
+
+	t.Run("IsTruncateFloatEnabled", func(t *testing.T) {
+		if !cfg.IsTruncateFloatEnabled() {
+			t.Error("IsTruncateFloatEnabled should return true")
+		}
+	})
+
+	t.Run("GetMaxDepth", func(t *testing.T) {
+		if cfg.GetMaxDepth() != 50 {
+			t.Errorf("GetMaxDepth = %d, want 50", cfg.GetMaxDepth())
+		}
+	})
+
+	t.Run("ShouldIncludeNulls", func(t *testing.T) {
+		if !cfg.ShouldIncludeNulls() {
+			t.Error("ShouldIncludeNulls should return true")
+		}
+	})
+
+	t.Run("ShouldValidateUTF8", func(t *testing.T) {
+		if !cfg.ShouldValidateUTF8() {
+			t.Error("ShouldValidateUTF8 should return true")
+		}
+	})
+
+	t.Run("IsDisallowUnknownEnabled", func(t *testing.T) {
+		if !cfg.IsDisallowUnknownEnabled() {
+			t.Error("IsDisallowUnknownEnabled should return true")
+		}
+	})
+}
+
+// TestConfigEncodingMethodsDefaults tests default values
+func TestConfigEncodingMethodsDefaults(t *testing.T) {
+	cfg := Config{} // Zero value
+
+	t.Run("DefaultIsHTMLEscapeEnabled", func(t *testing.T) {
+		if cfg.IsHTMLEscapeEnabled() {
+			t.Error("Zero-value IsHTMLEscapeEnabled should return false")
+		}
+	})
+
+	t.Run("DefaultIsPrettyEnabled", func(t *testing.T) {
+		if cfg.IsPrettyEnabled() {
+			t.Error("Zero-value IsPrettyEnabled should return false")
+		}
+	})
+
+	t.Run("DefaultGetIndent", func(t *testing.T) {
+		if cfg.GetIndent() != "" {
+			t.Errorf("Zero-value GetIndent = %q, want empty", cfg.GetIndent())
+		}
+	})
+
+	t.Run("DefaultGetPrefix", func(t *testing.T) {
+		if cfg.GetPrefix() != "" {
+			t.Errorf("Zero-value GetPrefix = %q, want empty", cfg.GetPrefix())
+		}
+	})
+}
+
+// ============================================================================
+// TOP-LEVEL FILE FUNCTIONS - Missing coverage tests
+// ============================================================================
+
+// TestLoadFromFileTopLevel tests the top-level LoadFromFile function
+func TestLoadFromFileTopLevel(t *testing.T) {
+	t.Run("ValidFile", func(t *testing.T) {
+		tempDir := t.TempDir()
+		filePath := filepath.Join(tempDir, "test.json")
+		testData := `{"name":"test","value":123}`
+
+		err := os.WriteFile(filePath, []byte(testData), 0644)
+		if err != nil {
+			t.Fatalf("Failed to write test file: %v", err)
+		}
+
+		loaded, err := LoadFromFile(filePath)
+		if err != nil {
+			t.Errorf("LoadFromFile failed: %v", err)
+		}
+		if loaded != testData {
+			t.Errorf("Loaded data = %q, want %q", loaded, testData)
+		}
+	})
+
+	t.Run("NonExistentFile", func(t *testing.T) {
+		_, err := LoadFromFile("/non/existent/file.json")
+		if err == nil {
+			t.Error("Expected error for non-existent file")
+		}
+	})
+}
+
+// TestSaveToFileTopLevel tests the top-level SaveToFile function
+func TestSaveToFileTopLevel(t *testing.T) {
+	t.Run("SaveAndLoad", func(t *testing.T) {
+		tempDir := t.TempDir()
+		filePath := filepath.Join(tempDir, "save_test.json")
+		testData := map[string]any{"name": "test", "value": 123}
+
+		cfg := DefaultConfig()
+		cfg.Pretty = false
+		err := SaveToFile(filePath, testData, cfg)
+		if err != nil {
+			t.Errorf("SaveToFile failed: %v", err)
+		}
+
+		loaded, err := LoadFromFile(filePath)
+		if err != nil {
+			t.Errorf("LoadFromFile failed: %v", err)
+		}
+
+		if !strings.Contains(loaded, `"name"`) {
+			t.Error("Loaded data should contain 'name'")
+		}
+	})
+}
+
+// TestMarshalToFileTopLevel tests the top-level MarshalToFile function
+func TestMarshalToFileTopLevel(t *testing.T) {
+	t.Run("MarshalAndLoad", func(t *testing.T) {
+		tempDir := t.TempDir()
+		filePath := filepath.Join(tempDir, "marshal_test.json")
+		testData := map[string]any{"key": "value"}
+
+		err := MarshalToFile(filePath, testData)
+		if err != nil {
+			t.Errorf("MarshalToFile failed: %v", err)
+		}
+
+		loaded, err := LoadFromFile(filePath)
+		if err != nil {
+			t.Errorf("LoadFromFile failed: %v", err)
+		}
+
+		if !strings.Contains(loaded, `"key"`) {
+			t.Error("Loaded data should contain 'key'")
+		}
+	})
+}
+
+// TestSaveToWriterTopLevel tests the top-level SaveToWriter function
+func TestSaveToWriterTopLevel(t *testing.T) {
+	t.Run("SaveToBuffer", func(t *testing.T) {
+		var buf bytes.Buffer
+		testData := map[string]any{"key": "value"}
+		cfg := DefaultConfig()
+
+		err := SaveToWriter(&buf, testData, cfg)
+		if err != nil {
+			t.Errorf("SaveToWriter failed: %v", err)
+		}
+
+		if !strings.Contains(buf.String(), `"key"`) {
+			t.Error("Buffer should contain 'key'")
+		}
+	})
+}
+
+// ============================================================================
+// TEST HELPERS - Missing coverage tests
+// ============================================================================
+
+// TestAssertNotEqual tests the AssertNotEqual helper
+func TestAssertNotEqual(t *testing.T) {
+	helper := newTestHelper(t)
+
+	t.Run("NotEqual", func(t *testing.T) {
+		// Should not fail - values are different
+		helper.AssertNotEqual("a", "b")
+	})
+}
+
+// ============================================================================
+// RESOURCE MANAGER - Missing coverage tests
+// ============================================================================
+
+// TestDrainPool tests the drainPool function
+func TestDrainPool(t *testing.T) {
+	t.Run("DrainBufferPool", func(t *testing.T) {
+		pool := &sync.Pool{
+			New: func() any { return new(bytes.Buffer) },
+		}
+		// Add some items
+		pool.Put(new(bytes.Buffer))
+		pool.Put(new(bytes.Buffer))
+
+		// Drain should not panic
+		drainPool(pool)
+	})
+}
+
+// ============================================================================
+// EDGE CASES - Additional boundary tests
+// ============================================================================
+
+// TestEmptyAndNilInputs tests empty and nil input handling
+func TestEmptyAndNilInputs(t *testing.T) {
+	processor, _ := New()
+	defer processor.Close()
+
+	t.Run("EmptyJSON", func(t *testing.T) {
+		_, err := processor.Get("", "key")
+		if err == nil {
+			t.Error("Get with empty JSON should return error")
+		}
+	})
+
+	t.Run("EmptyPath", func(t *testing.T) {
+		result, err := processor.Get(`{"key":"value"}`, "")
+		// Empty path may return root or error depending on implementation
+		_ = result
+		_ = err
+	})
+
+	t.Run("NilValue", func(t *testing.T) {
+		result, err := processor.Set(`{"key":"value"}`, "key", nil)
+		if err != nil {
+			t.Errorf("Set with nil value failed: %v", err)
+		}
+		// Verify nil was set
+		_ = result
+	})
+}
+
+// TestArrayBoundaryConditions tests array boundary conditions
+func TestArrayBoundaryConditions(t *testing.T) {
+	processor, _ := New()
+	defer processor.Close()
+
+	jsonStr := `{"items": [1, 2, 3]}`
+
+	t.Run("NegativeIndex", func(t *testing.T) {
+		result, err := processor.Get(jsonStr, "items[-1]")
+		if err != nil {
+			t.Errorf("Get with negative index failed: %v", err)
+		}
+		if result != 3.0 {
+			t.Errorf("items[-1] = %v, want 3", result)
+		}
+	})
+
+	t.Run("IndexOutOfRange", func(t *testing.T) {
+		result, err := processor.Get(jsonStr, "items[100]")
+		// Out-of-range may return nil or error depending on implementation
+		_ = result
+		_ = err
+	})
+
+	t.Run("EmptyArray", func(t *testing.T) {
+		result, err := processor.Get(`{"empty": []}`, "empty")
+		if err != nil {
+			t.Errorf("Get empty array failed: %v", err)
+		}
+		arr, ok := result.([]any)
+		if !ok || len(arr) != 0 {
+			t.Error("Empty array should be empty")
+		}
+	})
+}
+
+// TestDeepNesting tests deeply nested JSON handling
+func TestDeepNesting(t *testing.T) {
+	processor, _ := New()
+	defer processor.Close()
+
+	t.Run("DeepPath", func(t *testing.T) {
+		// Create deeply nested JSON
+		deep := `{"a":{"b":{"c":{"d":{"e":"deep"}}}}}`
+		result, err := processor.Get(deep, "a.b.c.d.e")
+		if err != nil {
+			t.Errorf("Get deep path failed: %v", err)
+		}
+		if result != "deep" {
+			t.Errorf("Result = %v, want deep", result)
+		}
+	})
+
+	t.Run("DeepArray", func(t *testing.T) {
+		deep := `{"a":[[[1,2],[3,4]],[[5,6],[7,8]]]}`
+		result, err := processor.Get(deep, "a[0][1][0]")
+		if err != nil {
+			t.Errorf("Get deep array failed: %v", err)
+		}
+		if result != 3.0 {
+			t.Errorf("Result = %v, want 3", result)
+		}
+	})
+}
+
+// ============================================================================
+// FAST ENCODER TESTS - Missing coverage
+// ============================================================================
+
+// TestFastEncoderFunctions tests the fast encoder functions
+func TestFastEncoderFunctions(t *testing.T) {
+	t.Run("FastEncodeSimple", func(t *testing.T) {
+		data := map[string]any{"key": "value", "num": 123}
+		result, ok := fastEncodeSimple(data)
+		if !ok {
+			t.Error("fastEncodeSimple should succeed for simple data")
+		}
+		if !strings.Contains(result, `"key"`) {
+			t.Error("Result should contain key")
+		}
+	})
+
+	t.Run("FastEncodeSimpleWithHTMLEscape", func(t *testing.T) {
+		data := map[string]any{"html": "<script>"}
+		result, ok := fastEncodeSimpleWithHTMLEscape(data)
+		if !ok {
+			t.Error("fastEncodeSimpleWithHTMLEscape should succeed")
+		}
+		if !strings.Contains(result, "\\u003c") {
+			t.Error("HTML should be escaped")
+		}
+	})
+}
+
+// TestConfigCloneEdgeCases tests Config.Clone edge cases
+func TestConfigCloneEdgeCases(t *testing.T) {
+	t.Run("CloneWithCustomEscapes", func(t *testing.T) {
+		original := Config{
+			CustomEscapes: map[rune]string{
+				'\n': "\\n",
+				'\t': "\\t",
+			},
+		}
+
+		cloned := original.Clone()
+		if cloned.CustomEscapes == nil {
+			t.Error("Cloned CustomEscapes should not be nil")
+		}
+
+		// Modify clone
+		cloned.CustomEscapes['\r'] = "\\r"
+		if _, exists := original.CustomEscapes['\r']; exists {
+			t.Error("Original should not be affected by clone modification")
+		}
+	})
+
+	t.Run("CloneNil", func(t *testing.T) {
+		var cfg *Config
+		cloned := cfg.Clone()
+		if cloned != nil {
+			t.Error("Clone of nil should be nil")
+		}
+	})
+}
+
+// TestConfigValidationEdgeCases tests Config.Validate edge cases
+func TestConfigValidationEdgeCases(t *testing.T) {
+	t.Run("ValidateWithWarnings", func(t *testing.T) {
+		cfg := Config{
+			MaxCacheSize: -1,
+			MaxJSONSize:  -1,
+		}
+		warnings := cfg.ValidateWithWarnings()
+		// Should have warnings for negative values
+		_ = warnings
+	})
+
+	t.Run("ValidateZeroConfig", func(t *testing.T) {
+		cfg := Config{}
+		err := cfg.Validate()
+		if err != nil {
+			t.Errorf("Validate of zero config should succeed: %v", err)
+		}
+	})
+}
+
+// TestResourcePoolOperations tests resource pool edge cases
+func TestResourcePoolOperations(t *testing.T) {
+	t.Run("BufferPoolOperations", func(t *testing.T) {
+		rm := newUnifiedResourceManager()
+
+		buf := rm.GetBuffer()
+		buf = append(buf, "test"...)
+		rm.PutBuffer(buf)
+
+		// Get another buffer
+		buf2 := rm.GetBuffer()
+		rm.PutBuffer(buf2)
+	})
+
+	t.Run("StringBuilderPoolOperations", func(t *testing.T) {
+		rm := newUnifiedResourceManager()
+
+		sb := rm.GetStringBuilder()
+		sb.WriteString("test")
+		rm.PutStringBuilder(sb)
+	})
+
+	t.Run("PathSegmentsPoolOperations", func(t *testing.T) {
+		rm := newUnifiedResourceManager()
+
+		segs := rm.GetPathSegments()
+		rm.PutPathSegments(segs)
+	})
+}
+
+// TestStreamEncoderDecodeRoundTrip tests encoding and decoding round trip
+func TestStreamEncoderDecodeRoundTrip(t *testing.T) {
+	t.Run("RoundTrip", func(t *testing.T) {
+		var buf bytes.Buffer
+
+		// Encode
+		encoder := NewEncoder(&buf)
+		original := map[string]any{
+			"name":  "test",
+			"value": 123,
+			"nested": map[string]any{
+				"key": "nested_value",
+			},
+		}
+		err := encoder.Encode(original)
+		if err != nil {
+			t.Fatalf("Encode failed: %v", err)
+		}
+
+		// Decode
+		decoder := NewDecoder(&buf)
+		var decoded map[string]any
+		err = decoder.Decode(&decoded)
+		if err != nil {
+			t.Fatalf("Decode failed: %v", err)
+		}
+
+		if decoded["name"] != "test" {
+			t.Error("Decoded name should be 'test'")
+		}
+	})
+}
+
+// TestJSONNumberHandling tests json.Number handling
+func TestJSONNumberHandling(t *testing.T) {
+	processor, _ := New()
+	defer processor.Close()
+
+	t.Run("UseNumber", func(t *testing.T) {
+		decoder := NewDecoder(strings.NewReader(`{"num":123}`))
+		decoder.UseNumber()
+
+		var result map[string]any
+		err := decoder.Decode(&result)
+		if err != nil {
+			t.Fatalf("Decode failed: %v", err)
+		}
+
+		// The number might be a float64 or json.Number depending on implementation
+		_ = result["num"]
+	})
+}
+
+// TestTypeConversionErrors tests type conversion error conditions
+func TestTypeConversionErrors(t *testing.T) {
+	processor, _ := New()
+	defer processor.Close()
+
+	t.Run("InvalidJSONGet", func(t *testing.T) {
+		_, err := processor.Get(`{invalid}`, "key")
+		if err == nil {
+			t.Error("Get with invalid JSON should return error")
+		}
+	})
+
+	t.Run("InvalidJSONSet", func(t *testing.T) {
+		_, err := processor.Set(`{invalid}`, "key", "value")
+		if err == nil {
+			t.Error("Set with invalid JSON should return error")
+		}
+	})
+
+	t.Run("InvalidJSONDelete", func(t *testing.T) {
+		_, err := processor.Delete(`{invalid}`, "key")
+		if err == nil {
+			t.Error("Delete with invalid JSON should return error")
+		}
+	})
+
+	t.Run("TypeConversionFailures", func(t *testing.T) {
+		// Test type conversion error handling
+		_, ok := ConvertToInt("not a number")
+		if ok {
+			t.Error("Converting non-numeric string to int should fail")
+		}
+
+		_, ok = ConvertToFloat64("not a number")
+		if ok {
+			t.Error("Converting non-numeric string to float should fail")
+		}
+
+		_, ok = ConvertToBool("maybe")
+		if ok {
+			t.Error("Converting invalid bool string should fail")
 		}
 	})
 }

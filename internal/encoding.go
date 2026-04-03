@@ -45,10 +45,22 @@ var (
 			return buf
 		},
 	}
-	// PERFORMANCE: Added byte slice pool for encoding operations
-	byteSlicePool = sync.Pool{
+	// PERFORMANCE: Tiered byte slice pools for better size matching
+	smallByteSlicePool = sync.Pool{
+		New: func() any {
+			b := make([]byte, 0, 256)
+			return &b
+		},
+	}
+	mediumByteSlicePool = sync.Pool{
 		New: func() any {
 			b := make([]byte, 0, 1024)
+			return &b
+		},
+	}
+	largeByteSlicePool = sync.Pool{
+		New: func() any {
+			b := make([]byte, 0, 8192)
 			return &b
 		},
 	}
@@ -97,8 +109,29 @@ func PutEncoderBufferSecure(buf *bytes.Buffer) {
 
 // GetByteSlice gets a byte slice from the pool
 // PERFORMANCE: Reusable byte slices for encoding operations
+// Deprecated: Use GetByteSliceWithHint for better size matching
 func GetByteSlice() *[]byte {
-	return byteSlicePool.Get().(*[]byte)
+	return mediumByteSlicePool.Get().(*[]byte)
+}
+
+// GetByteSliceWithHint gets a byte slice with appropriate capacity hint
+// PERFORMANCE: Uses tiered pools for better memory management
+func GetByteSliceWithHint(hint int) *[]byte {
+	var b *[]byte
+	switch {
+	case hint <= 256:
+		b = smallByteSlicePool.Get().(*[]byte)
+	case hint <= 1024:
+		b = mediumByteSlicePool.Get().(*[]byte)
+	case hint <= 8192:
+		b = largeByteSlicePool.Get().(*[]byte)
+	default:
+		// For very large hints, allocate directly
+		newSlice := make([]byte, 0, hint)
+		return &newSlice
+	}
+	*b = (*b)[:0]
+	return b
 }
 
 // PutByteSlice returns a byte slice to the pool
@@ -107,11 +140,18 @@ func PutByteSlice(b *[]byte) {
 		return
 	}
 	const maxByteSliceCap = 32 * 1024 // 32KB
-	const minByteSliceCap = 256
 	c := cap(*b)
-	if c >= minByteSliceCap && c <= maxByteSliceCap {
-		*b = (*b)[:0]
-		byteSlicePool.Put(b)
+	if c > maxByteSliceCap {
+		return // Don't pool very large slices
+	}
+	*b = (*b)[:0]
+	switch {
+	case c <= 256:
+		smallByteSlicePool.Put(b)
+	case c <= 1024:
+		mediumByteSlicePool.Put(b)
+	case c <= 8192:
+		largeByteSlicePool.Put(b)
 	}
 }
 
@@ -123,15 +163,22 @@ func PutByteSliceSecure(b *[]byte) {
 		return
 	}
 	const maxByteSliceCap = 32 * 1024 // 32KB
-	const minByteSliceCap = 256
 	c := cap(*b)
-	if c >= minByteSliceCap && c <= maxByteSliceCap {
-		// SECURITY: Zero out the slice content before returning to pool
-		for i := range *b {
-			(*b)[i] = 0
-		}
-		*b = (*b)[:0]
-		byteSlicePool.Put(b)
+	if c > maxByteSliceCap {
+		return // Don't pool very large slices
+	}
+	// SECURITY: Zero out the slice content before returning to pool
+	for i := range *b {
+		(*b)[i] = 0
+	}
+	*b = (*b)[:0]
+	switch {
+	case c <= 256:
+		smallByteSlicePool.Put(b)
+	case c <= 1024:
+		mediumByteSlicePool.Put(b)
+	case c <= 8192:
+		largeByteSlicePool.Put(b)
 	}
 }
 

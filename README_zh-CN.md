@@ -3,7 +3,7 @@
 [![Go Version](https://img.shields.io/badge/Go-1.24+-00ADD8.svg)](https://golang.org)
 [![GoDoc](https://pkg.go.dev/badge/github.com/cybergodev/json.svg)](https://pkg.go.dev/github.com/cybergodev/json)
 [![MIT License](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
-[![Thread Safe](https://img.shields.io/badge/Thread_Safe-Yes-brightgreen.svg)]()
+[![Thread Safe](https://img.shields.io/badge/Thread_Safe-Yes-brightgreen.svg)](https://pkg.go.dev/github.com/cybergodev/json)
 [![Security](https://img.shields.io/badge/Security-Hardened-red.svg)](docs/SECURITY.md)
 [![Zero Deps](https://img.shields.io/badge/deps-zero-brightgreen.svg)](go.mod)
 
@@ -15,17 +15,18 @@
 ---
 
 ## 为什么选择 cybergodev/json
+
 | 功能 | encoding/json | cybergodev/json |
-|-----|-------------|---------------|
-| 路径访问 | ❌ 手动解析 | ✅ `json.Get(data, "users[0].name")` |
-| 索引取值 | ❌ | ✅ `items[-1]` 获取最后一个元素 |
-| 扁平化嵌套数组 | ❌ | ✅ `users{flat:tags}` |
-| 类型安全默认值 | ❌ | ✅ `GetStringOr(data, "path", "default")` |
-| 大文件流式处理 | ❌ | ✅ 内置流式处理器 |
-| Schema 验证 | ❌ | ✅ JSON Schema 验证 |
-| 内存池 | ❌ | ✅ 热路径使用 `sync.Pool` |
-| 缓存 | ❌ | ✅ 智能 TTL 路径缓存 |
-| 100% 兼容性 | ✅ | ✅ 直接替换 |
+|-----|---------------|-----------------|
+| 路径访问 | 手动解析 | `json.Get(data, "users[0].name")` |
+| 负索引 | - | `items[-1]` 获取最后一个元素 |
+| 扁平化嵌套数组 | - | `users{flat:tags}` |
+| 类型安全默认值 | - | `GetStringOr(data, "path", "default")` |
+| 大文件流式处理 | - | 内置流式处理器 |
+| Schema 验证 | - | JSON Schema 验证 |
+| 内存池 | - | 热路径使用 `sync.Pool` |
+| 缓存 | - | 智能 TTL 路径缓存 |
+| 100% 兼容性 | 原生 | 直接替换 |
 
 ---
 
@@ -210,8 +211,8 @@ strVal       := json.ConvertToString(value)
 
 // JSON 工具
 equal, _    := json.CompareJSON(json1, json2)
-merged, _   := json.MergeJSON(json1, json2)                       // 并集（默认）
-merged, _   := json.MergeJSON(json1, json2, json.MergeIntersection) // 交集
+merged, _   := json.MergeJSON(json1, json2)                          // 并集（默认）
+merged, _   := json.MergeJSON(json1, json2, json.MergeIntersection)  // 交集
 deepCopy, _ := json.DeepCopy(data)
 ```
 
@@ -308,6 +309,11 @@ err := jsonlProcessor.ProcessReader(reader, func(lineNum int, obj map[string]any
     // 处理每一行
     return nil
 })
+
+// 流式转换（过滤、映射、归约）
+filtered, _ := json.StreamArrayFilter(reader, func(item any) bool {
+    return item.(map[string]any)["active"] == true
+})
 ```
 
 ### Schema 验证
@@ -324,6 +330,19 @@ schema := &json.Schema{
 }
 
 errors, err := json.ValidateSchema(jsonStr, schema)
+```
+
+### 编码工具
+
+```go
+// EncodeStream - 将切片编码为 JSON 数组
+streamJSON, _ := json.EncodeStream(users, json.PrettyConfig())
+
+// EncodeBatch - 将键值对编码为 JSON 对象
+batchJSON, _ := json.EncodeBatch(pairs, cfg)
+
+// EncodeFields - 只编码指定字段（过滤敏感数据）
+fieldsJSON, _ := json.EncodeFields(user, []string{"id", "name", "email"}, cfg)
 ```
 
 ---
@@ -455,8 +474,9 @@ defer processor.Close()
 | [14_batch_operations.go](examples/14_batch_operations.go) | 批量处理 |
 
 ```bash
-# 运行示例
+# 运行单个示例
 go run -tags=example examples/1_basic_usage.go
+go run -tags=example examples/2_advanced_features.go
 ```
 
 ---
@@ -477,4 +497,4 @@ MIT License - 详见 [LICENSE](LICENSE) 文件。
 
 ---
 
-如果这个项目对你有帮助，请给一个 star！ ⭐
+如果这个项目对你有帮助，请给一个 star！

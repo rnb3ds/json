@@ -302,11 +302,8 @@ func demonstrateBatchPerformance() {
 	fmt.Println("   Performance comparison (1000 operations):")
 
 	// Without cache optimization
-	configNoCache := json.Config{
-		EnableCache:  false,
-		MaxJSONSize:  10 * 1024 * 1024,
-		MaxBatchSize: 1000,
-	}
+	configNoCache := json.DefaultConfig()
+	configNoCache.EnableCache = false
 	procNoCache, _ := json.New(configNoCache)
 	defer procNoCache.Close()
 
@@ -317,13 +314,10 @@ func demonstrateBatchPerformance() {
 	noCacheDuration := time.Since(start)
 
 	// With cache optimization
-	configCache := json.Config{
-		EnableCache:  true,
-		MaxCacheSize: 1000,
-		CacheTTL:     10 * time.Minute,
-		MaxJSONSize:  10 * 1024 * 1024,
-		MaxBatchSize: 1000,
-	}
+	configCache := json.DefaultConfig()
+	configCache.EnableCache = true
+	configCache.MaxCacheSize = 1000
+	configCache.CacheTTL = 10 * time.Minute
 	procCache, _ := json.New(configCache)
 	defer procCache.Close()
 

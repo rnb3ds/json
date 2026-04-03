@@ -365,8 +365,8 @@ func (j *JSONLProcessor) StreamLinesParallel(fn func(lineNum int, data any) erro
 	}
 	jobs := make(chan lineJob, workers*2)
 
-	// Error handling
-	var firstErr error
+	// Error handling - use atomic pointer for thread-safe error storage
+	var firstErr atomic.Pointer[error]
 	var errCount int32
 	var wg sync.WaitGroup
 
@@ -381,7 +381,8 @@ func (j *JSONLProcessor) StreamLinesParallel(fn func(lineNum int, data any) erro
 				}
 				if jobErr := fn(job.lineNum, job.data); jobErr != nil {
 					if atomic.CompareAndSwapInt32(&errCount, 0, 1) {
-						firstErr = jobErr
+						// Store error atomically to avoid data race
+						firstErr.Store(&jobErr)
 					}
 				}
 			}
@@ -392,9 +393,11 @@ func (j *JSONLProcessor) StreamLinesParallel(fn func(lineNum int, data any) erro
 	defer func() {
 		close(jobs)
 		wg.Wait()
-		// Propagate worker error if no other error occurred
-		if err == nil && firstErr != nil {
-			err = firstErr
+		// Propagate worker error if no other error occurred - load atomically
+		if err == nil {
+			if storedErr := firstErr.Load(); storedErr != nil {
+				err = *storedErr
+			}
 		}
 	}()
 

@@ -41,9 +41,9 @@ const (
 	closeOperationTimeout = 5 * time.Second // Timeout waiting for active operations during Close()
 	semaphoreDrainTimeout = 1 * time.Second // Timeout for draining concurrency semaphore
 
-	// LargeStringHashThreshold is the byte threshold for using sampling-based hash.
-	// Re-exported from internal package for public API access.
-	LargeStringHashThreshold = internal.LargeStringHashThreshold
+	// largeStringHashThreshold is the byte threshold for using sampling-based hash.
+	// Internal constant for hash optimization.
+	largeStringHashThreshold = internal.LargeStringHashThreshold
 
 	// Path Validation - Secure but flexible
 	// MaxPathLength is the maximum allowed path length for security.
@@ -54,9 +54,9 @@ const (
 	DefaultCacheTTL = 5 * time.Minute
 
 	// Cache key constants
-	// MaxCacheKeyLength is the maximum allowed cache key length.
-	// Re-exported from internal package for public API access.
-	MaxCacheKeyLength = internal.MaxCacheKeyLength
+	// maxCacheKeyLength is the maximum allowed cache key length.
+	// Internal constant for cache key validation.
+	maxCacheKeyLength = internal.MaxCacheKeyLength
 
 	// Validation constants (internal)
 	validationBOMPrefix = "\uFEFF" // UTF-8 BOM prefix to detect and remove

@@ -1,7 +1,6 @@
 package json
 
 import (
-	"encoding/json"
 	"fmt"
 	"reflect"
 	"strconv"
@@ -1443,7 +1442,7 @@ func (p *Processor) handleArrayExtensionAndSet(data any, segments []internal.Pat
 	}
 }
 
-func (p *Processor) handleArrayIndexExtension(current any, segment internal.PathSegment, arrayExtErr *arrayExtensionNeededError) error {
+func (p *Processor) handleArrayIndexExtension(current any, _ internal.PathSegment, arrayExtErr *arrayExtensionNeededError) error {
 	// For array index access, current should be the array that needs extension
 	arr, ok := current.([]any)
 	if !ok {
@@ -1474,7 +1473,7 @@ func (p *Processor) handleArrayIndexExtension(current any, segment internal.Path
 	return fmt.Errorf("cannot extend array in place for index %d", arrayExtErr.start)
 }
 
-func (p *Processor) handleArraySliceExtension(parent any, segment internal.PathSegment, arrayExtErr *arrayExtensionNeededError) error {
+func (p *Processor) handleArraySliceExtension(parent any, _ internal.PathSegment, arrayExtErr *arrayExtensionNeededError) error {
 	// Get the array that needs extension
 	arr, ok := parent.([]any)
 	if !ok {
@@ -1991,7 +1990,7 @@ func (p *Processor) createContainerForNextSegment(allSegments []internal.PathSeg
 
 // Extraction-related set operations
 
-func (p *Processor) setValueForExtract(current any, segment internal.PathSegment, value any, createPaths bool) error {
+func (p *Processor) setValueForExtract(current any, segment internal.PathSegment, value any, _ bool) error {
 	field := segment.Key
 	if field == "" {
 		return fmt.Errorf("invalid extraction syntax: %s", segment.String())
@@ -2221,7 +2220,7 @@ func (p *Processor) setJSONPointerFinalValue(current any, segment string, value 
 	}
 }
 
-func (p *Processor) replaceArrayInJSONPointerParent(parent any, oldArray, newArray []any, index int, newContainer any) (any, error) {
+func (p *Processor) replaceArrayInJSONPointerParent(_ any, oldArray, newArray []any, index int, newContainer any) (any, error) {
 	// This is a complex operation that would require tracking parent references
 	// For now, we'll try to extend in place if possible
 	if cap(oldArray) >= len(newArray) {
@@ -2280,6 +2279,7 @@ func (p *Processor) FastSet(jsonStr, path string, value any) (string, error) {
 }
 
 // fastSetSimple handles simple single-level property access
+// PERFORMANCE: Uses FastMarshalToString to reduce allocations
 func (p *Processor) fastSetSimple(jsonStr, key string, value any) (string, error) {
 	// Quick validation
 	if err := p.validateInput(jsonStr); err != nil {
@@ -2301,13 +2301,13 @@ func (p *Processor) fastSetSimple(jsonStr, key string, value any) (string, error
 	// Direct set
 	obj[key] = value
 
-	// Marshal result
-	result, err := json.Marshal(obj)
+	// PERFORMANCE: Use FastMarshalToString to avoid double allocation
+	result, err := internal.FastMarshalToString(obj)
 	if err != nil {
 		return jsonStr, err
 	}
 
-	return string(result), nil
+	return result, nil
 }
 
 // FastDelete is an optimized Delete operation for simple paths
@@ -2326,6 +2326,7 @@ func (p *Processor) FastDelete(jsonStr, path string) (string, error) {
 }
 
 // fastDeleteSimple handles simple single-level property deletion
+// PERFORMANCE: Uses FastMarshalToString to reduce allocations
 func (p *Processor) fastDeleteSimple(jsonStr, key string) (string, error) {
 	// Quick validation
 	if err := p.validateInput(jsonStr); err != nil {
@@ -2347,16 +2348,17 @@ func (p *Processor) fastDeleteSimple(jsonStr, key string) (string, error) {
 	// Direct delete
 	delete(obj, key)
 
-	// Marshal result
-	result, err := json.Marshal(obj)
+	// PERFORMANCE: Use FastMarshalToString to avoid double allocation
+	result, err := internal.FastMarshalToString(obj)
 	if err != nil {
 		return jsonStr, err
 	}
 
-	return string(result), nil
+	return result, nil
 }
 
 // BatchSetOptimized performs multiple Set operations efficiently
+// PERFORMANCE: Uses pooled encoder and single-parse optimization
 func (p *Processor) BatchSetOptimized(jsonStr string, updates map[string]any) (string, error) {
 	if err := p.checkClosed(); err != nil {
 		return jsonStr, err
@@ -2387,16 +2389,17 @@ func (p *Processor) BatchSetOptimized(jsonStr string, updates map[string]any) (s
 		}
 	}
 
-	// PERFORMANCE: Use FastMarshal for encoding to reduce allocations
-	result, err := internal.FastMarshal(data)
+	// PERFORMANCE: Use FastMarshalToString to avoid double allocation (bytes -> string)
+	result, err := internal.FastMarshalToString(data)
 	if err != nil {
 		return jsonStr, err
 	}
 
-	return string(result), nil
+	return result, nil
 }
 
 // BatchDeleteOptimized performs multiple Delete operations efficiently
+// PERFORMANCE: Uses pooled encoder and single-parse optimization
 func (p *Processor) BatchDeleteOptimized(jsonStr string, paths []string) (string, error) {
 	if err := p.checkClosed(); err != nil {
 		return jsonStr, err
@@ -2428,13 +2431,13 @@ func (p *Processor) BatchDeleteOptimized(jsonStr string, paths []string) (string
 		}
 	}
 
-	// PERFORMANCE: Use FastMarshal for encoding to reduce allocations
-	result, err := internal.FastMarshal(data)
+	// PERFORMANCE: Use FastMarshalToString to avoid double allocation (bytes -> string)
+	result, err := internal.FastMarshalToString(data)
 	if err != nil {
 		return jsonStr, err
 	}
 
-	return string(result), nil
+	return result, nil
 }
 
 // ============================================================================

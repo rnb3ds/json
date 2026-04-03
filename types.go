@@ -368,9 +368,9 @@ func (e *MarshalerError) Unwrap() error { return e.Err }
 // IMPORTANT: Do not reassign this variable. Use IsDeletedMarker() for comparisons.
 var deletedMarker = &struct{}{} // deleted marker - empty struct for pointer identity
 
-// IsDeletedMarker checks if a value is the deleted marker sentinel.
-// This is the recommended way to check for deleted markers instead of direct comparison.
-func IsDeletedMarker(v any) bool {
+// isDeletedMarker checks if a value is the deleted marker sentinel.
+// This is the internal function for checking deleted markers.
+func isDeletedMarker(v any) bool {
 	return v == deletedMarker
 }
 
@@ -728,8 +728,8 @@ type AccessResult struct {
 	Type   string // Runtime type info (for debugging)
 }
 
-// NewAccessResult creates a new AccessResult.
-func NewAccessResult(value any, exists bool) AccessResult {
+// newAccessResult creates a new AccessResult.
+func newAccessResult(value any, exists bool) AccessResult {
 	var typeStr string
 	if value != nil {
 		typeStr = fmt.Sprintf("%T", value)
@@ -756,9 +756,9 @@ func (r AccessResult) UnwrapOr(defaultValue any) any {
 	return r.Value
 }
 
-// As safely converts the result to type T.
+// as safely converts the result to type T.
 // Returns error if the type doesn't match.
-func As[T any](r AccessResult) (T, error) {
+func as[T any](r AccessResult) (T, error) {
 	if !r.Exists {
 		var zero T
 		return zero, ErrPathNotFound

@@ -859,8 +859,10 @@ func (urp *recursiveProcessor) handleExtractSegmentUnified(data any, segment int
 }
 
 // handleMultiFieldExtractSegment handles multi-field extraction (e.g., {id,name})
-// Returns a new object (or array of objects) containing only the specified fields
-func (urp *recursiveProcessor) handleMultiFieldExtractSegment(data any, fieldsStr string, isFlat bool, segments []internal.PathSegment, segmentIndex int, isLastSegment bool, op operation, value any, createPaths bool) (any, error) {
+// Returns a new object (or array of objects) containing only the specified fields.
+// Note: isFlat is unused for multi-field extraction as flattening doesn't apply when
+// extracting multiple fields into an object (only applicable to single-field extraction).
+func (urp *recursiveProcessor) handleMultiFieldExtractSegment(data any, fieldsStr string, _ bool, segments []internal.PathSegment, segmentIndex int, isLastSegment bool, op operation, value any, createPaths bool) (any, error) {
 	fields := strings.Split(fieldsStr, ",")
 
 	// Trim whitespace from field names
@@ -1022,7 +1024,8 @@ func (urp *recursiveProcessor) handleExtractThenSlice(data any, extractSegment, 
 }
 
 // handleExtractThenSliceDelete handles Delete ops for {extract}[slice] patterns
-func (urp *recursiveProcessor) handleExtractThenSliceDelete(data any, extractSegment, sliceSegment internal.PathSegment, segments []internal.PathSegment, segmentIndex int, value any) (any, error) {
+// Note: segments, segmentIndex, and value are unused but kept for API consistency with other handlers.
+func (urp *recursiveProcessor) handleExtractThenSliceDelete(data any, extractSegment, sliceSegment internal.PathSegment, _ []internal.PathSegment, _ int, _ any) (any, error) {
 	switch container := data.(type) {
 	case []any:
 		// Apply slice deletion to each extracted array
@@ -1085,8 +1088,9 @@ func (urp *recursiveProcessor) applySliceDeletion(arr []any, sliceSegment intern
 	return nil
 }
 
-// handleWildcardSegmentUnified handles wildcard segments for all ops
-func (urp *recursiveProcessor) handleWildcardSegmentUnified(data any, segment internal.PathSegment, segments []internal.PathSegment, segmentIndex int, isLastSegment bool, op operation, value any, createPaths bool) (any, error) {
+// handleWildcardSegmentUnified handles wildcard segments for all ops.
+// Note: segment parameter is unused as wildcard operations don't need segment-specific data.
+func (urp *recursiveProcessor) handleWildcardSegmentUnified(data any, _ internal.PathSegment, segments []internal.PathSegment, segmentIndex int, isLastSegment bool, op operation, value any, createPaths bool) (any, error) {
 	switch container := data.(type) {
 	case []any:
 		if isLastSegment {
