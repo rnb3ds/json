@@ -175,7 +175,6 @@ var streamingProcessorPool = sync.Pool{
 }
 
 // newStreamingProcessor creates a streaming processor for large JSON.
-// Deprecated: Use Processor.StreamArray() instead.
 func newStreamingProcessor(reader io.Reader, bufferSize int) *StreamingProcessor {
 	sp := streamingProcessorPool.Get().(*StreamingProcessor)
 	if bufferSize <= 0 {
@@ -192,6 +191,12 @@ func newStreamingProcessor(reader io.Reader, bufferSize int) *StreamingProcessor
 	sp.decoder = json.NewDecoder(sp.bufReader)
 	sp.stats = StreamingStats{}
 	return sp
+}
+
+// NewStreamingProcessor creates a new streaming processor for large JSON data.
+// bufferSize of 0 uses the default (64KB).
+func NewStreamingProcessor(reader io.Reader, bufferSize int) *StreamingProcessor {
+	return newStreamingProcessor(reader, bufferSize)
 }
 
 // StreamArray streams array elements one at a time
@@ -558,129 +563,6 @@ func (sp *StreamingProcessor) StreamObjectChunked(chunkSize int, fn func(map[str
 // STREAMING TRANSFORMATION OPERATIONS
 // PERFORMANCE: Transform large JSON without loading entire structure into memory
 // ============================================================================
-
-// StreamArrayFilter filters array elements during streaming
-// Only elements that pass the predicate are kept
-func StreamArrayFilter(reader io.Reader, predicate func(any) bool) ([]any, error) {
-	processor := newStreamingProcessor(reader, 0)
-	result := make([]any, 0)
-
-	err := processor.StreamArray(func(index int, item any) bool {
-		if predicate(item) {
-			result = append(result, item)
-		}
-		return true
-	})
-
-	return result, err
-}
-
-// StreamArrayMap transforms array elements during streaming
-// Each element is transformed using the provided function
-func StreamArrayMap(reader io.Reader, transform func(any) any) ([]any, error) {
-	processor := newStreamingProcessor(reader, 0)
-	result := make([]any, 0)
-
-	err := processor.StreamArray(func(index int, item any) bool {
-		result = append(result, transform(item))
-		return true
-	})
-
-	return result, err
-}
-
-// StreamArrayReduce reduces array elements to a single value during streaming
-// The reducer function receives the accumulated value and current element
-func StreamArrayReduce(reader io.Reader, initial any, reducer func(any, any) any) (any, error) {
-	processor := newStreamingProcessor(reader, 0)
-	accumulator := initial
-
-	err := processor.StreamArray(func(index int, item any) bool {
-		accumulator = reducer(accumulator, item)
-		return true
-	})
-
-	return accumulator, err
-}
-
-// StreamArrayForEach processes each element without collecting results
-// Useful for side effects like writing to a database or file
-func StreamArrayForEach(reader io.Reader, fn func(int, any) error) error {
-	processor := newStreamingProcessor(reader, 0)
-
-	return processor.StreamArray(func(index int, item any) bool {
-		if err := fn(index, item); err != nil {
-			return false // Stop iteration on error
-		}
-		return true
-	})
-}
-
-// StreamArrayCount counts elements without storing them
-// Memory-efficient for just getting array length
-func StreamArrayCount(reader io.Reader) (int, error) {
-	processor := newStreamingProcessor(reader, 0)
-	count := 0
-
-	err := processor.StreamArray(func(index int, item any) bool {
-		count++
-		return true
-	})
-
-	return count, err
-}
-
-// StreamArrayFirst returns the first element that matches a predicate
-// Stops processing as soon as a match is found
-func StreamArrayFirst(reader io.Reader, predicate func(any) bool) (any, bool, error) {
-	processor := newStreamingProcessor(reader, 0)
-	var result any
-	found := false
-
-	err := processor.StreamArray(func(index int, item any) bool {
-		if predicate(item) {
-			result = item
-			found = true
-			return false // Stop iteration
-		}
-		return true
-	})
-
-	return result, found, err
-}
-
-// StreamArrayTake returns the first n elements from a streaming array
-// Useful for pagination or sampling
-func StreamArrayTake(reader io.Reader, n int) ([]any, error) {
-	processor := newStreamingProcessor(reader, 0)
-	result := make([]any, 0, n)
-
-	err := processor.StreamArray(func(index int, item any) bool {
-		if len(result) >= n {
-			return false // Stop iteration
-		}
-		result = append(result, item)
-		return true
-	})
-
-	return result, err
-}
-
-// StreamArraySkip skips the first n elements and returns the rest
-// Useful for pagination
-func StreamArraySkip(reader io.Reader, n int) ([]any, error) {
-	processor := newStreamingProcessor(reader, 0)
-	result := make([]any, 0)
-
-	err := processor.StreamArray(func(index int, item any) bool {
-		if index >= n {
-			result = append(result, item)
-		}
-		return true
-	})
-
-	return result, err
-}
 
 // ============================================================================
 // LAZY JSON - Parse on first access

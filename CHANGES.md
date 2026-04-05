@@ -29,7 +29,6 @@ All notable changes to the cybergodev/json library will be documented in this fi
 
 ### Fixed
 - StreamLinesParallel goroutine leak and error propagation
-- SamplingReader.Sample callback return value handling
 - ProcessFileChunked data corruption (shared array issue)
 - Hash cache TTL-based expiration for stale entry prevention
 - Pool corruption recovery mechanism
@@ -111,7 +110,7 @@ All notable changes to the cybergodev/json library will be documented in this fi
 - **JSONL (JSON Lines) Support**: `ParseJSONL()`, `JSONLProcessor`, `StreamLinesParallel()`, `StreamLinesInto[T]()`, `JSONLWriter`, `ToJSONL()`
 - **Streaming Processing**: `StreamingProcessor`, `StreamArray()`, `StreamObject()`, `StreamArrayChunked()`, `StreamArrayFilter/Map/Reduce()`, `StreamArrayFirst/Take/Skip()`
 - **Lazy JSON Parsing**: `LazyJSON` with on-demand parsing, `Get()`, `IsParsed()`, `Raw()`
-- **Large File Processing**: `LargeFileProcessor`, `ProcessFile()`, `ProcessFileChunked()`, `ChunkedReader`
+- **Large File Processing**: `LargeFileProcessor`, `ProcessFile()`, `ProcessFileChunked()`
 - **Compiled Path Support**: `CompiledPath` for zero-parse overhead, `CompilePath()`, `GetCompiled()`, `CompiledPathCache`
 - **Fast Encoder**: `FastEncoder` with 4-8x faster encoding for common types, pre-computed integer tables (0-9999)
 - **String Interning**: `StringIntern`, `KeyIntern` (64 shards), `PathIntern`, `BatchIntern`

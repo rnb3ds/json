@@ -1,58 +1,12 @@
 package json
 
 import (
-	"bytes"
-	"encoding/json"
 	"strings"
 	"sync"
 	"testing"
 
 	"github.com/cybergodev/json/internal"
 )
-
-// TestConcurrentSampling tests concurrent access to SamplingReader
-// This test verifies that globalRand is thread-safe
-func TestConcurrentSampling(t *testing.T) {
-	// Create a large JSON array for sampling
-	items := make([]map[string]any, 100)
-	for i := range items {
-		items[i] = map[string]any{
-			"id":    i,
-			"value": "test item",
-		}
-	}
-	jsonData, err := json.Marshal(items)
-	if err != nil {
-		t.Fatalf("Failed to marshal test data: %v", err)
-	}
-
-	// Run concurrent sampling operations
-	var wg sync.WaitGroup
-	concurrency := 10
-
-	for i := 0; i < concurrency; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for j := 0; j < 5; j++ {
-				reader := NewSamplingReader(bytes.NewReader(jsonData), 10)
-				count := 0
-				err := reader.Sample(func(index int, item any) bool {
-					count++
-					return true
-				})
-				if err != nil {
-					t.Errorf("Sample failed: %v", err)
-					return
-				}
-				if count > 10 {
-					t.Errorf("Expected at most 10 samples, got %d", count)
-				}
-			}
-		}()
-	}
-	wg.Wait()
-}
 
 // TestConcurrentPathTypeCache tests concurrent access to pathTypeCacheShards
 func TestConcurrentPathTypeCache(t *testing.T) {

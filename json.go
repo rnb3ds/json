@@ -595,11 +595,6 @@ func ParseJSONL(data []byte) ([]any, error) {
 	return results, err
 }
 
-// ParseJSONLInto parses JSONL data into typed values
-func ParseJSONLInto[T any](data []byte) ([]T, error) {
-	return StreamLinesInto[T](bytes.NewReader(data), nil)
-}
-
 // ToJSONL converts a slice of values to JSONL format
 func ToJSONL(data []any) ([]byte, error) {
 	if len(data) == 0 {

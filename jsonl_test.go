@@ -573,31 +573,6 @@ func TestParseJSONL(t *testing.T) {
 	}
 }
 
-func TestParseJSONLInto(t *testing.T) {
-	type Person struct {
-		Name string `json:"name"`
-		Age  int    `json:"age"`
-	}
-
-	input := "{\"name\":\"Alice\",\"age\":30}\n{\"name\":\"Bob\",\"age\":25}"
-
-	results, err := ParseJSONLInto[Person]([]byte(input))
-	if err != nil {
-		t.Fatalf("ParseJSONLInto error: %v", err)
-	}
-
-	if len(results) != 2 {
-		t.Fatalf("Expected 2 results, got %d", len(results))
-	}
-
-	if results[0].Name != "Alice" {
-		t.Errorf("results[0].Name = %q, want %q", results[0].Name, "Alice")
-	}
-	if results[1].Age != 25 {
-		t.Errorf("results[1].Age = %d, want 25", results[1].Age)
-	}
-}
-
 func TestToJSONL(t *testing.T) {
 	tests := []struct {
 		name          string

@@ -21,9 +21,8 @@ import (
 // - StreamingProcessor for large JSON arrays
 // - StreamArray and StreamObject for element-by-element processing
 // - StreamArrayChunked for batch processing
-// - StreamArrayFilter, StreamArrayMap, StreamArrayReduce
+// - Custom filtering, mapping, and reducing with StreamingProcessor
 // - NDJSONProcessor for line-delimited JSON files
-// - LazyParser for deferred parsing
 // - LargeFileProcessor for memory-efficient file handling
 //
 // Run: go run -tags=example examples/13_streaming_ndjson.go
@@ -44,10 +43,7 @@ func main() {
 	// 4. NDJSON PROCESSING
 	demonstrateNDJSON()
 
-	// 5. LAZY JSON
-	demonstrateLazyJSON()
-
-	// 6. LARGE FILE PROCESSING
+	// 5. LARGE FILE PROCESSING
 	demonstrateLargeFileProcessing()
 
 	fmt.Println("\nStreaming & NDJSON processing examples complete!")
@@ -102,30 +98,34 @@ func demonstrateStreamingTransformations() {
 		{"name": "Eve", "score": 88}
 	]`
 
-	// Filter: Get only high scores (>= 90)
+	// Filter: Get only high scores (>= 90) using StreamingProcessor
 	reader := strings.NewReader(data)
-	filtered, err := json.StreamArrayFilter(reader, func(item any) bool {
+	processor := json.NewStreamingProcessor(reader, 0)
+	var filtered []map[string]any
+
+	err := processor.StreamArray(func(index int, item any) bool {
 		if obj, ok := item.(map[string]any); ok {
-			if score, ok := obj["score"].(float64); ok {
-				return score >= 90
+			if score, ok := obj["score"].(float64); ok && score >= 90 {
+				filtered = append(filtered, obj)
 			}
 		}
-		return false
+		return true
 	})
 	if err != nil {
 		fmt.Printf("   Filter error: %v\n", err)
 	} else {
 		fmt.Printf("   Filtered (score >= 90): %d items\n", len(filtered))
-		for _, item := range filtered {
-			if obj, ok := item.(map[string]any); ok {
-				fmt.Printf("   - %v: %v\n", obj["name"], obj["score"])
-			}
+		for _, obj := range filtered {
+			fmt.Printf("   - %v: %v\n", obj["name"], obj["score"])
 		}
 	}
 
-	// Map: Transform names to uppercase
+	// Map: Transform names to uppercase using StreamingProcessor
 	reader = strings.NewReader(data)
-	transformed, err := json.StreamArrayMap(reader, func(item any) any {
+	processor = json.NewStreamingProcessor(reader, 0)
+	var transformed []map[string]any
+
+	err = processor.StreamArray(func(index int, item any) bool {
 		if obj, ok := item.(map[string]any); ok {
 			newObj := make(map[string]any)
 			for k, v := range obj {
@@ -134,30 +134,31 @@ func demonstrateStreamingTransformations() {
 			if name, ok := newObj["name"].(string); ok {
 				newObj["name"] = strings.ToUpper(name)
 			}
-			return newObj
+			transformed = append(transformed, newObj)
 		}
-		return item
+		return true
 	})
 	if err != nil {
 		fmt.Printf("   Map error: %v\n", err)
 	} else {
 		fmt.Println("\n   Transformed (uppercase names):")
-		for _, item := range transformed {
-			if obj, ok := item.(map[string]any); ok {
-				fmt.Printf("   - %v\n", obj["name"])
-			}
+		for _, obj := range transformed {
+			fmt.Printf("   - %v\n", obj["name"])
 		}
 	}
 
-	// Reduce: Sum all scores
+	// Reduce: Sum all scores using StreamingProcessor
 	reader = strings.NewReader(data)
-	sum, err := json.StreamArrayReduce(reader, 0.0, func(acc any, item any) any {
+	processor = json.NewStreamingProcessor(reader, 0)
+	var sum float64
+
+	err = processor.StreamArray(func(index int, item any) bool {
 		if obj, ok := item.(map[string]any); ok {
 			if score, ok := obj["score"].(float64); ok {
-				return acc.(float64) + score
+				sum += score
 			}
 		}
-		return acc
+		return true
 	})
 	if err != nil {
 		fmt.Printf("   Reduce error: %v\n", err)
@@ -165,22 +166,34 @@ func demonstrateStreamingTransformations() {
 		fmt.Printf("\n   Total score (reduce): %.0f\n", sum)
 	}
 
-	// Count: Get array length without storing elements
+	// Count: Get array length using StreamingProcessor
 	reader = strings.NewReader(data)
-	count, err := json.StreamArrayCount(reader)
+	processor = json.NewStreamingProcessor(reader, 0)
+	count := 0
+
+	err = processor.StreamArray(func(index int, item any) bool {
+		count++
+		return true
+	})
 	if err != nil {
 		fmt.Printf("   Count error: %v\n", err)
 	} else {
 		fmt.Printf("   Array count: %d\n", count)
 	}
 
-	// First: Find first matching element
+	// First: Find first matching element using StreamingProcessor
 	reader = strings.NewReader(data)
-	first, found, err := json.StreamArrayFirst(reader, func(item any) bool {
-		if obj, ok := item.(map[string]any); ok {
-			return obj["name"] == "Charlie"
+	processor = json.NewStreamingProcessor(reader, 0)
+	var first map[string]any
+	found := false
+
+	err = processor.StreamArray(func(index int, item any) bool {
+		if obj, ok := item.(map[string]any); ok && obj["name"] == "Charlie" {
+			first = obj
+			found = true
+			return false // Stop iteration
 		}
-		return false
+		return true
 	})
 	if err != nil {
 		fmt.Printf("   First error: %v\n", err)
@@ -188,9 +201,21 @@ func demonstrateStreamingTransformations() {
 		fmt.Printf("   Found 'Charlie': %v\n", first)
 	}
 
-	// Take: Get first N elements
+	// Take: Get first N elements using StreamingProcessor
 	reader = strings.NewReader(data)
-	taken, err := json.StreamArrayTake(reader, 3)
+	processor = json.NewStreamingProcessor(reader, 0)
+	var taken []map[string]any
+	takeN := 3
+
+	err = processor.StreamArray(func(index int, item any) bool {
+		if len(taken) >= takeN {
+			return false // Stop iteration
+		}
+		if obj, ok := item.(map[string]any); ok {
+			taken = append(taken, obj)
+		}
+		return true
+	})
 	if err != nil {
 		fmt.Printf("   Take error: %v\n", err)
 	} else {
@@ -301,46 +326,6 @@ func demonstrateNDJSON() {
 	}
 }
 
-func demonstrateLazyJSON() {
-	fmt.Println("\n5. Lazy JSON (Deferred Parsing)")
-	fmt.Println("--------------------------------")
-
-	// LazyParser defers parsing until a value is accessed
-	rawJSON := []byte(`{"user": {"name": "Alice", "age": 30}, "active": true}`)
-
-	lazy := json.NewLazyParser(rawJSON)
-
-	// Check if parsed (not yet)
-	fmt.Printf("   Is parsed (before access): %v\n", lazy.IsParsed())
-
-	// Access a value - this triggers parsing
-	name, err := lazy.Get("user.name")
-	if err != nil {
-		fmt.Printf("   Error: %v\n", err)
-	} else {
-		fmt.Printf("   user.name: %v\n", name)
-	}
-
-	// Now it's parsed
-	fmt.Printf("   Is parsed (after access): %v\n", lazy.IsParsed())
-
-	// Subsequent accesses are fast (no re-parsing)
-	age, _ := lazy.Get("user.age")
-	active, _ := lazy.Get("active")
-	fmt.Printf("   user.age: %v, active: %v\n", age, active)
-
-	// Get raw bytes
-	fmt.Printf("   Raw JSON length: %d bytes\n", len(lazy.Raw()))
-
-	// Force parse and get all data
-	parsed, err := lazy.Parse()
-	if err != nil {
-		fmt.Printf("   Parse error: %v\n", err)
-	} else {
-		fmt.Printf("   Parsed data: %v\n", parsed)
-	}
-}
-
 func demonstrateLargeFileProcessing() {
 	fmt.Println("\n6. Large File Processing")
 	fmt.Println("------------------------")
@@ -407,27 +392,5 @@ func demonstrateLargeFileProcessing() {
 
 	if err != nil {
 		fmt.Printf("   Error: %v\n", err)
-	}
-
-	// ChunkedReader for more control
-	fmt.Println("\n   Using ChunkedReader:")
-	file, err := os.Open(largeFilePath)
-	if err != nil {
-		fmt.Printf("   Error opening file: %v\n", err)
-		return
-	}
-	defer file.Close()
-
-	reader := json.NewChunkedReader(file, 1024)
-	crCount := 0
-	err = reader.ReadArray(func(item any) bool {
-		crCount++
-		return crCount < 5 // Stop after 5 items for demo
-	})
-
-	if err != nil {
-		fmt.Printf("   Error: %v\n", err)
-	} else {
-		fmt.Printf("   Read %d items with ChunkedReader\n", crCount)
 	}
 }
