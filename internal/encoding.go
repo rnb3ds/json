@@ -107,13 +107,6 @@ func PutEncoderBufferSecure(buf *bytes.Buffer) {
 	}
 }
 
-// GetByteSlice gets a byte slice from the pool
-// PERFORMANCE: Reusable byte slices for encoding operations
-// Deprecated: Use GetByteSliceWithHint for better size matching
-func GetByteSlice() *[]byte {
-	return mediumByteSlicePool.Get().(*[]byte)
-}
-
 // GetByteSliceWithHint gets a byte slice with appropriate capacity hint
 // PERFORMANCE: Uses tiered pools for better memory management
 func GetByteSliceWithHint(hint int) *[]byte {
