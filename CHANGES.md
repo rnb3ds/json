@@ -13,6 +13,8 @@ All notable changes to the cybergodev/json library will be documented in this fi
 - `EncodeWithOptions()` → Use `EncodeWithConfig()` (deprecated alias removed)
 - `EncodeStreamWithOptions()` → Use `EncodeStream()` (deprecated alias removed)
 - `StreamingProcessor.Release()` → Use `Close()` (deprecated method removed)
+- `ValidWithOptions()` → Use `ValidWithConfig()` (deprecated alias removed)
+- `NewEncoderWithOpts()` → Use `NewEncoderWithConfig()` (deprecated alias removed)
 
 ### Added
 - `CompactBytes()`, `IndentBytes()` - encoding/json signature compatibility

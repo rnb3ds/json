@@ -78,16 +78,23 @@ type processorMetrics struct {
 
 // New creates a new JSON processor with the given configuration.
 // If no configuration is provided, uses default configuration.
-// Returns an error if the configuration is invalid.
+//
+// Returns an error if the configuration is invalid (see Config.Validate).
+// Always call Close() when done to release resources.
 //
 // Example:
 //
 //	// Using default configuration
 //	processor, err := json.New()
+//	if err != nil {
+//	    // Handle configuration error
+//	}
+//	defer processor.Close()
 //
 //	// With custom configuration
 //	cfg := json.DefaultConfig()
 //	cfg.CreatePaths = true
+//	cfg.EnableCache = true
 //	processor, err := json.New(cfg)
 //
 //	// Using preset configuration
@@ -143,8 +150,17 @@ func New(cfg ...Config) (*Processor, error) {
 	return p, nil
 }
 
-// Close closes the processor and cleans up resources
-// This method is idempotent and thread-safe
+// Close closes the processor and cleans up resources.
+// This method is idempotent and thread-safe.
+// After Close is called, all operations on the processor will return ErrProcessorClosed.
+//
+// IMPORTANT: Always call Close() to release resources:
+//
+//	processor, err := json.New()
+//	if err != nil {
+//	    return err
+//	}
+//	defer processor.Close()
 func (p *Processor) Close() error {
 	p.cleanupOnce.Do(func() {
 		// Mark as closing to prevent new operations
@@ -806,16 +822,6 @@ func (p *Processor) getConfig(opts ...Config) (*Config, error) {
 		return nil, err
 	}
 	return cfg, nil
-}
-
-// putConfig returns a Config to the pool after clearing sensitive data
-func (p *Processor) putConfig(cfg *Config) {
-	if cfg == nil {
-		return
-	}
-	// Clear sensitive fields to prevent memory leaks
-	cfg.Context = nil
-	configPool.Put(cfg)
 }
 
 // prepareOptions prepares and validates processor options

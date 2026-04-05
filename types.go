@@ -637,33 +637,92 @@ func (rm *resourceMonitor) GetPoolHitRatio() float64 {
 	return float64(hits) / float64(total) * 100.0
 }
 
-// Schema represents a JSON schema for validation
+// Schema represents a JSON schema for validation.
+// Supports a subset of JSON Schema Draft 7 for validating JSON structures.
+//
+// Example:
+//
+//	schema := &json.Schema{
+//	    Type:     "object",
+//	    Required: []string{"name", "email"},
+//	    Properties: map[string]*json.Schema{
+//	        "name":  {Type: "string", MinLength: 1},
+//	        "email": {Type: "string", Format: "email"},
+//	        "age":   {Type: "integer", Minimum: 0},
+//	    },
+//	}
+//	err := processor.ValidateSchema(jsonStr, schema)
 type Schema struct {
-	Type                 string             `json:"type,omitempty"`
-	Properties           map[string]*Schema `json:"properties,omitempty"`
-	Items                *Schema            `json:"items,omitempty"`
-	Required             []string           `json:"required,omitempty"`
-	MinLength            int                `json:"minLength,omitempty"`
-	MaxLength            int                `json:"maxLength,omitempty"`
-	Minimum              float64            `json:"minimum,omitempty"`
-	Maximum              float64            `json:"maximum,omitempty"`
-	Pattern              string             `json:"pattern,omitempty"`
-	Format               string             `json:"format,omitempty"`
-	AdditionalProperties bool               `json:"additionalProperties,omitempty"`
-	MinItems             int                `json:"minItems,omitempty"`
-	MaxItems             int                `json:"maxItems,omitempty"`
-	UniqueItems          bool               `json:"uniqueItems,omitempty"`
-	Enum                 []any              `json:"enum,omitempty"`
-	Const                any                `json:"const,omitempty"`
-	MultipleOf           float64            `json:"multipleOf,omitempty"`
-	ExclusiveMinimum     bool               `json:"exclusiveMinimum,omitempty"`
-	ExclusiveMaximum     bool               `json:"exclusiveMaximum,omitempty"`
-	Title                string             `json:"title,omitempty"`
-	Description          string             `json:"description,omitempty"`
-	Default              any                `json:"default,omitempty"`
-	Examples             []any              `json:"examples,omitempty"`
+	// Type specifies the JSON type: "object", "array", "string", "number", "integer", "boolean", "null".
+	Type string `json:"type,omitempty"`
 
-	// Internal flags
+	// Properties defines the schema for each property when Type is "object".
+	Properties map[string]*Schema `json:"properties,omitempty"`
+
+	// Items defines the schema for array elements when Type is "array".
+	Items *Schema `json:"items,omitempty"`
+
+	// Required lists property names that must be present (for objects).
+	Required []string `json:"required,omitempty"`
+
+	// MinLength is the minimum string length (for strings).
+	MinLength int `json:"minLength,omitempty"`
+
+	// MaxLength is the maximum string length (for strings).
+	MaxLength int `json:"maxLength,omitempty"`
+
+	// Minimum is the minimum numeric value (for numbers/integers).
+	Minimum float64 `json:"minimum,omitempty"`
+
+	// Maximum is the maximum numeric value (for numbers/integers).
+	Maximum float64 `json:"maximum,omitempty"`
+
+	// Pattern is a regex pattern that the string must match (for strings).
+	Pattern string `json:"pattern,omitempty"`
+
+	// Format specifies a semantic format: "email", "uri", "date", "date-time", etc.
+	Format string `json:"format,omitempty"`
+
+	// AdditionalProperties controls whether extra properties are allowed (for objects).
+	AdditionalProperties bool `json:"additionalProperties,omitempty"`
+
+	// MinItems is the minimum number of items (for arrays).
+	MinItems int `json:"minItems,omitempty"`
+
+	// MaxItems is the maximum number of items (for arrays).
+	MaxItems int `json:"maxItems,omitempty"`
+
+	// UniqueItems requires all array elements to be unique (for arrays).
+	UniqueItems bool `json:"uniqueItems,omitempty"`
+
+	// Enum restricts the value to one of the specified values.
+	Enum []any `json:"enum,omitempty"`
+
+	// Const requires the value to equal this exact value.
+	Const any `json:"const,omitempty"`
+
+	// MultipleOf requires the value to be a multiple of this number.
+	MultipleOf float64 `json:"multipleOf,omitempty"`
+
+	// ExclusiveMinimum excludes the minimum value itself (for numbers).
+	ExclusiveMinimum bool `json:"exclusiveMinimum,omitempty"`
+
+	// ExclusiveMaximum excludes the maximum value itself (for numbers).
+	ExclusiveMaximum bool `json:"exclusiveMaximum,omitempty"`
+
+	// Title is a human-readable title for the schema.
+	Title string `json:"title,omitempty"`
+
+	// Description is a human-readable description of the schema.
+	Description string `json:"description,omitempty"`
+
+	// Default is the default value for the property.
+	Default any `json:"default,omitempty"`
+
+	// Examples provides example values for documentation.
+	Examples []any `json:"examples,omitempty"`
+
+	// Internal flags for tracking which constraints are explicitly set
 	hasMinLength bool
 	hasMaxLength bool
 	hasMinimum   bool
@@ -672,9 +731,22 @@ type Schema struct {
 	hasMaxItems  bool
 }
 
-// ValidationError represents a schema validation error
+// ValidationError represents a schema validation error.
+// It includes the path where the error occurred and a descriptive message.
+//
+// Example:
+//
+//	err := processor.ValidateSchema(jsonStr, schema)
+//	if err != nil {
+//	    var valErr *json.ValidationError
+//	    if errors.As(err, &valErr) {
+//	        fmt.Printf("Error at %s: %s\n", valErr.Path, valErr.Message)
+//	    }
+//	}
 type ValidationError struct {
-	Path    string `json:"path"`
+	// Path is the JSON path where the validation error occurred.
+	Path string `json:"path"`
+	// Message describes the validation failure.
 	Message string `json:"message"`
 }
 
@@ -750,15 +822,6 @@ type AccessResult struct {
 	Type   string // Runtime type info (for debugging)
 }
 
-// newAccessResult creates a new AccessResult.
-func newAccessResult(value any, exists bool) AccessResult {
-	var typeStr string
-	if value != nil {
-		typeStr = fmt.Sprintf("%T", value)
-	}
-	return AccessResult{Value: value, Exists: exists, Type: typeStr}
-}
-
 // Ok returns true if the value exists.
 func (r AccessResult) Ok() bool { return r.Exists }
 
@@ -776,20 +839,6 @@ func (r AccessResult) UnwrapOr(defaultValue any) any {
 		return defaultValue
 	}
 	return r.Value
-}
-
-// as safely converts the result to type T.
-// Returns error if the type doesn't match.
-func as[T any](r AccessResult) (T, error) {
-	if !r.Exists {
-		var zero T
-		return zero, ErrPathNotFound
-	}
-	if v, ok := r.Value.(T); ok {
-		return v, nil
-	}
-	var zero T
-	return zero, fmt.Errorf("cannot convert %T to %T", r.Value, zero)
 }
 
 // AsString safely converts the result to string.
@@ -921,6 +970,25 @@ type SchemaConfig struct {
 	Default              any
 	Examples             []any
 }
+
+// DefaultSchemaConfig returns the default configuration for creating a Schema.
+// This follows the unified Config pattern as required by the design guidelines.
+//
+// Example:
+//
+//	cfg := json.DefaultSchemaConfig()
+//	cfg.Type = "object"
+//	cfg.Required = []string{"name", "email"}
+//	schema := json.NewSchemaWithConfig(cfg)
+func DefaultSchemaConfig() SchemaConfig {
+	return SchemaConfig{
+		AdditionalProperties: ptrBool(true),
+	}
+}
+
+// ptrBool returns a pointer to a bool value.
+// This is a helper function for SchemaConfig optional fields.
+func ptrBool(v bool) *bool { return &v }
 
 // NewSchemaWithConfig creates a new Schema with the provided configuration.
 // This is the recommended way to create configured Schema instances.

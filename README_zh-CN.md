@@ -268,12 +268,10 @@ json.Foreach(data, func(key any, item *json.IterableValue) {
     fmt.Printf("键: %v, 名称: %s\n", key, name)
 })
 
-// 带路径和控制流
-json.ForeachWithPathAndControl(data, "users", func(key any, value any) json.IteratorControl {
-    if shouldStop {
-        return json.IteratorBreak  // 提前终止
-    }
-    return json.IteratorContinue
+// 带路径
+json.ForeachWithPath(data, "users", func(key any, item *json.IterableValue) {
+    name := item.GetString("name")
+    fmt.Printf("键: %v, 名称: %s\n", key, name)
 })
 ```
 
@@ -310,9 +308,14 @@ err := jsonlProcessor.ProcessReader(reader, func(lineNum int, obj map[string]any
     return nil
 })
 
-// 流式转换（过滤、映射、归约）
-filtered, _ := json.StreamArrayFilter(reader, func(item any) bool {
-    return item.(map[string]any)["active"] == true
+// 使用处理器进行流式过滤
+processor := json.NewStreamingProcessor(reader, 64*1024)
+var filtered []any
+processor.StreamArray(func(index int, item any) bool {
+    if obj, ok := item.(map[string]any); ok && obj["active"] == true {
+        filtered = append(filtered, item)
+    }
+    return true  // 继续
 })
 ```
 
@@ -497,4 +500,4 @@ MIT License - 详见 [LICENSE](LICENSE) 文件。
 
 ---
 
-如果这个项目对你有帮助，请给一个 star！
+如果这个项目对你有帮助，请给一个 star！ ⭐

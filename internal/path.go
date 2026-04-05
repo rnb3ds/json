@@ -426,17 +426,25 @@ func NewRecursiveSegment() PathSegment {
 	}
 }
 
+// emptyPathSegments is a cached empty slice for empty/root paths
+// PERFORMANCE: Avoids repeated allocations for common empty path case
+var emptyPathSegments []PathSegment
+
+func init() {
+	emptyPathSegments = make([]PathSegment, 0)
+}
+
 // ParsePath parses a JSON path string into segments
 // PERFORMANCE v3: Added sync.Map-based cache for lock-free reads
 // PERFORMANCE v2: Added fast path for simple single-property access
 func ParsePath(path string) ([]PathSegment, error) {
 	if path == "" {
-		return []PathSegment{}, nil
+		return emptyPathSegments, nil
 	}
 
 	// Handle root path special case
 	if path == "." {
-		return []PathSegment{}, nil
+		return emptyPathSegments, nil
 	}
 
 	// PERFORMANCE v3: Check cache first (lock-free)

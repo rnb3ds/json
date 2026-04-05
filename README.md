@@ -99,14 +99,14 @@ func main() {
 
 | Syntax | Description | Example |
 |--------|-------------|---------|
-| `.property` | Access property | `user.name` - "Alice" |
-| `[n]` | Array index | `items[0]` - first element |
-| `[-n]` | Negative index (from end) | `items[-1]` - last element |
-| `[start:end]` | Array slice | `items[1:3]` - elements 1-2 |
-| `[start:end:step]` | Slice with step | `items[::2]` - every other element |
-| `[+]` | Append to array | `items[+]` - append position |
-| `{field}` | Extract field from all elements | `users{name}` - ["Alice", "Bob"] |
-| `{flat:field}` | Flatten nested arrays | `users{flat:tags}` - merge all tags |
+| `.property` | Access property | `user.name` → "Alice" |
+| `[n]` | Array index | `items[0]` → first element |
+| `[-n]` | Negative index (from end) | `items[-1]` → last element |
+| `[start:end]` | Array slice | `items[1:3]` → elements 1-2 |
+| `[start:end:step]` | Slice with step | `items[::2]` → every other element |
+| `[+]` | Append to array | `items[+]` → append position |
+| `{field}` | Extract field from all elements | `users{name}` → ["Alice", "Bob"] |
+| `{flat:field}` | Flatten nested arrays | `users{flat:tags}` → merge all tags |
 
 ---
 
@@ -268,12 +268,10 @@ json.Foreach(data, func(key any, item *json.IterableValue) {
     fmt.Printf("Key: %v, Name: %s\n", key, name)
 })
 
-// With path and control flow
-json.ForeachWithPathAndControl(data, "users", func(key any, value any) json.IteratorControl {
-    if shouldStop {
-        return json.IteratorBreak  // early termination
-    }
-    return json.IteratorContinue
+// With path
+json.ForeachWithPath(data, "users", func(key any, item *json.IterableValue) {
+    name := item.GetString("name")
+    fmt.Printf("Key: %v, Name: %s\n", key, name)
 })
 ```
 
@@ -310,9 +308,14 @@ err := jsonlProcessor.ProcessReader(reader, func(lineNum int, obj map[string]any
     return nil
 })
 
-// Streaming transformations (filter, map, reduce)
-filtered, _ := json.StreamArrayFilter(reader, func(item any) bool {
-    return item.(map[string]any)["active"] == true
+// Streaming with filter pattern using processor
+processor := json.NewStreamingProcessor(reader, 64*1024)
+var filtered []any
+processor.StreamArray(func(index int, item any) bool {
+    if obj, ok := item.(map[string]any); ok && obj["active"] == true {
+        filtered = append(filtered, item)
+    }
+    return true  // continue
 })
 ```
 
@@ -497,4 +500,4 @@ MIT License - See [LICENSE](LICENSE) file for details.
 
 ---
 
-If this project helps you, please give it a star!
+If this project helps you, please give it a star! ⭐

@@ -12,22 +12,33 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
 	"github.com/cybergodev/json/internal"
 )
 
-// Pre-compiled regex patterns for schema validation
+// Lazy-initialized regex patterns for schema validation
+// PERFORMANCE: Using sync.OnceValue to defer compilation until first use
+// This avoids init-time overhead when schema validation isn't needed
 var (
 	// emailLocalRegex validates local part of email addresses
-	emailLocalRegex = regexp.MustCompile(`^[a-zA-Z0-9._%+-]+$`)
+	emailLocalRegex = sync.OnceValue(func() *regexp.Regexp {
+		return regexp.MustCompile(`^[a-zA-Z0-9._%+-]+$`)
+	})
 	// emailDomainRegex validates domain part of email addresses
-	emailDomainRegex = regexp.MustCompile(`^[a-zA-Z0-9.-]+$`)
+	emailDomainRegex = sync.OnceValue(func() *regexp.Regexp {
+		return regexp.MustCompile(`^[a-zA-Z0-9.-]+$`)
+	})
 	// uuidRegex validates UUID format (v4 pattern)
-	uuidRegex = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
+	uuidRegex = sync.OnceValue(func() *regexp.Regexp {
+		return regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
+	})
 	// ipv6Regex validates IPv6 address format
-	ipv6Regex = regexp.MustCompile(`^([0-9a-fA-F]{0,4}:){2,7}[0-9a-fA-F]{0,4}$`)
+	ipv6Regex = sync.OnceValue(func() *regexp.Regexp {
+		return regexp.MustCompile(`^([0-9a-fA-F]{0,4}:){2,7}[0-9a-fA-F]{0,4}$`)
+	})
 )
 
 // Token holds a value of one of these types:
@@ -110,29 +121,29 @@ func NewEncoder(w io.Writer) *Encoder {
 	}
 }
 
-// NewEncoderWithOpts returns a new encoder that writes to w with Config configuration.
+// NewEncoderWithConfig returns a new encoder that writes to w with Config configuration.
 // This is the unified API for creating encoders with consistent Config pattern.
 //
 // Example:
 //
 //	cfg := json.DefaultConfig()
 //	cfg.Pretty = true
-//	encoder := json.NewEncoderWithOpts(writer, &cfg)
+//	encoder := json.NewEncoderWithConfig(writer, &cfg)
 //	err := encoder.Encode(data)
-func NewEncoderWithOpts(w io.Writer, opts *Config) *Encoder {
+func NewEncoderWithConfig(w io.Writer, cfg *Config) *Encoder {
 	p := getDefaultProcessor()
 	enc := &Encoder{
 		w:          w,
 		processor:  p,
 		escapeHTML: true, // Default behavior matches encoding/json
 	}
-	if opts != nil {
+	if cfg != nil {
 		// Apply escape HTML setting
-		enc.escapeHTML = opts.EscapeHTML
+		enc.escapeHTML = cfg.EscapeHTML
 		// Apply pretty print settings
-		if opts.Pretty {
-			enc.prefix = opts.Prefix
-			enc.indent = opts.Indent
+		if cfg.Pretty {
+			enc.prefix = cfg.Prefix
+			enc.indent = cfg.Indent
 			if enc.indent == "" {
 				enc.indent = "  " // Default indent
 			}
@@ -1003,7 +1014,7 @@ func fastEncodeSimple(value any) (string, bool) {
 
 // fastEncodeSimpleWithHTMLEscape encodes simple types with HTML escaping
 // Returns (result, true) if successful, ("", false) if type not supported
-// PERFORMANCE v2: Uses FastEncoder with direct HTML escaping to reduce allocations
+// PERFORMANCE v3: Direct byte-level HTML escaping to minimize allocations
 func fastEncodeSimpleWithHTMLEscape(value any) (string, bool) {
 	encoder := internal.GetEncoder()
 	defer internal.PutEncoder(encoder)
@@ -1013,10 +1024,13 @@ func fastEncodeSimpleWithHTMLEscape(value any) (string, bool) {
 		return "", false
 	}
 
-	// PERFORMANCE v2: Directly escape bytes without intermediate string conversion
+	// PERFORMANCE v3: Work directly with bytes to avoid string conversions
 	data := encoder.Bytes()
-	if internal.NeedsHTMLEscape(string(data)) {
-		return internal.HTMLEscape(string(data)), true
+	if internal.NeedsHTMLEscapeBytes(data) {
+		escaped := internal.HTMLEscapeBytes(data)
+		result := string(escaped)
+		internal.PutHTMLEscapeBytes(escaped)
+		return result, true
 	}
 
 	return string(data), true
@@ -2036,7 +2050,7 @@ func (p *Processor) validateEmailFormat(email, path string, errors *[]Validation
 	}
 
 	// Basic character validation for local and domain parts
-	if !emailLocalRegex.MatchString(localPart) || !emailDomainRegex.MatchString(domainPart) {
+	if !emailLocalRegex().MatchString(localPart) || !emailDomainRegex().MatchString(domainPart) {
 		*errors = append(*errors, ValidationError{
 			Path:    path,
 			Message: fmt.Sprintf("'%s' contains invalid characters in email address", email),
@@ -2097,7 +2111,7 @@ func (p *Processor) validateURIFormat(uri, path string, errors *[]ValidationErro
 
 // validateUUIDFormat validates UUID format
 func (p *Processor) validateUUIDFormat(uuid, path string, errors *[]ValidationError) error {
-	if !uuidRegex.MatchString(uuid) {
+	if !uuidRegex().MatchString(uuid) {
 		*errors = append(*errors, ValidationError{
 			Path:    path,
 			Message: fmt.Sprintf("'%s' is not a valid UUID format", uuid),
@@ -2141,8 +2155,8 @@ func (p *Processor) validateIPv6Format(ip, path string, errors *[]ValidationErro
 		return nil
 	}
 
-	// Use pre-compiled regex for validation
-	if !ipv6Regex.MatchString(ip) {
+	// Use lazy-initialized regex for validation
+	if !ipv6Regex().MatchString(ip) {
 		*errors = append(*errors, ValidationError{
 			Path:    path,
 			Message: fmt.Sprintf("'%s' is not a valid IPv6 format", ip),

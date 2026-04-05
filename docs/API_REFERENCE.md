@@ -301,7 +301,7 @@ result, err := json.Set(data, "numbers[+]", moreItems)
 **Comparison with old approach:**
 ```go
 // OLD WAY: 3 operations
-members, _ := json.GetAsArray(data, "users")           // Step 1: Get
+members, _ := json.GetArray(data, "users")           // Step 1: Get
 members = append(members, newUser)                   // Step 2: Append
 result, _ := json.Set(data, "users", members)        // Step 3: Set back
 
@@ -530,15 +530,17 @@ Recursively iterates through all nested levels.
 func ForeachWithPathAndControl(jsonStr, path string, fn func(key any, value any) IteratorControl) error
 ```
 
-Iterates with early termination support.
+Iterates with early termination support using internal `IteratorControl` type.
 
-**Example:**
+**Note:** For user-facing iteration with control, prefer `ForeachWithPath` with `IterableValue`:
+
 ```go
-err := json.ForeachWithPathAndControl(data, "users", func(key any, value any) json.IteratorControl {
-    if shouldStop {
-        return json.IteratorBreak
+json.ForeachWithPath(data, "users", func(key any, item *json.IterableValue) {
+    name := item.GetString("name")
+    if name == "target" {
+        // Use item.Break() for early termination in file operations
+        return
     }
-    return json.IteratorContinue
 })
 ```
 
@@ -574,46 +576,6 @@ err := processor.StreamArray(func(index int, item any) bool {
     return true  // continue
 })
 ```
-
----
-
-### StreamArrayFilter
-
-```go
-func StreamArrayFilter(reader io.Reader, predicate func(any) bool) ([]any, error)
-```
-
-Filters array elements during streaming.
-
----
-
-### StreamArrayMap
-
-```go
-func StreamArrayMap(reader io.Reader, transform func(any) any) ([]any, error)
-```
-
-Transforms array elements during streaming.
-
----
-
-### StreamArrayTake
-
-```go
-func StreamArrayTake(reader io.Reader, n int) ([]any, error)
-```
-
-Returns the first n elements from a streaming array.
-
----
-
-### StreamArraySkip
-
-```go
-func StreamArraySkip(reader io.Reader, n int) ([]any, error)
-```
-
-Skips the first n elements and returns the rest.
 
 ---
 
@@ -1066,15 +1028,25 @@ type ValidationError struct {
 
 ---
 
-## Iterator Control Constants
+## Iterator Control
+
+The `IteratorControl` type is used internally for iteration flow control.
+
+For user-facing iteration with early termination, use `ForeachFile`, `ForeachFileChunked`, or `ForeachFileObject` with `IterableValue.Break()`:
 
 ```go
-const (
-    IteratorNormal   IteratorControl = iota
-    IteratorContinue
-    IteratorBreak
-)
+processor, _ := json.New()
+defer processor.Close()
+
+err := processor.ForeachFile("data.json", func(key any, item *json.IterableValue) error {
+    if item.GetInt("id") == targetId {
+        return item.Break() // stop iteration
+    }
+    return nil // continue
+})
 ```
+
+**Note:** The `IteratorControl` constants (`IteratorContinue`, `IteratorBreak`) are internal. Use the `IterableValue.Break()` method for user-facing iteration control.
 
 ---
 

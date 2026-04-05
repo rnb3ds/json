@@ -34,19 +34,19 @@ value, err := json.Get(data, "path")
 str, err := json.GetString(data, "user.name")
 
 // Get integer
-num, err := json.GetAsInt(data, "user.age")
+num, err := json.GetInt(data, "user.age")
 
 // Get boolean
-flag, err := json.GetAsBool(data, "user.active")
+flag, err := json.GetBool(data, "user.active")
 
 // Get float
-price, err := json.GetAsFloat(data, "product.price")
+price, err := json.GetFloat(data, "product.price")
 
 // Get array
-arr, err := json.GetAsArray(data, "items")
+arr, err := json.GetArray(data, "items")
 
 // Get object
-obj, err := json.GetAsObject(data, "user.profile")
+obj, err := json.GetObject(data, "user.profile")
 ```
 
 ### Retrieval with Default Values
@@ -186,13 +186,15 @@ json.ForeachNested(data, func(key any, item *json.IterableValue) {
 ### Iteration with Flow Control
 
 ```go
-// Iterate with early termination support
-json.ForeachWithPathAndControl(data, "users", func(key any, value any) json.IteratorControl {
-    // Process each item
-    if shouldStop {
-        return json.IteratorBreak  // Stop iteration
+// For early termination, use file-based iteration with IterableValue.Break()
+processor, _ := json.New()
+defer processor.Close()
+
+err := processor.ForeachFile("data.json", func(key any, item *json.IterableValue) error {
+    if item.GetInt("id") == targetId {
+        return item.Break() // Stop iteration
     }
-    return json.IteratorContinue  // Continue to next item
+    return nil // Continue
 })
 ```
 
@@ -594,20 +596,6 @@ err := processor.StreamArrayChunked(100, func(chunk []any) error {
     // Process 100 items at a time
     return nil
 })
-
-// Stream transformations
-filtered, err := json.StreamArrayFilter(reader, func(item any) bool {
-    return item.(map[string]any)["active"] == true
-})
-
-transformed, err := json.StreamArrayMap(reader, func(item any) any {
-    item.(map[string]any)["processed"] = true
-    return item
-})
-
-// Pagination support
-page, err := json.StreamArraySkip(reader, 10)  // Skip first 10
-page, err := json.StreamArrayTake(reader, 10)  // Take first 10
 ```
 
 ---

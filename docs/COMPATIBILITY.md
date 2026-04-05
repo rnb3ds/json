@@ -139,7 +139,7 @@ Beyond 100% compatibility, our library also provides:
 - **Performance Optimizations**: Caching, memory pools, string interning
 - **Thread Safety**: Concurrent-safe operations with atomic operations
 - **Rich Query Syntax**: Dot notation, array slicing, JSON Pointer
-- **Streaming Processing**: `json.NewStreamingProcessor()`, `json.StreamArrayFilter()`
+- **Streaming Processing**: `json.NewStreamingProcessor()`, `processor.StreamArray()`
 - **JSONL Support**: `json.NewJSONLProcessor()`, `json.ParseJSONL()`, `json.ToJSONL()`
 - **Advanced Encoding**: `json.EncodeStream()`, `json.EncodeBatch()`, `json.EncodeFields()`
 - **File Operations**: `json.LoadFromFile()`, `json.SaveToFile()`, `json.MarshalToFile()`

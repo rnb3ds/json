@@ -338,20 +338,20 @@ type validationCacheEntry struct {
 	lastAccess int64 // Unix timestamp for LRU eviction
 }
 
-// PatternChecker handles dangerous pattern detection in JSON content.
+// patternChecker handles dangerous pattern detection in JSON content.
 // RESPONSIBILITY: Detects and reports dangerous patterns like XSS, prototype pollution, etc.
-type PatternChecker struct {
+type patternChecker struct {
 	fullSecurityScan bool
 }
 
-// NewPatternChecker creates a new pattern checker.
-func NewPatternChecker(fullSecurityScan bool) *PatternChecker {
-	return &PatternChecker{fullSecurityScan: fullSecurityScan}
+// newPatternChecker creates a new pattern checker.
+func newPatternChecker(fullSecurityScan bool) *patternChecker {
+	return &patternChecker{fullSecurityScan: fullSecurityScan}
 }
 
 // Check performs pattern validation on the JSON string.
 // Returns error if dangerous patterns are detected.
-func (pc *PatternChecker) Check(jsonStr string) error {
+func (pc *patternChecker) Check(jsonStr string) error {
 	if len(jsonStr) < securitySmallJSONThreshold {
 		return pc.checkFull(jsonStr)
 	}
@@ -359,7 +359,7 @@ func (pc *PatternChecker) Check(jsonStr string) error {
 }
 
 // checkFull performs full pattern validation for small JSON strings
-func (pc *PatternChecker) checkFull(jsonStr string) error {
+func (pc *patternChecker) checkFull(jsonStr string) error {
 	// SECURITY: Always scan critical patterns in full
 	for _, cp := range criticalPatterns {
 		if strings.Contains(jsonStr, cp.pattern) {
@@ -404,7 +404,7 @@ func (pc *PatternChecker) checkFull(jsonStr string) error {
 }
 
 // checkOptimized performs optimized pattern validation for large JSON strings
-func (pc *PatternChecker) checkOptimized(jsonStr string) error {
+func (pc *patternChecker) checkOptimized(jsonStr string) error {
 	if pc.fullSecurityScan {
 		return pc.checkFull(jsonStr)
 	}
@@ -438,7 +438,7 @@ func (pc *PatternChecker) checkOptimized(jsonStr string) error {
 }
 
 // hasSuspiciousDensity checks if the JSON has high density of suspicious characters
-func (pc *PatternChecker) hasSuspiciousDensity(jsonStr string) bool {
+func (pc *patternChecker) hasSuspiciousDensity(jsonStr string) bool {
 	sampleSize := min(len(jsonStr), securitySampleSize)
 	suspiciousCount := 0
 	for i := 0; i < sampleSize; i++ {
@@ -451,7 +451,7 @@ func (pc *PatternChecker) hasSuspiciousDensity(jsonStr string) bool {
 }
 
 // scanRollingWindow performs rolling window scan for large JSON
-func (pc *PatternChecker) scanRollingWindow(jsonStr string) error {
+func (pc *patternChecker) scanRollingWindow(jsonStr string) error {
 	windowSize := securityScanWindowSize
 	overlap := maxDangerousPatternLen
 
@@ -470,38 +470,19 @@ func (pc *PatternChecker) scanRollingWindow(jsonStr string) error {
 	return nil
 }
 
-// StructureValidator handles JSON structure and nesting validation.
+// structureValidator handles JSON structure and nesting validation.
 // RESPONSIBILITY: Validates JSON syntax, structure, and depth limits.
-type StructureValidator struct {
+type structureValidator struct {
 	maxNestingDepth int64
 }
 
-// NewStructureValidator creates a new structure validator.
-func NewStructureValidator(maxNestingDepth int64) *StructureValidator {
-	return &StructureValidator{maxNestingDepth: maxNestingDepth}
-}
-
-// ValidateStructure checks the JSON structure for validity.
-func (sv *StructureValidator) ValidateStructure(jsonStr string) error {
-	if len(jsonStr) == 0 {
-		return newOperationError("validate_structure", "JSON string cannot be empty", ErrInvalidJSON)
-	}
-
-	// Check UTF-8 validity
-	if !utf8.ValidString(jsonStr) {
-		return newOperationError("validate_structure", "JSON contains invalid UTF-8 sequences", ErrInvalidJSON)
-	}
-
-	// Check for BOM
-	if strings.HasPrefix(jsonStr, validationBOMPrefix) {
-		return newOperationError("validate_structure", "JSON contains BOM which is not allowed", ErrInvalidJSON)
-	}
-
-	return nil
+// newStructureValidator creates a new structure validator.
+func newStructureValidator(maxNestingDepth int64) *structureValidator {
+	return &structureValidator{maxNestingDepth: maxNestingDepth}
 }
 
 // ValidateNesting checks the nesting depth of the JSON.
-func (sv *StructureValidator) ValidateNesting(jsonStr string) error {
+func (sv *structureValidator) ValidateNesting(jsonStr string) error {
 	if sv.maxNestingDepth <= 0 {
 		return nil // Skip if depth limit not set
 	}
@@ -544,19 +525,19 @@ func (sv *StructureValidator) ValidateNesting(jsonStr string) error {
 	return nil
 }
 
-// PathSecurityChecker handles path security validation.
+// pathSecurityChecker handles path security validation.
 // RESPONSIBILITY: Validates JSON path syntax and security.
-type PathSecurityChecker struct {
+type pathSecurityChecker struct {
 	maxPathLength int
 }
 
-// NewPathSecurityChecker creates a new path security checker.
-func NewPathSecurityChecker(maxPathLength int) *PathSecurityChecker {
-	return &PathSecurityChecker{maxPathLength: maxPathLength}
+// newPathSecurityChecker creates a new path security checker.
+func newPathSecurityChecker(maxPathLength int) *pathSecurityChecker {
+	return &pathSecurityChecker{maxPathLength: maxPathLength}
 }
 
 // Validate checks the path for security issues.
-func (pc *PathSecurityChecker) Validate(path string) error {
+func (pc *pathSecurityChecker) Validate(path string) error {
 	if len(path) > pc.maxPathLength {
 		return newPathError(path, fmt.Sprintf("path length %d exceeds maximum %d", len(path), pc.maxPathLength), ErrInvalidPath)
 	}
@@ -567,16 +548,16 @@ func (pc *PathSecurityChecker) Validate(path string) error {
 }
 
 // securityValidator provides comprehensive security validation for JSON processing.
-// It composes PatternChecker, StructureValidator, and PathSecurityChecker for separation of concerns.
+// It composes patternChecker, structureValidator, and pathSecurityChecker for separation of concerns.
 type securityValidator struct {
 	maxJSONSize      int64
 	maxPathLength    int
 	maxNestingDepth  int
 	fullSecurityScan bool
 	// Composed validators for separation of concerns
-	patternChecker   *PatternChecker
-	structureChecker *StructureValidator
-	pathChecker      *PathSecurityChecker
+	patternChecker   *patternChecker
+	structureChecker *structureValidator
+	pathChecker      *pathSecurityChecker
 	// Cache for validation results
 	validationCache map[string]*validationCacheEntry
 	cacheMutex      sync.RWMutex
@@ -592,11 +573,12 @@ func newSecurityValidator(maxJSONSize int64, maxPathLength, maxNestingDepth int,
 		validationCache:  make(map[string]*validationCacheEntry, 256),
 	}
 	// Initialize composed validators
-	sv.patternChecker = NewPatternChecker(fullSecurityScan)
-	sv.structureChecker = NewStructureValidator(int64(maxNestingDepth))
-	sv.pathChecker = NewPathSecurityChecker(maxPathLength)
+	sv.patternChecker = newPatternChecker(fullSecurityScan)
+	sv.structureChecker = newStructureValidator(int64(maxNestingDepth))
+	sv.pathChecker = newPathSecurityChecker(maxPathLength)
 	return sv
 }
+
 // ValidateJSONInput performs comprehensive JSON input validation with enhanced security.
 // PERFORMANCE: Uses caching to avoid repeated validation of the same JSON string.
 func (sv *securityValidator) ValidateJSONInput(jsonStr string) error {

@@ -7,31 +7,74 @@ import (
 
 // Primary errors for common cases.
 var (
-	ErrInvalidJSON     = errors.New("invalid JSON format")
-	ErrPathNotFound    = errors.New("path not found")
-	ErrTypeMismatch    = errors.New("type mismatch")
+	// ErrInvalidJSON indicates that the input is not valid JSON.
+	// This error is returned when JSON parsing fails due to syntax errors,
+	// malformed structures, or invalid UTF-8 encoding.
+	ErrInvalidJSON = errors.New("invalid JSON format")
+
+	// ErrPathNotFound indicates that the specified path does not exist
+	// in the JSON structure. This can occur when accessing nested keys
+	// that don't exist or using array indices out of bounds.
+	ErrPathNotFound = errors.New("path not found")
+
+	// ErrTypeMismatch indicates that the value at the path is not of the expected type.
+	// For example, trying to get a string when the value is a number.
+	ErrTypeMismatch = errors.New("type mismatch")
+
+	// ErrOperationFailed indicates that a JSON operation failed.
+	// The error message contains details about the specific failure.
 	ErrOperationFailed = errors.New("operation failed")
-	ErrInvalidPath     = errors.New("invalid path format")
+
+	// ErrInvalidPath indicates that the path syntax is invalid.
+	// Paths should use format: "key.subkey" or "array[0]".
+	ErrInvalidPath = errors.New("invalid path format")
+
+	// ErrProcessorClosed indicates that the processor has been closed
+	// and cannot accept new operations. Create a new processor with New().
 	ErrProcessorClosed = errors.New("processor is closed")
-	ErrInternalError   = errors.New("internal error")
+
+	// ErrInternalError indicates an unexpected internal error.
+	// This typically indicates a bug in the library.
+	ErrInternalError = errors.New("internal error")
 
 	// errBreak is an internal signal to stop iteration.
 	// Use item.Break() to stop iteration from callback functions.
 	errBreak = errors.New("iteration break")
 
-	// Limit-related errors.
-	ErrSizeLimit        = errors.New("size limit exceeded")
-	ErrDepthLimit       = errors.New("depth limit exceeded")
+	// ErrSizeLimit indicates that the JSON size exceeds the configured limit.
+	// Increase MaxJSONSize in Config to handle larger inputs.
+	ErrSizeLimit = errors.New("size limit exceeded")
+
+	// ErrDepthLimit indicates that the JSON nesting depth exceeds the configured limit.
+	// Increase MaxNestingDepth in Config for deeply nested structures.
+	ErrDepthLimit = errors.New("depth limit exceeded")
+
+	// ErrConcurrencyLimit indicates that the concurrent operation count exceeds the limit.
+	// Increase MaxConcurrency in Config for high-concurrency scenarios.
 	ErrConcurrencyLimit = errors.New("concurrency limit exceeded")
 
-	// Security and validation errors.
+	// ErrSecurityViolation indicates that potentially dangerous content was detected.
+	// This includes prototype pollution patterns and other security risks.
 	ErrSecurityViolation = errors.New("security violation detected")
-	ErrUnsupportedPath   = errors.New("unsupported path operation")
 
-	// Resource and performance errors.
-	ErrCacheFull         = errors.New("cache is full")
-	ErrCacheDisabled     = errors.New("cache is disabled")
-	ErrOperationTimeout  = errors.New("operation timeout")
+	// ErrUnsupportedPath indicates that the path operation is not supported.
+	// This may occur with invalid path segments or operations.
+	ErrUnsupportedPath = errors.New("unsupported path operation")
+
+	// ErrCacheFull indicates that the cache has reached its maximum size.
+	// Consider increasing MaxCacheSize or clearing the cache.
+	ErrCacheFull = errors.New("cache is full")
+
+	// ErrCacheDisabled indicates that caching is not enabled.
+	// Set EnableCache to true in Config to enable caching.
+	ErrCacheDisabled = errors.New("cache is disabled")
+
+	// ErrOperationTimeout indicates that an operation exceeded its timeout duration.
+	// Consider increasing timeout or optimizing the operation.
+	ErrOperationTimeout = errors.New("operation timeout")
+
+	// ErrResourceExhausted indicates that system resources are exhausted.
+	// This may indicate a memory leak or excessive resource usage.
 	ErrResourceExhausted = errors.New("system resources exhausted")
 )
 

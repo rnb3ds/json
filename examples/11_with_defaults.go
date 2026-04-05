@@ -14,7 +14,7 @@ import (
 // to handle missing or null values gracefully.
 //
 // Topics covered:
-// - GetOr[T] - recommended generic method for defaults
+// - GetTypedOr[T] - recommended generic method for defaults
 // - Practical use cases
 //
 // Run: go run -tags=example examples/11_with_defaults.go
@@ -47,11 +47,11 @@ func main() {
 		}
 	}`
 
-	// 1. GETDEFAULT[T] - RECOMMENDED
-	demonstrateGetDefault(partialData, completeData)
+	// 1. GETTYPEDOR[T] - RECOMMENDED
+	demonstrateGetTypedOr(partialData, completeData)
 
-	// 2. GETTYPEDOR GENERIC
-	demonstrateGetTypedOrGeneric(partialData, completeData)
+	// 2. TYPED DEFAULTS IN PRACTICE
+	demonstrateTypedDefaultsPractice(partialData, completeData)
 
 	// 3. PRACTICAL USE CASES
 	demonstratePracticalCases()
@@ -59,9 +59,9 @@ func main() {
 	fmt.Println("\nWith defaults examples complete!")
 }
 
-func demonstrateGetDefault(partialData, completeData string) {
-	fmt.Println("1. GetOr[T] (Recommended)")
-	fmt.Println("------------------------")
+func demonstrateGetTypedOr(partialData, completeData string) {
+	fmt.Println("1. GetTypedOr[T] (Recommended)")
+	fmt.Println("------------------------------")
 
 	// String with default - RECOMMENDED approach
 	email := json.GetTypedOr(partialData, "user.email", "no-email@example.com")
@@ -90,7 +90,7 @@ func demonstrateGetDefault(partialData, completeData string) {
 	fmt.Printf("   user.tags (missing): %v (length: %d)\n", tags, len(tags))
 }
 
-func demonstrateGetTypedOrGeneric(partialData, completeData string) {
+func demonstrateTypedDefaultsPractice(partialData, completeData string) {
 	fmt.Println("\n2. GetTypedOr[T] (generic, type-safe)")
 	fmt.Println("-------------------------------------")
 

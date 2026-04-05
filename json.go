@@ -21,7 +21,7 @@
 //
 //	// Type-safe operations
 //	name, err := json.GetString(jsonStr, "user.name")
-//	age, err := json.GetAsInt(jsonStr, "user.age")
+//	age, err := json.GetInt(jsonStr, "user.age")
 //
 //	// Advanced processor for complex operations
 //	processor := json.New() // Use default config

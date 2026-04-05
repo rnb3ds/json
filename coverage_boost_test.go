@@ -2297,8 +2297,8 @@ func TestGetBoolOr(t *testing.T) {
 // TestValidString tests the ValidString function
 func TestValidString(t *testing.T) {
 	tests := []struct {
-		jsonStr   string
-		expected  bool
+		jsonStr  string
+		expected bool
 	}{
 		{`{"key":"value"}`, true},
 		{`[1, 2, 3]`, true},
@@ -2321,9 +2321,9 @@ func TestValidString(t *testing.T) {
 	}
 }
 
-// TestValidWithOptions tests ValidWithOptions function
-func TestValidWithOptions(t *testing.T) {
-	t.Run("WithOptions", func(t *testing.T) {
+// TestValidWithConfig tests ValidWithConfig function
+func TestValidWithConfig(t *testing.T) {
+	t.Run("WithConfig", func(t *testing.T) {
 		cfg := Config{
 			MaxNestingDepthSecurity: 100,
 			MaxJSONSize:             1024 * 1024,
@@ -2338,9 +2338,9 @@ func TestValidWithOptions(t *testing.T) {
 		}
 
 		for _, tt := range tests {
-			result, _ := ValidWithOptions(tt.jsonStr, cfg)
+			result, _ := ValidWithConfig(tt.jsonStr, cfg)
 			if result != tt.expected {
-				t.Errorf("ValidWithOptions(%q) = %v, want %v", tt.jsonStr, result, tt.expected)
+				t.Errorf("ValidWithConfig(%q) = %v, want %v", tt.jsonStr, result, tt.expected)
 			}
 		}
 	})

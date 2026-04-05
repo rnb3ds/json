@@ -334,26 +334,27 @@ func GetStreamingMap(hint int) map[string]any {
 }
 
 // PutStreamingMap returns a map[string]any to the pool
-// Note: Uses len() as approximation since maps don't have capacity
+// Note: Uses original size before clearing since maps don't have capacity
 func PutStreamingMap(m map[string]any) {
 	if m == nil {
 		return
 	}
+	// Capture original size BEFORE clearing - critical for correct pool selection
+	originalSize := len(m)
+
 	// Clear the map
 	for k := range m {
 		delete(m, k)
 	}
-	// Use len as approximation for which pool to use
-	// Maps don't have capacity, so we use len to categorize
+
+	// Use original size for pool selection to ensure correct bucket
 	switch {
-	case len(m) == 0:
-		// Empty map - pool based on typical size pattern
+	case originalSize <= smallSliceSize:
 		smallMapPool.Put(m)
-	case len(m) <= smallSliceSize:
-		smallMapPool.Put(m)
-	case len(m) <= mediumSliceSize:
+	case originalSize <= mediumSliceSize:
 		mediumMapPool.Put(m)
-	default:
+	case originalSize <= largeSliceSize:
 		largeMapPool.Put(m)
+	// Maps larger than largeSliceSize are discarded to prevent pool bloat
 	}
 }

@@ -18,17 +18,44 @@ const (
 	// Cache Sizes - Balanced for performance and memory (internal)
 	defaultCacheSize = 128
 
-	// Operation Limits - Secure defaults with reasonable headroom
-	DefaultMaxJSONSize     = 100 * 1024 * 1024 // 100MB
-	DefaultMaxNestingDepth = 200
-	DefaultMaxPathDepth    = 50
-	DefaultMaxConcurrency  = 50
+	// DefaultMaxJSONSize is the maximum allowed JSON input size (100MB).
+	// JSON documents larger than this will be rejected with ErrSizeLimit.
+	// Adjust via Config.MaxJSONSize if processing larger documents.
+	DefaultMaxJSONSize = 100 * 1024 * 1024
 
-	// Internal operation limits
-	DefaultMaxSecuritySize   = 10 * 1024 * 1024
-	DefaultMaxObjectKeys     = 100000
-	DefaultMaxArrayElements  = 100000
-	DefaultMaxBatchSize      = 2000
+	// DefaultMaxNestingDepth is the maximum allowed JSON nesting depth (200).
+	// Deeply nested JSON may indicate malicious input.
+	// Adjust via Config.MaxNestingDepthSecurity if needed.
+	DefaultMaxNestingDepth = 200
+
+	// DefaultMaxPathDepth is the maximum allowed path depth (50).
+	// Limits the number of segments in a path like "a.b.c.d...".
+	// Adjust via Config.MaxPathDepth if needed.
+	DefaultMaxPathDepth = 50
+
+	// DefaultMaxConcurrency is the maximum concurrent operations (50).
+	// Limits parallel operations to prevent resource exhaustion.
+	// Adjust via Config.MaxConcurrency for high-throughput scenarios.
+	DefaultMaxConcurrency = 50
+
+	// DefaultMaxSecuritySize is the maximum size for security validation (10MB).
+	// JSON documents larger than this use sampling-based security checks.
+	DefaultMaxSecuritySize = 10 * 1024 * 1024
+
+	// DefaultMaxObjectKeys is the maximum number of keys in an object (100000).
+	// Objects with more keys will be rejected to prevent memory exhaustion.
+	DefaultMaxObjectKeys = 100000
+
+	// DefaultMaxArrayElements is the maximum number of elements in an array (100000).
+	// Arrays with more elements will be rejected to prevent memory exhaustion.
+	DefaultMaxArrayElements = 100000
+
+	// DefaultMaxBatchSize is the maximum number of operations in a batch (2000).
+	// Larger batches will be rejected to prevent memory exhaustion.
+	DefaultMaxBatchSize = 2000
+
+	// DefaultParallelThreshold is the threshold for parallel processing (10).
+	// Operations below this count use sequential processing.
 	DefaultParallelThreshold = 10
 
 	// Timing and Intervals - Optimized for responsiveness (internal)
@@ -45,18 +72,15 @@ const (
 	// Internal constant for hash optimization.
 	largeStringHashThreshold = internal.LargeStringHashThreshold
 
-	// Path Validation - Secure but flexible
-	// MaxPathLength is the maximum allowed path length for security.
-	// Re-exported from internal package for public API access.
+	// MaxPathLength is the maximum allowed path string length (1024).
+	// Paths longer than this will be rejected for security reasons.
+	// This is a security limit to prevent path traversal attacks.
 	MaxPathLength = internal.MaxPathLength
 
-	// Cache TTL
+	// DefaultCacheTTL is the default cache entry time-to-live (5 minutes).
+	// Cached values expire after this duration.
+	// Adjust via Config.CacheTTL if needed.
 	DefaultCacheTTL = 5 * time.Minute
-
-	// Cache key constants
-	// maxCacheKeyLength is the maximum allowed cache key length.
-	// Internal constant for cache key validation.
-	maxCacheKeyLength = internal.MaxCacheKeyLength
 
 	// Validation constants (internal)
 	validationBOMPrefix = "\uFEFF" // UTF-8 BOM prefix to detect and remove

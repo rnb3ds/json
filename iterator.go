@@ -29,8 +29,7 @@ const (
 type IteratorControl int
 
 const (
-	// iteratorNormal continues iteration normally
-	iteratorNormal IteratorControl = iota
+	_ IteratorControl = iota // reserved
 	// iteratorContinue skips the current item and continues iteration
 	iteratorContinue
 	// iteratorBreak stops iteration entirely
@@ -146,7 +145,27 @@ func safeTypeAssert[T any](value any) (T, bool) {
 	return zero, false
 }
 
-// Iterator represents an iterator over JSON data
+// Iterator represents an iterator over JSON data for sequential access.
+// Supports iteration over both arrays and objects.
+// Thread-safe for single goroutine use; for concurrent access, create separate iterators.
+//
+// Example:
+//
+//	// Iterate over an array
+//	data, _ := json.Parse(`[1, 2, 3]`)
+//	iter := json.NewIterator(data)
+//	for iter.HasNext() {
+//	    value, _ := iter.Next()
+//	    fmt.Println(value)
+//	}
+//
+//	// Iterate over an object
+//	data, _ := json.Parse(`{"a": 1, "b": 2}`)
+//	iter := json.NewIterator(data)
+//	for iter.HasNext() {
+//	    value, _ := iter.Next()
+//	    fmt.Println(value)
+//	}
 type Iterator struct {
 	data     any
 	position int
@@ -155,8 +174,20 @@ type Iterator struct {
 }
 
 // NewIterator creates a new Iterator over the provided data.
-// Simplified API: creates an iterator for traversing arrays and objects.
+// Creates an iterator for traversing arrays and objects.
 // Note: The opts parameter is reserved for future use and currently ignored.
+//
+// Example:
+//
+//	data, _ := json.Parse(`{"name": "Alice", "age": 30}`)
+//	iter := json.NewIterator(data)
+//	for iter.HasNext() {
+//	    value, ok := iter.Next()
+//	    if !ok {
+//	        break
+//	    }
+//	    fmt.Println(value)
+//	}
 func NewIterator(data any, opts ...Config) *Iterator {
 	return &Iterator{
 		data:     data,
@@ -190,7 +221,10 @@ var iterableValuePool = sync.Pool{
 	},
 }
 
-// HasNext checks if there are more elements
+// HasNext checks if there are more elements to iterate.
+// Returns true if the iterator has not reached the end of the data.
+// For arrays, checks if position < array length.
+// For objects, checks if position < number of keys.
 func (it *Iterator) HasNext() bool {
 	if arr, ok := it.data.([]any); ok {
 		return it.position < len(arr)
@@ -203,7 +237,10 @@ func (it *Iterator) HasNext() bool {
 	return false
 }
 
-// Next returns the next element
+// Next returns the next element and advances the iterator.
+// Returns (value, true) if an element is available, or (nil, false) at the end.
+// For arrays, returns the array element at the current position.
+// For objects, returns the value at the current key position.
 func (it *Iterator) Next() (any, bool) {
 	if !it.HasNext() {
 		return nil, false
@@ -229,13 +266,24 @@ func (it *Iterator) Next() (any, bool) {
 	return nil, false
 }
 
-// IterableValue wraps a value to provide convenient access methods
-// Note: Simplified to avoid resource leaks from holding processor/iterator references
+// IterableValue wraps a value to provide convenient access methods during iteration.
+// Used by Foreach and ForeachKey callback functions to provide structured access.
+// Note: Simplified to avoid resource leaks from holding processor/iterator references.
+//
+// Example:
+//
+//	err := processor.Foreach(data, "items", func(item json.IterableValue) error {
+//	    name, _ := item.GetString("name")
+//	    age, _ := item.GetInt("age")
+//	    fmt.Printf("Name: %s, Age: %d\n", name, age)
+//	    return nil
+//	})
 type IterableValue struct {
 	data any
 }
 
-// NewIterableValue creates an IterableValue from data
+// NewIterableValue creates an IterableValue from data.
+// This is primarily used internally by iteration functions.
 func NewIterableValue(data any) *IterableValue {
 	return &IterableValue{data: data}
 }
@@ -1002,6 +1050,21 @@ func navigateToPathSimple(data any, path string) (any, error) {
 type StreamIteratorConfig struct {
 	BufferSize int  // Buffer size for underlying reader (default: 32KB)
 	ReadAhead  bool // Enable read-ahead buffering for improved performance
+}
+
+// DefaultStreamIteratorConfig returns the default configuration for StreamIterator.
+// This follows the unified Config pattern as required by the design guidelines.
+//
+// Example:
+//
+//	cfg := json.DefaultStreamIteratorConfig()
+//	cfg.BufferSize = 64 * 1024 // Custom buffer size
+//	iter := json.NewStreamIteratorWithConfig(reader, cfg)
+func DefaultStreamIteratorConfig() StreamIteratorConfig {
+	return StreamIteratorConfig{
+		BufferSize: 32 * 1024, // 32KB - good balance between memory and performance
+		ReadAhead:  false,
+	}
 }
 
 // StreamIterator provides memory-efficient iteration over large JSON arrays

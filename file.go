@@ -820,47 +820,71 @@ func validateWindowsPath(absPath string) error {
 		return newSecurityError("validate_windows_path", "UNC paths not allowed")
 	}
 
+	// SECURITY FIX: Comprehensive Alternate Data Streams (ADS) detection
+	// ADS format examples: file.txt:stream, C:\path\file.txt:stream
+	// Valid Windows paths can have at most 1 colon for drive letter
+	// Exception: Drive-relative paths like "C:path\file.txt" are valid
+	colonCount := strings.Count(absPath, ":")
+	if colonCount > 1 {
+		return newSecurityError("validate_windows_path", "alternate data streams not allowed")
+	}
+	if colonCount == 1 {
+		// Check if this is a valid drive letter pattern
+		colonIdx := strings.Index(absPath, ":")
+		// Drive letter must be at position 1
+		if colonIdx == 1 && len(absPath) >= 2 {
+			driveLetter := absPath[0]
+			if (driveLetter >= 'A' && driveLetter <= 'Z') || (driveLetter >= 'a' && driveLetter <= 'z') {
+				// Valid drive letter - both "C:\path" and "C:path" (drive-relative) are allowed
+				// This is NOT an ADS
+			} else {
+				return newSecurityError("validate_windows_path", "alternate data streams not allowed")
+			}
+		} else if colonIdx == 0 {
+			// Colon at position 0 is invalid (e.g., ":stream")
+			return newSecurityError("validate_windows_path", "alternate data streams not allowed")
+		} else if colonIdx > 1 {
+			// Colon not at position 1 (e.g., "file.txt:stream") - this is ADS
+			return newSecurityError("validate_windows_path", "alternate data streams not allowed")
+		}
+	}
+
 	// Extract filename for device name checking
 	filename := strings.ToUpper(filepath.Base(absPath))
 	if idx := strings.LastIndex(filename, "."); idx > 0 {
 		filename = filename[:idx]
 	}
 
-	// Check reserved device names (complete list)
-	reserved := []string{"CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$"}
+	// Check reserved device names (complete list including extended)
+	reserved := []string{"CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$", "CLOCK$"}
 	for _, name := range reserved {
 		if filename == name {
 			return newSecurityError("validate_windows_path", "Windows reserved device name")
 		}
 	}
 
-	// Additional check for alternate data streams (ADS)
-	if strings.Contains(absPath, ":") {
-		parts := strings.SplitN(absPath, ":", 2)
-		if len(parts) == 2 {
-			// Check if it looks like a drive letter pattern
-			if len(parts[0]) == 1 && parts[0][0] >= 'A' && parts[0][0] <= 'Z' {
-				// This is a drive letter path, not ADS
-			} else {
-				return newSecurityError("validate_windows_path", "alternate data streams not allowed")
+	// Check COM0-9 and LPT0-9 (expanded range with proper validation)
+	if len(filename) >= 4 && len(filename) <= 5 {
+		prefix := filename[:3]
+		suffix := filename[3:]
+		if prefix == "COM" || prefix == "LPT" {
+			// Check if suffix is a valid number (0-9 for single digit, 10-99 for double)
+			validDevice := false
+			if len(suffix) == 1 && suffix[0] >= '0' && suffix[0] <= '9' {
+				validDevice = true
+			} else if len(suffix) == 2 {
+				// Allow COM10-COM99, LPT10-LPT99
+				if (suffix[0] >= '1' && suffix[0] <= '9') && (suffix[1] >= '0' && suffix[1] <= '9') {
+					validDevice = true
+				}
+			}
+			if validDevice {
+				return newSecurityError("validate_windows_path", "Windows reserved device name")
 			}
 		}
 	}
 
-	// Check COM1-9 and LPT1-9
-	if len(filename) == 4 && filename[3] >= '0' && filename[3] <= '9' {
-		prefix := filename[:3]
-		if prefix == "COM" || prefix == "LPT" {
-			return newSecurityError("validate_windows_path", "Windows reserved device name")
-		}
-	}
-
-	// Check COM0 and LPT0 (explicitly invalid in Windows)
-	if filename == "COM0" || filename == "LPT0" {
-		return newSecurityError("validate_windows_path", "Windows reserved device name")
-	}
-
-	// Check for invalid characters in Windows paths
+	// Check for invalid characters in Windows paths (excluding drive letter portion)
 	pathToCheck := absPath
 	if len(absPath) > 2 && absPath[1] == ':' {
 		pathToCheck = absPath[2:]

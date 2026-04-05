@@ -92,16 +92,13 @@ func (urm *unifiedResourceManager) GetStringBuilder() *strings.Builder {
 }
 
 func (urm *unifiedResourceManager) PutStringBuilder(sb *strings.Builder) {
-	// Use consistent size limits from constants.go
-	const maxBuilderCap = maxPoolBufferSize // 32768 - consistent with constants
-	const minBuilderCap = minPoolBufferSize // 256 - consistent with constants
-
+	// Use centralized constants from internal package
 	if sb == nil {
 		return
 	}
 
 	c := sb.Cap()
-	if c >= minBuilderCap && c <= maxBuilderCap {
+	if c >= internal.MinPoolBuilderCap && c <= internal.MaxPoolBuilderCap {
 		sb.Reset()
 		urm.stringBuilderPool.Put(sb)
 	}
@@ -129,15 +126,12 @@ func (urm *unifiedResourceManager) GetPathSegments() []internal.PathSegment {
 }
 
 func (urm *unifiedResourceManager) PutPathSegments(segments []internal.PathSegment) {
-	// Stricter segment pool limits
-	const maxSegmentCap = 32 // Reduced from 64
-	const minSegmentCap = 4  // Keep minimum
-
+	// Use centralized constants from internal package
 	if segments == nil {
 		return
 	}
 
-	if cap(segments) >= minSegmentCap && cap(segments) <= maxSegmentCap {
+	if cap(segments) >= internal.MinPoolSliceSize && cap(segments) <= 32 {
 		segments = segments[:0]
 		urm.pathSegmentPool.Put(segments)
 	}
@@ -165,15 +159,12 @@ func (urm *unifiedResourceManager) GetBuffer() []byte {
 }
 
 func (urm *unifiedResourceManager) PutBuffer(buf []byte) {
-	// Use consistent size limits from constants.go
-	const maxBufferCap = maxPoolBufferSize // 32768 - consistent with constants
-	const minBufferCap = minPoolBufferSize // 256 - consistent with constants
-
+	// Use centralized constants from internal package
 	if buf == nil {
 		return
 	}
 
-	if cap(buf) >= minBufferCap && cap(buf) <= maxBufferCap {
+	if cap(buf) >= internal.MinPoolBufferSize && cap(buf) <= internal.MaxPoolBufferSize {
 		buf = buf[:0]
 		urm.bufferPool.Put(buf)
 	}

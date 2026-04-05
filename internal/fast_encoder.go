@@ -779,7 +779,16 @@ func (e *FastEncoder) EncodeBool(b bool) {
 }
 
 // EncodeMap encodes a map[string]any
+// PERFORMANCE v2: Pre-allocates buffer capacity based on map size estimate
 func (e *FastEncoder) EncodeMap(m map[string]any) error {
+	// PERFORMANCE: Pre-grow buffer to reduce reallocations
+	// Estimate: each entry needs ~32 bytes on average (key + value + quotes + colon + comma)
+	needed := len(m) * 32
+	if cap(e.buf)-len(e.buf) < needed {
+		// Grow by the needed amount
+		e.buf = append(e.buf[:cap(e.buf)], make([]byte, needed)...)[:len(e.buf)]
+	}
+
 	e.buf = append(e.buf, '{')
 	first := true
 

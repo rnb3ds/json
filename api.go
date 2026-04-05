@@ -369,6 +369,19 @@ func hashCustomEscapes(h uint64, m map[rune]string) uint64 {
 
 // Get retrieves a value from JSON at the specified path.
 // Returns the value as any and requires type assertion.
+//
+// Errors:
+//   - ErrInvalidJSON: jsonStr is not valid JSON
+//   - ErrPathNotFound: path does not exist in the JSON structure
+//   - ErrProcessorClosed: processor has been closed
+//
+// Example:
+//
+//	value, err := json.Get(`{"user":{"name":"Alice"}}`, "user.name")
+//	if err != nil {
+//	    // Handle error
+//	}
+//	name := value.(string)
 func Get(jsonStr, path string, cfg ...Config) (any, error) {
 	return withProcessor(func(p *Processor) (any, error) {
 		return p.Get(jsonStr, path, cfg...)
@@ -393,6 +406,11 @@ func GetTyped[T any](jsonStr, path string, cfg ...Config) (T, error) {
 }
 
 // GetString retrieves a string value from JSON at the specified path.
+//
+// Errors:
+//   - ErrInvalidJSON: jsonStr is not valid JSON
+//   - ErrPathNotFound: path does not exist
+//   - ErrTypeMismatch: value is not a string type
 func GetString(jsonStr, path string, cfg ...Config) (string, error) {
 	return withProcessor(func(p *Processor) (string, error) {
 		return p.GetString(jsonStr, path, cfg...)
@@ -400,6 +418,11 @@ func GetString(jsonStr, path string, cfg ...Config) (string, error) {
 }
 
 // GetInt retrieves an int value from JSON at the specified path.
+//
+// Errors:
+//   - ErrInvalidJSON: jsonStr is not valid JSON
+//   - ErrPathNotFound: path does not exist
+//   - ErrTypeMismatch: value is not an integer type or cannot be converted
 func GetInt(jsonStr, path string, cfg ...Config) (int, error) {
 	return withProcessor(func(p *Processor) (int, error) {
 		return p.GetInt(jsonStr, path, cfg...)
@@ -407,6 +430,11 @@ func GetInt(jsonStr, path string, cfg ...Config) (int, error) {
 }
 
 // GetFloat retrieves a float64 value from JSON at the specified path.
+//
+// Errors:
+//   - ErrInvalidJSON: jsonStr is not valid JSON
+//   - ErrPathNotFound: path does not exist
+//   - ErrTypeMismatch: value is not a numeric type or cannot be converted
 func GetFloat(jsonStr, path string, cfg ...Config) (float64, error) {
 	return withProcessor(func(p *Processor) (float64, error) {
 		return p.GetFloat(jsonStr, path, cfg...)
@@ -414,6 +442,11 @@ func GetFloat(jsonStr, path string, cfg ...Config) (float64, error) {
 }
 
 // GetBool retrieves a bool value from JSON at the specified path.
+//
+// Errors:
+//   - ErrInvalidJSON: jsonStr is not valid JSON
+//   - ErrPathNotFound: path does not exist
+//   - ErrTypeMismatch: value is not a boolean type
 func GetBool(jsonStr, path string, cfg ...Config) (bool, error) {
 	return withProcessor(func(p *Processor) (bool, error) {
 		return p.GetBool(jsonStr, path, cfg...)
@@ -421,6 +454,11 @@ func GetBool(jsonStr, path string, cfg ...Config) (bool, error) {
 }
 
 // GetArray retrieves an array value from JSON at the specified path.
+//
+// Errors:
+//   - ErrInvalidJSON: jsonStr is not valid JSON
+//   - ErrPathNotFound: path does not exist
+//   - ErrTypeMismatch: value is not an array type
 func GetArray(jsonStr, path string, cfg ...Config) ([]any, error) {
 	return withProcessor(func(p *Processor) ([]any, error) {
 		return p.GetArray(jsonStr, path, cfg...)
@@ -428,6 +466,11 @@ func GetArray(jsonStr, path string, cfg ...Config) ([]any, error) {
 }
 
 // GetObject retrieves an object value from JSON at the specified path.
+//
+// Errors:
+//   - ErrInvalidJSON: jsonStr is not valid JSON
+//   - ErrPathNotFound: path does not exist
+//   - ErrTypeMismatch: value is not an object type
 func GetObject(jsonStr, path string, cfg ...Config) (map[string]any, error) {
 	return withProcessor(func(p *Processor) (map[string]any, error) {
 		return p.GetObject(jsonStr, path, cfg...)
@@ -507,31 +550,54 @@ func GetBoolOr(jsonStr, path string, defaultValue bool, cfg ...Config) bool {
 	return p.GetBoolOr(jsonStr, path, defaultValue, cfg...)
 }
 
-// GetMultiple retrieves multiple values from JSON at the specified paths
+// GetMultiple retrieves multiple values from JSON at the specified paths.
+// Returns a map of path to value for each successfully retrieved path.
+//
+// Errors:
+//   - ErrInvalidJSON: jsonStr is not valid JSON
 func GetMultiple(jsonStr string, paths []string, cfg ...Config) (map[string]any, error) {
 	return withProcessor(func(p *Processor) (map[string]any, error) {
 		return p.GetMultiple(jsonStr, paths, cfg...)
 	})
 }
 
-// Set sets a value in JSON at the specified path
+// Set sets a value in JSON at the specified path.
+// Creates intermediate paths if Config.CreatePaths is true.
+//
 // Returns:
 //   - On success: modified JSON string and nil error
 //   - On failure: original unmodified JSON string and error information
+//
+// Errors:
+//   - ErrInvalidJSON: jsonStr is not valid JSON
+//   - ErrInvalidPath: path syntax is invalid
+//   - ErrPathNotFound: path does not exist and CreatePaths is false
+//   - ErrTypeMismatch: cannot set value at path due to type conflict
 func Set(jsonStr, path string, value any, cfg ...Config) (string, error) {
 	return withProcessorStringResult(func(p *Processor) (string, error) {
 		return p.Set(jsonStr, path, value, cfg...)
 	}, jsonStr)
 }
 
-// SetMultiple sets multiple values using a map of path-value pairs
+// SetMultiple sets multiple values using a map of path-value pairs.
+// Creates intermediate paths if Config.CreatePaths is true.
+//
+// Errors:
+//   - ErrInvalidJSON: jsonStr is not valid JSON
+//   - ErrInvalidPath: any path syntax is invalid
+//   - ErrPathNotFound: path does not exist and CreatePaths is false
 func SetMultiple(jsonStr string, updates map[string]any, cfg ...Config) (string, error) {
 	return withProcessorStringResult(func(p *Processor) (string, error) {
 		return p.SetMultiple(jsonStr, updates, cfg...)
 	}, jsonStr)
 }
 
-// Delete deletes a value from JSON at the specified path
+// Delete deletes a value from JSON at the specified path.
+//
+// Errors:
+//   - ErrInvalidJSON: jsonStr is not valid JSON
+//   - ErrPathNotFound: path does not exist
+//   - ErrInvalidPath: path syntax is invalid
 func Delete(jsonStr, path string, cfg ...Config) (string, error) {
 	return withProcessorStringResult(func(p *Processor) (string, error) {
 		return p.Delete(jsonStr, path, cfg...)
@@ -803,9 +869,15 @@ func ValidString(jsonStr string) bool {
 	return err == nil && valid
 }
 
-// ValidWithOptions reports whether the JSON string is valid with optional configuration.
+// ValidWithConfig reports whether the JSON string is valid with configuration.
 // Returns both the validation result and any error that occurred during validation.
-func ValidWithOptions(jsonStr string, cfg ...Config) (bool, error) {
+// This is the unified API for validation with configuration.
+//
+// Example:
+//
+//	cfg := json.SecurityConfig()
+//	valid, err := json.ValidWithConfig(jsonStr, cfg)
+func ValidWithConfig(jsonStr string, cfg ...Config) (bool, error) {
 	return withProcessor(func(p *Processor) (bool, error) {
 		return p.Valid(jsonStr, cfg...)
 	})
