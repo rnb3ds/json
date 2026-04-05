@@ -3,6 +3,7 @@ package json
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math/rand/v2"
@@ -167,6 +168,113 @@ func (p *Processor) LoadFromReaderAsData(reader io.Reader, opts ...Config) (any,
 	var jsonData any
 	err = p.Parse(string(data), &jsonData, opts...)
 	return jsonData, err
+}
+
+// ============================================================================
+// STREAMING PROCESSING METHODS
+// Memory-efficient processing for large JSON files
+// ============================================================================
+
+// StreamArray streams array elements one at a time from an io.Reader.
+// This is memory-efficient for large JSON arrays.
+// The callback function receives the index and item; return false to stop iteration.
+//
+// Example:
+//
+//	file, _ := os.Open("large-data.json")
+//	defer file.Close()
+//	err := processor.StreamArray(file, func(index int, item any) bool {
+//	    fmt.Printf("[%d] %v\n", index, item)
+//	    return true // continue processing
+//	})
+func (p *Processor) StreamArray(reader io.Reader, fn func(index int, item any) bool) error {
+	if err := p.checkClosed(); err != nil {
+		return err
+	}
+	sp := newStreamingProcessor(reader, p.config.BufferSize)
+	defer sp.Close()
+	return sp.StreamArray(fn)
+}
+
+// StreamObject streams object key-value pairs from an io.Reader.
+// This is memory-efficient for large JSON objects.
+// The callback function receives the key and value; return false to stop iteration.
+//
+// Example:
+//
+//	file, _ := os.Open("large-object.json")
+//	defer file.Close()
+//	err := processor.StreamObject(file, func(key string, value any) bool {
+//	    fmt.Printf("%s: %v\n", key, value)
+//	    return true // continue processing
+//	})
+func (p *Processor) StreamObject(reader io.Reader, fn func(key string, value any) bool) error {
+	if err := p.checkClosed(); err != nil {
+		return err
+	}
+	sp := newStreamingProcessor(reader, p.config.BufferSize)
+	defer sp.Close()
+	return sp.StreamObject(fn)
+}
+
+// StreamArrayChunked streams array elements in chunks for memory-efficient processing.
+// The chunkSize parameter controls how many elements are processed at once.
+//
+// Example:
+//
+//	err := processor.StreamArrayChunked(file, 100, func(chunk []any) error {
+//	    // Process batch of 100 elements
+//	    return nil
+//	})
+func (p *Processor) StreamArrayChunked(reader io.Reader, chunkSize int, fn func([]any) error) error {
+	if err := p.checkClosed(); err != nil {
+		return err
+	}
+	sp := newStreamingProcessor(reader, p.config.BufferSize)
+	defer sp.Close()
+	return sp.StreamArrayChunked(chunkSize, fn)
+}
+
+// StreamObjectChunked streams object key-value pairs in chunks for memory-efficient processing.
+// The chunkSize parameter controls how many pairs are processed at once.
+//
+// Example:
+//
+//	err := processor.StreamObjectChunked(file, 100, func(chunk map[string]any) error {
+//	    // Process batch of 100 key-value pairs
+//	    return nil
+//	})
+func (p *Processor) StreamObjectChunked(reader io.Reader, chunkSize int, fn func(map[string]any) error) error {
+	if err := p.checkClosed(); err != nil {
+		return err
+	}
+	sp := newStreamingProcessor(reader, p.config.BufferSize)
+	defer sp.Close()
+	return sp.StreamObjectChunked(chunkSize, fn)
+}
+
+// StreamArrayWithStats streams array elements and returns processing statistics.
+// Useful for monitoring large file processing progress.
+func (p *Processor) StreamArrayWithStats(reader io.Reader, fn func(index int, item any) bool) (StreamingStats, error) {
+	if err := p.checkClosed(); err != nil {
+		return StreamingStats{}, err
+	}
+	sp := newStreamingProcessor(reader, p.config.BufferSize)
+	defer sp.Close()
+	err := sp.StreamArray(fn)
+	return sp.GetStats(), err
+}
+
+// StreamObjectWithStats streams object key-value pairs and returns processing statistics.
+// Useful for monitoring large file processing progress.
+func (p *Processor) StreamObjectWithStats(reader io.Reader, fn func(key string, value any) bool) (StreamingStats, error) {
+	if err := p.checkClosed(); err != nil {
+		return StreamingStats{}, err
+	}
+	sp := newStreamingProcessor(reader, p.config.BufferSize)
+	defer sp.Close()
+	err := sp.StreamObject(fn)
+	return sp.GetStats(), err
 }
 
 // preprocessDataForEncoding normalizes string/[]byte inputs to prevent double-encoding.
@@ -807,99 +915,220 @@ func validateWindowsPath(absPath string) error {
 }
 
 // ============================================================================
-// LARGE JSON FILE PROCESSOR
-// Provides memory-efficient processing for very large JSON files
-// PERFORMANCE: Memory-mapped file support and chunked processing
+// LARGE JSON FILE PROCESSING
+// Unified API - all methods are on Processor
+// Config fields: ChunkSize, MaxMemory, BufferSize, SamplingEnabled, SampleSize
 // ============================================================================
 
-// LargeFileConfig holds configuration for large file processing
-type LargeFileConfig struct {
-	ChunkSize       int64 // Size of each chunk in bytes
-	MaxMemory       int64 // Maximum memory to use
-	BufferSize      int   // Buffer size for reading
-	SamplingEnabled bool  // Enable sampling for very large files
-	SampleSize      int   // Number of samples to take
-}
-
-// DefaultLargeFileConfig returns the default configuration
-func DefaultLargeFileConfig() LargeFileConfig {
-	return LargeFileConfig{
-		ChunkSize:       1024 * 1024,       // 1MB chunks
-		MaxMemory:       100 * 1024 * 1024, // 100MB max
-		BufferSize:      64 * 1024,         // 64KB buffer
-		SamplingEnabled: true,
-		SampleSize:      1000,
-	}
-}
-
-// LargeFileProcessor handles processing of large JSON files
-type LargeFileProcessor struct {
-	config LargeFileConfig
-}
-
-// NewLargeFileProcessor creates a new large file processor
-func NewLargeFileProcessor(config LargeFileConfig) *LargeFileProcessor {
-	return &LargeFileProcessor{config: config}
-}
-
-// ProcessFile processes a large JSON file efficiently
-func (lfp *LargeFileProcessor) ProcessFile(filename string, fn func(item any) error) error {
-	file, err := os.Open(filename)
-	if err != nil {
+// ForeachFile iterates over a large JSON array file with IterableValue interface.
+//
+// The callback function returns an error to control iteration:
+//   - nil: continue to next item
+//   - ErrBreak: stop iteration without error (ForeachFile returns nil)
+//   - other error: stop iteration and return the error
+//
+// Example:
+//
+//	processor, _ := json.New()
+//	err := processor.ForeachFile("large-data.json", func(key any, item *json.IterableValue) error {
+//	    id := item.GetInt("id")
+//	    if id == targetId {
+//	        return json.ErrBreak // stop iteration, no error
+//	    }
+//	    return nil
+//	})
+func (p *Processor) ForeachFile(filename string, fn func(key any, item *IterableValue) error) error {
+	if err := p.checkClosed(); err != nil {
 		return err
 	}
-	defer func() { _ = file.Close() }() // best-effort cleanup; error ignored in defer
 
-	// Use buffered reader for efficiency
-	reader := bufio.NewReaderSize(file, lfp.config.BufferSize)
+	file, err := os.Open(filename)
+	if err != nil {
+		return &JsonsError{
+			Op:      "foreach_file",
+			Message: fmt.Sprintf("failed to open file %s: %v", filename, err),
+			Err:     err,
+		}
+	}
+	defer func() { _ = file.Close() }()
 
-	// Create streaming processor
-	sp := NewStreamingProcessor(reader, int(lfp.config.ChunkSize))
-	defer func() { _ = sp.Close() }() // Ensure cleanup for API consistency
+	bufferSize := p.config.BufferSize
+	if bufferSize <= 0 {
+		bufferSize = 64 * 1024
+	}
 
-	// Stream array elements
-	return sp.StreamArray(func(index int, item any) bool {
-		if err := fn(item); err != nil {
+	reader := bufio.NewReaderSize(file, bufferSize)
+	sp := newStreamingProcessor(reader, int(p.config.ChunkSize))
+	defer func() { _ = sp.Close() }()
+
+	var callbackErr error
+	sp.StreamArray(func(index int, item any) bool {
+		iv := NewIterableValue(item)
+		if err := fn(index, iv); err != nil {
+			if errors.Is(err, errBreak) {
+				callbackErr = nil // ErrBreak means no error
+			} else {
+				callbackErr = err
+			}
 			return false
 		}
 		return true
 	})
+	return callbackErr
 }
 
-// ProcessFileChunked processes a large JSON file in chunks
-func (lfp *LargeFileProcessor) ProcessFileChunked(filename string, chunkSize int, fn func(chunk []any) error) error {
-	file, err := os.Open(filename)
-	if err != nil {
+// ForeachFileChunked iterates over a large JSON file in chunks.
+//
+// The callback function returns an error to control iteration:
+//   - nil: continue to next chunk
+//   - ErrBreak: stop iteration without error (ForeachFileChunked returns nil)
+//   - other error: stop iteration and return the error
+//
+// Example:
+//
+//	processor, _ := json.New()
+//	err := processor.ForeachFileChunked("large-data.json", 100, func(chunk []*json.IterableValue) error {
+//	    for _, item := range chunk {
+//	        id := item.GetInt("id")
+//	    }
+//	    return nil
+//	})
+func (p *Processor) ForeachFileChunked(filename string, chunkSize int, fn func(chunk []*IterableValue) error) error {
+	if err := p.checkClosed(); err != nil {
 		return err
 	}
-	defer func() { _ = file.Close() }() // best-effort cleanup; error ignored in defer
 
-	reader := bufio.NewReaderSize(file, lfp.config.BufferSize)
-	sp := NewStreamingProcessor(reader, int(lfp.config.ChunkSize))
-	defer func() { _ = sp.Close() }() // Ensure cleanup for API consistency
+	file, err := os.Open(filename)
+	if err != nil {
+		return &JsonsError{
+			Op:      "foreach_file_chunked",
+			Message: fmt.Sprintf("failed to open file %s: %v", filename, err),
+			Err:     err,
+		}
+	}
+	defer func() { _ = file.Close() }()
 
-	chunk := make([]any, 0, chunkSize)
+	bufferSize := p.config.BufferSize
+	if bufferSize <= 0 {
+		bufferSize = 64 * 1024
+	}
 
-	err = sp.StreamArray(func(index int, item any) bool {
-		chunk = append(chunk, item)
+	reader := bufio.NewReaderSize(file, bufferSize)
+	sp := newStreamingProcessor(reader, int(p.config.ChunkSize))
+	defer func() { _ = sp.Close() }()
+
+	chunk := make([]*IterableValue, 0, chunkSize)
+	var callbackErr error
+
+	sp.StreamArray(func(index int, item any) bool {
+		chunk = append(chunk, NewIterableValue(item))
 
 		if len(chunk) >= chunkSize {
 			if err := fn(chunk); err != nil {
+				if errors.Is(err, errBreak) {
+					callbackErr = nil
+				} else {
+					callbackErr = err
+				}
 				return false
 			}
-			// Allocate new slice to avoid sharing underlying array with callback
-			// This prevents data corruption if callback retains reference to chunk
-			chunk = make([]any, 0, chunkSize)
+			chunk = make([]*IterableValue, 0, chunkSize)
 		}
 		return true
 	})
 
-	// Process remaining items
-	if err == nil && len(chunk) > 0 {
-		err = fn(chunk)
+	// Process remaining items if no error and callbackErr is nil
+	if callbackErr == nil && len(chunk) > 0 {
+		if err := fn(chunk); err != nil {
+			if !errors.Is(err, errBreak) {
+				callbackErr = err
+			}
+		}
 	}
 
-	return err
+	return callbackErr
+}
+
+// ForeachFileObject iterates over a large JSON object file (key-value pairs).
+//
+// The callback function returns an error to control iteration:
+//   - nil: continue to next item
+//   - ErrBreak: stop iteration without error
+//   - other error: stop iteration and return the error
+func (p *Processor) ForeachFileObject(filename string, fn func(key string, item *IterableValue) error) error {
+	if err := p.checkClosed(); err != nil {
+		return err
+	}
+
+	file, err := os.Open(filename)
+	if err != nil {
+		return &JsonsError{
+			Op:      "foreach_file_object",
+			Message: fmt.Sprintf("failed to open file %s: %v", filename, err),
+			Err:     err,
+		}
+	}
+	defer func() { _ = file.Close() }()
+
+	bufferSize := p.config.BufferSize
+	if bufferSize <= 0 {
+		bufferSize = 64 * 1024
+	}
+
+	reader := bufio.NewReaderSize(file, bufferSize)
+	sp := newStreamingProcessor(reader, int(p.config.ChunkSize))
+	defer func() { _ = sp.Close() }()
+
+	var callbackErr error
+	sp.StreamObject(func(key string, value any) bool {
+		iv := NewIterableValue(value)
+		if err := fn(key, iv); err != nil {
+			if errors.Is(err, errBreak) {
+				callbackErr = nil
+			} else {
+				callbackErr = err
+			}
+			return false
+		}
+		return true
+	})
+	return callbackErr
+}
+
+// ForeachFileFromReader iterates over JSON array from an io.Reader.
+//
+// The callback function returns an error to control iteration:
+//   - nil: continue to next item
+//   - ErrBreak: stop iteration without error
+//   - other error: stop iteration and return the error
+func (p *Processor) ForeachFileFromReader(reader io.Reader, fn func(key any, item *IterableValue) error) error {
+	if err := p.checkClosed(); err != nil {
+		return err
+	}
+
+	bufferSize := p.config.BufferSize
+	if bufferSize <= 0 {
+		bufferSize = 64 * 1024
+	}
+
+	bufReader := bufio.NewReaderSize(reader, bufferSize)
+	sp := newStreamingProcessor(bufReader, int(p.config.ChunkSize))
+	defer func() { _ = sp.Close() }()
+
+	var callbackErr error
+	sp.StreamArray(func(index int, item any) bool {
+		iv := NewIterableValue(item)
+		if err := fn(index, iv); err != nil {
+			if errors.Is(err, errBreak) {
+				callbackErr = nil
+			} else {
+				callbackErr = err
+			}
+			return false
+		}
+		return true
+	})
+	return callbackErr
 }
 
 // ============================================================================

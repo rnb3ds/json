@@ -136,6 +136,13 @@ func DefaultConfig() Config {
 		EnableMetrics:     false,
 		EnableHealthCheck: false,
 
+		// Large File Processing
+		ChunkSize:       1024 * 1024,       // 1MB chunks
+		MaxMemory:       100 * 1024 * 1024, // 100MB max
+		BufferSize:      64 * 1024,         // 64KB buffer
+		SamplingEnabled: true,
+		SampleSize:      1000,
+
 		// Context
 		Context: nil,
 	}

@@ -371,15 +371,22 @@ func demonstrateLargeFileProcessing() {
 		return
 	}
 
-	// Process with LargeFileProcessor
-	config := json.DefaultLargeFileConfig()
-	config.ChunkSize = 1024 // Small chunks for demo
-
-	lfp := json.NewLargeFileProcessor(config)
+	// Process large file using unified Processor API
+	processor, err := json.New()
+	if err != nil {
+		fmt.Printf("   Error creating processor: %v\n", err)
+		return
+	}
 
 	count := 0
-	err = lfp.ProcessFile(largeFilePath, func(item any) error {
+	err = processor.ForeachFile(largeFilePath, func(key any, item *json.IterableValue) error {
 		count++
+		// Demonstrate accessing fields with IterableValue
+		if count <= 3 {
+			id := item.GetInt("id")
+			value := item.GetString("value")
+			fmt.Printf("      Item %d: id=%d, value=%s\n", count, id, value)
+		}
 		return nil
 	})
 
@@ -389,10 +396,10 @@ func demonstrateLargeFileProcessing() {
 		fmt.Printf("   Processed %d items from large file\n", count)
 	}
 
-	// Process in chunks
+	// Process in chunks with ForeachFileChunked
 	fmt.Println("\n   Chunked processing:")
 	chunkCount := 0
-	err = lfp.ProcessFileChunked(largeFilePath, 25, func(chunk []any) error {
+	err = processor.ForeachFileChunked(largeFilePath, 25, func(chunk []*json.IterableValue) error {
 		chunkCount++
 		fmt.Printf("   Processed chunk %d with %d items\n", chunkCount, len(chunk))
 		return nil

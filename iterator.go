@@ -29,12 +29,12 @@ const (
 type IteratorControl int
 
 const (
-	// IteratorNormal continues iteration normally
-	IteratorNormal IteratorControl = iota
-	// IteratorContinue skips the current item and continues iteration
-	IteratorContinue
-	// IteratorBreak stops iteration entirely
-	IteratorBreak
+	// iteratorNormal continues iteration normally
+	iteratorNormal IteratorControl = iota
+	// iteratorContinue skips the current item and continues iteration
+	iteratorContinue
+	// iteratorBreak stops iteration entirely
+	iteratorBreak
 )
 
 // pathTypeCacheShard represents a single shard of the path type cache
@@ -243,6 +243,21 @@ func NewIterableValue(data any) *IterableValue {
 // GetData returns the underlying data
 func (iv *IterableValue) GetData() any {
 	return iv.data
+}
+
+// Break returns a signal to stop iteration without error.
+// Use it in ForeachFile/ForeachFileChunked callback to exit early.
+//
+// Example:
+//
+//	processor.ForeachFile("data.json", func(key any, item *json.IterableValue) error {
+//	    if item.GetInt("id") == targetId {
+//	        return item.Break() // stop iteration
+//	    }
+//	    return nil // continue
+//	})
+func (iv *IterableValue) Break() error {
+	return errBreak
 }
 
 // Get returns a value by path (supports dot notation and array indices)
@@ -845,7 +860,7 @@ func foreachWithPathIterableValue(data any, currentPath string, fn func(key any,
 			ctrl := fn(i, iv, path)
 			iv.data = nil
 			iterableValuePool.Put(iv)
-			if ctrl == IteratorBreak {
+			if ctrl == iteratorBreak {
 				return nil
 			}
 		}
@@ -857,7 +872,7 @@ func foreachWithPathIterableValue(data any, currentPath string, fn func(key any,
 			ctrl := fn(key, iv, path)
 			iv.data = nil
 			iterableValuePool.Put(iv)
-			if ctrl == IteratorBreak {
+			if ctrl == iteratorBreak {
 				return nil
 			}
 		}
@@ -892,13 +907,13 @@ func foreachOnValue(data any, fn func(key any, value any) IteratorControl) error
 	switch v := data.(type) {
 	case []any:
 		for i, item := range v {
-			if ctrl := fn(i, item); ctrl == IteratorBreak {
+			if ctrl := fn(i, item); ctrl == iteratorBreak {
 				return nil
 			}
 		}
 	case map[string]any:
 		for key, val := range v {
-			if ctrl := fn(key, val); ctrl == IteratorBreak {
+			if ctrl := fn(key, val); ctrl == iteratorBreak {
 				return nil
 			}
 		}

@@ -1897,7 +1897,7 @@ func TestStreamingProcessor(t *testing.T) {
 		jsonArray := `[1,2,3,4,5]`
 		reader := strings.NewReader(jsonArray)
 
-		sp := NewStreamingProcessor(reader, 0)
+		sp := newStreamingProcessor(reader, 0)
 
 		count := 0
 		err := sp.StreamArray(func(index int, item any) bool {
@@ -1918,7 +1918,7 @@ func TestStreamingProcessor(t *testing.T) {
 		jsonObj := `{"a":1,"b":2,"c":3}`
 		reader := strings.NewReader(jsonObj)
 
-		sp := NewStreamingProcessor(reader, 0)
+		sp := newStreamingProcessor(reader, 0)
 
 		count := 0
 		err := sp.StreamObject(func(key string, value any) bool {
@@ -1939,7 +1939,7 @@ func TestStreamingProcessor(t *testing.T) {
 		jsonArray := `[1,2,3,4,5,6,7,8,9,10]`
 		reader := strings.NewReader(jsonArray)
 
-		sp := NewStreamingProcessor(reader, 0)
+		sp := newStreamingProcessor(reader, 0)
 
 		chunks := 0
 		totalItems := 0
@@ -1966,7 +1966,7 @@ func TestStreamingProcessor(t *testing.T) {
 		jsonObj := `{"a":1,"b":2,"c":3,"d":4,"e":5}`
 		reader := strings.NewReader(jsonObj)
 
-		sp := NewStreamingProcessor(reader, 0)
+		sp := newStreamingProcessor(reader, 0)
 
 		chunks := 0
 		err := sp.StreamObjectChunked(2, func(chunk map[string]any) error {
@@ -1987,7 +1987,7 @@ func TestStreamingProcessor(t *testing.T) {
 		jsonArray := `[1,2,3]`
 		reader := strings.NewReader(jsonArray)
 
-		sp := NewStreamingProcessor(reader, 0)
+		sp := newStreamingProcessor(reader, 0)
 
 		_ = sp.StreamArray(func(index int, item any) bool {
 			return true

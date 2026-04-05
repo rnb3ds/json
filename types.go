@@ -101,6 +101,28 @@ type Config struct {
 	EnableMetrics     bool `json:"enable_metrics"`
 	EnableHealthCheck bool `json:"enable_health_check"`
 
+	// ===== Large File Processing =====
+	// ChunkSize is the size of each chunk when processing large files.
+	// Default: 1MB (1024 * 1024 bytes)
+	ChunkSize int64 `json:"chunk_size"`
+
+	// MaxMemory is the maximum memory to use for large file processing.
+	// Default: 100MB (100 * 1024 * 1024 bytes)
+	MaxMemory int64 `json:"max_memory"`
+
+	// BufferSize is the buffer size for reading large files.
+	// Default: 64KB (64 * 1024 bytes)
+	BufferSize int `json:"buffer_size"`
+
+	// SamplingEnabled enables sampling for very large files.
+	// When true, only a subset of data is validated for security.
+	// Default: true
+	SamplingEnabled bool `json:"sampling_enabled"`
+
+	// SampleSize is the number of samples to take when sampling is enabled.
+	// Default: 1000
+	SampleSize int `json:"sample_size"`
+
 	// ===== Context =====
 	Context context.Context `json:"-"` // Operation context
 

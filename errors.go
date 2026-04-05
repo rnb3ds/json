@@ -15,6 +15,10 @@ var (
 	ErrProcessorClosed = errors.New("processor is closed")
 	ErrInternalError   = errors.New("internal error")
 
+	// errBreak is an internal signal to stop iteration.
+	// Use item.Break() to stop iteration from callback functions.
+	errBreak = errors.New("iteration break")
+
 	// Limit-related errors.
 	ErrSizeLimit        = errors.New("size limit exceeded")
 	ErrDepthLimit       = errors.New("depth limit exceeded")

@@ -305,7 +305,7 @@ func BenchmarkStreaming_Array_1000(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		sp := NewStreamingProcessor(bytes.NewReader(jsonData), 0)
+		sp := newStreamingProcessor(bytes.NewReader(jsonData), 0)
 		_ = sp.StreamArray(func(index int, item any) bool {
 			return true
 		})
@@ -317,7 +317,7 @@ func BenchmarkStreaming_Array_10000(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		sp := NewStreamingProcessor(bytes.NewReader(jsonData), 0)
+		sp := newStreamingProcessor(bytes.NewReader(jsonData), 0)
 		_ = sp.StreamArray(func(index int, item any) bool {
 			return true
 		})
@@ -997,7 +997,7 @@ func BenchmarkStreamingProcessor_Array(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		sp := NewStreamingProcessor(bytes.NewReader(data), 0)
+		sp := newStreamingProcessor(bytes.NewReader(data), 0)
 		_ = sp.StreamArray(func(index int, item any) bool {
 			return true
 		})
