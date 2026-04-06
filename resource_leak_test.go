@@ -108,7 +108,7 @@ func TestParallelIteratorForEachWithContextCancellation(t *testing.T) {
 		data[i] = i
 	}
 
-	iterator := NewParallelIterator(data, 4)
+	iterator := NewParallelIteratorWithWorkers(data, 4)
 
 	// Use a context that we'll cancel
 	ctx, cancel := context.WithCancel(context.Background())
@@ -156,7 +156,7 @@ func TestParallelIteratorForEachBatchWithContextCancellation(t *testing.T) {
 		data[i] = i
 	}
 
-	iterator := NewParallelIterator(data, 4)
+	iterator := NewParallelIteratorWithWorkers(data, 4)
 
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -200,7 +200,7 @@ func TestParallelIteratorForEachNoLeak(t *testing.T) {
 
 	// Run multiple iterations
 	for i := 0; i < 10; i++ {
-		iterator := NewParallelIterator(data, 4)
+		iterator := NewParallelIteratorWithWorkers(data, 4)
 		err := iterator.ForEach(func(idx int, val any) error {
 			return nil
 		})
@@ -273,7 +273,7 @@ func TestParallelIteratorChannelCleanup(t *testing.T) {
 
 	// Create multiple iterators and verify they don't leak channels
 	for i := 0; i < 50; i++ {
-		iterator := NewParallelIterator(data, 4)
+		iterator := NewParallelIteratorWithWorkers(data, 4)
 		_ = iterator.ForEach(func(idx int, val any) error {
 			return nil
 		})
@@ -297,7 +297,7 @@ func TestIteratorPoolNoLeak(t *testing.T) {
 
 	// Create and release many iterators
 	for i := 0; i < 100; i++ {
-		iv := NewIterableValue(data)
+		iv := newIterableValue(data)
 		_ = iv.GetString("key1")
 		iv.Release()
 	}
@@ -395,7 +395,7 @@ func TestParallelIteratorWithTimeout(t *testing.T) {
 		data[i] = i
 	}
 
-	iterator := NewParallelIterator(data, 4)
+	iterator := NewParallelIteratorWithWorkers(data, 4)
 
 	// Create context with short timeout
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
@@ -508,7 +508,7 @@ func TestParallelIteratorClose(t *testing.T) {
 		data[i] = i
 	}
 
-	iterator := NewParallelIterator(data, 4)
+	iterator := NewParallelIteratorWithWorkers(data, 4)
 
 	// Process some data
 	_ = iterator.ForEach(func(idx int, val any) error {

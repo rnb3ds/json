@@ -706,9 +706,10 @@ func (d *numberPreservingDecoder) convertJSONNumber(num json.Number) any {
 	hasScientific := false
 	for i := range numLen {
 		c := numStr[i]
-		if c == '.' {
+		switch c {
+		case '.':
 			hasDecimal = true
-		} else if c == 'e' || c == 'E' {
+		case 'e', 'E':
 			hasScientific = true
 		}
 	}

@@ -263,14 +263,27 @@ func GetCriticalPatterns() []DangerousPattern {
 	return result
 }
 
-// indicatorChars contains characters that indicate potential dangerous patterns
-// If none of these exist, we can skip pattern matching entirely
-var indicatorChars = map[byte]bool{
-	'<': true, '(': true, ':': true, '.': true,
-	'_': true, 'O': true, 'R': true, 'P': true, 'S': true,
-	'a': true, 'b': true, 'c': true, 'd': true, 'e': true,
-	'f': true, 'i': true, 'j': true, 'n': true, 'o': true,
-	'p': true, 'r': true, 's': true, 'v': true, 'w': true,
+// isIndicatorChar checks if a byte is a potential indicator character for dangerous patterns
+// PERFORMANCE: Uses switch for O(1) lookup instead of map
+func isIndicatorChar(c byte) bool {
+	switch c {
+	case '<', '(', ':', '.', '_':
+		return true
+	case 'O', 'R', 'P', 'S', 'a', 'b', 'c', 'd', 'e', 'f', 'i', 'j', 'n', 'o', 'p', 'r', 's', 'v', 'w':
+		return true
+	default:
+		return false
+	}
+}
+
+// indicatorChars is a pre-computed lookup table for indicator characters.
+// PERFORMANCE: O(1) lookup per character during security scanning.
+var indicatorChars = [256]bool{
+	'<': true, '(': true, ':': true, '.': true, '_': true,
+	'O': true, 'R': true, 'P': true, 'S': true,
+	'a': true, 'b': true, 'c': true, 'd': true, 'e': true, 'f': true,
+	'i': true, 'j': true, 'n': true, 'o': true, 'p': true, 'r': true,
+	's': true, 'v': true, 'w': true,
 }
 
 // maxDangerousPatternLen is the length of the longest dangerous pattern
@@ -508,12 +521,13 @@ func (sv *structureValidator) ValidateNesting(jsonStr string) error {
 		if inString {
 			continue
 		}
-		if c == '{' || c == '[' {
+		switch c {
+		case '{', '[':
 			depth++
 			if depth > maxDepth {
 				maxDepth = depth
 			}
-		} else if c == '}' || c == ']' {
+		case '}', ']':
 			depth--
 		}
 	}
@@ -577,6 +591,16 @@ func newSecurityValidator(maxJSONSize int64, maxPathLength, maxNestingDepth int,
 	sv.structureChecker = newStructureValidator(int64(maxNestingDepth))
 	sv.pathChecker = newPathSecurityChecker(maxPathLength)
 	return sv
+}
+
+// Close releases resources held by the security validator.
+// This should be called when the validator is no longer needed to prevent memory leaks.
+func (sv *securityValidator) Close() {
+	sv.cacheMutex.Lock()
+	defer sv.cacheMutex.Unlock()
+
+	// Clear validation cache to release memory
+	sv.validationCache = nil
 }
 
 // ValidateJSONInput performs comprehensive JSON input validation with enhanced security.

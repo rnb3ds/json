@@ -307,26 +307,20 @@ var (
 )
 
 // GetStreamingMap retrieves a pooled map[string]any
+// PERFORMANCE: Uses Go 1.21+ clear() for O(1) map clearing instead of O(n) loop
 func GetStreamingMap(hint int) map[string]any {
 	switch {
 	case hint <= smallSliceSize:
 		m := smallMapPool.Get().(map[string]any)
-		// Clear the map
-		for k := range m {
-			delete(m, k)
-		}
+		clear(m) // O(1) instead of O(n) loop
 		return m
 	case hint <= mediumSliceSize:
 		m := mediumMapPool.Get().(map[string]any)
-		for k := range m {
-			delete(m, k)
-		}
+		clear(m)
 		return m
 	case hint <= largeSliceSize:
 		m := largeMapPool.Get().(map[string]any)
-		for k := range m {
-			delete(m, k)
-		}
+		clear(m)
 		return m
 	default:
 		return make(map[string]any, hint)
@@ -334,7 +328,7 @@ func GetStreamingMap(hint int) map[string]any {
 }
 
 // PutStreamingMap returns a map[string]any to the pool
-// Note: Uses original size before clearing since maps don't have capacity
+// PERFORMANCE: Uses Go 1.21+ clear() for O(1) clearing
 func PutStreamingMap(m map[string]any) {
 	if m == nil {
 		return
@@ -342,10 +336,8 @@ func PutStreamingMap(m map[string]any) {
 	// Capture original size BEFORE clearing - critical for correct pool selection
 	originalSize := len(m)
 
-	// Clear the map
-	for k := range m {
-		delete(m, k)
-	}
+	// Clear using Go 1.21+ clear() for O(1) performance
+	clear(m)
 
 	// Use original size for pool selection to ensure correct bucket
 	switch {

@@ -326,7 +326,7 @@ func TestNDJSONProcessor(t *testing.T) {
 `
 		os.WriteFile(filePath, []byte(content), 0644)
 
-		np := NewNDJSONProcessor(1024)
+		np := NewNDJSONProcessorWithSize(1024)
 
 		lines := 0
 		err := np.ProcessFile(filePath, func(lineNum int, obj map[string]interface{}) error {
@@ -348,7 +348,7 @@ func TestNDJSONProcessor(t *testing.T) {
 `
 		reader := strings.NewReader(content)
 
-		np := NewNDJSONProcessor(1024)
+		np := NewNDJSONProcessorWithSize(1024)
 
 		lines := 0
 		err := np.ProcessReader(reader, func(lineNum int, obj map[string]interface{}) error {
@@ -371,7 +371,7 @@ invalid json
 `
 		reader := strings.NewReader(content)
 
-		np := NewNDJSONProcessor(1024)
+		np := NewNDJSONProcessorWithSize(1024)
 
 		lines := 0
 		err := np.ProcessReader(reader, func(lineNum int, obj map[string]interface{}) error {
@@ -395,7 +395,7 @@ invalid json
 `
 		reader := strings.NewReader(content)
 
-		np := NewNDJSONProcessor(1024)
+		np := NewNDJSONProcessorWithSize(1024)
 
 		lines := 0
 		err := np.ProcessReader(reader, func(lineNum int, obj map[string]interface{}) error {

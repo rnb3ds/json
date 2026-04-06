@@ -28,9 +28,10 @@ const (
 	CacheHighWatermarkPercent = 80
 
 	// Memory bounds for cache size estimation
-	minCacheMemoryBytes = 64 * 1024 * 1024   // 64MB minimum
-	maxCacheMemoryBytes = 1024 * 1024 * 1024 // 1GB maximum
-	cacheSizeMultiplier = 4                  // Multiplier for overhead estimation
+	minCacheMemoryBytes   = 64 * 1024 * 1024   // 64MB minimum
+	maxCacheMemoryBytes   = 1024 * 1024 * 1024 // 1GB maximum
+	cacheSizeMultiplier   = 4                  // Multiplier for overhead estimation
+	maxConcurrentCleanups = 4                  // Maximum concurrent cleanup goroutines
 )
 
 // Global cleanup semaphore to limit concurrent cleanup goroutines
@@ -39,10 +40,10 @@ var (
 	cleanupSemOnce sync.Once
 )
 
-// getCleanupSem returns the cleanup semaphore (max 4 concurrent cleanups)
+// getCleanupSem returns the cleanup semaphore (limited concurrent cleanups)
 func getCleanupSem() chan struct{} {
 	cleanupSemOnce.Do(func() {
-		cleanupSem = make(chan struct{}, 4) // Limit to 4 concurrent cleanups
+		cleanupSem = make(chan struct{}, maxConcurrentCleanups)
 	})
 	return cleanupSem
 }
@@ -591,7 +592,12 @@ func (cm *CacheManager) evictLRU(shard *cacheShard) {
 	cm.entryPool.Put(entry)
 }
 
+// cleanupBatchSize is the number of entries to process before yielding the lock
+const cleanupBatchSize = 50
+
 // cleanupShard removes expired entries from a shard
+// OPTIMIZED: Uses batched cleanup with lock release intervals to allow concurrent reads
+// FIX: Previously held write lock during entire traversal, blocking concurrent reads
 func (cm *CacheManager) cleanupShard(shard *cacheShard) {
 	if cm.config == nil || cm.config.GetCacheTTL() <= 0 {
 		return
@@ -600,14 +606,19 @@ func (cm *CacheManager) cleanupShard(shard *cacheShard) {
 	now := time.Now().UnixNano()
 	ttlNanos := int64(cm.config.GetCacheTTL().Nanoseconds())
 
-	shard.mu.Lock()
-	defer shard.mu.Unlock()
+	processed := 0
 
-	// Iterate from back (oldest) and remove expired entries
-	for element := shard.evictList.Back(); element != nil; {
+	for {
+		shard.mu.Lock()
+		element := shard.evictList.Back()
+		if element == nil {
+			shard.mu.Unlock()
+			return // All remaining entries are valid
+		}
+
 		entry := element.Value.(*lruEntry)
 		if now-entry.timestamp > ttlNanos {
-			prev := element.Prev()
+			// Remove expired entry
 			delete(shard.items, entry.key)
 			shard.evictList.Remove(element)
 			shard.size--
@@ -617,9 +628,16 @@ func (cm *CacheManager) cleanupShard(shard *cacheShard) {
 			entry.reset()
 			cm.entryPool.Put(entry)
 
-			element = prev
+			processed++
+			shard.mu.Unlock()
+
+			// Yield lock every batchSize to allow concurrent reads
+			if processed%cleanupBatchSize == 0 {
+				runtime.Gosched()
+			}
 		} else {
-			break
+			shard.mu.Unlock()
+			return // All remaining entries are valid (oldest is not expired)
 		}
 	}
 }

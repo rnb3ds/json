@@ -17,9 +17,9 @@ import (
 // 3. Bulk operation optimizations
 // ============================================================================
 
-// WarmupPathCache pre-populates the path cache with common paths.
+// warmupPathCache pre-populates the path cache with common paths.
 // Delegates to internal.GlobalPathIntern for storage.
-func WarmupPathCache(commonPaths []string) {
+func warmupPathCache(commonPaths []string) {
 	processor := getDefaultProcessor()
 	if processor == nil {
 		return
@@ -27,9 +27,9 @@ func WarmupPathCache(commonPaths []string) {
 	warmupPathCacheWith(processor, commonPaths)
 }
 
-// WarmupPathCacheWithProcessor pre-populates the path cache using a specific processor.
+// warmupPathCacheWithProcessor pre-populates the path cache using a specific processor.
 // Delegates to internal.GlobalPathIntern for storage.
-func WarmupPathCacheWithProcessor(processor *Processor, commonPaths []string) {
+func warmupPathCacheWithProcessor(processor *Processor, commonPaths []string) {
 	warmupPathCacheWith(processor, commonPaths)
 }
 
@@ -145,25 +145,25 @@ func putPooledDecoder(dec *Decoder) {
 // BULK OPERATION OPTIMIZATIONS
 // ============================================================================
 
-// BulkProcessor handles multiple operations efficiently
-type BulkProcessor struct {
+// bulkProcessor handles multiple operations efficiently
+type bulkProcessor struct {
 	processor *Processor
 	batchSize int
 }
 
-// NewBulkProcessor creates a bulk processor
-func NewBulkProcessor(processor *Processor, batchSize int) *BulkProcessor {
+// newBulkProcessor creates a bulk processor
+func newBulkProcessor(processor *Processor, batchSize int) *bulkProcessor {
 	if batchSize <= 0 {
 		batchSize = 100
 	}
-	return &BulkProcessor{
+	return &bulkProcessor{
 		processor: processor,
 		batchSize: batchSize,
 	}
 }
 
-// BulkGet performs multiple Get operations efficiently
-func (bp *BulkProcessor) BulkGet(jsonStr string, paths []string) (map[string]any, error) {
+// bulkGet performs multiple Get operations efficiently
+func (bp *bulkProcessor) bulkGet(jsonStr string, paths []string) (map[string]any, error) {
 	results := make(map[string]any, len(paths))
 
 	// Parse JSON once for all operations
@@ -174,7 +174,7 @@ func (bp *BulkProcessor) BulkGet(jsonStr string, paths []string) (map[string]any
 
 	// Reuse parsed data for all path lookups
 	for _, path := range paths {
-		value, err := bp.processor.GetFromParsedData(data, path)
+		value, err := bp.processor.getFromParsedData(data, path)
 		if err == nil {
 			results[path] = value
 		}
@@ -263,9 +263,9 @@ func putEncodeBuffer(buf []byte) {
 // PERFORMANCE: Defer JSON parsing until data is actually needed
 // ============================================================================
 
-// GetFromParsedData retrieves a value from already-parsed data
+// getFromParsedData retrieves a value from already-parsed data
 // Uses the processor's path navigation without re-parsing
-func (p *Processor) GetFromParsedData(data any, path string) (any, error) {
+func (p *Processor) getFromParsedData(data any, path string) (any, error) {
 	if err := p.checkClosed(); err != nil {
 		return nil, err
 	}

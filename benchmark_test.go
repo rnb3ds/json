@@ -721,7 +721,7 @@ func BenchmarkIterableValue_Get(b *testing.B) {
 			"value": 42,
 		},
 	}
-	iv := NewIterableValue(data)
+	iv := newIterableValue(data)
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -739,7 +739,7 @@ func BenchmarkIterableValue_GetNested(b *testing.B) {
 			},
 		},
 	}
-	iv := NewIterableValue(data)
+	iv := newIterableValue(data)
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -754,7 +754,7 @@ func BenchmarkIterableValue_GetTyped(b *testing.B) {
 		"price":  99.99,
 		"active": true,
 	}
-	iv := NewIterableValue(data)
+	iv := newIterableValue(data)
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {

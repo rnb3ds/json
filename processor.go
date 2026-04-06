@@ -219,6 +219,14 @@ func (p *Processor) Close() error {
 			p.cache.Close()
 		}
 
+		// Close security validator to release its cache
+		if p.securityValidator != nil {
+			p.securityValidator.Close()
+		}
+
+		// Clear global path type cache to prevent memory leaks in long-running services
+		clearPathTypeCache()
+
 		// Reset resource tracking
 		if p.resources != nil {
 			atomic.StoreInt32(&p.resources.memoryPressure, 0)

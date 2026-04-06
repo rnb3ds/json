@@ -104,32 +104,54 @@ type Encoder struct {
 
 // NewEncoder returns a new encoder that writes to w.
 // This function is fully compatible with encoding/json.NewEncoder.
-func NewEncoder(w io.Writer) *Encoder {
+//
+// The optional cfg parameter allows customization of encoding behavior.
+// If no configuration is provided, default settings are used.
+//
+// Example:
+//
+//	// Default encoder
+//	encoder := json.NewEncoder(writer)
+//
+//	// With configuration
+//	cfg := json.DefaultConfig()
+//	cfg.Pretty = true
+//	encoder := json.NewEncoder(writer, cfg)
+func NewEncoder(w io.Writer, cfg ...Config) *Encoder {
 	p := getDefaultProcessor()
-	if p == nil {
-		// SAFETY: Return encoder with nil processor; Encode will return error
-		return &Encoder{
-			w:          w,
-			processor:  nil,
-			escapeHTML: true,
-		}
-	}
-	return &Encoder{
+	enc := &Encoder{
 		w:          w,
 		processor:  p,
 		escapeHTML: true, // Default behavior matches encoding/json
 	}
+
+	// Apply configuration if provided
+	if len(cfg) > 0 {
+		enc.escapeHTML = cfg[0].EscapeHTML
+		if cfg[0].Pretty {
+			enc.prefix = cfg[0].Prefix
+			enc.indent = cfg[0].Indent
+			if enc.indent == "" {
+				enc.indent = "  " // Default indent
+			}
+		}
+	}
+
+	return enc
 }
 
 // NewEncoderWithConfig returns a new encoder that writes to w with Config configuration.
-// This is the unified API for creating encoders with consistent Config pattern.
 //
-// Example:
+// Deprecated: Use NewEncoder(w, cfg) instead. This function is deprecated since v1.5.0
+// and will be removed in v2.0.0.
 //
-//	cfg := json.DefaultConfig()
-//	cfg.Pretty = true
+// Example migration:
+//
+//	// Old:
 //	encoder := json.NewEncoderWithConfig(writer, &cfg)
-//	err := encoder.Encode(data)
+//
+//	// New:
+//	encoder := json.NewEncoder(writer, cfg)
 func NewEncoderWithConfig(w io.Writer, cfg *Config) *Encoder {
 	p := getDefaultProcessor()
 	enc := &Encoder{
@@ -217,13 +239,31 @@ type Decoder struct {
 
 // NewDecoder returns a new decoder that reads from r.
 // This function is fully compatible with encoding/json.NewDecoder.
-func NewDecoder(r io.Reader) *Decoder {
+//
+// The optional cfg parameter allows customization of decoding behavior.
+// If no configuration is provided, default settings are used.
+//
+// Example:
+//
+//	// Default decoder
+//	decoder := json.NewDecoder(reader)
+//
+//	// With custom configuration
+//	cfg := json.DefaultConfig()
+//	cfg.DisallowUnknown = true
+//	decoder := json.NewDecoder(reader, cfg)
+func NewDecoder(r io.Reader, cfg ...Config) *Decoder {
 	p := getDefaultProcessor()
-	return &Decoder{
+	dec := &Decoder{
 		r:         r,
 		buf:       bufio.NewReader(r),
 		processor: p,
 	}
+	// Apply config if provided
+	if len(cfg) > 0 {
+		dec.disallowUnknownFields = cfg[0].DisallowUnknown
+	}
+	return dec
 }
 
 // Decode reads the next JSON-encoded value from its input and stores it in v.
@@ -642,7 +682,11 @@ func (dec *Decoder) parseNumber(first byte) (any, error) {
 			break
 		}
 
-		actual, _ := dec.buf.ReadByte()
+		// FIX: Check error from ReadByte to prevent data corruption
+		actual, readErr := dec.buf.ReadByte()
+		if readErr != nil {
+			return nil, fmt.Errorf("failed to read number character: %w", readErr)
+		}
 		dec.offset++
 		buf.WriteByte(actual)
 	}

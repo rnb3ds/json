@@ -26,9 +26,9 @@ func TestGetTypedOrConsolidated(t *testing.T) {
 		}
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
-				result := GetTypedOr[string](tt.jsonStr, tt.path, tt.defaultValue)
+				result := GetTypedOr(tt.jsonStr, tt.path, tt.defaultValue)
 				if result != tt.expected {
-					t.Errorf("GetTypedOr[string]() = %q, want %q", result, tt.expected)
+					t.Errorf("GetTypedOr() = %q, want %q", result, tt.expected)
 				}
 			})
 		}
@@ -50,9 +50,9 @@ func TestGetTypedOrConsolidated(t *testing.T) {
 		}
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
-				result := GetTypedOr[int](tt.jsonStr, tt.path, tt.defaultValue)
+				result := GetTypedOr(tt.jsonStr, tt.path, tt.defaultValue)
 				if result != tt.expected {
-					t.Errorf("GetTypedOr[int]() = %d, want %d", result, tt.expected)
+					t.Errorf("GetTypedOr() = %d, want %d", result, tt.expected)
 				}
 			})
 		}
@@ -73,9 +73,9 @@ func TestGetTypedOrConsolidated(t *testing.T) {
 		}
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
-				result := GetTypedOr[float64](tt.jsonStr, tt.path, tt.defaultValue)
+				result := GetTypedOr(tt.jsonStr, tt.path, tt.defaultValue)
 				if result != tt.expected {
-					t.Errorf("GetTypedOr[float64]() = %f, want %f", result, tt.expected)
+					t.Errorf("GetTypedOr() = %f, want %f", result, tt.expected)
 				}
 			})
 		}
@@ -96,9 +96,9 @@ func TestGetTypedOrConsolidated(t *testing.T) {
 		}
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
-				result := GetTypedOr[bool](tt.jsonStr, tt.path, tt.defaultValue)
+				result := GetTypedOr(tt.jsonStr, tt.path, tt.defaultValue)
 				if result != tt.expected {
-					t.Errorf("GetTypedOr[bool]() = %v, want %v", result, tt.expected)
+					t.Errorf("GetTypedOr() = %v, want %v", result, tt.expected)
 				}
 			})
 		}
@@ -118,9 +118,9 @@ func TestGetTypedOrConsolidated(t *testing.T) {
 		}
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
-				result := GetTypedOr[[]any](tt.jsonStr, tt.path, defaultArr)
+				result := GetTypedOr(tt.jsonStr, tt.path, defaultArr)
 				if len(result) != len(tt.expected) {
-					t.Errorf("GetTypedOr[[]any]() length = %d, want %d", len(result), len(tt.expected))
+					t.Errorf("GetTypedOr() length = %d, want %d", len(result), len(tt.expected))
 				}
 			})
 		}
@@ -140,7 +140,7 @@ func TestGetTypedOrConsolidated(t *testing.T) {
 		}
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
-				result := GetTypedOr[map[string]any](tt.jsonStr, tt.path, defaultObj)
+				result := GetTypedOr(tt.jsonStr, tt.path, defaultObj)
 				if len(result) != len(tt.expected) {
 					t.Errorf("GetTypedOr[map]() length = %d, want %d", len(result), len(tt.expected))
 				}

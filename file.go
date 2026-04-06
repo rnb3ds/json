@@ -807,8 +807,42 @@ type NDJSONProcessor struct {
 	bufferSize int
 }
 
-// NewNDJSONProcessor creates a new NDJSON processor
-func NewNDJSONProcessor(bufferSize int) *NDJSONProcessor {
+// NewNDJSONProcessor creates a new NDJSON processor.
+// The optional cfg parameter allows customization using the unified Config pattern.
+// When config is provided, cfg.JSONLBufferSize is used as the buffer size.
+//
+// Example:
+//
+//	// Default settings
+//	processor := json.NewNDJSONProcessor()
+//
+//	// With custom buffer size
+//	cfg := json.DefaultConfig()
+//	cfg.JSONLBufferSize = 128 * 1024
+//	processor := json.NewNDJSONProcessor(cfg)
+//
+//	// Legacy pattern (backward compatible)
+//	processor := json.NewNDJSONProcessorWithSize(128 * 1024)
+func NewNDJSONProcessor(cfg ...Config) *NDJSONProcessor {
+	var config Config
+	if len(cfg) > 0 {
+		config = cfg[0]
+	} else {
+		config = DefaultConfig()
+	}
+
+	bufferSize := config.JSONLBufferSize
+	if bufferSize <= 0 {
+		bufferSize = 64 * 1024 // Default buffer size
+	}
+	return &NDJSONProcessor{bufferSize: bufferSize}
+}
+
+// NewNDJSONProcessorWithSize creates an NDJSON processor with a specific buffer size.
+// This function is provided for backward compatibility.
+//
+// Deprecated: Use NewNDJSONProcessor(cfg) with Config.JSONLBufferSize instead.
+func NewNDJSONProcessorWithSize(bufferSize int) *NDJSONProcessor {
 	if bufferSize <= 0 {
 		bufferSize = 64 * 1024
 	}
@@ -970,7 +1004,7 @@ func (p *Processor) ForeachFileChunked(filePath string, chunkSize int, fn func(c
 
 	chunk := make([]*IterableValue, 0, chunkSize)
 	for _, item := range arr {
-		iv := NewIterableValue(item)
+		iv := newIterableValue(item)
 		chunk = append(chunk, iv)
 
 		if len(chunk) >= chunkSize {

@@ -5240,22 +5240,22 @@ func TestProcessor_ForeachVsPackageLevel(t *testing.T) {
 	})
 }
 
-func TestProcessor_GetFromParsedData(t *testing.T) {
+func TestProcessor_getFromParsedData(t *testing.T) {
 	processor, _ := New()
 	defer processor.Close()
 
-	t.Run("GetFromParsedData", func(t *testing.T) {
+	t.Run("getFromParsedData", func(t *testing.T) {
 		data := map[string]any{
 			"user": map[string]any{
 				"name": "John",
 			},
 		}
-		result, err := processor.GetFromParsedData(data, "user.name")
+		result, err := processor.getFromParsedData(data, "user.name")
 		if err != nil {
-			t.Errorf("GetFromParsedData error: %v", err)
+			t.Errorf("getFromParsedData error: %v", err)
 		}
 		if result != "John" {
-			t.Errorf("GetFromParsedData = %v, want 'John'", result)
+			t.Errorf("getFromParsedData = %v, want 'John'", result)
 		}
 	})
 }

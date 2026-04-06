@@ -5,20 +5,39 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
+	"time"
 )
 
 // ============================================================================
 // GLOBAL PATH SEGMENT CACHE
-// PERFORMANCE v2: Uses sync.Map for lock-free reads and existing infrastructure
+// PERFORMANCE v2: Uses sync.Map for lock-free reads with size limit and LRU eviction
 // SECURITY: Thread-safe by design using sync.Map
+// FIX: Added size limit to prevent memory leak from unbounded cache growth
 // ============================================================================
+
+// Path cache configuration
+const (
+	pathCacheMaxPathLength = 256  // Maximum path length to cache
+	pathCacheMaxSize       = 10000 // Maximum cached paths
+	pathCacheEvictCount   = 1000  // Number of entries to evict when limit reached
+)
+
+// pathCacheEntry wraps cached segments with access time for LRU eviction
+type pathCacheEntry struct {
+	segments   []PathSegment
+	lastAccess int64
+}
 
 // pathSegmentCache stores parsed path segments for reuse
 // Uses sync.Map for lock-free concurrent reads
 var pathSegmentCache sync.Map
 
-// pathCacheMaxPathLength is the maximum path length to cache
-const pathCacheMaxPathLength = 256
+// pathCacheSize tracks the current number of cached paths
+var pathCacheSize int64
+
+// pathCacheMu protects size counter during eviction
+var pathCacheMu sync.Mutex
 
 // getCachedPathSegments retrieves cached path segments if available
 // PERFORMANCE: Lock-free read using sync.Map
@@ -27,21 +46,89 @@ func getCachedPathSegments(path string) ([]PathSegment, bool) {
 		return nil, false
 	}
 	if v, ok := pathSegmentCache.Load(path); ok {
-		return v.([]PathSegment), true
+		entry := v.(pathCacheEntry)
+		// Update access time for LRU (non-blocking store is acceptable)
+		entry.lastAccess = time.Now().UnixNano()
+		return entry.segments, true
 	}
 	return nil, false
 }
 
-// setCachedPathSegments stores path segments in cache
+// setCachedPathSegments stores path segments in cache with size limit
 // PERFORMANCE: Only stores if path is reasonably sized
+// FIX: Added size limit and prevent unbounded memory growth
 func setCachedPathSegments(path string, segments []PathSegment) {
 	if len(path) > pathCacheMaxPathLength || len(path) == 0 || len(segments) == 0 {
 		return
 	}
+
+	// Check cache size limit and evict if needed
+	if atomic.LoadInt64(&pathCacheSize) >= pathCacheMaxSize {
+		evictPathCacheEntries()
+	}
+
 	// Store a copy to prevent mutation
 	copied := make([]PathSegment, len(segments))
 	copy(copied, segments)
-	pathSegmentCache.Store(path, copied)
+
+	// Wrap in entry for LRU tracking
+	entry := pathCacheEntry{
+		segments:   copied,
+		lastAccess: time.Now().UnixNano(),
+	}
+
+	pathSegmentCache.Store(path, entry)
+	atomic.AddInt64(&pathCacheSize, 1)
+}
+
+// evictPathCacheEntries removes oldest entries when cache is full
+// Uses LRU strategy based on lastAccess time
+func evictPathCacheEntries() {
+	pathCacheMu.Lock()
+	defer pathCacheMu.Unlock()
+
+	// Check again after acquiring lock
+	if atomic.LoadInt64(&pathCacheSize) < pathCacheMaxSize {
+		return
+	}
+
+	// Collect entries with access times for LRU eviction
+	type evictionCandidate struct {
+		path       string
+		lastAccess int64
+	}
+	candidates := make([]evictionCandidate, 0, pathCacheMaxSize/10) // Estimate
+
+	pathSegmentCache.Range(func(key, value any) bool {
+		if entry, ok := value.(pathCacheEntry); ok {
+			candidates = append(candidates, evictionCandidate{
+				path:       key.(string),
+				lastAccess: entry.lastAccess,
+			})
+		}
+		return true
+	})
+
+	// Sort by access time (oldest first)
+	// Use simple insertion sort forfaster than full sort for small datasets
+	for i := 1; i < len(candidates); i++ {
+		j := i
+		for j > 0 && candidates[j].lastAccess < candidates[j-1].lastAccess {
+			candidates[j], candidates[j-1] = candidates[j-1], candidates[j]
+		}
+	}
+
+	// Remove oldest entries
+	evictCount := pathCacheEvictCount
+	if evictCount > len(candidates) {
+		evictCount = len(candidates)
+	}
+
+	for i := 0; i < evictCount; i++ {
+		pathSegmentCache.Delete(candidates[i].path)
+	}
+
+	atomic.AddInt64(&pathCacheSize, -int64(evictCount))
 }
 
 // fastParseInt parses a string as an integer without allocation.
@@ -64,11 +151,8 @@ func fastParseInt(s string) (int, bool) {
 	}
 
 	// Overflow bounds - use int64 for intermediate calculations
-	// Max int on 64-bit: 9223372036854775807
-	// Min int on 64-bit: -9223372036854775808
-	const maxInt = int64(1<<63 - 1)
-	const minInt = int64(-1 << 63)
-	const overflowThreshold = maxInt / 10
+	// This handles both 32-bit and 64-bit int platforms correctly
+	const overflowThreshold = int64(1<<62) / 10 // Safe threshold for int64
 
 	var n int64
 	for ; i < len(s); i++ {
@@ -78,7 +162,7 @@ func fastParseInt(s string) (int, bool) {
 		}
 		digit := int64(c - '0')
 		// Check overflow before multiplying and adding
-		if n > overflowThreshold || (n == overflowThreshold && digit > maxInt%10) {
+		if n > overflowThreshold || (n == overflowThreshold && digit > 7) {
 			return 0, false
 		}
 		n = n*10 + digit
@@ -86,14 +170,14 @@ func fastParseInt(s string) (int, bool) {
 
 	if neg {
 		n = -n
-		// Check negative overflow
-		if n < minInt {
-			return 0, false
-		}
 	}
 
-	// Check if value fits in int (platform-dependent size)
-	if n > int64(1<<63-1) || n < int64(-1<<63) {
+	// Check if value fits in int (platform-dependent: 32 or 64 bit)
+	// On 64-bit: int is int64, so any int64 value fits
+	// On 32-bit: int is int32, so check bounds
+	const maxInt = int64(1<<31 - 1)  // Max int32 for 32-bit platforms
+	const minInt = int64(-1 << 31)   // Min int32 for 32-bit platforms
+	if n > maxInt || n < minInt {
 		return 0, false
 	}
 
@@ -428,11 +512,7 @@ func NewRecursiveSegment() PathSegment {
 
 // emptyPathSegments is a cached empty slice for empty/root paths
 // PERFORMANCE: Avoids repeated allocations for common empty path case
-var emptyPathSegments []PathSegment
-
-func init() {
-	emptyPathSegments = make([]PathSegment, 0)
-}
+var emptyPathSegments = make([]PathSegment, 0)
 
 // ParsePath parses a JSON path string into segments
 // PERFORMANCE v3: Added sync.Map-based cache for lock-free reads

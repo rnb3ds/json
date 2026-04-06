@@ -12,8 +12,23 @@ import (
 	"sync/atomic"
 )
 
-// StreamJSONLConfig holds configuration for JSONL streaming operations
-type StreamJSONLConfig struct {
+// streamJSONLConfig holds configuration for JSONL streaming operations.
+//
+// Deprecated: Use the main Config struct with JSONL* fields instead.
+// This type will be removed in v2.0.
+//
+// Example migration:
+//
+//	// Old:
+//	cfg := json.defaultStreamJSONLConfig()
+//	cfg.SkipEmpty = false
+//	err := processor.StreamJSONLWithConfig(reader, cfg, fn)
+//
+//	// New:
+//	cfg := json.DefaultConfig()
+//	cfg.JSONLSkipEmpty = false
+//	err := processor.StreamJSONL(reader, fn, cfg)
+type streamJSONLConfig struct {
 	// BufferSize is the buffer size for reading JSONL data
 	// Default: 64KB
 	BufferSize int
@@ -43,9 +58,12 @@ type StreamJSONLConfig struct {
 	ChunkSize int
 }
 
-// DefaultStreamJSONLConfig returns the default configuration for StreamJSONL
-func DefaultStreamJSONLConfig() StreamJSONLConfig {
-	return StreamJSONLConfig{
+// DefaultstreamJSONLConfig returns the default configuration for StreamJSONL.
+//
+// Deprecated: Use DefaultConfig() and modify JSONL* fields instead.
+// This function will be removed in v2.0.
+func defaultStreamJSONLConfig() streamJSONLConfig {
+	return streamJSONLConfig{
 		BufferSize:      64 * 1024,      // 64KB
 		MaxLineSize:     1024 * 1024,    // 1MB
 		SkipEmpty:       true,
@@ -57,7 +75,7 @@ func DefaultStreamJSONLConfig() StreamJSONLConfig {
 }
 
 // Validate validates and applies defaults to the configuration
-func (c *StreamJSONLConfig) Validate() {
+func (c *streamJSONLConfig) validate() {
 	if c.BufferSize <= 0 {
 		c.BufferSize = 64 * 1024
 	}
@@ -70,6 +88,31 @@ func (c *StreamJSONLConfig) Validate() {
 	if c.ChunkSize <= 0 {
 		c.ChunkSize = 1000
 	}
+}
+
+// ToConfig converts streamJSONLConfig to the unified Config struct.
+// This method helps with migration from the deprecated streamJSONLConfig type.
+//
+// Example:
+//
+//	// Old code using streamJSONLConfig
+//	oldCfg := json.defaultStreamJSONLConfig()
+//	oldCfg.SkipEmpty = false
+//	oldCfg.Workers = 8
+//
+//	// Convert to new Config
+//	cfg := oldCfg.ToConfig()
+//	err := processor.StreamJSONL(reader, fn, cfg)
+func (c streamJSONLConfig) toConfig() Config {
+	cfg := DefaultConfig()
+	cfg.JSONLBufferSize = c.BufferSize
+	cfg.JSONLMaxLineSize = c.MaxLineSize
+	cfg.JSONLSkipEmpty = c.SkipEmpty
+	cfg.JSONLSkipComments = c.SkipComments
+	cfg.JSONLContinueOnErr = c.ContinueOnError
+	cfg.JSONLWorkers = c.Workers
+	cfg.JSONLChunkSize = c.ChunkSize
+	return cfg
 }
 
 // StreamJSONLResult holds the result of a JSONL streaming operation
@@ -109,22 +152,37 @@ func (p *Processor) StreamJSONL(reader io.Reader, fn func(lineNum int, item *Ite
 		return err
 	}
 
-	config := DefaultStreamJSONLConfig()
+	config := defaultStreamJSONLConfig()
 	return p.streamJSONLInternal(reader, config, fn)
 }
 
-// StreamJSONLWithConfig streams JSONL data with custom configuration
-func (p *Processor) StreamJSONLWithConfig(reader io.Reader, config StreamJSONLConfig, fn func(lineNum int, item *IterableValue) error) error {
+// StreamJSONLWithConfig streams JSONL data with custom configuration.
+//
+// Deprecated: Use StreamJSONL(reader, fn, cfg...) instead.
+// This method will be removed in v2.0.
+//
+// Example migration:
+//
+//	// Old:
+//	cfg := json.defaultStreamJSONLConfig()
+//	cfg.SkipEmpty = false
+//	err := processor.StreamJSONLWithConfig(reader, cfg, fn)
+//
+//	// New:
+//	cfg := json.DefaultConfig()
+//	cfg.JSONLSkipEmpty = false
+//	err := processor.StreamJSONL(reader, fn, cfg)
+func (p *Processor) StreamJSONLWithConfig(reader io.Reader, config streamJSONLConfig, fn func(lineNum int, item *IterableValue) error) error {
 	if err := p.checkClosed(); err != nil {
 		return err
 	}
 
-	config.Validate()
+	config.validate()
 	return p.streamJSONLInternal(reader, config, fn)
 }
 
 // streamJSONLInternal is the internal implementation of JSONL streaming
-func (p *Processor) streamJSONLInternal(reader io.Reader, config StreamJSONLConfig, fn func(lineNum int, item *IterableValue) error) error {
+func (p *Processor) streamJSONLInternal(reader io.Reader, config streamJSONLConfig, fn func(lineNum int, item *IterableValue) error) error {
 	scanner := bufio.NewScanner(reader)
 	scanner.Buffer(make([]byte, config.BufferSize), config.MaxLineSize)
 
@@ -157,7 +215,7 @@ func (p *Processor) streamJSONLInternal(reader io.Reader, config StreamJSONLConf
 		lineNum++
 
 		// Create IterableValue and call user callback
-		item := NewIterableValue(data)
+		item := newIterableValue(data)
 		if err := fn(int(lineNum), item); err != nil {
 			if errors.Is(err, errBreak) {
 				return nil // Clean stop
@@ -190,18 +248,21 @@ func (p *Processor) StreamJSONLParallel(reader io.Reader, workers int, fn func(l
 		return err
 	}
 
-	config := DefaultStreamJSONLConfig()
+	config := defaultStreamJSONLConfig()
 	config.Workers = workers
 	return p.StreamJSONLParallelWithConfig(reader, config, fn)
 }
 
-// StreamJSONLParallelWithConfig processes JSONL data in parallel with custom configuration
-func (p *Processor) StreamJSONLParallelWithConfig(reader io.Reader, config StreamJSONLConfig, fn func(lineNum int, item *IterableValue) error) error {
+// StreamJSONLParallelWithConfig processes JSONL data in parallel with custom configuration.
+//
+// Deprecated: Use StreamJSONLParallel(reader, workers, fn) instead.
+// This method will be removed in v2.0.
+func (p *Processor) StreamJSONLParallelWithConfig(reader io.Reader, config streamJSONLConfig, fn func(lineNum int, item *IterableValue) error) error {
 	if err := p.checkClosed(); err != nil {
 		return err
 	}
 
-	config.Validate()
+	config.validate()
 
 	// Job structure for parallel processing
 	type job struct {
@@ -225,7 +286,7 @@ func (p *Processor) StreamJSONLParallelWithConfig(reader io.Reader, config Strea
 				if atomic.LoadInt32(&errCount) > 0 {
 					continue
 				}
-				item := NewIterableValue(job.data)
+				item := newIterableValue(job.data)
 				if jobErr := fn(job.lineNum, item); jobErr != nil {
 					if !errors.Is(jobErr, errBreak) {
 						if atomic.CompareAndSwapInt32(&errCount, 0, 1) {
@@ -309,18 +370,21 @@ func (p *Processor) StreamJSONLChunked(reader io.Reader, chunkSize int, fn func(
 		return err
 	}
 
-	config := DefaultStreamJSONLConfig()
+	config := defaultStreamJSONLConfig()
 	config.ChunkSize = chunkSize
 	return p.StreamJSONLChunkedWithConfig(reader, config, fn)
 }
 
-// StreamJSONLChunkedWithConfig processes JSONL data in chunks with custom configuration
-func (p *Processor) StreamJSONLChunkedWithConfig(reader io.Reader, config StreamJSONLConfig, fn func(chunk []*IterableValue) error) error {
+// StreamJSONLChunkedWithConfig processes JSONL data in chunks with custom configuration.
+//
+// Deprecated: Use StreamJSONLChunked(reader, chunkSize, fn) instead.
+// This method will be removed in v2.0.
+func (p *Processor) StreamJSONLChunkedWithConfig(reader io.Reader, config streamJSONLConfig, fn func(chunk []*IterableValue) error) error {
 	if err := p.checkClosed(); err != nil {
 		return err
 	}
 
-	config.Validate()
+	config.validate()
 
 	var chunk []*IterableValue
 
@@ -494,8 +558,11 @@ func (p *Processor) StreamJSONLFile(filename string, fn func(lineNum int, item *
 	return p.StreamJSONL(file, fn)
 }
 
-// StreamJSONLFileWithConfig streams JSONL data from a file with custom configuration
-func (p *Processor) StreamJSONLFileWithConfig(filename string, config StreamJSONLConfig, fn func(lineNum int, item *IterableValue) error) error {
+// StreamJSONLFileWithConfig streams JSONL data from a file with custom configuration.
+//
+// Deprecated: Use StreamJSONLFile(filename, fn) instead.
+// This method will be removed in v2.0.
+func (p *Processor) StreamJSONLFileWithConfig(filename string, config streamJSONLConfig, fn func(lineNum int, item *IterableValue) error) error {
 	if err := p.checkClosed(); err != nil {
 		return err
 	}

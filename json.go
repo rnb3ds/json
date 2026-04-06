@@ -51,20 +51,13 @@ var (
 // init initializes the fallback processor at package load time.
 // SAFETY: Ensures a fallback processor is always available for error recovery.
 func init() {
+	// Single attempt with default config - should always succeed
 	p, err := New()
 	if err != nil {
-		// This should never happen with DefaultConfig, but handle gracefully.
-		// Create a minimal config with reduced limits as a last resort.
-		cfg := DefaultConfig()
-		cfg.MaxJSONSize = 1024 * 1024 // 1MB - minimal safe limit
-		cfg.EnableCache = false       // Disable cache to reduce complexity
-		p, err = New(cfg)
-		if err != nil {
-			// Final fallback: log and continue without fallback processor
-			// Callers must handle nil processor gracefully
-			fmt.Fprintf(os.Stderr, "json: warning: failed to create fallback processor: %v\n", err)
-			return
-		}
+		// This should never happen with DefaultConfig (all defaults are validated).
+		// Log warning and continue - callers must handle nil processor gracefully.
+		fmt.Fprintf(os.Stderr, "json: warning: failed to create fallback processor: %v\n", err)
+		return
 	}
 	fallbackProcessor.Store(p)
 }
@@ -72,6 +65,8 @@ func init() {
 // getDefaultProcessor returns the default processor in a panic-safe manner.
 // SAFETY: Never panics - returns fallback processor on error.
 // Uses sync.OnceValue pattern for efficient lazy initialization.
+// IMPORTANT: Callers MUST check for nil return value and handle appropriately.
+// FIX: Removed redundant New() call that could cause infinite loop on repeated failures.
 func getDefaultProcessor() *Processor {
 	// Fast path: check if processor exists and is not closed
 	if p := defaultProcessor.Load(); p != nil && !p.IsClosed() {
@@ -95,15 +90,9 @@ func getDefaultProcessor() *Processor {
 		if fb := fallbackProcessor.Load(); fb != nil && !fb.IsClosed() {
 			return fb
 		}
-		// Last resort: create a minimal processor directly
-		// This should never fail with DefaultConfig
-		minimalP, minimalErr := New()
-		if minimalErr != nil {
-			// Return nil - callers must handle nil processor
-			// This is safer than panicking in production
-			return nil
-		}
-		return minimalP
+		// FIX: Return nil instead of retrying New() which already failed
+		// Callers must handle nil processor gracefully
+		return nil
 	}
 	defaultProcessor.Store(p)
 	return p
@@ -149,8 +138,23 @@ func ShutdownGlobalProcessor() {
 // Commonly used for: logs, data pipelines, streaming data
 // ============================================================================
 
-// JSONLConfig holds configuration for JSONL processing
-type JSONLConfig struct {
+// JSONLConfig holds configuration for JSONL processing.
+//
+// Deprecated: Use the main Config struct with JSONL* fields instead.
+// This type is deprecated since v1.5.0 and will be removed in v2.0.0.
+//
+// Example migration:
+//
+//	// Old:
+//	cfg := json.DefaultJSONLConfig()
+//	cfg.SkipEmpty = false
+//	results, err := json.StreamLinesIntoWithConfig(reader, cfg, fn)
+//
+//	// New:
+//	cfg := json.DefaultConfig()
+//	cfg.JSONLSkipEmpty = false
+//	results, err := json.StreamLinesInto(reader, fn, cfg)
+type jsonlConfig struct {
 	BufferSize    int        // Buffer size for reading (default: 64KB)
 	MaxLineSize   int        // Maximum line size (default: 1MB)
 	SkipEmpty     bool       // Skip empty lines (default: true)
@@ -159,9 +163,12 @@ type JSONLConfig struct {
 	Processor     *Processor // Optional custom processor (default: global processor)
 }
 
-// DefaultJSONLConfig returns the default JSONL configuration
-func DefaultJSONLConfig() JSONLConfig {
-	return JSONLConfig{
+// DefaultJSONLConfig returns the default JSONL configuration.
+//
+// Deprecated: Use DefaultConfig() and modify JSONL* fields instead.
+// This function will be removed in v2.0.
+func defaultJSONLConfig() jsonlConfig {
+	return jsonlConfig{
 		BufferSize:    64 * 1024,   // 64KB
 		MaxLineSize:   1024 * 1024, // 1MB
 		SkipEmpty:     true,
@@ -171,16 +178,38 @@ func DefaultJSONLConfig() JSONLConfig {
 	}
 }
 
-// shouldSkipJSONLLine checks if a line should be skipped based on JSONLConfig.
-// This is a standalone function for use without a JSONLProcessor instance.
-func shouldSkipJSONLLine(line []byte, config JSONLConfig) bool {
+// ToConfig converts JSONLConfig to the unified Config struct.
+// This method helps with migration from the deprecated JSONLConfig type.
+//
+// Example:
+//
+//	// Old code using JSONLConfig
+//	oldCfg := json.DefaultJSONLConfig()
+//	oldCfg.SkipEmpty = false
+//
+//	// Convert to new Config
+//	cfg := oldCfg.ToConfig()
+//	results, err := json.StreamLinesInto[T](reader, fn, cfg)
+func (c jsonlConfig) toConfig() Config {
+	cfg := DefaultConfig()
+	cfg.JSONLBufferSize = c.BufferSize
+	cfg.JSONLMaxLineSize = c.MaxLineSize
+	cfg.JSONLSkipEmpty = c.SkipEmpty
+	cfg.JSONLSkipComments = c.SkipComments
+	cfg.JSONLContinueOnErr = c.ContinueOnErr
+	return cfg
+}
+
+// shouldSkipJSONLLineFromConfig checks if a line should be skipped based on Config.
+// Uses the unified Config struct with JSONL* fields.
+func shouldSkipJSONLLineFromConfig(line []byte, cfg Config) bool {
 	// Skip empty lines if configured
-	if config.SkipEmpty && len(line) == 0 {
+	if cfg.JSONLSkipEmpty && len(line) == 0 {
 		return true
 	}
 
 	// Skip comments if configured
-	if config.SkipComments && len(line) > 0 {
+	if cfg.JSONLSkipComments && len(line) > 0 {
 		if line[0] == '#' || (len(line) > 1 && line[0] == '/' && line[1] == '/') {
 			return true
 		}
@@ -189,14 +218,107 @@ func shouldSkipJSONLLine(line []byte, config JSONLConfig) bool {
 	return false
 }
 
-// StreamLinesInto processes JSONL data into a slice of typed values
-// Uses generics for type-safe processing
-func StreamLinesInto[T any](reader io.Reader, fn func(lineNum int, data T) error) ([]T, error) {
-	return StreamLinesIntoWithConfig(reader, DefaultJSONLConfig(), fn)
+// shouldSkipJSONLLine checks if a line should be skipped based on JSONLConfig.
+//
+// Deprecated: Use shouldSkipJSONLLineFromConfig with Config struct instead.
+// This function delegates to the unified implementation to avoid code duplication.
+func shouldSkipJSONLLine(line []byte, config jsonlConfig) bool {
+	// Delegate to unified implementation
+	cfg := config.toConfig()
+	return shouldSkipJSONLLineFromConfig(line, cfg)
 }
 
-// StreamLinesIntoWithConfig processes JSONL data into a slice of typed values with config
-func StreamLinesIntoWithConfig[T any](reader io.Reader, config JSONLConfig, fn func(lineNum int, data T) error) ([]T, error) {
+// StreamLinesInto processes JSONL data into a slice of typed values.
+// Uses generics for type-safe processing.
+// The optional cfg parameter allows customization using the unified Config pattern.
+//
+// Example:
+//
+//	// Default settings
+//	results, err := json.StreamLinesInto[MyType](reader, func(lineNum int, data MyType) error {
+//	    fmt.Printf("Line %d: %+v\n", lineNum, data)
+//	    return nil
+//	})
+//
+//	// With custom configuration
+//	cfg := json.DefaultConfig()
+//	cfg.JSONLSkipEmpty = false
+//	cfg.JSONLSkipComments = true
+//	results, err := json.StreamLinesInto[MyType](reader, processFunc, cfg)
+func StreamLinesInto[T any](reader io.Reader, fn func(lineNum int, data T) error, cfg ...Config) ([]T, error) {
+	var config Config
+	if len(cfg) > 0 {
+		config = cfg[0]
+	} else {
+		config = DefaultConfig()
+	}
+
+	// Get buffer and line size from config
+	bufSize := config.JSONLBufferSize
+	if bufSize <= 0 {
+		bufSize = 64 * 1024
+	}
+	maxLineSize := config.JSONLMaxLineSize
+	if maxLineSize <= 0 {
+		maxLineSize = 1024 * 1024
+	}
+
+	scanner := bufio.NewScanner(reader)
+	scanner.Buffer(make([]byte, bufSize), maxLineSize)
+
+	var results []T
+	lineNum := 0
+
+	for scanner.Scan() {
+		lineNum++
+		line := scanner.Bytes()
+
+		// Use helper to check if line should be skipped
+		if shouldSkipJSONLLineFromConfig(line, config) {
+			continue
+		}
+
+		var data T
+		if err := json.Unmarshal(line, &data); err != nil {
+			if config.JSONLContinueOnErr {
+				continue
+			}
+			return nil, fmt.Errorf("line %d: %w", lineNum, err)
+		}
+
+		if fn != nil {
+			if err := fn(lineNum, data); err != nil {
+				return nil, err
+			}
+		}
+
+		results = append(results, data)
+	}
+
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+
+	return results, nil
+}
+
+// StreamLinesIntoWithConfig processes JSONL data into a slice of typed values with config.
+//
+// Deprecated: Use StreamLinesInto(reader, fn, cfg) instead.
+// This function will be removed in v2.0.
+//
+// Example migration:
+//
+//	// Old:
+//	cfg := json.DefaultJSONLConfig()
+//	cfg.SkipEmpty = false
+//	results, err := json.StreamLinesIntoWithConfig(reader, cfg, fn)
+//
+//	// New:
+//	cfg := json.DefaultConfig()
+//	cfg.JSONLSkipEmpty = false
+//	results, err := json.StreamLinesInto(reader, fn, cfg)
+func streamLinesIntoWithConfig[T any](reader io.Reader, config jsonlConfig, fn func(lineNum int, data T) error) ([]T, error) {
 	scanner := bufio.NewScanner(reader)
 	scanner.Buffer(make([]byte, config.BufferSize), config.MaxLineSize)
 
@@ -207,9 +329,16 @@ func StreamLinesIntoWithConfig[T any](reader io.Reader, config JSONLConfig, fn f
 		lineNum++
 		line := scanner.Bytes()
 
-		// Use helper to check if line should be skipped
-		if shouldSkipJSONLLine(line, config) {
+		// Skip empty lines if configured
+		if config.SkipEmpty && len(line) == 0 {
 			continue
+		}
+
+		// Skip comments if configured
+		if config.SkipComments && len(line) > 0 {
+			if line[0] == '#' || (len(line) > 1 && line[0] == '/' && line[1] == '/') {
+				continue
+			}
 		}
 
 		var data T

@@ -74,7 +74,7 @@ func BenchmarkIterableValueGet(b *testing.B) {
 			"email": "alice@example.com",
 		},
 	}
-	iv := NewIterableValue(data)
+	iv := newIterableValue(data)
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -91,27 +91,27 @@ func BenchmarkSafeTypeAssert(b *testing.B) {
 	}
 }
 
-// TestBulkProcessor tests BulkProcessor functionality
+// TestBulkProcessor tests bulkProcessor functionality
 func TestBulkProcessor(t *testing.T) {
 	processor, _ := New()
 	defer processor.Close()
 
-	bp := NewBulkProcessor(processor, 10)
+	bp := newBulkProcessor(processor, 10)
 
 	jsonStr := `{"a":1,"b":2,"c":3}`
 	paths := []string{"a", "b", "c"}
 
-	results, err := bp.BulkGet(jsonStr, paths)
+	results, err := bp.bulkGet(jsonStr, paths)
 	if err != nil {
-		t.Fatalf("BulkGet error: %v", err)
+		t.Fatalf("bulkGet error: %v", err)
 	}
 
 	if len(results) != 3 {
-		t.Errorf("BulkGet returned %d results, want 3", len(results))
+		t.Errorf("bulkGet returned %d results, want 3", len(results))
 	}
 
 	if results["a"].(float64) != 1 {
-		t.Errorf("BulkGet a = %v, want 1", results["a"])
+		t.Errorf("bulkGet a = %v, want 1", results["a"])
 	}
 }
 
@@ -122,7 +122,7 @@ func TestDefaultValues(t *testing.T) {
 		"age":  30,
 	}
 
-	iv := NewIterableValue(data)
+	iv := newIterableValue(data)
 
 	t.Run("GetStringWithDefault", func(t *testing.T) {
 		result := iv.GetStringWithDefault("name", "Unknown")
@@ -246,7 +246,7 @@ func TestIterableValueExists(t *testing.T) {
 		},
 	}
 
-	iv := NewIterableValue(data)
+	iv := newIterableValue(data)
 
 	tests := []struct {
 		name     string
@@ -300,7 +300,7 @@ func TestIterableValueGet(t *testing.T) {
 		"items": []any{"a", "b", "c"},
 	}
 
-	iv := NewIterableValue(data)
+	iv := newIterableValue(data)
 
 	tests := []struct {
 		name     string
@@ -359,7 +359,7 @@ func TestIterableValueGetArray(t *testing.T) {
 		},
 	}
 
-	iv := NewIterableValue(data)
+	iv := newIterableValue(data)
 
 	tests := []struct {
 		name        string
@@ -416,7 +416,7 @@ func TestIterableValueGetBool(t *testing.T) {
 		},
 	}
 
-	iv := NewIterableValue(data)
+	iv := newIterableValue(data)
 
 	tests := []struct {
 		name     string
@@ -471,7 +471,7 @@ func TestIterableValueGetFloat64(t *testing.T) {
 		},
 	}
 
-	iv := NewIterableValue(data)
+	iv := newIterableValue(data)
 
 	tests := []struct {
 		name     string
@@ -527,7 +527,7 @@ func TestIterableValueGetInt(t *testing.T) {
 		},
 	}
 
-	iv := NewIterableValue(data)
+	iv := newIterableValue(data)
 
 	tests := []struct {
 		name     string
@@ -588,7 +588,7 @@ func TestIterableValueGetObject(t *testing.T) {
 		},
 	}
 
-	iv := NewIterableValue(data)
+	iv := newIterableValue(data)
 
 	tests := []struct {
 		name        string
@@ -642,7 +642,7 @@ func TestIterableValueGetString(t *testing.T) {
 		},
 	}
 
-	iv := NewIterableValue(data)
+	iv := newIterableValue(data)
 
 	tests := []struct {
 		name     string
@@ -703,7 +703,7 @@ func TestIterableValueIsEmpty(t *testing.T) {
 		},
 	}
 
-	iv := NewIterableValue(data)
+	iv := newIterableValue(data)
 
 	tests := []struct {
 		name     string
@@ -762,7 +762,7 @@ func TestIterableValueIsNull(t *testing.T) {
 		},
 	}
 
-	iv := NewIterableValue(data)
+	iv := newIterableValue(data)
 
 	tests := []struct {
 		name     string
@@ -1419,7 +1419,7 @@ func TestLargeBuffer(t *testing.T) {
 	putLargeBuffer(buf2)
 }
 
-// TestNewIterableValue tests creating IterableValue from different data types
+// TestNewIterableValue tests creating IterableValue from different data types (internal)
 func TestNewIterableValue(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -1455,7 +1455,7 @@ func TestNewIterableValue(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			iv := NewIterableValue(tt.data)
+			iv := newIterableValue(tt.data)
 			if iv == nil {
 				t.Error("Expected non-nil IterableValue")
 			}
@@ -1583,9 +1583,9 @@ func TestWarmupPathCache(t *testing.T) {
 	}
 
 	// Should not panic
-	WarmupPathCache(paths)
-	WarmupPathCache(nil)        // nil paths
-	WarmupPathCache([]string{}) // empty paths
+	warmupPathCache(paths)
+	warmupPathCache(nil)        // nil paths
+	warmupPathCache([]string{}) // empty paths
 }
 
 // TestWarmupPathCacheWithProcessor tests path cache warmup with processor
@@ -1599,7 +1599,7 @@ func TestWarmupPathCacheWithProcessor(t *testing.T) {
 	}
 
 	// Should not panic
-	WarmupPathCacheWithProcessor(processor, paths)
-	WarmupPathCacheWithProcessor(nil, paths)     // nil processor
-	WarmupPathCacheWithProcessor(processor, nil) // nil paths
+	warmupPathCacheWithProcessor(processor, paths)
+	warmupPathCacheWithProcessor(nil, paths)     // nil processor
+	warmupPathCacheWithProcessor(processor, nil) // nil paths
 }
