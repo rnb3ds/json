@@ -288,37 +288,6 @@ operations := []json.BatchOperation{
 results, err := json.ProcessBatch(operations)
 ```
 
-### 流式处理（大文件）
-
-```go
-import "strings"
-
-// 流式处理数组元素
-reader := strings.NewReader(largeJSONArray)
-processor := json.NewStreamingProcessor(reader, 64*1024)
-err := processor.StreamArray(func(index int, item any) bool {
-    // 处理每个元素
-    return true // 继续
-})
-
-// JSONL/NDJSON 处理
-jsonlProcessor := json.NewNDJSONProcessor(64 * 1024)
-err := jsonlProcessor.ProcessReader(reader, func(lineNum int, obj map[string]any) error {
-    // 处理每一行
-    return nil
-})
-
-// 使用处理器进行流式过滤
-processor := json.NewStreamingProcessor(reader, 64*1024)
-var filtered []any
-processor.StreamArray(func(index int, item any) bool {
-    if obj, ok := item.(map[string]any); ok && obj["active"] == true {
-        filtered = append(filtered, item)
-    }
-    return true  // 继续
-})
-```
-
 ### Schema 验证
 
 ```go

@@ -13,7 +13,7 @@ import (
 // ============================================================================
 // FILE OPERATIONS TESTS
 // Tests for file.go: LoadFromFile, SaveToFile, LargeFileProcessor,
-// NDJSONProcessor, ChunkedWriter, SamplingReader, LazyParser
+// NDJSONProcessor, SamplingReader, LazyParser
 // ============================================================================
 
 // TestLoadFromFile tests the LoadFromFile method
@@ -294,101 +294,6 @@ func TestMarshalToFile(t *testing.T) {
 	})
 }
 
-// ============================================================================
-// LARGE FILE PROCESSOR TESTS
-// ============================================================================
-
-// TestLargeFileProcessor tests the large file processing methods on Processor
-func TestLargeFileProcessor(t *testing.T) {
-	if testing.Short() {
-		t.Skip("Skipping large file tests in short mode")
-	}
-
-	t.Run("ForeachFile", func(t *testing.T) {
-		tempDir := t.TempDir()
-		filePath := filepath.Join(tempDir, "large_test.json")
-
-		// Create a large JSON array
-		var items []map[string]interface{}
-		for i := 0; i < 100; i++ {
-			items = append(items, map[string]interface{}{
-				"id":    i,
-				"name":  fmt.Sprintf("Item%d", i),
-				"value": i * 10,
-			})
-		}
-		data, _ := json.Marshal(items)
-		os.WriteFile(filePath, data, 0644)
-
-		processor, err := New()
-		if err != nil {
-			t.Fatalf("Failed to create processor: %v", err)
-		}
-
-		count := 0
-		err = processor.ForeachFile(filePath, func(key any, item *IterableValue) error {
-			count++
-			// Verify we can access fields using IterableValue
-			id := item.GetInt("id")
-			name := item.GetString("name")
-			if id < 0 || name == "" {
-				t.Errorf("Unexpected values: id=%d, name=%s", id, name)
-			}
-			return nil
-		})
-
-		if err != nil {
-			t.Errorf("ForeachFile failed: %v", err)
-		}
-		if count != 100 {
-			t.Errorf("Processed %d items, want 100", count)
-		}
-	})
-
-	t.Run("ForeachFileChunked", func(t *testing.T) {
-		tempDir := t.TempDir()
-		filePath := filepath.Join(tempDir, "chunked_test.json")
-
-		// Create a large JSON array
-		var items []map[string]interface{}
-		for i := 0; i < 50; i++ {
-			items = append(items, map[string]interface{}{
-				"id":    i,
-				"value": i * 2,
-			})
-		}
-		data, _ := json.Marshal(items)
-		os.WriteFile(filePath, data, 0644)
-
-		processor, err := New()
-		if err != nil {
-			t.Fatalf("Failed to create processor: %v", err)
-		}
-
-		chunks := 0
-		totalItems := 0
-		err = processor.ForeachFileChunked(filePath, 10, func(chunk []*IterableValue) error {
-			chunks++
-			totalItems += len(chunk)
-			// Verify we can access fields using IterableValue
-			for _, item := range chunk {
-				_ = item.GetInt("id")
-			}
-			return nil
-		})
-
-		if err != nil {
-			t.Errorf("ForeachFileChunked failed: %v", err)
-		}
-		if chunks < 5 {
-			t.Errorf("Expected at least 5 chunks, got %d", chunks)
-		}
-		if totalItems != 50 {
-			t.Errorf("Total items = %d, want 50", totalItems)
-		}
-	})
-}
-
 // TestDefaultConfigLargeFile tests that DefaultConfig has proper large file settings
 func TestDefaultConfigLargeFile(t *testing.T) {
 	config := DefaultConfig()
@@ -508,322 +413,165 @@ invalid json
 }
 
 // ============================================================================
-// CHUNKED WRITER TESTS
+// FOREACHFILE TESTS
+// Tests for file.go: ForeachFile, ForeachFileWithPath, ForeachFileChunked
 // ============================================================================
 
-// TestChunkedWriter tests the ChunkedWriter
-func TestChunkedWriter(t *testing.T) {
-	t.Run("WriteArray", func(t *testing.T) {
-		var buf bytes.Buffer
-		cw := NewChunkedWriter(&buf, 1024, true)
+func TestForeachFile(t *testing.T) {
+	processor, _ := New()
+	defer processor.Close()
 
-		for i := 0; i < 5; i++ {
-			if err := cw.WriteItem(map[string]interface{}{"id": i}); err != nil {
-				t.Errorf("WriteItem failed: %v", err)
-			}
+	t.Run("BasicIteration", func(t *testing.T) {
+		tempDir := t.TempDir()
+		filePath := filepath.Join(tempDir, "test.json")
+		testData := `[{"id":1,"name":"Alice"},{"id":2,"name":"Bob"},{"id":3,"name":"Charlie"}]`
+
+		err := os.WriteFile(filePath, []byte(testData), 0644)
+		if err != nil {
+			t.Fatalf("Failed to write test file: %v", err)
 		}
 
-		if err := cw.Flush(true); err != nil {
-			t.Errorf("Flush failed: %v", err)
-		}
-
-		result := buf.String()
-		if result[0] != '[' || result[len(result)-1] != ']' {
-			t.Errorf("Result should be a JSON array, got: %s", result)
-		}
-
-		if cw.Count() != 5 {
-			t.Errorf("Count = %d, want 5", cw.Count())
-		}
-	})
-
-	t.Run("WriteObject", func(t *testing.T) {
-		var buf bytes.Buffer
-		cw := NewChunkedWriter(&buf, 1024, false)
-
-		for i := 0; i < 3; i++ {
-			if err := cw.WriteKeyValue(fmt.Sprintf("key%d", i), i); err != nil {
-				t.Errorf("WriteKeyValue failed: %v", err)
-			}
-		}
-
-		if err := cw.Flush(true); err != nil {
-			t.Errorf("Flush failed: %v", err)
-		}
-
-		result := buf.String()
-		if result[0] != '{' || result[len(result)-1] != '}' {
-			t.Errorf("Result should be a JSON object, got: %s", result)
-		}
-	})
-
-	t.Run("AutoFlush", func(t *testing.T) {
-		var buf bytes.Buffer
-		// Small chunk size to trigger auto-flush
-		cw := NewChunkedWriter(&buf, 50, true)
-
-		for i := 0; i < 100; i++ {
-			if err := cw.WriteItem(map[string]interface{}{"id": i, "data": strings.Repeat("x", 100)}); err != nil {
-				t.Errorf("WriteItem failed: %v", err)
-			}
-		}
-
-		// Buffer should have content even before final flush
-		if buf.Len() == 0 {
-			t.Error("Expected auto-flush to write data")
-		}
-	})
-}
-
-// ============================================================================
-// STREAMING PROCESSOR FILE TESTS
-// ============================================================================
-
-// TestStreamingProcessorWithFile tests streaming with file-like data
-func TestStreamingProcessorWithFile(t *testing.T) {
-	t.Run("StreamLargeArray", func(t *testing.T) {
-		// Create a large array
-		var buf bytes.Buffer
-		buf.WriteString("[")
-		for i := 0; i < 1000; i++ {
-			if i > 0 {
-				buf.WriteString(",")
-			}
-			buf.WriteString(fmt.Sprintf(`{"id":%d}`, i))
-		}
-		buf.WriteString("]")
-
-		sp := newStreamingProcessor(bytes.NewReader(buf.Bytes()), 0)
-
-		count := 0
-		err := sp.StreamArray(func(index int, item interface{}) bool {
-			count++
-			return true
+		var ids []int
+		var names []string
+		err = processor.ForeachFile(filePath, func(key any, item *IterableValue) error {
+			ids = append(ids, item.GetInt("id"))
+			names = append(names, item.GetString("name"))
+			return nil
 		})
 
 		if err != nil {
-			t.Errorf("StreamArray failed: %v", err)
+			t.Errorf("ForeachFile failed: %v", err)
 		}
-		if count != 1000 {
-			t.Errorf("Streamed %d items, want 1000", count)
+		if len(ids) != 3 {
+			t.Errorf("Expected 3 items, got %d", len(ids))
+		}
+		if names[0] != "Alice" {
+			t.Errorf("Expected first name 'Alice', got '%s'", names[0])
 		}
 	})
 
-	t.Run("StreamWithEarlyStop", func(t *testing.T) {
-		var buf bytes.Buffer
-		buf.WriteString("[")
-		for i := 0; i < 100; i++ {
-			if i > 0 {
-				buf.WriteString(",")
-			}
-			buf.WriteString(fmt.Sprintf(`%d`, i))
-		}
-		buf.WriteString("]")
+	t.Run("BreakIteration", func(t *testing.T) {
+		tempDir := t.TempDir()
+		filePath := filepath.Join(tempDir, "test.json")
+		testData := `[{"id":1},{"id":2},{"id":3},{"id":4},{"id":5}]`
 
-		sp := newStreamingProcessor(bytes.NewReader(buf.Bytes()), 0)
+		err := os.WriteFile(filePath, []byte(testData), 0644)
+		if err != nil {
+			t.Fatalf("Failed to write test file: %v", err)
+		}
 
 		count := 0
-		err := sp.StreamArray(func(index int, item interface{}) bool {
+		err = processor.ForeachFile(filePath, func(key any, item *IterableValue) error {
 			count++
-			return count < 10 // Stop after 10
+			if item.GetInt("id") == 2 {
+				return item.Break()
+			}
+			return nil
 		})
 
 		if err != nil {
-			t.Errorf("StreamArray failed: %v", err)
+			t.Errorf("ForeachFile failed: %v", err)
 		}
-		if count != 10 {
-			t.Errorf("Streamed %d items, want 10", count)
+		if count != 2 {
+			t.Errorf("Expected 2 iterations (break at id=2), got %d", count)
+		}
+	})
+
+	t.Run("ObjectIteration", func(t *testing.T) {
+		tempDir := t.TempDir()
+		filePath := filepath.Join(tempDir, "test.json")
+		testData := `{"users":{"alice":{"age":30},"bob":{"age":25}}}`
+
+		err := os.WriteFile(filePath, []byte(testData), 0644)
+		if err != nil {
+			t.Fatalf("Failed to write test file: %v", err)
+		}
+
+		var keys []string
+		var ages []int
+		err = processor.ForeachFileWithPath(filePath, "users", func(key any, item *IterableValue) error {
+			keys = append(keys, key.(string))
+			ages = append(ages, item.GetInt("age"))
+			return nil
+		})
+
+		if err != nil {
+			t.Errorf("ForeachFileWithPath failed: %v", err)
+		}
+		if len(keys) != 2 {
+			t.Errorf("Expected 2 items, got %d", len(keys))
 		}
 	})
 }
 
-// ============================================================================
-// Processor Streaming Methods Tests
-// ============================================================================
-
-func TestProcessorStreamArray(t *testing.T) {
-	processor, err := New()
-	if err != nil {
-		t.Fatalf("Failed to create processor: %v", err)
-	}
+func TestForeachFileChunked(t *testing.T) {
+	processor, _ := New()
 	defer processor.Close()
 
-	jsonData := `["a", "b", "c", "d", "e"]`
-	reader := strings.NewReader(jsonData)
+	t.Run("BasicChunked", func(t *testing.T) {
+		tempDir := t.TempDir()
+		filePath := filepath.Join(tempDir, "test.json")
 
-	var items []string
-	err = processor.StreamArray(reader, func(index int, item any) bool {
-		if s, ok := item.(string); ok {
-			items = append(items, s)
+		// Create array with 10 items
+		testData := `[`
+		for i := 1; i <= 10; i++ {
+			if i > 1 {
+				testData += ","
+			}
+			testData += fmt.Sprintf(`{"id":%d}`, i)
 		}
-		return true
-	})
-	if err != nil {
-		t.Fatalf("StreamArray failed: %v", err)
-	}
+		testData += `]`
 
-	if len(items) != 5 {
-		t.Errorf("Expected 5 items, got %d", len(items))
-	}
-}
-
-func TestProcessorStreamObject(t *testing.T) {
-	processor, err := New()
-	if err != nil {
-		t.Fatalf("Failed to create processor: %v", err)
-	}
-	defer processor.Close()
-
-	jsonData := `{"a": 1, "b": 2, "c": 3}`
-	reader := strings.NewReader(jsonData)
-
-	result := make(map[string]any)
-	err = processor.StreamObject(reader, func(key string, value any) bool {
-		result[key] = value
-		return true
-	})
-	if err != nil {
-		t.Fatalf("StreamObject failed: %v", err)
-	}
-
-	if len(result) != 3 {
-		t.Errorf("Expected 3 keys, got %d", len(result))
-	}
-}
-
-func TestProcessorStreamArrayChunked(t *testing.T) {
-	processor, err := New()
-	if err != nil {
-		t.Fatalf("Failed to create processor: %v", err)
-	}
-	defer processor.Close()
-
-	// Create JSON array with 10 elements
-	var buf bytes.Buffer
-	buf.WriteString("[")
-	for i := 0; i < 10; i++ {
-		if i > 0 {
-			buf.WriteString(",")
+		err := os.WriteFile(filePath, []byte(testData), 0644)
+		if err != nil {
+			t.Fatalf("Failed to write test file: %v", err)
 		}
-		buf.WriteString(fmt.Sprintf(`%d`, i))
-	}
-	buf.WriteString("]")
-	reader := bytes.NewReader(buf.Bytes())
 
-	var totalBatches int
-	var totalItems int
-	err = processor.StreamArrayChunked(reader, 3, func(chunk []any) error {
-		totalBatches++
-		totalItems += len(chunk)
-		return nil
+		batches := 0
+		totalItems := 0
+		err = processor.ForeachFileChunked(filePath, 3, func(chunk []*IterableValue) error {
+			batches++
+			totalItems += len(chunk)
+			return nil
+		})
+
+		if err != nil {
+			t.Errorf("ForeachFileChunked failed: %v", err)
+		}
+		// 10 items with chunk size 3 = 4 batches (3, 3, 3, 1)
+		if batches != 4 {
+			t.Errorf("Expected 4 batches, got %d", batches)
+		}
+		if totalItems != 10 {
+			t.Errorf("Expected 10 total items, got %d", totalItems)
+		}
 	})
-	if err != nil {
-		t.Fatalf("StreamArrayChunked failed: %v", err)
-	}
 
-	if totalItems != 10 {
-		t.Errorf("Expected 10 items, got %d", totalItems)
-	}
+	t.Run("BreakInChunk", func(t *testing.T) {
+		tempDir := t.TempDir()
+		filePath := filepath.Join(tempDir, "test.json")
+		testData := `[{"id":1},{"id":2},{"id":3},{"id":4},{"id":5}]`
 
-	// Should have 4 batches: 3, 3, 3, 1
-	if totalBatches != 4 {
-		t.Errorf("Expected 4 batches, got %d", totalBatches)
-	}
+		err := os.WriteFile(filePath, []byte(testData), 0644)
+		if err != nil {
+			t.Fatalf("Failed to write test file: %v", err)
+		}
+
+		batches := 0
+		err = processor.ForeachFileChunked(filePath, 2, func(chunk []*IterableValue) error {
+			batches++
+			if batches == 2 {
+				return ErrOperationFailed // use any non-break error to stop
+			}
+			return nil
+		})
+
+		if err == nil {
+			t.Error("Expected error from callback")
+		}
+		if batches != 2 {
+			t.Errorf("Expected 2 batches before error, got %d", batches)
+		}
+	})
 }
 
-func TestProcessorStreamObjectChunked(t *testing.T) {
-	processor, err := New()
-	if err != nil {
-		t.Fatalf("Failed to create processor: %v", err)
-	}
-	defer processor.Close()
-
-	jsonData := `{"a": 1, "b": 2, "c": 3, "d": 4, "e": 5}`
-	reader := strings.NewReader(jsonData)
-
-	var totalBatches int
-	var totalKeys int
-	err = processor.StreamObjectChunked(reader, 2, func(chunk map[string]any) error {
-		totalBatches++
-		totalKeys += len(chunk)
-		return nil
-	})
-	if err != nil {
-		t.Fatalf("StreamObjectChunked failed: %v", err)
-	}
-
-	if totalKeys != 5 {
-		t.Errorf("Expected 5 keys, got %d", totalKeys)
-	}
-
-	// Should have 3 batches: 2, 2, 1
-	if totalBatches != 3 {
-		t.Errorf("Expected 3 batches, got %d", totalBatches)
-	}
-}
-
-func TestProcessorStreamArrayWithStats(t *testing.T) {
-	processor, err := New()
-	if err != nil {
-		t.Fatalf("Failed to create processor: %v", err)
-	}
-	defer processor.Close()
-
-	jsonData := `[1, 2, 3, 4, 5]`
-	reader := strings.NewReader(jsonData)
-
-	stats, err := processor.StreamArrayWithStats(reader, func(index int, item any) bool {
-		return true
-	})
-	if err != nil {
-		t.Fatalf("StreamArrayWithStats failed: %v", err)
-	}
-
-	if stats.ItemsProcessed != 5 {
-		t.Errorf("Expected 5 items processed, got %d", stats.ItemsProcessed)
-	}
-}
-
-func TestProcessorStreamArrayEarlyStop(t *testing.T) {
-	processor, err := New()
-	if err != nil {
-		t.Fatalf("Failed to create processor: %v", err)
-	}
-	defer processor.Close()
-
-	jsonData := `[1, 2, 3, 4, 5]`
-	reader := strings.NewReader(jsonData)
-
-	var count int
-	err = processor.StreamArray(reader, func(index int, item any) bool {
-		count++
-		return count < 3 // Stop after 3 items
-	})
-	if err != nil {
-		t.Fatalf("StreamArray failed: %v", err)
-	}
-
-	if count != 3 {
-		t.Errorf("Expected 3 items, got %d", count)
-	}
-}
-
-func TestProcessorStreamOnClosedProcessor(t *testing.T) {
-	processor, err := New()
-	if err != nil {
-		t.Fatalf("Failed to create processor: %v", err)
-	}
-
-	// Close immediately
-	processor.Close()
-
-	jsonData := `[1, 2, 3]`
-	reader := strings.NewReader(jsonData)
-
-	err = processor.StreamArray(reader, func(index int, item any) bool {
-		return true
-	})
-	if err == nil {
-		t.Error("Expected error on closed processor")
-	}
-}

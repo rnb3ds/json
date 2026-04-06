@@ -1,7 +1,6 @@
 package json
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -299,30 +298,6 @@ func BenchmarkIterator_LargeObject(b *testing.B) {
 // ----------------------------------------------------------------------------
 // STREAMING BENCHMARKS
 // ----------------------------------------------------------------------------
-
-func BenchmarkStreaming_Array_1000(b *testing.B) {
-	jsonData := []byte(generateLargeJSONArray(1000))
-
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		sp := newStreamingProcessor(bytes.NewReader(jsonData), 0)
-		_ = sp.StreamArray(func(index int, item any) bool {
-			return true
-		})
-	}
-}
-
-func BenchmarkStreaming_Array_10000(b *testing.B) {
-	jsonData := []byte(generateLargeJSONArray(10000))
-
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		sp := newStreamingProcessor(bytes.NewReader(jsonData), 0)
-		_ = sp.StreamArray(func(index int, item any) bool {
-			return true
-		})
-	}
-}
 
 func BenchmarkStreamIterator_1000(b *testing.B) {
 	jsonData := generateLargeJSONArray(1000)
@@ -980,26 +955,3 @@ func BenchmarkIsSimplePropertyAccess(b *testing.B) {
 	}
 }
 
-// BenchmarkStreamingProcessor_Array benchmarks streaming processor for arrays
-func BenchmarkStreamingProcessor_Array(b *testing.B) {
-	var buf bytes.Buffer
-	buf.WriteString("[")
-	for i := 0; i < 1000; i++ {
-		if i > 0 {
-			buf.WriteString(",")
-		}
-		buf.WriteString(`{"id":`)
-		buf.WriteString(strings.Repeat("0", 3))
-		buf.WriteString(`}`)
-	}
-	buf.WriteString("]")
-	data := buf.Bytes()
-
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		sp := newStreamingProcessor(bytes.NewReader(data), 0)
-		_ = sp.StreamArray(func(index int, item any) bool {
-			return true
-		})
-	}
-}

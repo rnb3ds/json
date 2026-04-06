@@ -1012,6 +1012,90 @@ func foreachNestedOnValue(data any, fn func(key any, item *IterableValue)) {
 	}
 }
 
+// foreachWithIterableValueError iterates with error-returning callback
+// PERFORMANCE: Uses pooled IterableValue to reduce allocations
+func foreachWithIterableValueError(data any, fn func(key any, item *IterableValue) error) error {
+	switch v := data.(type) {
+	case []any:
+		for i, item := range v {
+			iv := iterableValuePool.Get().(*IterableValue)
+			iv.data = item
+			err := fn(i, iv)
+			iv.data = nil
+			iterableValuePool.Put(iv)
+			if err != nil {
+				if err == errBreak {
+					return nil // Break is not an error
+				}
+				return err
+			}
+		}
+	case map[string]any:
+		for key, val := range v {
+			iv := iterableValuePool.Get().(*IterableValue)
+			iv.data = val
+			err := fn(key, iv)
+			iv.data = nil
+			iterableValuePool.Put(iv)
+			if err != nil {
+				if err == errBreak {
+					return nil // Break is not an error
+				}
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// foreachNestedOnValueError recursively iterates with error-returning callback
+// PERFORMANCE: Uses pooled IterableValue to reduce allocations
+func foreachNestedOnValueError(data any, fn func(key any, item *IterableValue) error) error {
+	switch v := data.(type) {
+	case []any:
+		for i, item := range v {
+			iv := iterableValuePool.Get().(*IterableValue)
+			iv.data = item
+			err := fn(i, iv)
+			if err != nil {
+				iv.data = nil
+				iterableValuePool.Put(iv)
+				if err == errBreak {
+					return nil
+				}
+				return err
+			}
+			err = foreachNestedOnValueError(item, fn)
+			iv.data = nil
+			iterableValuePool.Put(iv)
+			if err != nil {
+				return err
+			}
+		}
+	case map[string]any:
+		for key, val := range v {
+			iv := iterableValuePool.Get().(*IterableValue)
+			iv.data = val
+			err := fn(key, iv)
+			if err != nil {
+				iv.data = nil
+				iterableValuePool.Put(iv)
+				if err == errBreak {
+					return nil
+				}
+				return err
+			}
+			err = foreachNestedOnValueError(val, fn)
+			iv.data = nil
+			iterableValuePool.Put(iv)
+			if err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 // isComplexPathIterator checks if the path contains array indices or other complex syntax
 func isComplexPathIterator(path string) bool {
 	return strings.ContainsAny(path, "[]")

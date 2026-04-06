@@ -123,6 +123,41 @@ type Config struct {
 	// Default: 1000
 	SampleSize int `json:"sample_size"`
 
+	// ===== JSONL (JSON Lines) Configuration =====
+	// These settings control JSONL/NDJSON file processing
+
+	// JSONLBufferSize is the buffer size for reading JSONL files.
+	// Default: 64KB (64 * 1024 bytes)
+	JSONLBufferSize int `json:"jsonl_buffer_size"`
+
+	// JSONLMaxLineSize is the maximum allowed line size for JSONL files.
+	// Default: 1MB (1024 * 1024 bytes)
+	JSONLMaxLineSize int `json:"jsonl_max_line_size"`
+
+	// JSONLSkipEmpty skips empty lines when processing JSONL files.
+	// Default: true
+	JSONLSkipEmpty bool `json:"jsonl_skip_empty"`
+
+	// JSONLSkipComments skips lines starting with # or //.
+	// Default: false
+	JSONLSkipComments bool `json:"jsonl_skip_comments"`
+
+	// JSONLContinueOnErr continues processing on parse errors.
+	// Default: false
+	JSONLContinueOnErr bool `json:"jsonl_continue_on_err"`
+
+	// JSONLWorkers is the number of parallel workers for JSONL processing.
+	// Default: 4
+	JSONLWorkers int `json:"jsonl_workers"`
+
+	// JSONLChunkSize is the chunk size for batched JSONL processing.
+	// Default: 1000
+	JSONLChunkSize int `json:"jsonl_chunk_size"`
+
+	// JSONLMaxMemory is the maximum memory for JSONL file processing in bytes.
+	// Default: 100MB
+	JSONLMaxMemory int64 `json:"jsonl_max_memory"`
+
 	// ===== Context =====
 	Context context.Context `json:"-"` // Operation context
 

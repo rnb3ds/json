@@ -1039,6 +1039,54 @@ func (p *Processor) ForeachNested(jsonStr string, fn func(key any, item *Iterabl
 	foreachNestedOnValue(data, fn)
 }
 
+// ForeachWithError iterates over JSON arrays or objects with error-returning callback.
+// The callback returns an error to signal iteration control:
+//   - nil: continue iteration
+//   - errBreak (via item.Break()): stop iteration without error
+//   - other error: stop iteration and return the error
+//
+// Example:
+//
+//	err := processor.ForeachWithError(jsonStr, ".", func(key any, item *json.IterableValue) error {
+//	    if item.GetInt("id") == targetId {
+//	        return item.Break() // stop iteration
+//	    }
+//	    return nil // continue
+//	})
+func (p *Processor) ForeachWithError(jsonStr, path string, fn func(key any, item *IterableValue) error) error {
+	if err := p.checkClosed(); err != nil {
+		return err
+	}
+
+	data, err := p.Get(jsonStr, path)
+	if err != nil {
+		return err
+	}
+
+	return foreachWithIterableValueError(data, fn)
+}
+
+// ForeachNestedWithError recursively iterates over all nested JSON structures with error-returning callback.
+//
+// Example:
+//
+//	err := processor.ForeachNestedWithError(jsonStr, func(key any, item *json.IterableValue) error {
+//	    fmt.Printf("Key: %v\n", key)
+//	    return nil
+//	})
+func (p *Processor) ForeachNestedWithError(jsonStr string, fn func(key any, item *IterableValue) error) error {
+	if err := p.checkClosed(); err != nil {
+		return err
+	}
+
+	data, err := p.Get(jsonStr, ".")
+	if err != nil {
+		return err
+	}
+
+	return foreachNestedOnValueError(data, fn)
+}
+
 // SafeGet performs a type-safe get operation with comprehensive error handling
 func (p *Processor) SafeGet(jsonStr, path string) AccessResult {
 	// Validate inputs

@@ -558,27 +558,6 @@ Iterates and returns the original JSON string (read-only).
 
 ---
 
-## Streaming Processing
-
-### NewStreamingProcessor
-
-```go
-func NewStreamingProcessor(reader io.Reader, bufferSize int) *StreamingProcessor
-```
-
-Creates a streaming processor for large JSON arrays.
-
-**Example:**
-```go
-processor := json.NewStreamingProcessor(reader, 64*1024)
-err := processor.StreamArray(func(index int, item any) bool {
-    fmt.Printf("Item %d: %v\n", index, item)
-    return true  // continue
-})
-```
-
----
-
 ## JSONL Support
 
 ### NewJSONLProcessor

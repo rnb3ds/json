@@ -288,37 +288,6 @@ operations := []json.BatchOperation{
 results, err := json.ProcessBatch(operations)
 ```
 
-### Streaming (Large Files)
-
-```go
-import "strings"
-
-// Stream array elements
-reader := strings.NewReader(largeJSONArray)
-processor := json.NewStreamingProcessor(reader, 64*1024)
-err := processor.StreamArray(func(index int, item any) bool {
-    // process each element
-    return true // continue
-})
-
-// JSONL/NDJSON processing
-jsonlProcessor := json.NewNDJSONProcessor(64 * 1024)
-err := jsonlProcessor.ProcessReader(reader, func(lineNum int, obj map[string]any) error {
-    // process each line
-    return nil
-})
-
-// Streaming with filter pattern using processor
-processor := json.NewStreamingProcessor(reader, 64*1024)
-var filtered []any
-processor.StreamArray(func(index int, item any) bool {
-    if obj, ok := item.(map[string]any); ok && obj["active"] == true {
-        filtered = append(filtered, item)
-    }
-    return true  // continue
-})
-```
-
 ### Schema Validation
 
 ```go

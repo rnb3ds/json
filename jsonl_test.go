@@ -93,100 +93,100 @@ func TestShouldSkipJSONLLine(t *testing.T) {
 }
 
 // ============================================================================
-// JSONL PROCESSOR TESTS
+// PROCESSOR.StreamJSONL TESTS
 // ============================================================================
 
-func TestNewJSONLProcessor(t *testing.T) {
-	input := `{"a":1}
-{"b":2}
-{"c":3}`
+func TestProcessor_StreamJSONL(t *testing.T) {
+	processor, err := New()
+	if err != nil {
+		t.Fatalf("Failed to create processor: %v", err)
+	}
+	defer processor.Close()
 
-	processor := NewJSONLProcessor(strings.NewReader(input))
-	defer processor.Release()
+	input := `{"name":"Alice"}
+{"name":"Bob"}
+{"name":"Charlie"}`
 
-	if processor == nil {
-		t.Fatal("NewJSONLProcessor returned nil")
+	var count int
+	var names []string
+
+	err = processor.StreamJSONL(strings.NewReader(input), func(lineNum int, item *IterableValue) error {
+		count++
+		names = append(names, item.GetString("name"))
+		return nil
+	})
+
+	if err != nil {
+		t.Errorf("Unexpected error: %v", err)
+	}
+	if count != 3 {
+		t.Errorf("Expected 3 lines, got %d", count)
+	}
+	if len(names) != 3 || names[0] != "Alice" || names[1] != "Bob" || names[2] != "Charlie" {
+		t.Errorf("Names mismatch: %v", names)
 	}
 }
 
-func TestNewJSONLProcessorWithOptions(t *testing.T) {
-	input := `{"a":1}`
-
-	customConfig := JSONLConfig{
-		BufferSize:   32 * 1024,
-		MaxLineSize:  512 * 1024,
-		SkipEmpty:    false,
-		SkipComments: true,
+func TestProcessor_StreamJSONLWithConfig(t *testing.T) {
+	processor, err := New()
+	if err != nil {
+		t.Fatalf("Failed to create processor: %v", err)
 	}
+	defer processor.Close()
 
-	processor := NewJSONLProcessorWithConfig(
-		strings.NewReader(input),
-		customConfig,
-	)
-	defer processor.Release()
-
-	if processor == nil {
-		t.Fatal("NewJSONLProcessorWithOptions returned nil")
-	}
-	if processor.config.BufferSize != 32*1024 {
-		t.Errorf("BufferSize = %d, want %d", processor.config.BufferSize, 32*1024)
-	}
-}
-
-func TestJSONLProcessor_StreamLines(t *testing.T) {
 	tests := []struct {
 		name          string
 		input         string
-		config        JSONLConfig
+		config        StreamJSONLConfig
 		expectedCount int
 		wantErr       bool
 	}{
 		{
 			name:          "basic_jsonl",
 			input:         "{\"name\":\"Alice\"}\n{\"name\":\"Bob\"}\n{\"name\":\"Charlie\"}",
-			config:        DefaultJSONLConfig(),
+			config:        DefaultStreamJSONLConfig(),
 			expectedCount: 3,
 			wantErr:       false,
 		},
 		{
 			name:          "skip_empty_lines",
 			input:         "{\"a\":1}\n\n{\"b\":2}\n\n{\"c\":3}",
-			config:        JSONLConfig{SkipEmpty: true},
+			config:        StreamJSONLConfig{SkipEmpty: true},
 			expectedCount: 3,
 			wantErr:       false,
 		},
 		{
 			name:          "keep_empty_lines_errors",
 			input:         "{\"a\":1}\n\n{\"b\":2}",
-			config:        JSONLConfig{SkipEmpty: false},
+			config:        StreamJSONLConfig{SkipEmpty: false},
 			expectedCount: 0, // Will error on empty line
 			wantErr:       true,
 		},
 		{
 			name:          "skip_comments",
 			input:         "# comment\n{\"a\":1}\n// another comment\n{\"b\":2}",
-			config:        JSONLConfig{SkipEmpty: true, SkipComments: true},
+			config:        StreamJSONLConfig{SkipEmpty: true, SkipComments: true},
 			expectedCount: 2,
 			wantErr:       false,
 		},
 		{
 			name:          "continue_on_error",
 			input:         "{\"valid\":1}\n{invalid}\n{\"valid\":2}",
-			config:        JSONLConfig{ContinueOnErr: true, SkipEmpty: true},
+			config:        StreamJSONLConfig{ContinueOnError: true, SkipEmpty: true},
 			expectedCount: 2,
 			wantErr:       false,
 		},
 		{
 			name:          "stop_on_error",
 			input:         "{\"valid\":1}\n{invalid}\n{\"valid\":2}",
-			config:        JSONLConfig{ContinueOnErr: false, SkipEmpty: true},
+			config:        StreamJSONLConfig{ContinueOnError: false, SkipEmpty: true},
 			expectedCount: 0,
 			wantErr:       true,
 		},
 		{
 			name:          "empty_input",
 			input:         "",
-			config:        DefaultJSONLConfig(),
+			config:        DefaultStreamJSONLConfig(),
 			expectedCount: 0,
 			wantErr:       false,
 		},
@@ -194,16 +194,10 @@ func TestJSONLProcessor_StreamLines(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			processor := NewJSONLProcessorWithConfig(
-				strings.NewReader(tt.input),
-				tt.config,
-			)
-			defer processor.Release()
-
 			var count int
-			err := processor.StreamLines(func(lineNum int, data any) bool {
+			err := processor.StreamJSONLWithConfig(strings.NewReader(tt.input), tt.config, func(lineNum int, item *IterableValue) error {
 				count++
-				return true
+				return nil
 			})
 
 			if tt.wantErr {
@@ -222,16 +216,22 @@ func TestJSONLProcessor_StreamLines(t *testing.T) {
 	}
 }
 
-func TestJSONLProcessor_StreamLines_EarlyStop(t *testing.T) {
+func TestProcessor_StreamJSONL_EarlyStop(t *testing.T) {
+	processor, err := New()
+	if err != nil {
+		t.Fatalf("Failed to create processor: %v", err)
+	}
+	defer processor.Close()
+
 	input := "{\"a\":1}\n{\"b\":2}\n{\"c\":3}\n{\"d\":4}\n{\"e\":5}"
 
-	processor := NewJSONLProcessor(strings.NewReader(input))
-	defer processor.Release()
-
 	var count int
-	err := processor.StreamLines(func(lineNum int, data any) bool {
+	err = processor.StreamJSONL(strings.NewReader(input), func(lineNum int, item *IterableValue) error {
 		count++
-		return lineNum < 3 // Stop after 3 lines
+		if lineNum >= 3 {
+			return item.Break() // Stop after 3 lines
+		}
+		return nil
 	})
 
 	if err != nil {
@@ -242,7 +242,13 @@ func TestJSONLProcessor_StreamLines_EarlyStop(t *testing.T) {
 	}
 }
 
-func TestJSONLProcessor_StreamLinesParallel(t *testing.T) {
+func TestProcessor_StreamJSONLParallel(t *testing.T) {
+	processor, err := New()
+	if err != nil {
+		t.Fatalf("Failed to create processor: %v", err)
+	}
+	defer processor.Close()
+
 	// Create input with 100 lines
 	var lines []string
 	for i := 0; i < 100; i++ {
@@ -250,88 +256,212 @@ func TestJSONLProcessor_StreamLinesParallel(t *testing.T) {
 	}
 	input := strings.Join(lines, "\n")
 
-	processor := NewJSONLProcessor(strings.NewReader(input))
-	defer processor.Release()
-
 	var count int32
-	err := processor.StreamLinesParallel(func(lineNum int, data any) error {
+	err = processor.StreamJSONLParallel(strings.NewReader(input), 4, func(lineNum int, item *IterableValue) error {
 		atomic.AddInt32(&count, 1)
 		return nil
-	}, 4)
+	})
 
 	if err != nil {
-		t.Errorf("StreamLinesParallel error: %v", err)
+		t.Errorf("StreamJSONLParallel error: %v", err)
 	}
 	if count != 100 {
 		t.Errorf("Expected 100 lines, got %d", count)
 	}
 }
 
-func TestJSONLProcessor_StreamLinesParallel_WithError(t *testing.T) {
+func TestProcessor_StreamJSONLParallel_WithError(t *testing.T) {
+	processor, err := New()
+	if err != nil {
+		t.Fatalf("Failed to create processor: %v", err)
+	}
+	defer processor.Close()
+
 	input := "{\"a\":1}\n{\"b\":2}\n{\"c\":3}"
 
-	processor := NewJSONLProcessor(strings.NewReader(input))
-	defer processor.Release()
-
-	err := processor.StreamLinesParallel(func(lineNum int, data any) error {
+	err = processor.StreamJSONLParallel(strings.NewReader(input), 2, func(lineNum int, item *IterableValue) error {
 		if lineNum == 2 {
 			return ErrOperationFailed
 		}
 		return nil
-	}, 2)
+	})
 
 	if err == nil {
 		t.Error("Expected error from worker")
 	}
 }
 
-func TestJSONLProcessor_Stop(t *testing.T) {
-	input := strings.Repeat("{\"a\":1}\n", 1000)
+func TestProcessor_StreamJSONLChunked(t *testing.T) {
+	processor, err := New()
+	if err != nil {
+		t.Fatalf("Failed to create processor: %v", err)
+	}
+	defer processor.Close()
 
-	processor := NewJSONLProcessor(strings.NewReader(input))
-	defer processor.Release()
+	input := "{\"a\":1}\n{\"b\":2}\n{\"c\":3}\n{\"d\":4}\n{\"e\":5}"
 
-	// Stop before processing
-	processor.Stop()
+	var chunkCalls int
+	var totalItems int
 
-	if !processor.stopped.Load() {
-		t.Error("Processor should be stopped")
+	err = processor.StreamJSONLChunked(strings.NewReader(input), 2, func(chunk []*IterableValue) error {
+		chunkCalls++
+		totalItems += len(chunk)
+		return nil
+	})
+
+	if err != nil {
+		t.Errorf("Unexpected error: %v", err)
+	}
+	if chunkCalls != 3 { // 2+2+1
+		t.Errorf("Expected 3 chunk calls, got %d", chunkCalls)
+	}
+	if totalItems != 5 {
+		t.Errorf("Expected 5 total items, got %d", totalItems)
 	}
 }
 
-func TestJSONLProcessor_GetStats(t *testing.T) {
-	input := "{\"a\":1}\n{\"b\":2}\n{\"c\":3}"
+func TestProcessor_ForeachJSONL(t *testing.T) {
+	processor, err := New()
+	if err != nil {
+		t.Fatalf("Failed to create processor: %v", err)
+	}
+	defer processor.Close()
 
-	processor := NewJSONLProcessor(strings.NewReader(input))
+	input := `{"id":1}
+{"id":2}
+{"id":3}`
 
-	_ = processor.StreamLines(func(lineNum int, data any) bool {
-		return true
+	var ids []int
+	err = processor.ForeachJSONL(strings.NewReader(input), func(lineNum int, item *IterableValue) error {
+		ids = append(ids, item.GetInt("id"))
+		return nil
 	})
 
-	stats := processor.GetStats()
-	processor.Release()
-
-	if stats.LinesProcessed != 3 {
-		t.Errorf("LinesProcessed = %d, want 3", stats.LinesProcessed)
+	if err != nil {
+		t.Errorf("Unexpected error: %v", err)
 	}
-	if stats.BytesRead == 0 {
-		t.Error("BytesRead should be > 0")
+	if len(ids) != 3 {
+		t.Errorf("Expected 3 items, got %d", len(ids))
 	}
 }
 
-func TestJSONLProcessor_Err(t *testing.T) {
-	input := "invalid json line"
+func TestProcessor_MapJSONL(t *testing.T) {
+	processor, err := New()
+	if err != nil {
+		t.Fatalf("Failed to create processor: %v", err)
+	}
+	defer processor.Close()
 
-	processor := NewJSONLProcessor(strings.NewReader(input))
-	processor.config.SkipEmpty = false
+	input := `{"name":"Alice","age":30}
+{"name":"Bob","age":25}`
 
-	_ = processor.StreamLines(func(lineNum int, data any) bool {
-		return true
+	results, err := processor.MapJSONL(strings.NewReader(input), func(lineNum int, item *IterableValue) (any, error) {
+		return map[string]any{
+			"name":     item.GetString("name"),
+			"ageYears": item.GetInt("age"),
+		}, nil
 	})
-	processor.Release()
 
-	// Err() returns scanner errors, not parse errors
-	// Parse errors are returned directly from StreamLines
+	if err != nil {
+		t.Errorf("Unexpected error: %v", err)
+	}
+	if len(results) != 2 {
+		t.Errorf("Expected 2 results, got %d", len(results))
+	}
+}
+
+func TestProcessor_ReduceJSONL(t *testing.T) {
+	processor, err := New()
+	if err != nil {
+		t.Fatalf("Failed to create processor: %v", err)
+	}
+	defer processor.Close()
+
+	input := `{"value":10}
+{"value":20}
+{"value":30}`
+
+	result, err := processor.ReduceJSONL(strings.NewReader(input), 0, func(acc any, item *IterableValue) any {
+		return acc.(int) + item.GetInt("value")
+	})
+
+	if err != nil {
+		t.Errorf("Unexpected error: %v", err)
+	}
+	if result.(int) != 60 {
+		t.Errorf("Expected 60, got %v", result)
+	}
+}
+
+func TestProcessor_FilterJSONL(t *testing.T) {
+	processor, err := New()
+	if err != nil {
+		t.Fatalf("Failed to create processor: %v", err)
+	}
+	defer processor.Close()
+
+	input := `{"age":25}
+{"age":15}
+{"age":30}
+{"age":10}`
+
+	results, err := processor.FilterJSONL(strings.NewReader(input), func(item *IterableValue) bool {
+		return item.GetInt("age") >= 18
+	})
+
+	if err != nil {
+		t.Errorf("Unexpected error: %v", err)
+	}
+	if len(results) != 2 {
+		t.Errorf("Expected 2 adults, got %d", len(results))
+	}
+}
+
+func TestProcessor_CollectJSONL(t *testing.T) {
+	processor, err := New()
+	if err != nil {
+		t.Fatalf("Failed to create processor: %v", err)
+	}
+	defer processor.Close()
+
+	input := `{"a":1}
+{"b":2}
+{"c":3}`
+
+	items, err := processor.CollectJSONL(strings.NewReader(input))
+
+	if err != nil {
+		t.Errorf("Unexpected error: %v", err)
+	}
+	if len(items) != 3 {
+		t.Errorf("Expected 3 items, got %d", len(items))
+	}
+}
+
+func TestProcessor_FirstJSONL(t *testing.T) {
+	processor, err := New()
+	if err != nil {
+		t.Fatalf("Failed to create processor: %v", err)
+	}
+	defer processor.Close()
+
+	input := `{"name":"Alice","id":1}
+{"name":"Bob","id":2}
+{"name":"Charlie","id":3}`
+
+	item, found, err := processor.FirstJSONL(strings.NewReader(input), func(item *IterableValue) bool {
+		return item.GetString("name") == "Bob"
+	})
+
+	if err != nil {
+		t.Errorf("Unexpected error: %v", err)
+	}
+	if !found {
+		t.Error("Expected to find Bob")
+	}
+	if item.GetInt("id") != 2 {
+		t.Errorf("Expected id 2, got %d", item.GetInt("id"))
+	}
 }
 
 // ============================================================================
@@ -684,10 +814,11 @@ func TestStreamLinesIntoWithConfig(t *testing.T) {
 	input := "# comment\n{\"key\":\"value1\"}\n\n{\"key\":\"value2\"}"
 
 	config := JSONLConfig{
-		BufferSize:   64 * 1024,
-		MaxLineSize:  1024 * 1024,
-		SkipEmpty:    true,
-		SkipComments: true,
+		BufferSize:    64 * 1024,
+		MaxLineSize:   1024 * 1024,
+		SkipEmpty:     true,
+		SkipComments:  true,
+		ContinueOnErr: false,
 	}
 
 	results, err := StreamLinesIntoWithConfig[Record](strings.NewReader(input), config, nil)
@@ -720,46 +851,50 @@ func TestStreamLinesInto_CallbackError(t *testing.T) {
 }
 
 // ============================================================================
-// WITH PROCESSOR CONFIG TEST
+// ITERABLEVALUE INTEGRATION TESTS
 // ============================================================================
 
-func TestJSONLProcessorWithCustomProcessor(t *testing.T) {
-	input := `{"a":1}`
-
-	customProcessor, err := New(DefaultConfig())
+func TestStreamJSONL_IterableValueMethods(t *testing.T) {
+	processor, err := New()
 	if err != nil {
 		t.Fatalf("Failed to create processor: %v", err)
 	}
-	defer customProcessor.Close()
+	defer processor.Close()
 
-	config := DefaultJSONLConfig()
-	config.Processor = customProcessor
+	input := `{"name":"Alice","age":30,"active":true,"score":95.5,"tags":["a","b"],"meta":{"city":"NYC"}}
+{"name":"Bob","age":25,"active":false,"score":88.0,"tags":["c"],"meta":{"city":"LA"}}`
 
-	processor := NewJSONLProcessorWithConfig(
-		strings.NewReader(input),
-		config,
-	)
-	defer processor.Release()
+	var results []map[string]any
 
-	if processor.processor != customProcessor {
-		t.Error("Config.Processor was not set correctly")
+	err = processor.StreamJSONL(strings.NewReader(input), func(lineNum int, item *IterableValue) error {
+		result := map[string]any{
+			"name":    item.GetString("name"),
+			"age":     item.GetInt("age"),
+			"active":  item.GetBool("active"),
+			"score":   item.GetFloat64("score"),
+			"city":    item.GetString("meta.city"),
+			"tag0":    item.GetString("tags[0]"),
+		}
+		results = append(results, result)
+		return nil
+	})
+
+	if err != nil {
+		t.Errorf("Unexpected error: %v", err)
 	}
-}
 
-func TestJSONLProcessorWithNilProcessor(t *testing.T) {
-	input := `{"a":1}`
+	if len(results) != 2 {
+		t.Fatalf("Expected 2 results, got %d", len(results))
+	}
 
-	config := DefaultJSONLConfig()
-	config.Processor = nil
-
-	processor := NewJSONLProcessorWithConfig(
-		strings.NewReader(input),
-		config,
-	)
-	defer processor.Release()
-
-	// Should use default processor, not crash
-	if processor == nil {
-		t.Error("Processor should not be nil")
+	// Check first result
+	if results[0]["name"] != "Alice" {
+		t.Errorf("Expected name Alice, got %v", results[0]["name"])
+	}
+	if results[0]["age"] != 30 {
+		t.Errorf("Expected age 30, got %v", results[0]["age"])
+	}
+	if results[0]["city"] != "NYC" {
+		t.Errorf("Expected city NYC, got %v", results[0]["city"])
 	}
 }

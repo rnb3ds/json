@@ -3,7 +3,6 @@ package json
 import (
 	"bufio"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/url"
@@ -136,108 +135,6 @@ func (p *Processor) LoadFromReaderAsData(reader io.Reader, opts ...Config) (any,
 // STREAMING PROCESSING METHODS
 // Memory-efficient processing for large JSON files
 // ============================================================================
-
-// StreamArray streams array elements one at a time from an io.Reader.
-// This is memory-efficient for large JSON arrays.
-// The callback function receives the index and item; return false to stop iteration.
-//
-// Example:
-//
-//	file, _ := os.Open("large-data.json")
-//	defer file.Close()
-//	err := processor.StreamArray(file, func(index int, item any) bool {
-//	    fmt.Printf("[%d] %v\n", index, item)
-//	    return true // continue processing
-//	})
-func (p *Processor) StreamArray(reader io.Reader, fn func(index int, item any) bool) error {
-	if err := p.checkClosed(); err != nil {
-		return err
-	}
-	sp := newStreamingProcessor(reader, p.config.BufferSize)
-	defer sp.Close()
-	return sp.StreamArray(fn)
-}
-
-// StreamObject streams object key-value pairs from an io.Reader.
-// This is memory-efficient for large JSON objects.
-// The callback function receives the key and value; return false to stop iteration.
-//
-// Example:
-//
-//	file, _ := os.Open("large-object.json")
-//	defer file.Close()
-//	err := processor.StreamObject(file, func(key string, value any) bool {
-//	    fmt.Printf("%s: %v\n", key, value)
-//	    return true // continue processing
-//	})
-func (p *Processor) StreamObject(reader io.Reader, fn func(key string, value any) bool) error {
-	if err := p.checkClosed(); err != nil {
-		return err
-	}
-	sp := newStreamingProcessor(reader, p.config.BufferSize)
-	defer sp.Close()
-	return sp.StreamObject(fn)
-}
-
-// StreamArrayChunked streams array elements in chunks for memory-efficient processing.
-// The chunkSize parameter controls how many elements are processed at once.
-//
-// Example:
-//
-//	err := processor.StreamArrayChunked(file, 100, func(chunk []any) error {
-//	    // Process batch of 100 elements
-//	    return nil
-//	})
-func (p *Processor) StreamArrayChunked(reader io.Reader, chunkSize int, fn func([]any) error) error {
-	if err := p.checkClosed(); err != nil {
-		return err
-	}
-	sp := newStreamingProcessor(reader, p.config.BufferSize)
-	defer sp.Close()
-	return sp.StreamArrayChunked(chunkSize, fn)
-}
-
-// StreamObjectChunked streams object key-value pairs in chunks for memory-efficient processing.
-// The chunkSize parameter controls how many pairs are processed at once.
-//
-// Example:
-//
-//	err := processor.StreamObjectChunked(file, 100, func(chunk map[string]any) error {
-//	    // Process batch of 100 key-value pairs
-//	    return nil
-//	})
-func (p *Processor) StreamObjectChunked(reader io.Reader, chunkSize int, fn func(map[string]any) error) error {
-	if err := p.checkClosed(); err != nil {
-		return err
-	}
-	sp := newStreamingProcessor(reader, p.config.BufferSize)
-	defer sp.Close()
-	return sp.StreamObjectChunked(chunkSize, fn)
-}
-
-// StreamArrayWithStats streams array elements and returns processing statistics.
-// Useful for monitoring large file processing progress.
-func (p *Processor) StreamArrayWithStats(reader io.Reader, fn func(index int, item any) bool) (StreamingStats, error) {
-	if err := p.checkClosed(); err != nil {
-		return StreamingStats{}, err
-	}
-	sp := newStreamingProcessor(reader, p.config.BufferSize)
-	defer sp.Close()
-	err := sp.StreamArray(fn)
-	return sp.GetStats(), err
-}
-
-// StreamObjectWithStats streams object key-value pairs and returns processing statistics.
-// Useful for monitoring large file processing progress.
-func (p *Processor) StreamObjectWithStats(reader io.Reader, fn func(key string, value any) bool) (StreamingStats, error) {
-	if err := p.checkClosed(); err != nil {
-		return StreamingStats{}, err
-	}
-	sp := newStreamingProcessor(reader, p.config.BufferSize)
-	defer sp.Close()
-	err := sp.StreamObject(fn)
-	return sp.GetStats(), err
-}
 
 // preprocessDataForEncoding normalizes string/[]byte inputs to prevent double-encoding.
 func (p *Processor) preprocessDataForEncoding(data any) (any, error) {
@@ -901,223 +798,6 @@ func validateWindowsPath(absPath string) error {
 }
 
 // ============================================================================
-// LARGE JSON FILE PROCESSING
-// Unified API - all methods are on Processor
-// Config fields: ChunkSize, MaxMemory, BufferSize, SamplingEnabled, SampleSize
-// ============================================================================
-
-// ForeachFile iterates over a large JSON array file with IterableValue interface.
-//
-// The callback function returns an error to control iteration:
-//   - nil: continue to next item
-//   - ErrBreak: stop iteration without error (ForeachFile returns nil)
-//   - other error: stop iteration and return the error
-//
-// Example:
-//
-//	processor, _ := json.New()
-//	err := processor.ForeachFile("large-data.json", func(key any, item *json.IterableValue) error {
-//	    id := item.GetInt("id")
-//	    if id == targetId {
-//	        return json.ErrBreak // stop iteration, no error
-//	    }
-//	    return nil
-//	})
-func (p *Processor) ForeachFile(filename string, fn func(key any, item *IterableValue) error) error {
-	if err := p.checkClosed(); err != nil {
-		return err
-	}
-
-	file, err := os.Open(filename)
-	if err != nil {
-		return &JsonsError{
-			Op:      "foreach_file",
-			Message: fmt.Sprintf("failed to open file %s: %v", filename, err),
-			Err:     err,
-		}
-	}
-	defer func() { _ = file.Close() }()
-
-	bufferSize := p.config.BufferSize
-	if bufferSize <= 0 {
-		bufferSize = 64 * 1024
-	}
-
-	reader := bufio.NewReaderSize(file, bufferSize)
-	sp := newStreamingProcessor(reader, int(p.config.ChunkSize))
-	defer func() { _ = sp.Close() }()
-
-	var callbackErr error
-	sp.StreamArray(func(index int, item any) bool {
-		iv := NewIterableValue(item)
-		if err := fn(index, iv); err != nil {
-			if errors.Is(err, errBreak) {
-				callbackErr = nil // ErrBreak means no error
-			} else {
-				callbackErr = err
-			}
-			return false
-		}
-		return true
-	})
-	return callbackErr
-}
-
-// ForeachFileChunked iterates over a large JSON file in chunks.
-//
-// The callback function returns an error to control iteration:
-//   - nil: continue to next chunk
-//   - ErrBreak: stop iteration without error (ForeachFileChunked returns nil)
-//   - other error: stop iteration and return the error
-//
-// Example:
-//
-//	processor, _ := json.New()
-//	err := processor.ForeachFileChunked("large-data.json", 100, func(chunk []*json.IterableValue) error {
-//	    for _, item := range chunk {
-//	        id := item.GetInt("id")
-//	    }
-//	    return nil
-//	})
-func (p *Processor) ForeachFileChunked(filename string, chunkSize int, fn func(chunk []*IterableValue) error) error {
-	if err := p.checkClosed(); err != nil {
-		return err
-	}
-
-	file, err := os.Open(filename)
-	if err != nil {
-		return &JsonsError{
-			Op:      "foreach_file_chunked",
-			Message: fmt.Sprintf("failed to open file %s: %v", filename, err),
-			Err:     err,
-		}
-	}
-	defer func() { _ = file.Close() }()
-
-	bufferSize := p.config.BufferSize
-	if bufferSize <= 0 {
-		bufferSize = 64 * 1024
-	}
-
-	reader := bufio.NewReaderSize(file, bufferSize)
-	sp := newStreamingProcessor(reader, int(p.config.ChunkSize))
-	defer func() { _ = sp.Close() }()
-
-	chunk := make([]*IterableValue, 0, chunkSize)
-	var callbackErr error
-
-	sp.StreamArray(func(index int, item any) bool {
-		chunk = append(chunk, NewIterableValue(item))
-
-		if len(chunk) >= chunkSize {
-			if err := fn(chunk); err != nil {
-				if errors.Is(err, errBreak) {
-					callbackErr = nil
-				} else {
-					callbackErr = err
-				}
-				return false
-			}
-			chunk = make([]*IterableValue, 0, chunkSize)
-		}
-		return true
-	})
-
-	// Process remaining items if no error and callbackErr is nil
-	if callbackErr == nil && len(chunk) > 0 {
-		if err := fn(chunk); err != nil {
-			if !errors.Is(err, errBreak) {
-				callbackErr = err
-			}
-		}
-	}
-
-	return callbackErr
-}
-
-// ForeachFileObject iterates over a large JSON object file (key-value pairs).
-//
-// The callback function returns an error to control iteration:
-//   - nil: continue to next item
-//   - ErrBreak: stop iteration without error
-//   - other error: stop iteration and return the error
-func (p *Processor) ForeachFileObject(filename string, fn func(key string, item *IterableValue) error) error {
-	if err := p.checkClosed(); err != nil {
-		return err
-	}
-
-	file, err := os.Open(filename)
-	if err != nil {
-		return &JsonsError{
-			Op:      "foreach_file_object",
-			Message: fmt.Sprintf("failed to open file %s: %v", filename, err),
-			Err:     err,
-		}
-	}
-	defer func() { _ = file.Close() }()
-
-	bufferSize := p.config.BufferSize
-	if bufferSize <= 0 {
-		bufferSize = 64 * 1024
-	}
-
-	reader := bufio.NewReaderSize(file, bufferSize)
-	sp := newStreamingProcessor(reader, int(p.config.ChunkSize))
-	defer func() { _ = sp.Close() }()
-
-	var callbackErr error
-	sp.StreamObject(func(key string, value any) bool {
-		iv := NewIterableValue(value)
-		if err := fn(key, iv); err != nil {
-			if errors.Is(err, errBreak) {
-				callbackErr = nil
-			} else {
-				callbackErr = err
-			}
-			return false
-		}
-		return true
-	})
-	return callbackErr
-}
-
-// ForeachFileFromReader iterates over JSON array from an io.Reader.
-//
-// The callback function returns an error to control iteration:
-//   - nil: continue to next item
-//   - ErrBreak: stop iteration without error
-//   - other error: stop iteration and return the error
-func (p *Processor) ForeachFileFromReader(reader io.Reader, fn func(key any, item *IterableValue) error) error {
-	if err := p.checkClosed(); err != nil {
-		return err
-	}
-
-	bufferSize := p.config.BufferSize
-	if bufferSize <= 0 {
-		bufferSize = 64 * 1024
-	}
-
-	bufReader := bufio.NewReaderSize(reader, bufferSize)
-	sp := newStreamingProcessor(bufReader, int(p.config.ChunkSize))
-	defer func() { _ = sp.Close() }()
-
-	var callbackErr error
-	sp.StreamArray(func(index int, item any) bool {
-		iv := NewIterableValue(item)
-		if err := fn(index, iv); err != nil {
-			if errors.Is(err, errBreak) {
-				callbackErr = nil
-			} else {
-				callbackErr = err
-			}
-			return false
-		}
-		return true
-	})
-	return callbackErr
-}
-
-// ============================================================================
 // LINE-DELIMITED JSON PROCESSOR
 // For processing NDJSON (newline-delimited JSON) files
 // ============================================================================
@@ -1198,112 +878,143 @@ func (np *NDJSONProcessor) ProcessReader(reader io.Reader, fn func(lineNum int, 
 }
 
 // ============================================================================
-// CHUNKED JSON WRITER
+// FILE-BASED FOREACH METHODS
+// Direct file iteration for convenience
 // ============================================================================
 
-// ChunkedWriter writes JSON in chunks for memory efficiency
-type ChunkedWriter struct {
-	writer    io.Writer
-	buffer    []byte
-	chunkSize int
-	count     int
-	first     bool
-	isArray   bool
+// ForeachFile iterates over JSON arrays or objects directly from a file.
+// The callback returns an error to signal iteration control:
+//   - nil: continue iteration
+//   - item.Break(): stop iteration without error
+//   - other error: stop iteration and return the error
+//
+// Example:
+//
+//	err := processor.ForeachFile("data.json", func(key any, item *json.IterableValue) error {
+//	    fmt.Println(item.GetString("name"))
+//	    return nil // continue
+//	})
+func (p *Processor) ForeachFile(filePath string, fn func(key any, item *IterableValue) error) error {
+	if err := p.checkClosed(); err != nil {
+		return err
+	}
+
+	jsonStr, err := p.LoadFromFile(filePath)
+	if err != nil {
+		return err
+	}
+
+	return p.ForeachWithError(jsonStr, ".", fn)
 }
 
-// NewChunkedWriter creates a new chunked writer
-func NewChunkedWriter(writer io.Writer, chunkSize int, isArray bool) *ChunkedWriter {
+// ForeachFileWithPath iterates over JSON arrays or objects at a specific path from a file.
+//
+// Example:
+//
+//	err := processor.ForeachFileWithPath("data.json", ".users", func(key any, item *json.IterableValue) error {
+//	    fmt.Println(item.GetString("name"))
+//	    return nil
+//	})
+func (p *Processor) ForeachFileWithPath(filePath, path string, fn func(key any, item *IterableValue) error) error {
+	if err := p.checkClosed(); err != nil {
+		return err
+	}
+
+	jsonStr, err := p.LoadFromFile(filePath)
+	if err != nil {
+		return err
+	}
+
+	return p.ForeachWithError(jsonStr, path, fn)
+}
+
+// ForeachFileChunked iterates over JSON arrays from a file in chunks (batches).
+// This is useful for batch processing large datasets.
+//
+// Example:
+//
+//	err := processor.ForeachFileChunked("data.json", 100, func(chunk []*json.IterableValue) error {
+//	    // Process batch of 100 items
+//	    for _, item := range chunk {
+//	        fmt.Println(item.GetString("name"))
+//	    }
+//	    return nil
+//	})
+func (p *Processor) ForeachFileChunked(filePath string, chunkSize int, fn func(chunk []*IterableValue) error) error {
+	if err := p.checkClosed(); err != nil {
+		return err
+	}
+
 	if chunkSize <= 0 {
-		chunkSize = 1024 * 1024
+		chunkSize = 100
 	}
-	return &ChunkedWriter{
-		writer:    writer,
-		buffer:    make([]byte, 0, chunkSize),
-		chunkSize: chunkSize,
-		first:     true,
-		isArray:   isArray,
-	}
-}
 
-// WriteItem writes a single item to the chunk
-func (cw *ChunkedWriter) WriteItem(item any) error {
-	// RESOURCE FIX: Encode item first before modifying buffer
-	// This prevents buffer corruption if encoding fails
-	data, err := json.Marshal(item)
+	jsonStr, err := p.LoadFromFile(filePath)
 	if err != nil {
 		return err
 	}
 
-	// Start array/object if first item
-	if cw.first {
-		if cw.isArray {
-			cw.buffer = append(cw.buffer, '[')
-		} else {
-			cw.buffer = append(cw.buffer, '{')
-		}
-		cw.first = false
-	} else {
-		cw.buffer = append(cw.buffer, ',')
+	data, err := p.Get(jsonStr, ".")
+	if err != nil {
+		return err
 	}
 
-	cw.buffer = append(cw.buffer, data...)
-	cw.count++
+	arr, ok := data.([]any)
+	if !ok {
+		return &JsonsError{
+			Op:      "foreach_file_chunked",
+			Message: "expected JSON array at root for chunked iteration",
+			Err:     ErrTypeMismatch,
+		}
+	}
 
-	// Flush if buffer is full
-	if len(cw.buffer) >= cw.chunkSize {
-		return cw.Flush(false)
+	chunk := make([]*IterableValue, 0, chunkSize)
+	for _, item := range arr {
+		iv := NewIterableValue(item)
+		chunk = append(chunk, iv)
+
+		if len(chunk) >= chunkSize {
+			if err := fn(chunk); err != nil {
+				if err == errBreak {
+					return nil
+				}
+				return err
+			}
+			chunk = chunk[:0] // reset slice
+		}
+	}
+
+	// Process remaining items
+	if len(chunk) > 0 {
+		if err := fn(chunk); err != nil {
+			if err == errBreak {
+				return nil
+			}
+			return err
+		}
 	}
 
 	return nil
 }
 
-// WriteKeyValue writes a key-value pair to the chunk
-func (cw *ChunkedWriter) WriteKeyValue(key string, value any) error {
-	if cw.isArray {
-		return cw.WriteItem(value)
+// ForeachFileNested recursively iterates over all nested JSON structures from a file.
+//
+// Example:
+//
+//	err := processor.ForeachFileNested("data.json", func(key any, item *json.IterableValue) error {
+//	    fmt.Printf("Key: %v, Type: %T\n", key, item.Value)
+//	    return nil
+//	})
+func (p *Processor) ForeachFileNested(filePath string, fn func(key any, item *IterableValue) error) error {
+	if err := p.checkClosed(); err != nil {
+		return err
 	}
 
-	// RESOURCE FIX: Encode key-value pair first before modifying buffer
-	// This prevents buffer corruption if encoding fails
-	data, err := json.Marshal(map[string]any{key: value})
+	jsonStr, err := p.LoadFromFile(filePath)
 	if err != nil {
 		return err
 	}
 
-	if cw.first {
-		cw.buffer = append(cw.buffer, '{')
-		cw.first = false
-	} else {
-		cw.buffer = append(cw.buffer, ',')
-	}
-
-	// Remove the outer braces and append
-	cw.buffer = append(cw.buffer, data[1:len(data)-1]...)
-	cw.count++
-
-	if len(cw.buffer) >= cw.chunkSize {
-		return cw.Flush(false)
-	}
-
-	return nil
+	return p.ForeachNestedWithError(jsonStr, fn)
 }
 
-// Flush writes the buffer to the underlying writer
-func (cw *ChunkedWriter) Flush(final bool) error {
-	if final {
-		if cw.isArray {
-			cw.buffer = append(cw.buffer, ']')
-		} else {
-			cw.buffer = append(cw.buffer, '}')
-		}
-	}
-
-	_, err := cw.writer.Write(cw.buffer)
-	cw.buffer = cw.buffer[:0]
-	return err
-}
-
-// Count returns the number of items written
-func (cw *ChunkedWriter) Count() int {
-	return cw.count
-}

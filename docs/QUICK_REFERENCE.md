@@ -212,17 +212,6 @@ json.ForeachWithPath(data, basePath, func(key any, item *json.IterableValue) {
 })
 ```
 
-### Streaming Iteration
-
-```go
-// Stream array elements without loading entire JSON
-processor := json.NewStreamingProcessor(reader, 64*1024)
-err := processor.StreamArray(func(index int, item any) bool {
-    fmt.Printf("Item %d: %v\n", index, item)
-    return true  // continue
-})
-```
-
 ### Complete Foreach Functions List
 
 | Function | Description | Use Case |
@@ -569,33 +558,6 @@ data := []any{
     map[string]any{"id": 2, "name": "Bob"},
 }
 jsonlBytes, err := json.ToJSONL(data)
-```
-
----
-
-## 🌊 Streaming Processing
-
-```go
-// Create streaming processor for large JSON arrays
-processor := json.NewStreamingProcessor(reader, 64*1024) // 64KB buffer
-
-// Stream array elements
-err := processor.StreamArray(func(index int, item any) bool {
-    fmt.Printf("Item %d: %v\n", index, item)
-    return true  // continue
-})
-
-// Stream object key-value pairs
-err := processor.StreamObject(func(key string, value any) bool {
-    fmt.Printf("Key: %s, Value: %v\n", key, value)
-    return true
-})
-
-// Chunked processing for batch operations
-err := processor.StreamArrayChunked(100, func(chunk []any) error {
-    // Process 100 items at a time
-    return nil
-})
 ```
 
 ---
