@@ -168,14 +168,17 @@ func DefaultConfig() Config {
 		SampleSize:      1000,
 
 		// JSONL (JSON Lines) Configuration
-		JSONLBufferSize:     64 * 1024,         // 64KB buffer
-		JSONLMaxLineSize:    1024 * 1024,       // 1MB max line
-		JSONLSkipEmpty:      true,              // Skip empty lines by default
-		JSONLSkipComments:   false,             // Don't skip comments by default
-		JSONLContinueOnErr:  false,             // Stop on errors by default
-		JSONLWorkers:        4,                 // 4 parallel workers
-		JSONLChunkSize:      1000,              // 1000 lines per chunk
-		JSONLMaxMemory:      100 * 1024 * 1024, // 100MB max memory
+		JSONLBufferSize:    64 * 1024,         // 64KB buffer
+		JSONLMaxLineSize:   1024 * 1024,       // 1MB max line
+		JSONLSkipEmpty:     true,              // Skip empty lines by default
+		JSONLSkipComments:  false,             // Don't skip comments by default
+		JSONLContinueOnErr: false,             // Stop on errors by default
+		JSONLWorkers:       4,                 // 4 parallel workers
+		JSONLChunkSize:     1000,              // 1000 lines per chunk
+		JSONLMaxMemory:     100 * 1024 * 1024, // 100MB max memory
+
+		// Merge Options
+		MergeMode: MergeUnion, // Default: union merge
 
 		// Context
 		Context: nil,

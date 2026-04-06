@@ -22,7 +22,36 @@ func (p *Processor) isPrimitiveType(data any) bool {
 	}
 }
 
-// Parse parses a JSON string into the provided target with improved error handling
+// Parse parses a JSON string into the provided target with improved error handling.
+// This is the core parsing method that supports both standard and number-preserving modes.
+//
+// Parameters:
+//   - jsonStr: the JSON string to parse
+//   - target: pointer to the target variable where parsed data will be stored
+//   - opts: optional Config for parsing options (e.g., PreserveNumbers)
+//
+// Errors:
+//   - ErrProcessorClosed: processor has been closed
+//   - ErrInvalidJSON: jsonStr is not valid JSON
+//   - ErrSizeLimit: JSON exceeds MaxJSONSize
+//   - ErrTypeMismatch: JSON structure doesn't match target type
+//
+// Example:
+//
+//	// Parse into map
+//	var obj map[string]any
+//	err := processor.Parse(`{"name":"Alice"}`, &obj)
+//
+//	// Parse into struct
+//	type User struct { Name string }
+//	var user User
+//	err := processor.Parse(`{"name":"Alice"}`, &user)
+//
+//	// Parse with number preservation
+//	cfg := json.DefaultConfig()
+//	cfg.PreserveNumbers = true
+//	var data any
+//	err := processor.Parse(`{"price":19.99}`, &data, cfg)
 func (p *Processor) Parse(jsonStr string, target any, opts ...Config) error {
 	if err := p.checkClosed(); err != nil {
 		return err
@@ -106,9 +135,18 @@ func (p *Processor) Parse(jsonStr string, target any, opts ...Config) error {
 // This method provides the same behavior as the package-level Parse function.
 // Use Parse when you need to unmarshal into a specific target type.
 //
+// Errors:
+//   - ErrProcessorClosed: processor has been closed
+//   - ErrInvalidJSON: jsonStr is not valid JSON
+//   - ErrSizeLimit: JSON exceeds MaxJSONSize
+//
 // Example:
 //
 //	data, err := processor.ParseAny(`{"name": "Alice"}`)
+//	if err != nil {
+//	    // Handle error
+//	}
+//	obj := data.(map[string]any)
 func (p *Processor) ParseAny(jsonStr string, opts ...Config) (any, error) {
 	if err := p.checkClosed(); err != nil {
 		return nil, err
@@ -121,7 +159,24 @@ func (p *Processor) ParseAny(jsonStr string, opts ...Config) (any, error) {
 	return data, nil
 }
 
-// Valid validates JSON format without parsing the entire structure
+// Valid validates JSON format without parsing the entire structure.
+// Returns (true, nil) if valid, (false, error) if invalid.
+// The error contains details about what makes the JSON invalid.
+//
+// Errors:
+//   - ErrProcessorClosed: processor has been closed
+//   - ErrInvalidJSON: jsonStr is not valid JSON (returned with false)
+//   - ErrSizeLimit: JSON exceeds MaxJSONSize
+//
+// Example:
+//
+//	valid, err := processor.Valid(`{"name":"Alice"}`)
+//	if err != nil {
+//	    // Handle validation error
+//	}
+//	if valid {
+//	    // JSON is valid
+//	}
 func (p *Processor) Valid(jsonStr string, opts ...Config) (bool, error) {
 	if err := p.checkClosed(); err != nil {
 		return false, err
@@ -248,6 +303,26 @@ func (p *Processor) parseExtractionSegment(part string, segments []internal.Path
 
 // Prettify formats JSON string with indentation.
 // This is the recommended method for formatting JSON strings.
+// Uses default indentation of 2 spaces, configurable via Config.Indent and Config.Prefix.
+//
+// Errors:
+//   - ErrProcessorClosed: processor has been closed
+//   - ErrInvalidJSON: jsonStr is not valid JSON
+//   - ErrSizeLimit: JSON exceeds MaxJSONSize
+//
+// Example:
+//
+//	pretty, err := processor.Prettify(`{"name":"Alice","age":30}`)
+//	// Output:
+//	// {
+//	//   "name": "Alice",
+//	//   "age": 30
+//	// }
+//
+//	// Custom indentation
+//	cfg := json.DefaultConfig()
+//	cfg.Indent = "    " // 4 spaces
+//	pretty, err := processor.Prettify(jsonStr, cfg)
 func (p *Processor) Prettify(jsonStr string, opts ...Config) (string, error) {
 	if err := p.checkClosed(); err != nil {
 		return "", err
@@ -308,7 +383,22 @@ func (p *Processor) Prettify(jsonStr string, opts ...Config) (string, error) {
 	return result, nil
 }
 
-// Compact removes whitespace from JSON string
+// Compact removes whitespace from JSON string.
+// This is useful for minimizing JSON size for transmission or storage.
+// The result is a single-line JSON string with no unnecessary whitespace.
+//
+// Errors:
+//   - ErrProcessorClosed: processor has been closed
+//   - ErrInvalidJSON: jsonStr is not valid JSON
+//   - ErrSizeLimit: JSON exceeds MaxJSONSize
+//
+// Example:
+//
+//	compact, err := processor.Compact(`{
+//	    "name": "Alice",
+//	    "age": 30
+//	}`)
+//	// Output: {"name":"Alice","age":30}
 func (p *Processor) Compact(jsonStr string, opts ...Config) (string, error) {
 	if err := p.checkClosed(); err != nil {
 		return "", err

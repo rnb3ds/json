@@ -158,6 +158,11 @@ type Config struct {
 	// Default: 100MB
 	JSONLMaxMemory int64 `json:"jsonl_max_memory"`
 
+	// ===== Merge Options =====
+	// MergeMode controls how JSON documents are merged by MergeJSON and MergeJSONMany.
+	// Default: MergeUnion (combine all keys/elements)
+	MergeMode MergeMode `json:"merge_mode"`
+
 	// ===== Context =====
 	Context context.Context `json:"-"` // Operation context
 

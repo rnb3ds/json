@@ -98,7 +98,20 @@ func getDefaultProcessor() *Processor {
 	return p
 }
 
-// SetGlobalProcessor sets a custom global processor (thread-safe)
+// SetGlobalProcessor sets a custom global processor for package-level operations.
+// The processor is used by all package-level functions (Get, Set, Delete, Marshal, etc.).
+// Passing nil is a no-op. The previous processor is closed before being replaced.
+// This function is thread-safe.
+//
+// Example:
+//
+//	cfg := json.DefaultConfig()
+//	cfg.EnableCache = true
+//	processor, _ := json.New(cfg)
+//	json.SetGlobalProcessor(processor)
+//
+//	// Now all package-level operations use the custom processor
+//	data, err := json.Get(`{"name":"Alice"}`, "name")
 func SetGlobalProcessor(processor *Processor) {
 	if processor == nil {
 		return
@@ -112,7 +125,15 @@ func SetGlobalProcessor(processor *Processor) {
 	}
 }
 
-// ShutdownGlobalProcessor shuts down the global processor
+// ShutdownGlobalProcessor closes and removes the global processor.
+// After calling this, package-level operations will create a new default processor
+// on first use. Call this for clean shutdown in long-running services.
+// This function is thread-safe.
+//
+// Example:
+//
+//	// At application shutdown
+//	json.ShutdownGlobalProcessor()
 func ShutdownGlobalProcessor() {
 	defaultProcessorMu.Lock()
 	defer defaultProcessorMu.Unlock()
@@ -234,7 +255,8 @@ func StreamLinesInto[T any](reader io.Reader, fn func(lineNum int, data T) error
 // JSONL WRITER - For writing JSONL format
 // ============================================================================
 
-// JSONLStats holds statistics for JSONL processing
+// JSONLStats holds statistics for JSONL (JSON Lines) processing.
+// Used by JSONLWriter to track lines and bytes written.
 type JSONLStats struct {
 	LinesProcessed int64
 	BytesRead      int64
@@ -242,7 +264,18 @@ type JSONLStats struct {
 	CurrentLine    int
 }
 
-// JSONLWriter writes JSON Lines format to an io.Writer
+// JSONLWriter writes JSON Lines (NDJSON) format to an io.Writer.
+// Each value is written as a single line of JSON, suitable for
+// log files, data pipelines, and streaming applications.
+//
+// Example:
+//
+//	file, _ := os.Create("output.jsonl")
+//	writer := json.NewJSONLWriter(file)
+//	defer file.Close()
+//
+//	writer.Write(map[string]any{"name": "Alice", "id": 1})
+//	writer.Write(map[string]any{"name": "Bob", "id": 2})
 type JSONLWriter struct {
 	writer   io.Writer
 	encoder  *json.Encoder
@@ -251,17 +284,38 @@ type JSONLWriter struct {
 	bytesOut int64
 }
 
-// NewJSONLWriter creates a new JSONL writer
-func NewJSONLWriter(writer io.Writer) *JSONLWriter {
+// NewJSONLWriter creates a new JSONL writer that writes to the provided io.Writer.
+// HTML escaping is controlled by Config.EscapeHTML (default: false for performance).
+//
+// Example:
+//
+//	var buf bytes.Buffer
+//	writer := json.NewJSONLWriter(&buf)
+//	writer.Write(map[string]any{"event": "login", "user": "alice"})
+//
+// With custom config:
+//
+//	cfg := json.DefaultConfig()
+//	cfg.EscapeHTML = true
+//	writer := json.NewJSONLWriter(&buf, cfg)
+func NewJSONLWriter(writer io.Writer, cfg ...Config) *JSONLWriter {
+	config := getConfigOrDefault(cfg...)
 	encoder := json.NewEncoder(writer)
-	encoder.SetEscapeHTML(false) // Performance: skip HTML escaping
+	encoder.SetEscapeHTML(config.EscapeHTML)
 	return &JSONLWriter{
 		writer:  writer,
 		encoder: encoder,
 	}
 }
 
-// Write writes a single JSON value as a line
+// Write writes a single JSON value as a line to the underlying writer.
+// Each value is followed by a newline character.
+// Returns any error encountered during writing.
+//
+// Example:
+//
+//	writer.Write(map[string]any{"name": "Alice"})  // Writes: {"name":"Alice"}\n
+//	writer.Write([]int{1, 2, 3})                   // Writes: [1,2,3]\n
 func (w *JSONLWriter) Write(data any) error {
 	if w.err != nil {
 		return w.err
@@ -276,7 +330,15 @@ func (w *JSONLWriter) Write(data any) error {
 	return nil
 }
 
-// WriteAll writes multiple JSON values as lines
+// WriteAll writes multiple JSON values as separate lines.
+// Stops and returns the first error encountered.
+//
+// Example:
+//
+//	writer.WriteAll([]any{
+//	    map[string]any{"id": 1},
+//	    map[string]any{"id": 2},
+//	})
 func (w *JSONLWriter) WriteAll(data []any) error {
 	for _, d := range data {
 		if err := w.Write(d); err != nil {
@@ -286,7 +348,13 @@ func (w *JSONLWriter) WriteAll(data []any) error {
 	return nil
 }
 
-// WriteRaw writes a raw JSON line (already encoded)
+// WriteRaw writes a raw JSON line that is already encoded.
+// A newline is appended if the line does not already end with one.
+// Use this for pre-encoded JSON to avoid re-encoding overhead.
+//
+// Example:
+//
+//	writer.WriteRaw([]byte(`{"pre":"encoded"}`))
 func (w *JSONLWriter) WriteRaw(line []byte) error {
 	if w.err != nil {
 		return w.err
@@ -312,12 +380,13 @@ func (w *JSONLWriter) WriteRaw(line []byte) error {
 	return nil
 }
 
-// Err returns any error encountered during writing
+// Err returns any error encountered during previous write operations.
+// Returns nil if no errors have occurred.
 func (w *JSONLWriter) Err() error {
 	return w.err
 }
 
-// Stats returns writing statistics
+// Stats returns writing statistics including lines processed and bytes written.
 func (w *JSONLWriter) Stats() JSONLStats {
 	return JSONLStats{
 		LinesProcessed: int64(w.lineNum),
@@ -329,9 +398,22 @@ func (w *JSONLWriter) Stats() JSONLStats {
 // UTILITY FUNCTIONS
 // ============================================================================
 
-// ParseJSONL parses JSONL data from a byte slice
-func ParseJSONL(data []byte) ([]any, error) {
-	p, err := New()
+// ParseJSONL parses JSONL data from a byte slice.
+// Uses Config.JSONLSkipComments and Config.JSONLContinueOnErr for processing options.
+//
+// Example:
+//
+//	// Basic usage
+//	data, err := json.ParseJSONL(jsonlBytes)
+//
+//	// With custom config
+//	cfg := json.DefaultConfig()
+//	cfg.JSONLSkipComments = true
+//	cfg.JSONLContinueOnErr = true
+//	data, err := json.ParseJSONL(jsonlBytes, cfg)
+func ParseJSONL(data []byte, cfg ...Config) ([]any, error) {
+	config := getConfigOrDefault(cfg...)
+	p, err := New(config)
 	if err != nil {
 		return nil, err
 	}
@@ -346,11 +428,24 @@ func ParseJSONL(data []byte) ([]any, error) {
 	return results, err
 }
 
-// ToJSONL converts a slice of values to JSONL format
-func ToJSONL(data []any) ([]byte, error) {
+// ToJSONL converts a slice of values to JSONL format.
+// Uses Config.EscapeHTML for encoding options.
+//
+// Example:
+//
+//	// Basic usage
+//	jsonl, err := json.ToJSONL([]any{map[string]any{"id": 1}, map[string]any{"id": 2}})
+//
+//	// With custom config
+//	cfg := json.DefaultConfig()
+//	cfg.EscapeHTML = true
+//	jsonl, err := json.ToJSONL(data, cfg)
+func ToJSONL(data []any, cfg ...Config) ([]byte, error) {
 	if len(data) == 0 {
 		return []byte{}, nil
 	}
+
+	config := getConfigOrDefault(cfg...)
 
 	// Estimate buffer size
 	estimatedSize := min(len(data)*64, 64*1024)
@@ -364,12 +459,19 @@ func ToJSONL(data []any) ([]byte, error) {
 		buf.Grow(estimatedSize - buf.Cap())
 	}
 
+	// Use processor for encoding with config
+	p, err := New(config)
+	if err != nil {
+		return nil, err
+	}
+	defer p.Close()
+
 	for _, item := range data {
-		encoded, err := json.Marshal(item)
+		encoded, err := p.EncodeWithConfig(item, cfg...)
 		if err != nil {
 			return nil, err
 		}
-		buf.Write(encoded)
+		buf.WriteString(encoded)
 		buf.WriteByte('\n')
 	}
 
@@ -378,9 +480,20 @@ func ToJSONL(data []any) ([]byte, error) {
 	return result, nil
 }
 
-// ToJSONLString converts a slice of values to JSONL format string
-func ToJSONLString(data []any) (string, error) {
-	result, err := ToJSONL(data)
+// ToJSONLString converts a slice of values to JSONL format string.
+// Uses Config.EscapeHTML and Config.Pretty for encoding options.
+//
+// Example:
+//
+//	// Basic usage
+//	jsonlStr, err := json.ToJSONLString(data)
+//
+//	// With custom config
+//	cfg := json.DefaultConfig()
+//	cfg.EscapeHTML = true
+//	jsonlStr, err := json.ToJSONLString(data, cfg)
+func ToJSONLString(data []any, cfg ...Config) (string, error) {
+	result, err := ToJSONL(data, cfg...)
 	if err != nil {
 		return "", err
 	}

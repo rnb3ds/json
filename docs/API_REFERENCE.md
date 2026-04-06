@@ -573,20 +573,54 @@ Creates a processor for JSON Lines (NDJSON) data.
 ### ParseJSONL
 
 ```go
-func ParseJSONL(data []byte) ([]any, error)
+func ParseJSONL(data []byte, cfg ...Config) ([]any, error)
 ```
 
-Parses JSONL data into a slice of values.
+Parses JSONL data into a slice of values. Supports Config for processing options.
+
+**Example:**
+```go
+// Basic usage
+data, err := json.ParseJSONL(jsonlBytes)
+
+// With config
+cfg := json.DefaultConfig()
+cfg.JSONLSkipComments = true
+cfg.JSONLContinueOnErr = true
+data, err := json.ParseJSONL(jsonlBytes, cfg)
+```
 
 ---
 
 ### ToJSONL
 
 ```go
-func ToJSONL(data any) (string, error)
+func ToJSONL(data []any, cfg ...Config) ([]byte, error)
+func ToJSONLString(data []any, cfg ...Config) (string, error)
 ```
 
-Converts a slice to JSONL format.
+Converts a slice to JSONL format. Supports Config for encoding options.
+
+**Example:**
+```go
+// Basic usage
+jsonl, err := json.ToJSONL(data)
+
+// With config
+cfg := json.DefaultConfig()
+cfg.EscapeHTML = true
+jsonl, err := json.ToJSONL(data, cfg)
+```
+
+---
+
+### NewJSONLWriter
+
+```go
+func NewJSONLWriter(writer io.Writer, cfg ...Config) *JSONLWriter
+```
+
+Creates a new JSONL writer with optional Config for encoding options.
 
 ---
 
@@ -712,12 +746,12 @@ Compares two JSON strings for semantic equality.
 ### MergeJSON
 
 ```go
-func MergeJSON(json1, json2 string, mode ...MergeMode) (string, error)
+func MergeJSON(json1, json2 string, cfg ...Config) (string, error)
 ```
 
-Merges two JSON objects using deep merge strategy. The optional mode parameter specifies the merge strategy (defaults to MergeUnion).
+Merges two JSON objects using deep merge strategy. Uses `Config.MergeMode` to specify the merge strategy (defaults to MergeUnion).
 
-**Merge Modes:**
+**Merge Modes (Config.MergeMode):**
 | Mode | Description |
 |------|-------------|
 | `MergeUnion` | Combines all keys from both objects (default) |
@@ -729,14 +763,14 @@ Merges two JSON objects using deep merge strategy. The optional mode parameter s
 // Union merge (default)
 result, err := json.MergeJSON(a, b)
 
-// Union merge (explicit)
-result, err := json.MergeJSON(a, b, json.MergeUnion)
-
 // Intersection merge (only common keys)
-result, err := json.MergeJSON(a, b, json.MergeIntersection)
+cfg := json.DefaultConfig()
+cfg.MergeMode = json.MergeIntersection
+result, err := json.MergeJSON(a, b, cfg)
 
 // Difference merge (keys only in first)
-result, err := json.MergeJSON(a, b, json.MergeDifference)
+cfg.MergeMode = json.MergeDifference
+result, err := json.MergeJSON(a, b, cfg)
 ```
 
 ---
@@ -744,14 +778,21 @@ result, err := json.MergeJSON(a, b, json.MergeDifference)
 ### MergeJSONMany
 
 ```go
-func MergeJSONMany(mode MergeMode, jsons ...string) (string, error)
+func MergeJSONMany(jsons ...string) (string, error)
+func MergeJSONManyWithConfig(cfg Config, jsons ...string) (string, error)
 ```
 
-Merges multiple JSON objects with specified merge mode. Requires at least 2 JSON strings.
+Merges multiple JSON objects. `MergeJSONMany` uses default Union mode. `MergeJSONManyWithConfig` allows custom configuration.
 
 **Example:**
 ```go
-result, err := json.MergeJSONMany(json.MergeUnion, config1, config2, config3)
+// Union merge (default)
+result, err := json.MergeJSONMany(config1, config2, config3)
+
+// Intersection merge with config
+cfg := json.DefaultConfig()
+cfg.MergeMode = json.MergeIntersection
+result, err := json.MergeJSONManyWithConfig(cfg, config1, config2, config3)
 ```
 
 ---

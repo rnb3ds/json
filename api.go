@@ -266,6 +266,10 @@ var configFieldList = []configFieldAccessor{
 	{"EnableHealthCheck",
 		func(a, b Config) bool { return a.EnableHealthCheck == b.EnableHealthCheck },
 		func(h uint64, c Config) uint64 { return internal.HashBool(h, c.EnableHealthCheck) }},
+	// Merge Options
+	{"MergeMode",
+		func(a, b Config) bool { return a.MergeMode == b.MergeMode },
+		func(h uint64, c Config) uint64 { return internal.HashInt(h, int(c.MergeMode)) }},
 	// Context - direct pointer comparison (different context instances are not equal)
 	{"Context",
 		func(a, b Config) bool { return a.Context == b.Context },

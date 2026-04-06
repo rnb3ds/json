@@ -754,12 +754,12 @@ func TestStreamJSONL_IterableValueMethods(t *testing.T) {
 
 	err = processor.StreamJSONL(strings.NewReader(input), func(lineNum int, item *IterableValue) error {
 		result := map[string]any{
-			"name":    item.GetString("name"),
-			"age":     item.GetInt("age"),
-			"active":  item.GetBool("active"),
-			"score":   item.GetFloat64("score"),
-			"city":    item.GetString("meta.city"),
-			"tag0":    item.GetString("tags[0]"),
+			"name":   item.GetString("name"),
+			"age":    item.GetInt("age"),
+			"active": item.GetBool("active"),
+			"score":  item.GetFloat64("score"),
+			"city":   item.GetString("meta.city"),
+			"tag0":   item.GetString("tags[0]"),
 		}
 		results = append(results, result)
 		return nil

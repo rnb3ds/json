@@ -18,9 +18,9 @@ import (
 
 // Path cache configuration
 const (
-	pathCacheMaxPathLength = 256  // Maximum path length to cache
+	pathCacheMaxPathLength = 256   // Maximum path length to cache
 	pathCacheMaxSize       = 10000 // Maximum cached paths
-	pathCacheEvictCount   = 1000  // Number of entries to evict when limit reached
+	pathCacheEvictCount    = 1000  // Number of entries to evict when limit reached
 )
 
 // pathCacheEntry wraps cached segments with access time for LRU eviction
@@ -41,14 +41,20 @@ var pathCacheMu sync.Mutex
 
 // getCachedPathSegments retrieves cached path segments if available
 // PERFORMANCE: Lock-free read using sync.Map
+// SECURITY FIX: Access time update now uses atomic Store to ensure visibility
 func getCachedPathSegments(path string) ([]PathSegment, bool) {
 	if len(path) > pathCacheMaxPathLength || len(path) == 0 {
 		return nil, false
 	}
 	if v, ok := pathSegmentCache.Load(path); ok {
 		entry := v.(pathCacheEntry)
-		// Update access time for LRU (non-blocking store is acceptable)
-		entry.lastAccess = time.Now().UnixNano()
+		// SECURITY FIX: Update access time by storing new entry
+		// This ensures LRU eviction works correctly under concurrent access
+		// Non-blocking store is acceptable - best-effort update for LRU
+		pathSegmentCache.Store(path, pathCacheEntry{
+			segments:   entry.segments,
+			lastAccess: time.Now().UnixNano(),
+		})
 		return entry.segments, true
 	}
 	return nil, false
@@ -110,7 +116,7 @@ func evictPathCacheEntries() {
 	})
 
 	// Sort by access time (oldest first)
-	// Use simple insertion sort forfaster than full sort for small datasets
+	// Use simple insertion sort - faster than full sort for small datasets
 	for i := 1; i < len(candidates); i++ {
 		j := i
 		for j > 0 && candidates[j].lastAccess < candidates[j-1].lastAccess {
@@ -175,8 +181,8 @@ func fastParseInt(s string) (int, bool) {
 	// Check if value fits in int (platform-dependent: 32 or 64 bit)
 	// On 64-bit: int is int64, so any int64 value fits
 	// On 32-bit: int is int32, so check bounds
-	const maxInt = int64(1<<31 - 1)  // Max int32 for 32-bit platforms
-	const minInt = int64(-1 << 31)   // Min int32 for 32-bit platforms
+	const maxInt = int64(1<<31 - 1) // Max int32 for 32-bit platforms
+	const minInt = int64(-1 << 31)  // Min int32 for 32-bit platforms
 	if n > maxInt || n < minInt {
 		return 0, false
 	}

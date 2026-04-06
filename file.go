@@ -16,6 +16,20 @@ import (
 )
 
 // LoadFromFile loads JSON data from a file and returns the raw JSON string.
+// The file path is validated for security (path traversal, symlinks, etc.).
+//
+// Errors:
+//   - ErrProcessorClosed: processor has been closed
+//   - ErrSecurityViolation: path contains traversal or unsafe patterns
+//   - ErrSizeLimit: file exceeds MaxJSONSize
+//   - File system errors (wrapped in JsonsError)
+//
+// Example:
+//
+//	jsonStr, err := processor.LoadFromFile("data.json")
+//	if err != nil {
+//	    // Handle error
+//	}
 func (p *Processor) LoadFromFile(filePath string, opts ...Config) (string, error) {
 	if err := p.checkClosed(); err != nil {
 		return "", err
@@ -40,6 +54,22 @@ func (p *Processor) LoadFromFile(filePath string, opts ...Config) (string, error
 }
 
 // LoadFromFileAsData loads JSON data from a file and returns the parsed data structure.
+// This is a convenience method that combines LoadFromFile and Parse.
+// The file path is validated for security before reading.
+//
+// Errors:
+//   - ErrProcessorClosed: processor has been closed
+//   - ErrInvalidJSON: file content is not valid JSON
+//   - ErrSecurityViolation: path contains traversal or unsafe patterns
+//   - ErrSizeLimit: file exceeds MaxJSONSize
+//
+// Example:
+//
+//	data, err := processor.LoadFromFileAsData("config.json")
+//	if err != nil {
+//	    // Handle error
+//	}
+//	config := data.(map[string]any)
 func (p *Processor) LoadFromFileAsData(filePath string, opts ...Config) (any, error) {
 	if err := p.checkClosed(); err != nil {
 		return nil, err
@@ -67,6 +97,18 @@ func (p *Processor) LoadFromFileAsData(filePath string, opts ...Config) (any, er
 }
 
 // LoadFromReader loads JSON data from an io.Reader and returns the raw JSON string.
+// The reader is limited to MaxJSONSize to prevent excessive memory usage.
+//
+// Errors:
+//   - ErrProcessorClosed: processor has been closed
+//   - ErrSizeLimit: data exceeds MaxJSONSize
+//   - Reader errors (wrapped in JsonsError)
+//
+// Example:
+//
+//	file, _ := os.Open("data.json")
+//	defer file.Close()
+//	jsonStr, err := processor.LoadFromReader(file)
 func (p *Processor) LoadFromReader(reader io.Reader, opts ...Config) (string, error) {
 	if err := p.checkClosed(); err != nil {
 		return "", err
@@ -98,6 +140,18 @@ func (p *Processor) LoadFromReader(reader io.Reader, opts ...Config) (string, er
 }
 
 // LoadFromReaderAsData loads JSON data from an io.Reader and returns the parsed data structure.
+// This is a convenience method that combines LoadFromReader and Parse.
+//
+// Errors:
+//   - ErrProcessorClosed: processor has been closed
+//   - ErrInvalidJSON: data is not valid JSON
+//   - ErrSizeLimit: data exceeds MaxJSONSize
+//
+// Example:
+//
+//	resp, _ := http.Get(url)
+//	defer resp.Body.Close()
+//	data, err := processor.LoadFromReaderAsData(resp.Body)
 func (p *Processor) LoadFromReaderAsData(reader io.Reader, opts ...Config) (any, error) {
 	if err := p.checkClosed(); err != nil {
 		return nil, err
@@ -186,9 +240,20 @@ func (p *Processor) createDirectoryIfNotExists(filePath string) error {
 
 // SaveToFile saves data to a JSON file using Config.
 // This is the unified API that accepts variadic Config.
+// Creates parent directories if they don't exist.
+//
+// Errors:
+//   - ErrProcessorClosed: processor has been closed
+//   - ErrSecurityViolation: path contains traversal or unsafe patterns
+//   - ErrInvalidJSON: data contains invalid JSON string
+//   - File system errors (wrapped in JsonsError)
 //
 // Example:
 //
+//	// Simple save
+//	err := processor.SaveToFile("data.json", data)
+//
+//	// Pretty-printed save
 //	err := processor.SaveToFile("data.json", data, json.PrettyConfig())
 func (p *Processor) SaveToFile(filePath string, data any, cfg ...Config) error {
 	if err := p.checkClosed(); err != nil {
@@ -238,6 +303,11 @@ func (p *Processor) SaveToFile(filePath string, data any, cfg ...Config) error {
 // SaveToWriter saves data to an io.Writer using Config.
 // This is the unified API that accepts variadic Config.
 //
+// Errors:
+//   - ErrProcessorClosed: processor has been closed
+//   - ErrInvalidJSON: data contains invalid JSON string
+//   - Writer errors (wrapped in JsonsError)
+//
 // Example:
 //
 //	var buf bytes.Buffer
@@ -275,9 +345,20 @@ func (p *Processor) SaveToWriter(writer io.Writer, data any, cfg ...Config) erro
 
 // MarshalToFile converts data to JSON and saves it to the specified file using Config.
 // This is the unified API that accepts variadic Config.
+// Creates parent directories if they don't exist.
+//
+// Errors:
+//   - ErrProcessorClosed: processor has been closed
+//   - ErrSecurityViolation: path contains traversal or unsafe patterns
+//   - ErrInvalidJSON: data cannot be marshaled
+//   - File system errors (wrapped in JsonsError)
 //
 // Example:
 //
+//	// Simple save
+//	err := processor.MarshalToFile("data.json", data)
+//
+//	// Pretty-printed save
 //	err := processor.MarshalToFile("data.json", data, json.PrettyConfig())
 func (p *Processor) MarshalToFile(path string, data any, cfg ...Config) error {
 	if err := p.checkClosed(); err != nil {
@@ -337,6 +418,24 @@ func (p *Processor) MarshalToFile(path string, data any, cfg ...Config) error {
 }
 
 // UnmarshalFromFile reads JSON data from the specified file and unmarshals it into the provided value.
+// The file path is validated for security before reading.
+//
+// Parameters:
+//   - path: file path to read JSON from
+//   - v: pointer to the target variable where JSON will be unmarshaled
+//   - opts: optional Config for security validation and processing
+//
+// Errors:
+//   - ErrProcessorClosed: processor has been closed
+//   - ErrInvalidJSON: file content is not valid JSON
+//   - ErrSecurityViolation: path contains traversal or unsafe patterns
+//   - ErrSizeLimit: file exceeds MaxJSONSize
+//   - File system errors (wrapped in JsonsError)
+//
+// Example:
+//
+//	var config Config
+//	err := processor.UnmarshalFromFile("config.json", &config)
 func (p *Processor) UnmarshalFromFile(path string, v any, opts ...Config) error {
 	if err := p.checkClosed(); err != nil {
 		return err
@@ -1064,4 +1163,3 @@ func (p *Processor) ForeachFileNested(filePath string, fn func(key any, item *It
 
 	return p.ForeachNestedWithError(jsonStr, fn)
 }
-

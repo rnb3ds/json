@@ -2446,7 +2446,7 @@ func TestRootDataTypeConversionError(t *testing.T) {
 	// Note: This test verifies that an uninitialized error pointer is nil
 	// which is always true in Go. The test exists for documentation purposes.
 	var nilErr *rootDataTypeConversionError //nolint:staticcheck // nilness check: intentionally testing nil
-	_ = nilErr                                              // use the variable to avoid compiler warnings
+	_ = nilErr                              // use the variable to avoid compiler warnings
 }
 
 // TestSafeConvertToInt64 tests safe int64 conversion with error handling

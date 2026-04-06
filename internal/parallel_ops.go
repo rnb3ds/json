@@ -443,8 +443,13 @@ func (wp *WorkerPool) SubmitWait(task func()) error {
 }
 
 // Stop stops the worker pool
+// SECURITY: Safe to call multiple times - uses atomic check to prevent double close panic
 func (wp *WorkerPool) Stop() {
-	wp.stopped.Store(true)
+	// SECURITY FIX: Use CompareAndSwap to ensure we only close once
+	// This prevents panic from closing an already-closed channel
+	if !wp.stopped.CompareAndSwap(false, true) {
+		return // Already stopped
+	}
 	close(wp.stopChan)
 	wp.wg.Wait()
 }

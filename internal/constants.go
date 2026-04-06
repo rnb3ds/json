@@ -26,7 +26,7 @@ const (
 	// ============================================================================
 
 	// Buffer pool limits (for []byte)
-	MinPoolBufferSize = 256  // Minimum capacity to pool (smaller buffers not worth pooling)
+	MinPoolBufferSize = 256   // Minimum capacity to pool (smaller buffers not worth pooling)
 	MaxPoolBufferSize = 32768 // Maximum capacity to pool (32KB - larger buffers discarded)
 
 	// Slice pool limits (for []any, []PathSegment, etc.)

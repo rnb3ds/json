@@ -954,4 +954,3 @@ func BenchmarkIsSimplePropertyAccess(b *testing.B) {
 		}
 	}
 }
-

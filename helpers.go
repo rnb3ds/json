@@ -73,8 +73,20 @@ func convertToFloatCore(value any) (float64, bool) {
 }
 
 // ConvertToInt converts any value to int with comprehensive type support.
-// Delegates to internal core function to reduce code duplication.
-// MAINTENANCE: Keep type switch cases in sync with ConvertToInt64, ConvertToUint64, ConvertToFloat64.
+// Returns (value, true) on success, (0, false) on failure.
+//
+// Supported types: int*, uint*, float*, string, bool, json.Number
+// Float values are truncated (not rounded) if they have no fractional part.
+// Bool converts: true -> 1, false -> 0.
+// String values are parsed as base-10 integers.
+//
+// Example:
+//
+//	i, ok := json.ConvertToInt("42")    // i=42, ok=true
+//	i, ok := json.ConvertToInt(3.0)     // i=3, ok=true
+//	i, ok := json.ConvertToInt(3.14)    // i=0, ok=false (has fractional part)
+//	i, ok := json.ConvertToInt(true)    // i=1, ok=true
+//	i, ok := json.ConvertToInt("abc")   // i=0, ok=false
 func ConvertToInt(value any) (int, bool) {
 	// Fast path: use core integer conversion
 	if result := convertToInt64Core(value); result.ok {
@@ -111,9 +123,17 @@ func ConvertToInt(value any) (int, bool) {
 	return 0, false
 }
 
-// ConvertToInt64 converts any value to int64.
-// Delegates to internal core function to reduce code duplication.
-// MAINTENANCE: Keep type switch cases in sync with ConvertToInt, ConvertToUint64, ConvertToFloat64.
+// ConvertToInt64 converts any value to int64 with comprehensive type support.
+// Returns (value, true) on success, (0, false) on failure.
+//
+// Supported types: int*, uint*, float*, string, bool, json.Number
+// Float values are truncated if they have no fractional part.
+// Bool converts: true -> 1, false -> 0.
+//
+// Example:
+//
+//	i, ok := json.ConvertToInt64("9223372036854775807")  // i=9223372036854775807, ok=true
+//	i, ok := json.ConvertToInt64(int32(100))             // i=100, ok=true
 func ConvertToInt64(value any) (int64, bool) {
 	// Fast path: use core integer conversion
 	if result := convertToInt64Core(value); result.ok {
@@ -147,9 +167,18 @@ func ConvertToInt64(value any) (int64, bool) {
 	return 0, false
 }
 
-// ConvertToUint64 converts any value to uint64.
-// Delegates to internal core function to reduce code duplication.
-// MAINTENANCE: Keep type switch cases in sync with ConvertToInt, ConvertToInt64, ConvertToFloat64.
+// ConvertToUint64 converts any value to uint64 with comprehensive type support.
+// Returns (value, true) on success, (0, false) on failure.
+// Negative values always fail conversion.
+//
+// Supported types: int*, uint*, float*, string, bool, json.Number
+// Float values are converted if >= 0 and have no fractional part.
+//
+// Example:
+//
+//	u, ok := json.ConvertToUint64("18446744073709551615")  // max uint64, ok=true
+//	u, ok := json.ConvertToUint64(-1)                      // u=0, ok=false (negative)
+//	u, ok := json.ConvertToUint64(uint(42))                // u=42, ok=true
 func ConvertToUint64(value any) (uint64, bool) {
 	// Special case: uint64 needs direct handling for values > int64 max
 	switch v := value.(type) {
@@ -191,9 +220,19 @@ func ConvertToUint64(value any) (uint64, bool) {
 	return 0, false
 }
 
-// ConvertToFloat64 converts any value to float64.
-// Delegates to internal core functions to reduce code duplication.
-// MAINTENANCE: Keep type switch cases in sync with ConvertToInt, ConvertToInt64, ConvertToUint64.
+// ConvertToFloat64 converts any value to float64 with comprehensive type support.
+// Returns (value, true) on success, (0.0, false) on failure.
+//
+// Supported types: int*, uint*, float*, string, bool, json.Number
+// Bool converts: true -> 1.0, false -> 0.0.
+// String values are parsed as floating-point numbers.
+//
+// Example:
+//
+//	f, ok := json.ConvertToFloat64("3.14")   // f=3.14, ok=true
+//	f, ok := json.ConvertToFloat64(42)       // f=42.0, ok=true
+//	f, ok := json.ConvertToFloat64(true)     // f=1.0, ok=true
+//	f, ok := json.ConvertToFloat64("abc")    // f=0.0, ok=false
 func ConvertToFloat64(value any) (float64, bool) {
 	// Fast path 1: use core integer conversion
 	if result := convertToInt64Core(value); result.ok {
@@ -224,11 +263,27 @@ func ConvertToFloat64(value any) (float64, bool) {
 	return 0.0, false
 }
 
-// ConvertToBool converts any value to bool.
-// String conversion supports both standard formats and user-friendly formats:
-// Standard: "1", "t", "T", "TRUE", "true", "True", "0", "f", "F", "FALSE", "false", "False"
-// Extended: "yes", "on" -> true, "no", "off", "" -> false
-// Delegates to internal core function to reduce code duplication
+// ConvertToBool converts any value to bool with comprehensive type support.
+// Returns (value, true) on success, (false, false) on failure.
+//
+// Supported types and conversions:
+//   - bool: returned as-is
+//   - int*, uint*, float*: 0 -> false, non-zero -> true
+//   - string: parses using strconv.ParseBool plus extended formats
+//   - json.Number: 0 -> false, non-zero -> true
+//
+// Extended string formats:
+//   - "yes", "on" -> true
+//   - "no", "off", "" -> false
+//   - Standard: "1", "t", "T", "TRUE", "true", "True", "0", "f", "F", "FALSE", "false", "False"
+//
+// Example:
+//
+//	b, ok := json.ConvertToBool("true")   // b=true, ok=true
+//	b, ok := json.ConvertToBool("yes")    // b=true, ok=true
+//	b, ok := json.ConvertToBool(1)        // b=true, ok=true
+//	b, ok := json.ConvertToBool(0)        // b=false, ok=true
+//	b, ok := json.ConvertToBool("maybe")  // b=false, ok=false
 func ConvertToBool(value any) (bool, bool) {
 	// Fast path: use core integer conversion for numeric types
 	if result := convertToInt64Core(value); result.ok {
@@ -449,7 +504,16 @@ func convertToMap(value any, targetType reflect.Type) (any, bool) {
 	return result.Interface(), true
 }
 
-// SafeConvertToInt64 safely converts any value to int64 with error handling
+// SafeConvertToInt64 safely converts any value to int64 with error handling.
+// Unlike ConvertToInt64, this function returns an error instead of a boolean,
+// making it suitable for use in error-returning code paths.
+//
+// Example:
+//
+//	i, err := json.SafeConvertToInt64("42")
+//	if err != nil {
+//	    // Handle conversion error
+//	}
 func SafeConvertToInt64(value any) (int64, error) {
 	if result, ok := ConvertToInt64(value); ok {
 		return result, nil
@@ -457,7 +521,16 @@ func SafeConvertToInt64(value any) (int64, error) {
 	return 0, fmt.Errorf("cannot convert %T to int64", value)
 }
 
-// SafeConvertToUint64 safely converts any value to uint64 with error handling
+// SafeConvertToUint64 safely converts any value to uint64 with error handling.
+// Unlike ConvertToUint64, this function returns an error instead of a boolean,
+// making it suitable for use in error-returning code paths.
+//
+// Example:
+//
+//	u, err := json.SafeConvertToUint64("42")
+//	if err != nil {
+//	    // Handle conversion error
+//	}
 func SafeConvertToUint64(value any) (uint64, error) {
 	if result, ok := ConvertToUint64(value); ok {
 		return result, nil
@@ -465,7 +538,15 @@ func SafeConvertToUint64(value any) (uint64, error) {
 	return 0, fmt.Errorf("cannot convert %T to uint64", value)
 }
 
-// FormatNumber formats a number value as a string
+// FormatNumber formats a numeric value as a string.
+// Supports int, int64, uint64, float64, json.Number, and falls back to fmt.Sprintf.
+// For floating-point numbers, uses the shortest representation that preserves precision.
+//
+// Example:
+//
+//	json.FormatNumber(42)        // "42"
+//	json.FormatNumber(3.14)      // "3.14"
+//	json.FormatNumber(json.Number("1e10"))  // "1e10"
 func FormatNumber(value any) string {
 	switch v := value.(type) {
 	case int:
@@ -483,7 +564,21 @@ func FormatNumber(value any) string {
 	}
 }
 
-// ConvertToString converts any value to string (for backward compatibility)
+// ConvertToString converts any value to its string representation.
+// Prefer this function over fmt.Sprintf when you need consistent string conversion.
+//
+// Conversion rules:
+//   - string: returned as-is
+//   - []byte: converted to string
+//   - json.Number: returns the underlying string
+//   - fmt.Stringer: calls String() method
+//   - other: uses fmt.Sprintf("%v", v)
+//
+// Example:
+//
+//	json.ConvertToString("hello")           // "hello"
+//	json.ConvertToString([]byte("data"))    // "data"
+//	json.ConvertToString(42)                // "42"
 func ConvertToString(value any) string {
 	switch v := value.(type) {
 	case string:
@@ -499,14 +594,30 @@ func ConvertToString(value any) string {
 	}
 }
 
-// IsValidJSON quickly checks if a string is valid JSON
+// IsValidJSON quickly checks if a string is valid JSON.
+// This is a convenience function that does not require a Processor.
+// For detailed error information, use Processor.Valid() instead.
+//
+// Example:
+//
+//	if json.IsValidJSON(`{"name":"Alice"}`) {
+//	    // Valid JSON, safe to parse
+//	}
 func IsValidJSON(jsonStr string) bool {
 	decoder := newNumberPreservingDecoder(false)
 	_, err := decoder.DecodeToAny(jsonStr)
 	return err == nil
 }
 
-// IsValidPath checks if a path expression is valid
+// IsValidPath checks if a path expression is valid.
+// Returns true for valid paths like "user.name", "items[0]", "data.*".
+// For detailed error information, use ValidatePath instead.
+//
+// Example:
+//
+//	if json.IsValidPath("user.profiles[0].name") {
+//	    // Valid path, safe to use
+//	}
 func IsValidPath(path string) bool {
 	if path == "" {
 		return false
@@ -522,7 +633,22 @@ func IsValidPath(path string) bool {
 	return err == nil
 }
 
-// ValidatePath validates a path expression and returns detailed error information
+// ValidatePath validates a path expression and returns detailed error information.
+// Returns nil if the path is valid, or an error describing the validation failure.
+//
+// Valid path formats:
+//   - Property access: "user.name", "data.nested.key"
+//   - Array access: "items[0]", "matrix[1][2]"
+//   - Array slice: "items[0:5]", "items[::2]"
+//   - Wildcard: "items[*]", "users.*.name"
+//   - Extraction: "{name,email}", "{flat:tags}"
+//   - Recursive descent: "**.name"
+//
+// Example:
+//
+//	if err := json.ValidatePath("user.profiles[0]"); err != nil {
+//	    // Handle invalid path
+//	}
 func ValidatePath(path string) error {
 	if path == "" {
 		return &JsonsError{
@@ -712,10 +838,10 @@ func CompareJSON(json1, json2 string) (bool, error) {
 }
 
 // MergeJSON merges two JSON objects using deep merge strategy.
-// For nested objects, it recursively merges keys according to the specified mode.
+// For nested objects, it recursively merges keys according to Config.MergeMode.
 // For primitive values and arrays, the value from json2 takes precedence.
 //
-// Supported modes (optional, defaults to MergeUnion):
+// Merge modes (Config.MergeMode, defaults to MergeUnion):
 //   - MergeUnion: combines all keys from both objects (default)
 //   - MergeIntersection: only keys present in both objects
 //   - MergeDifference: keys in json1 but not in json2
@@ -726,15 +852,16 @@ func CompareJSON(json1, json2 string) (bool, error) {
 //	result, err := json.MergeJSON(a, b)
 //
 //	// Intersection merge
-//	result, err := json.MergeJSON(a, b, json.MergeIntersection)
+//	cfg := json.DefaultConfig()
+//	cfg.MergeMode = json.MergeIntersection
+//	result, err := json.MergeJSON(a, b, cfg)
 //
 //	// Difference merge
-//	result, err := json.MergeJSON(a, b, json.MergeDifference)
-func MergeJSON(json1, json2 string, mode ...MergeMode) (string, error) {
-	m := MergeUnion
-	if len(mode) > 0 {
-		m = mode[0]
-	}
+//	cfg.MergeMode = json.MergeDifference
+//	result, err := json.MergeJSON(a, b, cfg)
+func MergeJSON(json1, json2 string, cfg ...Config) (string, error) {
+	config := getConfigOrDefault(cfg...)
+	mode := config.MergeMode
 
 	decoder := newNumberPreservingDecoder(true)
 
@@ -758,13 +885,13 @@ func MergeJSON(json1, json2 string, mode ...MergeMode) (string, error) {
 		return "", fmt.Errorf("second JSON is not an object")
 	}
 
-	merged := internal.DeepMergeWithMode(obj1, obj2, internal.MergeMode(m))
+	merged := internal.DeepMergeWithMode(obj1, obj2, internal.MergeMode(mode))
 
 	// Convert library Number types to float64 for proper encoding
 	converted := convertLibraryNumbers(merged)
 
 	// Use library's Encode function to properly handle the result
-	return Encode(converted)
+	return Encode(converted, config)
 }
 
 // convertLibraryNumbers recursively converts the library's Number type to float64
@@ -799,8 +926,26 @@ func convertLibraryNumbers(data any) any {
 //
 // Example:
 //
-//	result, err := json.MergeJSONMany(json.MergeUnion, config1, config2, config3)
-func MergeJSONMany(mode MergeMode, jsons ...string) (string, error) {
+//	// Union merge (default)
+//	result, err := json.MergeJSONMany(config1, config2, config3)
+//
+//	// Intersection merge
+//	cfg := json.DefaultConfig()
+//	cfg.MergeMode = json.MergeIntersection
+//	result, err := json.MergeJSONManyWithConfig(cfg, config1, config2, config3)
+func MergeJSONMany(jsons ...string) (string, error) {
+	return MergeJSONManyWithConfig(DefaultConfig(), jsons...)
+}
+
+// MergeJSONManyWithConfig merges multiple JSON objects with specified config.
+// Returns error if less than 2 JSON strings are provided.
+//
+// Example:
+//
+//	cfg := json.DefaultConfig()
+//	cfg.MergeMode = json.MergeIntersection
+//	result, err := json.MergeJSONManyWithConfig(cfg, config1, config2, config3)
+func MergeJSONManyWithConfig(cfg Config, jsons ...string) (string, error) {
 	if len(jsons) < 2 {
 		return "", fmt.Errorf("MergeJSONMany requires at least 2 JSON strings, got %d", len(jsons))
 	}
@@ -808,7 +953,7 @@ func MergeJSONMany(mode MergeMode, jsons ...string) (string, error) {
 	result := jsons[0]
 	for i := 1; i < len(jsons); i++ {
 		var err error
-		result, err = MergeJSON(result, jsons[i], mode)
+		result, err = MergeJSON(result, jsons[i], cfg)
 		if err != nil {
 			return "", fmt.Errorf("merge failed at index %d: %w", i, err)
 		}

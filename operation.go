@@ -505,28 +505,11 @@ func (p *Processor) deletePropertyFromContainer(current any, property string) er
 }
 
 func (p *Processor) deleteArrayElement(current any, indexStr string) error {
-	arr, ok := current.([]any)
-	if !ok {
-		return fmt.Errorf("cannot delete array element from type %T", current)
-	}
-
 	index, err := strconv.Atoi(indexStr)
 	if err != nil {
 		return fmt.Errorf("invalid array index: %s", indexStr)
 	}
-
-	// Handle negative indices
-	if index < 0 {
-		index = len(arr) + index
-	}
-
-	if index < 0 || index >= len(arr) {
-		return fmt.Errorf("array index %d out of bounds", index)
-	}
-
-	// Mark element for deletion (set to special marker)
-	arr[index] = deletedMarker
-	return nil
+	return p.deleteArrayElementByIndex(current, index)
 }
 
 func (p *Processor) deleteArrayElementByIndex(current any, index int) error {
@@ -2445,6 +2428,7 @@ func (p *Processor) BatchDeleteOptimized(jsonStr string, paths []string) (string
 // ============================================================================
 
 // FastGetMultiple performs multiple Get operations with single parse
+// PERFORMANCE v2: Uses pooled map for results to reduce allocations
 func (p *Processor) FastGetMultiple(jsonStr string, paths []string) (map[string]any, error) {
 	if err := p.checkClosed(); err != nil {
 		return nil, err
@@ -2460,7 +2444,8 @@ func (p *Processor) FastGetMultiple(jsonStr string, paths []string) (map[string]
 		return nil, err
 	}
 
-	results := make(map[string]any, len(paths))
+	// PERFORMANCE: Use pooled map for results
+	results := internal.GetBatchResultsMap(len(paths))
 
 	for _, path := range paths {
 		// Fast path for simple access

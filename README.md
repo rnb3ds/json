@@ -14,25 +14,6 @@
 
 ---
 
-## Table of Contents
-
-- [Why cybergodev/json](#why-cybergodevjson)
-- [Features](#features)
-- [Installation](#installation)
-- [Quick Start](#quick-start)
-- [Path Syntax Reference](#path-syntax-reference)
-- [Core API](#core-api)
-- [Configuration](#configuration)
-- [Advanced Features](#advanced-features)
-- [Common Use Cases](#common-use-cases)
-- [Performance Monitoring](#performance-monitoring)
-- [Migration Guide](#migration-guide)
-- [Example Code](#example-code)
-- [Documentation](#documentation)
-- [License](#license)
-
----
-
 ## Why cybergodev/json
 
 | Feature | encoding/json | cybergodev/json |

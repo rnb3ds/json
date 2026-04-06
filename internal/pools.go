@@ -347,6 +347,64 @@ func PutStreamingMap(m map[string]any) {
 		mediumMapPool.Put(m)
 	case originalSize <= largeSliceSize:
 		largeMapPool.Put(m)
-	// Maps larger than largeSliceSize are discarded to prevent pool bloat
+		// Maps larger than largeSliceSize are discarded to prevent pool bloat
+	}
+}
+
+// ----------------------------------------------------------------------------
+// BATCH OPERATION POOLS - For BatchSet, FastGetMultiple operations
+// PERFORMANCE: Reduces allocations in batch processing scenarios
+// ----------------------------------------------------------------------------
+
+var (
+	// smallBatchResultsPool pools map[string]any for small batch results (up to 8 entries)
+	smallBatchResultsPool = sync.Pool{
+		New: func() any {
+			return make(map[string]any, 8)
+		},
+	}
+	// mediumBatchResultsPool pools map[string]any for medium batch results (up to 16 entries)
+	mediumBatchResultsPool = sync.Pool{
+		New: func() any {
+			return make(map[string]any, 16)
+		},
+	}
+)
+
+// GetBatchResultsMap retrieves a map for batch operation results
+// PERFORMANCE: Uses tiered pools to match actual capacity needs
+func GetBatchResultsMap(hint int) map[string]any {
+	switch {
+	case hint <= 8:
+		m := smallBatchResultsPool.Get().(map[string]any)
+		clear(m)
+		return m
+	case hint <= 16:
+		m := mediumBatchResultsPool.Get().(map[string]any)
+		clear(m)
+		return m
+	default:
+		return make(map[string]any, hint)
+	}
+}
+
+// PutBatchResultsMap returns a map to the batch results pool
+func PutBatchResultsMap(m map[string]any) {
+	if m == nil {
+		return
+	}
+	// For maps, we use length as a proxy for capacity
+	l := len(m)
+	// Don't pool maps that grew too large (conservative estimate)
+	if l > 32 {
+		return
+	}
+	clear(m)
+	// Return to appropriate pool based on likely capacity
+	// Small pool for maps that likely have <= 8 capacity
+	if l <= 8 {
+		smallBatchResultsPool.Put(m)
+	} else {
+		mediumBatchResultsPool.Put(m)
 	}
 }
