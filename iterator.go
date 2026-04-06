@@ -1149,59 +1149,6 @@ func navigateToPathSimple(data any, path string) (any, error) {
 // STREAM ITERATOR - Memory-efficient iteration over large JSON data
 // ============================================================================
 
-// StreamIteratorConfig holds configuration options for StreamIterator.
-//
-// Deprecated: Use the main Config struct with BufferSize field instead.
-// This type will be removed in v2.0.
-//
-// Example migration:
-//
-//	// Old:
-//	cfg := json.DefaultStreamIteratorConfig()
-//	cfg.BufferSize = 64 * 1024
-//	iter := json.NewStreamIteratorWithConfig(reader, cfg)
-//
-//	// New:
-//	cfg := json.DefaultConfig()
-//	cfg.BufferSize = 64 * 1024
-//	iter := json.NewStreamIterator(reader, cfg)
-//
-// Deprecated: Use the main Config struct with BufferSize field instead.
-// This type will be removed in v2.0.
-type StreamIteratorConfig struct {
-	BufferSize int  // Buffer size for underlying reader (default: 32KB)
-	ReadAhead  bool // Enable read-ahead buffering for improved performance
-}
-
-// DefaultStreamIteratorConfig returns the default configuration for StreamIterator.
-//
-// Deprecated: Use DefaultConfig() and modify BufferSize field instead.
-// This function will be removed in v2.0.
-func DefaultStreamIteratorConfig() StreamIteratorConfig {
-	return StreamIteratorConfig{
-		BufferSize: 32 * 1024, // 32KB - good balance between memory and performance
-		ReadAhead:  false,
-	}
-}
-
-// ToConfig converts StreamIteratorConfig to the unified Config struct.
-// This method helps with migration from the deprecated StreamIteratorConfig type.
-//
-// Example:
-//
-//	// Old code using StreamIteratorConfig
-//	oldCfg := json.DefaultStreamIteratorConfig()
-//	oldCfg.BufferSize = 64 * 1024
-//
-//	// Convert to new Config
-//	cfg := oldCfg.ToConfig()
-//	iter := json.NewStreamIterator(reader, cfg)
-func (c StreamIteratorConfig) ToConfig() Config {
-	cfg := DefaultConfig()
-	cfg.BufferSize = c.BufferSize
-	return cfg
-}
-
 // StreamIterator provides memory-efficient iteration over large JSON arrays.
 // It processes elements one at a time without loading the entire array into memory.
 type StreamIterator struct {
@@ -1249,39 +1196,6 @@ func NewStreamIterator(reader io.Reader, cfg ...Config) *StreamIterator {
 		index:      -1,
 		buffer:     buffered,
 		bufferSize: bufSize,
-	}
-}
-
-// NewStreamIteratorWithConfig creates a stream iterator with custom configuration.
-//
-// Deprecated: Use NewStreamIterator(reader, cfg) instead.
-// This function will be removed in v2.0.
-//
-// Example migration:
-//
-//	// Old:
-//	cfg := json.StreamIteratorConfig{BufferSize: 64 * 1024}
-//	iter := json.NewStreamIteratorWithConfig(reader, cfg)
-//
-//	// New:
-//	cfg := json.DefaultConfig()
-//	cfg.BufferSize = 64 * 1024
-//	iter := json.NewStreamIterator(reader, cfg)
-func NewStreamIteratorWithConfig(reader io.Reader, config StreamIteratorConfig) *StreamIterator {
-	// Default buffer size: 32KB - good balance between memory and performance
-	if config.BufferSize <= 0 {
-		config.BufferSize = 32 * 1024
-	}
-
-	// Create buffered reader for improved I/O performance
-	buffered := bufio.NewReaderSize(reader, config.BufferSize)
-	decoder := json.NewDecoder(buffered)
-
-	return &StreamIterator{
-		decoder:    decoder,
-		index:      -1,
-		buffer:     buffered,
-		bufferSize: config.BufferSize,
 	}
 }
 
@@ -1660,21 +1574,6 @@ func NewBatchIterator(data []any, cfg ...Config) *BatchIterator {
 	}
 }
 
-// NewBatchIteratorWithSize creates a batch iterator with a specific batch size.
-// This function is provided for backward compatibility.
-//
-// Deprecated: Use NewBatchIterator(data, cfg) with Config.MaxBatchSize instead.
-func NewBatchIteratorWithSize(data []any, batchSize int) *BatchIterator {
-	if batchSize <= 0 {
-		batchSize = 100
-	}
-	return &BatchIterator{
-		data:      data,
-		batchSize: batchSize,
-		current:   0,
-	}
-}
-
 // NextBatch returns the next batch of elements
 // Returns nil when no more batches are available
 func (it *BatchIterator) NextBatch() []any {
@@ -1759,27 +1658,6 @@ func NewParallelIterator(data []any, cfg ...Config) *ParallelIterator {
 	workers := config.MaxConcurrency
 	if workers <= 0 {
 		workers = 4 // Default worker count
-	}
-	if workers > len(data) {
-		workers = len(data)
-		if workers == 0 {
-			workers = 1
-		}
-	}
-	return &ParallelIterator{
-		data:    data,
-		workers: workers,
-		sem:     make(chan struct{}, workers),
-	}
-}
-
-// NewParallelIteratorWithWorkers creates a parallel iterator with a specific worker count.
-// This function is provided for backward compatibility.
-//
-// Deprecated: Use NewParallelIterator(data, cfg) with Config.MaxConcurrency instead.
-func NewParallelIteratorWithWorkers(data []any, workers int) *ParallelIterator {
-	if workers <= 0 {
-		workers = 4
 	}
 	if workers > len(data) {
 		workers = len(data)

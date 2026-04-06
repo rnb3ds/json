@@ -108,7 +108,9 @@ func TestParallelIteratorForEachWithContextCancellation(t *testing.T) {
 		data[i] = i
 	}
 
-	iterator := NewParallelIteratorWithWorkers(data, 4)
+	cfg := DefaultConfig()
+	cfg.MaxConcurrency = 4
+	iterator := NewParallelIterator(data, cfg)
 
 	// Use a context that we'll cancel
 	ctx, cancel := context.WithCancel(context.Background())
@@ -156,7 +158,9 @@ func TestParallelIteratorForEachBatchWithContextCancellation(t *testing.T) {
 		data[i] = i
 	}
 
-	iterator := NewParallelIteratorWithWorkers(data, 4)
+	cfg := DefaultConfig()
+	cfg.MaxConcurrency = 4
+	iterator := NewParallelIterator(data, cfg)
 
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -200,7 +204,9 @@ func TestParallelIteratorForEachNoLeak(t *testing.T) {
 
 	// Run multiple iterations
 	for i := 0; i < 10; i++ {
-		iterator := NewParallelIteratorWithWorkers(data, 4)
+		cfg := DefaultConfig()
+		cfg.MaxConcurrency = 4
+		iterator := NewParallelIterator(data, cfg)
 		err := iterator.ForEach(func(idx int, val any) error {
 			return nil
 		})
@@ -273,7 +279,9 @@ func TestParallelIteratorChannelCleanup(t *testing.T) {
 
 	// Create multiple iterators and verify they don't leak channels
 	for i := 0; i < 50; i++ {
-		iterator := NewParallelIteratorWithWorkers(data, 4)
+		cfg := DefaultConfig()
+		cfg.MaxConcurrency = 4
+		iterator := NewParallelIterator(data, cfg)
 		_ = iterator.ForEach(func(idx int, val any) error {
 			return nil
 		})
@@ -395,7 +403,9 @@ func TestParallelIteratorWithTimeout(t *testing.T) {
 		data[i] = i
 	}
 
-	iterator := NewParallelIteratorWithWorkers(data, 4)
+	cfg := DefaultConfig()
+	cfg.MaxConcurrency = 4
+	iterator := NewParallelIterator(data, cfg)
 
 	// Create context with short timeout
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
@@ -508,7 +518,9 @@ func TestParallelIteratorClose(t *testing.T) {
 		data[i] = i
 	}
 
-	iterator := NewParallelIteratorWithWorkers(data, 4)
+	cfg := DefaultConfig()
+	cfg.MaxConcurrency = 4
+	iterator := NewParallelIterator(data, cfg)
 
 	// Process some data
 	_ = iterator.ForEach(func(idx int, val any) error {

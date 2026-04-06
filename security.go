@@ -263,19 +263,6 @@ func GetCriticalPatterns() []DangerousPattern {
 	return result
 }
 
-// isIndicatorChar checks if a byte is a potential indicator character for dangerous patterns
-// PERFORMANCE: Uses switch for O(1) lookup instead of map
-func isIndicatorChar(c byte) bool {
-	switch c {
-	case '<', '(', ':', '.', '_':
-		return true
-	case 'O', 'R', 'P', 'S', 'a', 'b', 'c', 'd', 'e', 'f', 'i', 'j', 'n', 'o', 'p', 'r', 's', 'v', 'w':
-		return true
-	default:
-		return false
-	}
-}
-
 // indicatorChars is a pre-computed lookup table for indicator characters.
 // PERFORMANCE: O(1) lookup per character during security scanning.
 var indicatorChars = [256]bool{

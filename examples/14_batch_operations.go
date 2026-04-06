@@ -161,24 +161,17 @@ func demonstrateCacheWarmup() {
 	version, _ := json.GetString(jsonStr, "config.version")
 	fmt.Printf("   - config.version: %s\n", version)
 
-	// Path cache warmup (for repeated path parsing)
-	json.WarmupPathCache(commonPaths)
-	fmt.Println("\n   Path cache warmed for common paths")
-
 	// Clear cache when done with this data
 	json.ClearCache()
 	fmt.Println("   Cache cleared")
 }
 
 func demonstrateBulkProcessor() {
-	fmt.Println("\n3. Bulk Processor")
-	fmt.Println("------------------")
+	fmt.Println("\n3. Bulk Operations with GetMultiple")
+	fmt.Println("------------------------------------")
 
 	processor, _ := json.New(json.DefaultConfig())
 	defer processor.Close()
-
-	// Create bulk processor with batch size
-	bulkProcessor := json.NewBulkProcessor(processor, 100)
 
 	jsonStr := `{
 		"items": [
@@ -189,7 +182,7 @@ func demonstrateBulkProcessor() {
 		"metadata": {"count": 3}
 	}`
 
-	// Bulk get multiple paths efficiently
+	// Use GetMultiple for efficient bulk retrieval
 	paths := []string{
 		"items[0].id",
 		"items[0].value",
@@ -198,19 +191,29 @@ func demonstrateBulkProcessor() {
 		"metadata.count",
 	}
 
-	results, err := bulkProcessor.BulkGet(jsonStr, paths)
+	// GetMultiple is optimized for batch operations
+	results, err := json.GetMultiple(jsonStr, paths)
 	if err != nil {
-		fmt.Printf("   Bulk get error: %v\n", err)
+		fmt.Printf("   GetMultiple error: %v\n", err)
 		return
 	}
 
-	fmt.Println("   Bulk get results:")
+	fmt.Println("   GetMultiple results:")
 	for path, value := range results {
 		fmt.Printf("   - %s: %v\n", path, value)
 	}
 
-	// BulkProcessor parses JSON once and reuses for all lookups
-	fmt.Printf("\n   BulkProcessor batch size: 100\n")
+	// Processor-level batch operations
+	fmt.Println("\n   Using Processor.GetMultiple:")
+	procResults, err := processor.GetMultiple(jsonStr, paths)
+	if err != nil {
+		fmt.Printf("   Processor GetMultiple error: %v\n", err)
+		return
+	}
+
+	for path, value := range procResults {
+		fmt.Printf("   - %s: %v\n", path, value)
+	}
 }
 
 func demonstrateEncodeFunctions() {

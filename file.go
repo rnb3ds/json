@@ -216,10 +216,7 @@ func (p *Processor) SaveToFile(filePath string, data any, cfg ...Config) error {
 	}
 
 	// Encode data to JSON
-	config := DefaultConfig()
-	if len(cfg) > 0 {
-		config = cfg[0]
-	}
+	config := getConfigOrDefault(cfg...)
 	jsonStr, err := p.EncodeWithConfig(processedData, config)
 	if err != nil {
 		return err
@@ -257,10 +254,7 @@ func (p *Processor) SaveToWriter(writer io.Writer, data any, cfg ...Config) erro
 	}
 
 	// Encode data to JSON
-	config := DefaultConfig()
-	if len(cfg) > 0 {
-		config = cfg[0]
-	}
+	config := getConfigOrDefault(cfg...)
 	jsonStr, err := p.EncodeWithConfig(processedData, config)
 	if err != nil {
 		return err
@@ -311,10 +305,7 @@ func (p *Processor) MarshalToFile(path string, data any, cfg ...Config) error {
 	}
 
 	// Determine formatting preference
-	config := DefaultConfig()
-	if len(cfg) > 0 {
-		config = cfg[0]
-	}
+	config := getConfigOrDefault(cfg...)
 
 	// Marshal data to JSON bytes
 	var jsonBytes []byte
@@ -517,6 +508,34 @@ func validatePathSymlinks(absPath string) error {
 		return validateUnixPath(realPath)
 	}
 	return validateWindowsPath(realPath)
+}
+
+// validateFilePathStandalone performs security validation without Processor dependency.
+// This is used by NDJSONProcessor and other standalone types.
+func validateFilePathStandalone(filePath string) error {
+	// Step 1: Basic validation
+	if err := validatePathBasic(filePath); err != nil {
+		return err
+	}
+
+	// Step 2: Security pattern validation
+	if err := validatePathSecurity(filePath); err != nil {
+		return err
+	}
+
+	// Step 3: Normalize and get absolute path
+	absPath, err := normalizeAndAbsPath(filePath)
+	if err != nil {
+		return err
+	}
+
+	// Step 4: Platform-specific validation on absolute path
+	if err := validatePathPlatform(absPath); err != nil {
+		return err
+	}
+
+	// Step 5: Symlink validation
+	return validatePathSymlinks(absPath)
 }
 
 // validatePathFileSize checks if file size is within limits
@@ -838,19 +857,13 @@ func NewNDJSONProcessor(cfg ...Config) *NDJSONProcessor {
 	return &NDJSONProcessor{bufferSize: bufferSize}
 }
 
-// NewNDJSONProcessorWithSize creates an NDJSON processor with a specific buffer size.
-// This function is provided for backward compatibility.
-//
-// Deprecated: Use NewNDJSONProcessor(cfg) with Config.JSONLBufferSize instead.
-func NewNDJSONProcessorWithSize(bufferSize int) *NDJSONProcessor {
-	if bufferSize <= 0 {
-		bufferSize = 64 * 1024
-	}
-	return &NDJSONProcessor{bufferSize: bufferSize}
-}
-
 // ProcessFile processes an NDJSON file line by line
 func (np *NDJSONProcessor) ProcessFile(filename string, fn func(lineNum int, obj map[string]any) error) error {
+	// SECURITY: Validate file path to prevent path traversal attacks
+	if err := validateFilePathStandalone(filename); err != nil {
+		return err
+	}
+
 	file, err := os.Open(filename)
 	if err != nil {
 		return err

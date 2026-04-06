@@ -182,6 +182,16 @@ func DefaultConfig() Config {
 	}
 }
 
+// getConfigOrDefault extracts configuration from variadic parameter.
+// Internal helper to reduce code duplication across the codebase.
+// Returns the first config if provided, otherwise returns DefaultConfig().
+func getConfigOrDefault(cfg ...Config) Config {
+	if len(cfg) > 0 {
+		return cfg[0]
+	}
+	return DefaultConfig()
+}
+
 // Clone creates a copy of the configuration.
 // Performs a deep copy of reference types (maps, slices).
 // Returns a pointer to avoid unnecessary copying of the large Config struct.

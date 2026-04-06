@@ -140,40 +140,6 @@ func NewEncoder(w io.Writer, cfg ...Config) *Encoder {
 	return enc
 }
 
-// NewEncoderWithConfig returns a new encoder that writes to w with Config configuration.
-//
-// Deprecated: Use NewEncoder(w, cfg) instead. This function is deprecated since v1.5.0
-// and will be removed in v2.0.0.
-//
-// Example migration:
-//
-//	// Old:
-//	encoder := json.NewEncoderWithConfig(writer, &cfg)
-//
-//	// New:
-//	encoder := json.NewEncoder(writer, cfg)
-func NewEncoderWithConfig(w io.Writer, cfg *Config) *Encoder {
-	p := getDefaultProcessor()
-	enc := &Encoder{
-		w:          w,
-		processor:  p,
-		escapeHTML: true, // Default behavior matches encoding/json
-	}
-	if cfg != nil {
-		// Apply escape HTML setting
-		enc.escapeHTML = cfg.EscapeHTML
-		// Apply pretty print settings
-		if cfg.Pretty {
-			enc.prefix = cfg.Prefix
-			enc.indent = cfg.Indent
-			if enc.indent == "" {
-				enc.indent = "  " // Default indent
-			}
-		}
-	}
-	return enc
-}
-
 // Encode writes the JSON encoding of v to the stream,
 // followed by a newline character.
 //
@@ -773,10 +739,7 @@ func needsCustomEncodingOpts(cfg Config) bool {
 
 // ToJsonString converts any Go value to JSON string with HTML escaping (safe for web)
 func (p *Processor) ToJsonString(value any, cfg ...Config) (string, error) {
-	config := DefaultConfig()
-	if len(cfg) > 0 {
-		config = cfg[0]
-	}
+	config := getConfigOrDefault(cfg...)
 	config.Pretty = false
 	config.EscapeHTML = true
 	return p.EncodeWithConfig(value, config)
@@ -784,10 +747,7 @@ func (p *Processor) ToJsonString(value any, cfg ...Config) (string, error) {
 
 // ToJsonStringPretty converts any Go value to pretty JSON string with HTML escaping
 func (p *Processor) ToJsonStringPretty(value any, cfg ...Config) (string, error) {
-	config := DefaultConfig()
-	if len(cfg) > 0 {
-		config = cfg[0]
-	}
+	config := getConfigOrDefault(cfg...)
 	config.Pretty = true
 	config.EscapeHTML = true
 	return p.EncodeWithConfig(value, config)
@@ -795,10 +755,7 @@ func (p *Processor) ToJsonStringPretty(value any, cfg ...Config) (string, error)
 
 // ToJsonStringStandard converts any Go value to compact JSON string without HTML escaping
 func (p *Processor) ToJsonStringStandard(value any, cfg ...Config) (string, error) {
-	config := DefaultConfig()
-	if len(cfg) > 0 {
-		config = cfg[0]
-	}
+	config := getConfigOrDefault(cfg...)
 	return p.EncodeWithConfig(value, config)
 }
 
@@ -877,10 +834,7 @@ func (p *Processor) EncodeStream(values any, cfg ...Config) (string, error) {
 	if err := p.checkClosed(); err != nil {
 		return "", err
 	}
-	config := DefaultConfig()
-	if len(cfg) > 0 {
-		config = cfg[0]
-	}
+	config := getConfigOrDefault(cfg...)
 	return p.EncodeWithConfig(values, config)
 }
 
@@ -891,10 +845,7 @@ func (p *Processor) EncodeStream(values any, cfg ...Config) (string, error) {
 //
 //	result, err := processor.EncodeBatch(pairs, json.PrettyConfig())
 func (p *Processor) EncodeBatch(pairs map[string]any, cfg ...Config) (string, error) {
-	config := DefaultConfig()
-	if len(cfg) > 0 {
-		config = cfg[0]
-	}
+	config := getConfigOrDefault(cfg...)
 	return p.EncodeWithConfig(pairs, config)
 }
 

@@ -8,85 +8,85 @@ import (
 )
 
 // ============================================================================
-// JSONL CONFIG TESTS
+// JSONL CONFIG TESTS - Using unified Config struct
 // ============================================================================
 
-func TestDefaultJSONLConfig(t *testing.T) {
-	config := defaultJSONLConfig()
+func TestJSONLConfigDefaults(t *testing.T) {
+	config := DefaultConfig()
 
-	if config.BufferSize <= 0 {
-		t.Error("BufferSize should be positive")
+	if config.JSONLBufferSize <= 0 {
+		t.Error("JSONLBufferSize should be positive")
 	}
-	if config.MaxLineSize <= 0 {
-		t.Error("MaxLineSize should be positive")
+	if config.JSONLMaxLineSize <= 0 {
+		t.Error("JSONLMaxLineSize should be positive")
 	}
-	if !config.SkipEmpty {
-		t.Error("SkipEmpty should be true by default")
+	if !config.JSONLSkipEmpty {
+		t.Error("JSONLSkipEmpty should be true by default")
 	}
-	if config.SkipComments {
-		t.Error("SkipComments should be false by default")
+	if config.JSONLSkipComments {
+		t.Error("JSONLSkipComments should be false by default")
 	}
-	if config.ContinueOnErr {
-		t.Error("ContinueOnErr should be false by default")
+	if config.JSONLContinueOnErr {
+		t.Error("JSONLContinueOnErr should be false by default")
 	}
 }
 
-func TestShouldSkipJSONLLine(t *testing.T) {
+func TestShouldSkipJSONLLineFromConfig(t *testing.T) {
 	tests := []struct {
 		name     string
 		line     []byte
-		config   jsonlConfig
+		config   Config
 		expected bool
 	}{
 		{
 			name:     "empty_line_skip_true",
 			line:     []byte{},
-			config:   jsonlConfig{SkipEmpty: true},
+			config:   Config{JSONLSkipEmpty: true},
 			expected: true,
 		},
 		{
 			name:     "empty_line_skip_false",
 			line:     []byte{},
-			config:   jsonlConfig{SkipEmpty: false},
+			config:   Config{JSONLSkipEmpty: false},
 			expected: false,
 		},
 		{
 			name:     "hash_comment_skip",
 			line:     []byte("# this is a comment"),
-			config:   jsonlConfig{SkipComments: true},
+			config:   Config{JSONLSkipComments: true},
 			expected: true,
 		},
 		{
 			name:     "double_slash_comment_skip",
 			line:     []byte("// this is a comment"),
-			config:   jsonlConfig{SkipComments: true},
+			config:   Config{JSONLSkipComments: true},
 			expected: true,
 		},
 		{
 			name:     "comment_skip_disabled",
 			line:     []byte("# this is a comment"),
-			config:   jsonlConfig{SkipComments: false},
+			config:   Config{JSONLSkipComments: false},
 			expected: false,
 		},
 		{
 			name:     "normal_json_not_skipped",
 			line:     []byte(`{"key":"value"}`),
-			config:   defaultJSONLConfig(),
+			config:   DefaultConfig(),
 			expected: false,
 		},
 		{
 			name:     "single_slash_not_comment",
 			line:     []byte(`/path/to/file`),
-			config:   jsonlConfig{SkipComments: true},
+			config:   Config{JSONLSkipComments: true},
 			expected: false,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := shouldSkipJSONLLine(tt.line, tt.config)
+			result := shouldSkipJSONLLineFromConfig(tt.line, tt.config)
 			if result != tt.expected {
-				t.Errorf("shouldSkipJSONLLine() = %v, want %v", result, tt.expected)
+				t.Errorf("shouldSkipJSONLLineFromConfig() = %v, want %v", result, tt.expected)
 			}
 		})
 	}
@@ -124,95 +124,6 @@ func TestProcessor_StreamJSONL(t *testing.T) {
 	}
 	if len(names) != 3 || names[0] != "Alice" || names[1] != "Bob" || names[2] != "Charlie" {
 		t.Errorf("Names mismatch: %v", names)
-	}
-}
-
-func TestProcessor_StreamJSONLWithConfig(t *testing.T) {
-	processor, err := New()
-	if err != nil {
-		t.Fatalf("Failed to create processor: %v", err)
-	}
-	defer processor.Close()
-
-	tests := []struct {
-		name          string
-		input         string
-		config        streamJSONLConfig
-		expectedCount int
-		wantErr       bool
-	}{
-		{
-			name:          "basic_jsonl",
-			input:         "{\"name\":\"Alice\"}\n{\"name\":\"Bob\"}\n{\"name\":\"Charlie\"}",
-			config:        defaultStreamJSONLConfig(),
-			expectedCount: 3,
-			wantErr:       false,
-		},
-		{
-			name:          "skip_empty_lines",
-			input:         "{\"a\":1}\n\n{\"b\":2}\n\n{\"c\":3}",
-			config:        streamJSONLConfig{SkipEmpty: true},
-			expectedCount: 3,
-			wantErr:       false,
-		},
-		{
-			name:          "keep_empty_lines_errors",
-			input:         "{\"a\":1}\n\n{\"b\":2}",
-			config:        streamJSONLConfig{SkipEmpty: false},
-			expectedCount: 0, // Will error on empty line
-			wantErr:       true,
-		},
-		{
-			name:          "skip_comments",
-			input:         "# comment\n{\"a\":1}\n// another comment\n{\"b\":2}",
-			config:        streamJSONLConfig{SkipEmpty: true, SkipComments: true},
-			expectedCount: 2,
-			wantErr:       false,
-		},
-		{
-			name:          "continue_on_error",
-			input:         "{\"valid\":1}\n{invalid}\n{\"valid\":2}",
-			config:        streamJSONLConfig{ContinueOnError: true, SkipEmpty: true},
-			expectedCount: 2,
-			wantErr:       false,
-		},
-		{
-			name:          "stop_on_error",
-			input:         "{\"valid\":1}\n{invalid}\n{\"valid\":2}",
-			config:        streamJSONLConfig{ContinueOnError: false, SkipEmpty: true},
-			expectedCount: 0,
-			wantErr:       true,
-		},
-		{
-			name:          "empty_input",
-			input:         "",
-			config:        defaultStreamJSONLConfig(),
-			expectedCount: 0,
-			wantErr:       false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			var count int
-			err := processor.StreamJSONLWithConfig(strings.NewReader(tt.input), tt.config, func(lineNum int, item *IterableValue) error {
-				count++
-				return nil
-			})
-
-			if tt.wantErr {
-				if err == nil {
-					t.Error("Expected error, got nil")
-				}
-			} else {
-				if err != nil {
-					t.Errorf("Unexpected error: %v", err)
-				}
-				if count != tt.expectedCount {
-					t.Errorf("Expected %d lines, got %d", tt.expectedCount, count)
-				}
-			}
-		})
 	}
 }
 
@@ -803,30 +714,6 @@ func TestStreamLinesInto(t *testing.T) {
 	}
 	if results[0].Value != "first" {
 		t.Errorf("results[0].Value = %q, want %q", results[0].Value, "first")
-	}
-}
-
-func testInternalStreamLinesIntoWithConfig(t *testing.T) {	type Record struct {
-		Key string `json:"key"`
-	}
-
-	input := "# comment\n{\"key\":\"value1\"}\n\n{\"key\":\"value2\"}"
-
-	config := jsonlConfig{
-		BufferSize:    64 * 1024,
-		MaxLineSize:   1024 * 1024,
-		SkipEmpty:     true,
-		SkipComments:  true,
-		ContinueOnErr: false,
-	}
-
-	results, err := streamLinesIntoWithConfig[Record](strings.NewReader(input), config, nil)
-	if err != nil {
-		t.Fatalf(" streamLinesIntoWithConfig error: %v", err)
-	}
-
-	if len(results) != 2 {
-		t.Errorf("Expected 2 results (comments and empty lines skipped), got %d", len(results))
 	}
 }
 

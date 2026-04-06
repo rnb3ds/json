@@ -1,6 +1,6 @@
 # cybergodev/json
 
-[![Go Version](https://img.shields.io/badge/Go-1.24+-00ADD8.svg)](https://golang.org)
+[![Go Version](https://img.shields.io/badge/Go-1.25+-00ADD8.svg)](https://golang.org)
 [![GoDoc](https://pkg.go.dev/badge/github.com/cybergodev/json.svg)](https://pkg.go.dev/github.com/cybergodev/json)
 [![MIT License](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
 [![Thread Safe](https://img.shields.io/badge/Thread_Safe-Yes-brightgreen.svg)](https://pkg.go.dev/github.com/cybergodev/json)
@@ -10,23 +10,42 @@
 > A high-performance, feature-rich Go JSON processing library with 100% `encoding/json` compatibility.
 > Powerful path syntax, type safety, streaming processing, production-grade performance.
 
-**[中文文档](README_zh-CN.md)**
+**[中文文档](README_zh-CN.md)** | **[API Reference](docs/API_REFERENCE.md)** | **[Quick Reference](docs/QUICK_REFERENCE.md)**
+
+---
+
+## Table of Contents
+
+- [Why cybergodev/json](#why-cybergodevjson)
+- [Features](#features)
+- [Installation](#installation)
+- [Quick Start](#quick-start)
+- [Path Syntax Reference](#path-syntax-reference)
+- [Core API](#core-api)
+- [Configuration](#configuration)
+- [Advanced Features](#advanced-features)
+- [Common Use Cases](#common-use-cases)
+- [Performance Monitoring](#performance-monitoring)
+- [Migration Guide](#migration-guide)
+- [Example Code](#example-code)
+- [Documentation](#documentation)
+- [License](#license)
 
 ---
 
 ## Why cybergodev/json
 
 | Feature | encoding/json | cybergodev/json |
-|---------|---------------|-----------------|
+|--------|---------------|-----------------|
 | Path-based access | Manual unmarshal | `json.Get(data, "users[0].name")` |
-| Negative index | - | `items[-1]` gets last element |
-| Flatten nested arrays | - | `users{flat:tags}` |
-| Type-safe defaults | - | `GetStringOr(data, "path", "default")` |
-| Streaming large files | - | Built-in streaming processors |
-| Schema validation | - | JSON Schema validation |
-| Memory pooling | - | `sync.Pool` for hot paths |
-| Caching | - | Smart path cache with TTL |
-| 100% Compatibility | Native | Drop-in replacement |
+| Negative index | ❌ | `items[-1]` gets last element |
+| Flatten nested arrays | ❌ | `users{flat:tags}` |
+| Type-safe defaults | ❌ | `GetStringOr(data, "path", "default")` |
+| Streaming large files | ❌ | Built-in streaming processors |
+| Schema validation | ❌ | JSON Schema validation |
+| Memory pooling | ❌ | `sync.Pool` for hot paths |
+| Caching | ❌ | Smart path cache with TTL |
+| 100% Compatibility | ✅ Native | Drop-in replacement |
 
 ---
 
@@ -47,7 +66,7 @@
 go get github.com/cybergodev/json
 ```
 
-**Requirements**: Go 1.24 or later
+**Requirements**: Go 1.25 or later
 
 ---
 
@@ -62,21 +81,19 @@ import (
 )
 
 func main() {
-    data := `{
-        "user": {
-            "name": "Alice",
-            "age": 28,
-            "tags": ["premium", "verified"]
-        }
-    }`
+    data := `{"user": {"name": "Alice", "age": 28, "tags": ["premium", "verified"]}}`
 
     // Simple field access
     name, _ := json.GetString(data, "user.name")
     fmt.Println(name) // "Alice"
 
-    // Type-safe retrieval
-    age, _ := json.GetInt(data, "user.age")
+    // Type-safe retrieval with generics
+    age, _ := json.GetTyped[int](data, "user.age")
     fmt.Println(age) // 28
+
+    // With default value (no error on missing path)
+    email := json.GetTypedOr[string](data, "user.email", "unknown@example.com")
+    fmt.Println(email) // "unknown@example.com"
 
     // Negative indexing (last element)
     lastTag, _ := json.Get(data, "user.tags[-1]")

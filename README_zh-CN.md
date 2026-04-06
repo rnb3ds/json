@@ -1,6 +1,6 @@
 # cybergodev/json
 
-[![Go Version](https://img.shields.io/badge/Go-1.24+-00ADD8.svg)](https://golang.org)
+[![Go Version](https://img.shields.io/badge/Go-1.25+-00ADD8.svg)](https://golang.org)
 [![GoDoc](https://pkg.go.dev/badge/github.com/cybergodev/json.svg)](https://pkg.go.dev/github.com/cybergodev/json)
 [![MIT License](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
 [![Thread Safe](https://img.shields.io/badge/Thread_Safe-Yes-brightgreen.svg)](https://pkg.go.dev/github.com/cybergodev/json)
@@ -10,23 +10,42 @@
 > 一个高性能、功能丰富的 Go JSON 处理库，100% 兼容 `encoding/json`。
 > 强大的路径语法、类型安全、流式处理、生产级性能。
 
-**[English Documentation](README.md)**
+**[English Documentation](README.md)** | **[API 参考](docs/API_REFERENCE.md)** | **[快速参考](docs/QUICK_REFERENCE.md)**
+
+---
+
+## 目录
+
+- [为什么选择 cybergodev/json](#为什么选择-cybergodevjson)
+- [特性](#特性)
+- [安装](#安装)
+- [快速开始](#快速开始)
+- [路径语法参考](#路径语法参考)
+- [核心 API](#核心-api)
+- [配置](#配置)
+- [高级功能](#高级功能)
+- [常见用例](#常见用例)
+- [性能监控](#性能监控)
+- [迁移指南](#迁移指南)
+- [示例代码](#示例代码)
+- [文档](#文档)
+- [许可证](#许可证)
 
 ---
 
 ## 为什么选择 cybergodev/json
 
 | 功能 | encoding/json | cybergodev/json |
-|-----|---------------|-----------------|
+|------|---------------|-----------------|
 | 路径访问 | 手动解析 | `json.Get(data, "users[0].name")` |
-| 负索引 | - | `items[-1]` 获取最后一个元素 |
-| 扁平化嵌套数组 | - | `users{flat:tags}` |
-| 类型安全默认值 | - | `GetStringOr(data, "path", "default")` |
-| 大文件流式处理 | - | 内置流式处理器 |
-| Schema 验证 | - | JSON Schema 验证 |
-| 内存池 | - | 热路径使用 `sync.Pool` |
-| 缓存 | - | 智能 TTL 路径缓存 |
-| 100% 兼容性 | 原生 | 直接替换 |
+| 负索引 | ❌ | `items[-1]` 获取最后一个元素 |
+| 扁平化嵌套数组 | ❌ | `users{flat:tags}` |
+| 类型安全默认值 | ❌ | `GetStringOr(data, "path", "default")` |
+| 大文件流式处理 | ❌ | 内置流式处理器 |
+| Schema 验证 | ❌ | JSON Schema 验证 |
+| 内存池 | ❌ | 热路径使用 `sync.Pool` |
+| 缓存 | ❌ | 智能 TTL 路径缓存 |
+| 100% 兼容性 | ✅ 原生 | 直接替换 |
 
 ---
 
@@ -47,7 +66,7 @@
 go get github.com/cybergodev/json
 ```
 
-**要求**: Go 1.24 或更高版本
+**要求**: Go 1.25 或更高版本
 
 ---
 
