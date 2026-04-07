@@ -207,11 +207,20 @@ func (p *Processor) Close() error {
 
 			select {
 			case <-drainDone:
-				// Drain completed
+				// Drain completed - goroutine exited cleanly
+				drainCancel()
 			case <-drainCtx.Done():
-				// Timeout on drain - continue with cleanup
+				// Timeout on drain - cancel context to signal goroutine to exit,
+				// then wait briefly for it to acknowledge
+				drainCancel()
+				select {
+				case <-drainDone:
+					// Goroutine exited after context cancellation
+				case <-time.After(100 * time.Millisecond):
+					// Goroutine still running - cannot wait indefinitely
+					// The goroutine will exit when it checks drainCtx.Done()
+				}
 			}
-			drainCancel() // Ensure context is cancelled to stop goroutine
 		}
 
 		// Safely close cache: cancels cleanup goroutines and clears data

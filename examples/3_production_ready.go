@@ -61,7 +61,7 @@ func main() {
 }
 
 func demonstrateConfigurations(testData string) {
-	fmt.Println("1️⃣  Configuration Patterns")
+	fmt.Println("1️. Configuration Patterns")
 	fmt.Println("───────────────────────────")
 
 	// 1. Default configuration (quick start)
@@ -117,7 +117,7 @@ func demonstrateConfigurations(testData string) {
 }
 
 func demonstrateConcurrency(testData string) {
-	fmt.Println("\n2️⃣  Thread-Safe Concurrent Operations")
+	fmt.Println("\n2️. Thread-Safe Concurrent Operations")
 	fmt.Println("──────────────────────────────────────")
 
 	processor, _ := json.New(json.DefaultConfig())
@@ -174,7 +174,7 @@ func demonstrateConcurrency(testData string) {
 }
 
 func demonstratePerformance(testData string) {
-	fmt.Println("\n3️⃣  Performance Optimization")
+	fmt.Println("\n3️. Performance Optimization")
 	fmt.Println("─────────────────────────────")
 
 	// Test with cache enabled
@@ -220,7 +220,7 @@ func demonstratePerformance(testData string) {
 }
 
 func demonstrateResourceManagement(testData string) {
-	fmt.Println("\n4️⃣  Resource Management")
+	fmt.Println("\n4️. Resource Management")
 	fmt.Println("────────────────────────")
 
 	// Proper resource lifecycle management
@@ -259,7 +259,7 @@ func demonstrateResourceManagement(testData string) {
 }
 
 func demonstrateMonitoring(testData string) {
-	fmt.Println("\n5️⃣  Monitoring & Metrics")
+	fmt.Println("\n5. Monitoring & Metrics")
 	fmt.Println("─────────────────────────")
 
 	config := json.DefaultConfig()

@@ -51,7 +51,7 @@ func main() {
 }
 
 func demonstrateSafeConversion() {
-	fmt.Println("1️⃣  Safe Type Conversion")
+	fmt.Println("1. Safe Type Conversion")
 	fmt.Println("─────────────────────────")
 
 	values := []interface{}{
@@ -98,7 +98,7 @@ func demonstrateSafeConversion() {
 }
 
 func demonstrateAutomaticConversion() {
-	fmt.Println("\n2️⃣  Automatic Type Conversion")
+	fmt.Println("\n2. Automatic Type Conversion")
 	fmt.Println("───────────────────────────")
 
 	testJSON := `{
@@ -135,7 +135,7 @@ func demonstrateAutomaticConversion() {
 }
 
 func demonstrateNumberHandling() {
-	fmt.Println("\n3️⃣  JSON Number Handling")
+	fmt.Println("\n3. JSON Number Handling")
 	fmt.Println("────────────────────────")
 
 	// JSON with number in various formats
@@ -177,7 +177,7 @@ func demonstrateNumberHandling() {
 }
 
 func demonstrateStringConversion() {
-	fmt.Println("\n4️⃣  String Conversion")
+	fmt.Println("\n4. String Conversion")
 	fmt.Println("──────────────────────")
 
 	values := []interface{}{
@@ -196,7 +196,7 @@ func demonstrateStringConversion() {
 }
 
 func demonstrateBoolConversion() {
-	fmt.Println("\n5️⃣  Boolean Conversion")
+	fmt.Println("\n5. Boolean Conversion")
 	fmt.Println("───────────────────────")
 
 	fmt.Println("   Boolean conversion truth table:")
@@ -233,7 +233,7 @@ func demonstrateBoolConversion() {
 }
 
 func demonstrateGenerics() {
-	fmt.Println("\n6️⃣  Type-Safe Generic Operations")
+	fmt.Println("\n6. Type-Safe Generic Operations")
 	fmt.Println("────────────────────────────────")
 
 	testJSON := `{
@@ -285,7 +285,7 @@ func demonstrateGenerics() {
 }
 
 func demonstrateDeepCopy() {
-	fmt.Println("\n7️⃣  Deep Copy with Type Preservation")
+	fmt.Println("\n7. Deep Copy with Type Preservation")
 	fmt.Println("──────────────────────────────────")
 
 	original := map[string]interface{}{

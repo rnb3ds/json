@@ -170,12 +170,16 @@ func demonstrateMerge() {
 	fmt.Println("\n   Merge Modes:")
 
 	// Intersection merge - only common keys
-	intersected, _ := json.MergeJSON(baseConfig, overrideConfig, json.MergeIntersection)
+	intersectCfg := json.DefaultConfig()
+	intersectCfg.MergeMode = json.MergeIntersection
+	intersected, _ := json.MergeJSON(baseConfig, overrideConfig, intersectCfg)
 	fmt.Println("\n   Intersection (common keys only):")
 	fmt.Println(intersected)
 
 	// Difference merge - keys only in base
-	diff, _ := json.MergeJSON(baseConfig, overrideConfig, json.MergeDifference)
+	diffCfg := json.DefaultConfig()
+	diffCfg.MergeMode = json.MergeDifference
+	diff, _ := json.MergeJSON(baseConfig, overrideConfig, diffCfg)
 	fmt.Println("\n   Difference (keys only in base):")
 	fmt.Println(diff)
 }

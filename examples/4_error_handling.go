@@ -46,7 +46,7 @@ func main() {
 }
 
 func demonstrateStructuredErrors() {
-	fmt.Println("1️⃣  Structured Errors (JsonsError)")
+	fmt.Println("1️. Structured Errors (JsonsError)")
 	fmt.Println("──────────────────────────────────")
 
 	// Invalid JSON example
@@ -79,7 +79,7 @@ func demonstrateStructuredErrors() {
 }
 
 func demonstrateErrorClassification() {
-	fmt.Println("\n2️⃣  Error Classification")
+	fmt.Println("\n2️. Error Classification")
 	fmt.Println("─────────────────────────")
 
 	testCases := []struct {
@@ -107,7 +107,7 @@ func demonstrateErrorClassification() {
 }
 
 func demonstrateErrorSuggestions() {
-	fmt.Println("\n3️⃣  Error Suggestions")
+	fmt.Println("\n3. Error Suggestions")
 	fmt.Println("──────────────────────")
 
 	// Simulate various errors
@@ -130,7 +130,7 @@ func demonstrateErrorSuggestions() {
 }
 
 func demonstrateRetryLogic() {
-	fmt.Println("\n4️⃣  Retry Logic")
+	fmt.Println("\n4️. Retry Logic")
 	fmt.Println("───────────────")
 
 	// Simulate errors and check retry ability
@@ -156,7 +156,7 @@ func demonstrateRetryLogic() {
 }
 
 func demonstrateErrorWrapping() {
-	fmt.Println("\n5️⃣  Error Wrapping")
+	fmt.Println("\n5️. Error Wrapping")
 	fmt.Println("─────────────────")
 
 	// Wrap errors with additional context

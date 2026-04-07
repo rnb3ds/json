@@ -56,7 +56,7 @@ func main() {
 }
 
 func demonstrateSaveToFile(tempDir string) {
-	fmt.Println("1️⃣  Save to File")
+	fmt.Println("1. Save to File")
 	fmt.Println("─────────────────")
 
 	// Sample data
@@ -100,7 +100,7 @@ func demonstrateSaveToFile(tempDir string) {
 }
 
 func demonstrateLoadFromFile(tempDir string) {
-	fmt.Println("\n2️⃣  Load from File")
+	fmt.Println("\n2. Load from File")
 	fmt.Println("───────────────────")
 
 	// First create a file
@@ -129,7 +129,7 @@ func demonstrateLoadFromFile(tempDir string) {
 }
 
 func demonstrateMarshalToFile(tempDir string) {
-	fmt.Println("\n3️⃣  Marshal to File")
+	fmt.Println("\n3. Marshal to File")
 	fmt.Println("────────────────────")
 
 	type User struct {
@@ -166,7 +166,7 @@ func demonstrateMarshalToFile(tempDir string) {
 }
 
 func demonstrateUnmarshalFromFile(tempDir string) {
-	fmt.Println("\n4️⃣  Unmarshal from File")
+	fmt.Println("\n4.  Unmarshal from File")
 	fmt.Println("───────────────────────")
 
 	// First create a file with JSON data
@@ -207,7 +207,7 @@ func demonstrateUnmarshalFromFile(tempDir string) {
 }
 
 func demonstrateReadModifyWrite(tempDir string) {
-	fmt.Println("\n5️⃣  Read-Modify-Write Pattern")
+	fmt.Println("\n5.  Read-Modify-Write Pattern")
 	fmt.Println("────────────────────────────")
 
 	// Create initial config file

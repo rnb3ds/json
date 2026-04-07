@@ -199,8 +199,8 @@ type Decoder struct {
 	processor             *Processor
 	useNumber             bool
 	disallowUnknownFields bool
-	offset                int64
-	scanp                 int64 // start of unread data in buf
+	offset                int64 // total bytes read from input
+	scanp                 int64 // reserved: start of unread data for future buffered scanning
 }
 
 // NewDecoder returns a new decoder that reads from r.

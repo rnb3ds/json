@@ -255,13 +255,25 @@ func (e *FastEncoder) EncodeString(s string) {
 }
 
 // isSafeString checks if a string is safe for direct JSON output (no escaping needed AND valid UTF-8)
-// PERFORMANCE: Combined single-pass check that replaces separate needsEscape + utf8.ValidString calls
+// PERFORMANCE v2: Combined single-pass check with optimized paths for common cases
 // Returns true only if the string:
 // 1. Contains no characters that need JSON escaping (control chars, quotes, backslashes)
 // 2. Is valid UTF-8 (all high bytes are part of valid multi-byte sequences)
 func isSafeString(s string) bool {
 	n := len(s)
 	if n == 0 {
+		return true
+	}
+
+	// PERFORMANCE v2: Fast path for short strings (<=8 bytes)
+	// Avoids SWAR loop overhead for very common small strings
+	if n <= 8 {
+		for i := 0; i < n; i++ {
+			c := s[i]
+			if needsEscapeTable[c] || c >= 0x80 {
+				return false
+			}
+		}
 		return true
 	}
 
@@ -546,42 +558,51 @@ var mediumIntsNeg [900][]byte
 var largeIntsNeg [9000][]byte
 
 // init initializes the medium and negative integer lookup tables and common floats
+// PERFORMANCE v2: Optimized initialization using direct byte array construction
+// avoids string concatenation allocations
 func init() {
-	// Initialize medium integers (100-999)
+	// Pre-allocate a single buffer for building numbers
+	var buf [4]byte
+
+	// Initialize medium integers (100-999) - direct byte construction
 	for i := range 900 {
 		n := i + 100
-		mediumInts[i] = []byte(
-			string(byte('0'+n/100)) +
-				string(byte('0'+(n/10)%10)) +
-				string(byte('0'+n%10)),
-		)
+		buf[0] = byte('0' + n/100)
+		buf[1] = byte('0' + (n/10)%10)
+		buf[2] = byte('0' + n%10)
+		// Create a copy since buf will be reused
+		mediumInts[i] = []byte{buf[0], buf[1], buf[2]}
 	}
 
-	// Initialize large integers (1000-9999)
+	// Initialize large integers (1000-9999) - direct byte construction
+	var buf4 [4]byte
 	for i := range 9000 {
 		n := i + 1000
-		largeInts[i] = []byte(
-			string(byte('0'+n/1000)) +
-				string(byte('0'+(n/100)%10)) +
-				string(byte('0'+(n/10)%10)) +
-				string(byte('0'+n%10)),
-		)
+		buf4[0] = byte('0' + n/1000)
+		buf4[1] = byte('0' + (n/100)%10)
+		buf4[2] = byte('0' + (n/10)%10)
+		buf4[3] = byte('0' + n%10)
+		largeInts[i] = []byte{buf4[0], buf4[1], buf4[2], buf4[3]}
 	}
 
 	// Initialize negative integers (-1 to -99)
 	smallIntsNeg[0] = []byte{} // unused (index 0)
 	for i := 1; i < 100; i++ {
-		smallIntsNeg[i] = []byte("-" + string(smallInts[i]))
+		positive := smallInts[i]
+		smallIntsNeg[i] = []byte{'-', positive[0]}
+		if len(positive) > 1 {
+			smallIntsNeg[i] = append(smallIntsNeg[i], positive[1:]...)
+		}
 	}
 
 	// Initialize medium negative integers (-100 to -999)
 	for i := range 900 {
-		mediumIntsNeg[i] = []byte("-" + string(mediumInts[i]))
+		mediumIntsNeg[i] = []byte{'-', mediumInts[i][0], mediumInts[i][1], mediumInts[i][2]}
 	}
 
 	// Initialize large negative integers (-1000 to -9999)
 	for i := range 9000 {
-		largeIntsNeg[i] = []byte("-" + string(largeInts[i]))
+		largeIntsNeg[i] = []byte{'-', largeInts[i][0], largeInts[i][1], largeInts[i][2], largeInts[i][3]}
 	}
 
 	// Initialize common floats table
@@ -851,7 +872,18 @@ func (e *FastEncoder) EncodeMapStringInt(m map[string]int) error {
 }
 
 // EncodeArray encodes a []any
+// PERFORMANCE v2: Pre-allocates buffer capacity based on array size estimate
 func (e *FastEncoder) EncodeArray(arr []any) error {
+	// PERFORMANCE: Pre-grow buffer to reduce reallocations for large arrays
+	n := len(arr)
+	if n > 8 {
+		// Estimate: each element needs ~16 bytes on average
+		needed := n * 16
+		if cap(e.buf)-len(e.buf) < needed {
+			e.buf = append(e.buf[:cap(e.buf)], make([]byte, needed)...)[:len(e.buf)]
+		}
+	}
+
 	e.buf = append(e.buf, '[')
 
 	for i, v := range arr {
@@ -868,7 +900,19 @@ func (e *FastEncoder) EncodeArray(arr []any) error {
 }
 
 // EncodeStringSlice encodes a []string
+// PERFORMANCE v2: Pre-allocates buffer for large slices
 func (e *FastEncoder) EncodeStringSlice(arr []string) {
+	// Pre-allocate for large slices
+	if n := len(arr); n > 8 {
+		totalLen := n * 2 // brackets and commas
+		for _, s := range arr {
+			totalLen += len(s) + 4 // quotes + potential escape overhead
+		}
+		if cap(e.buf)-len(e.buf) < totalLen {
+			e.buf = append(e.buf[:cap(e.buf)], make([]byte, totalLen)...)[:len(e.buf)]
+		}
+	}
+
 	e.buf = append(e.buf, '[')
 
 	for i, v := range arr {
@@ -882,7 +926,16 @@ func (e *FastEncoder) EncodeStringSlice(arr []string) {
 }
 
 // EncodeIntSlice encodes a []int
+// PERFORMANCE v2: Pre-allocates buffer for large slices
 func (e *FastEncoder) EncodeIntSlice(arr []int) {
+	// Each int needs at most 20 bytes (max int64 digits + comma)
+	if n := len(arr); n > 8 {
+		needed := n * 12 // average estimate
+		if cap(e.buf)-len(e.buf) < needed {
+			e.buf = append(e.buf[:cap(e.buf)], make([]byte, needed)...)[:len(e.buf)]
+		}
+	}
+
 	e.buf = append(e.buf, '[')
 
 	for i, v := range arr {
@@ -896,7 +949,16 @@ func (e *FastEncoder) EncodeIntSlice(arr []int) {
 }
 
 // EncodeFloatSlice encodes a []float64
+// PERFORMANCE v2: Pre-allocates buffer for large slices
 func (e *FastEncoder) EncodeFloatSlice(arr []float64) {
+	// Each float needs at most 24 bytes
+	if n := len(arr); n > 8 {
+		needed := n * 16 // average estimate
+		if cap(e.buf)-len(e.buf) < needed {
+			e.buf = append(e.buf[:cap(e.buf)], make([]byte, needed)...)[:len(e.buf)]
+		}
+	}
+
 	e.buf = append(e.buf, '[')
 
 	for i, v := range arr {

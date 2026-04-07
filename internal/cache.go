@@ -229,6 +229,7 @@ func nextPowerOf2(n int) int {
 // - Uses RLock for the common fast path
 // - Only upgrades to Lock when TTL expiration needs cleanup
 // - LRU position update is deferred to reduce write lock frequency
+// FIX: Properly handles TOCTOU race condition by re-validating entry after lock upgrade
 func (cm *CacheManager) Get(key string) (any, bool) {
 	if cm.config == nil || !cm.config.IsCacheEnabled() {
 		atomic.AddInt64(&cm.missCount, 1)
@@ -258,11 +259,15 @@ func (cm *CacheManager) Get(key string) (any, bool) {
 		shard.mu.RUnlock()
 		// Entry is expired, need write lock to delete
 		shard.mu.Lock()
-		// Double-check after acquiring write lock (entry might have been updated)
+		// FIX: Double-check after acquiring write lock (entry might have been updated)
+		// This handles the TOCTOU race condition properly
 		element, exists = shard.items[key]
 		if exists {
 			entry = element.Value.(*lruEntry)
+			// FIX: Re-check TTL with fresh timestamp after acquiring write lock
+			// Another goroutine might have updated this entry
 			if now-entry.timestamp > ttlNanos {
+				// Still expired - delete it
 				delete(shard.items, entry.key)
 				shard.evictList.Remove(element)
 				shard.size--
@@ -277,7 +282,21 @@ func (cm *CacheManager) Get(key string) (any, bool) {
 				shard.mu.Unlock()
 				return nil, false
 			}
+			// FIX: Entry was updated by another goroutine and is now valid
+			// Return the updated value instead of a miss
+			value := entry.value
+			atomic.AddInt64(&entry.hits, 1) // Update hit count, return value not needed here
+			entry.accessTime = now
+			if entry.freq < 255 {
+				entry.freq++
+			}
+			shard.evictList.MoveToFront(element)
+			shard.mu.Unlock()
+
+			atomic.AddInt64(&cm.hitCount, 1)
+			return value, true
 		}
+		// Entry was deleted by another goroutine
 		shard.mu.Unlock()
 		atomic.AddInt64(&cm.missCount, 1)
 		return nil, false

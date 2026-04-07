@@ -270,6 +270,47 @@ var configFieldList = []configFieldAccessor{
 	{"MergeMode",
 		func(a, b Config) bool { return a.MergeMode == b.MergeMode },
 		func(h uint64, c Config) uint64 { return internal.HashInt(h, int(c.MergeMode)) }},
+	// Large File Processing
+	{"ChunkSize",
+		func(a, b Config) bool { return a.ChunkSize == b.ChunkSize },
+		func(h uint64, c Config) uint64 { return internal.HashInt64(h, c.ChunkSize) }},
+	{"MaxMemory",
+		func(a, b Config) bool { return a.MaxMemory == b.MaxMemory },
+		func(h uint64, c Config) uint64 { return internal.HashInt64(h, c.MaxMemory) }},
+	{"BufferSize",
+		func(a, b Config) bool { return a.BufferSize == b.BufferSize },
+		func(h uint64, c Config) uint64 { return internal.HashInt(h, c.BufferSize) }},
+	{"SamplingEnabled",
+		func(a, b Config) bool { return a.SamplingEnabled == b.SamplingEnabled },
+		func(h uint64, c Config) uint64 { return internal.HashBool(h, c.SamplingEnabled) }},
+	{"SampleSize",
+		func(a, b Config) bool { return a.SampleSize == b.SampleSize },
+		func(h uint64, c Config) uint64 { return internal.HashInt(h, c.SampleSize) }},
+	// JSONL Configuration
+	{"JSONLBufferSize",
+		func(a, b Config) bool { return a.JSONLBufferSize == b.JSONLBufferSize },
+		func(h uint64, c Config) uint64 { return internal.HashInt(h, c.JSONLBufferSize) }},
+	{"JSONLMaxLineSize",
+		func(a, b Config) bool { return a.JSONLMaxLineSize == b.JSONLMaxLineSize },
+		func(h uint64, c Config) uint64 { return internal.HashInt(h, c.JSONLMaxLineSize) }},
+	{"JSONLSkipEmpty",
+		func(a, b Config) bool { return a.JSONLSkipEmpty == b.JSONLSkipEmpty },
+		func(h uint64, c Config) uint64 { return internal.HashBool(h, c.JSONLSkipEmpty) }},
+	{"JSONLSkipComments",
+		func(a, b Config) bool { return a.JSONLSkipComments == b.JSONLSkipComments },
+		func(h uint64, c Config) uint64 { return internal.HashBool(h, c.JSONLSkipComments) }},
+	{"JSONLContinueOnErr",
+		func(a, b Config) bool { return a.JSONLContinueOnErr == b.JSONLContinueOnErr },
+		func(h uint64, c Config) uint64 { return internal.HashBool(h, c.JSONLContinueOnErr) }},
+	{"JSONLWorkers",
+		func(a, b Config) bool { return a.JSONLWorkers == b.JSONLWorkers },
+		func(h uint64, c Config) uint64 { return internal.HashInt(h, c.JSONLWorkers) }},
+	{"JSONLChunkSize",
+		func(a, b Config) bool { return a.JSONLChunkSize == b.JSONLChunkSize },
+		func(h uint64, c Config) uint64 { return internal.HashInt(h, c.JSONLChunkSize) }},
+	{"JSONLMaxMemory",
+		func(a, b Config) bool { return a.JSONLMaxMemory == b.JSONLMaxMemory },
+		func(h uint64, c Config) uint64 { return internal.HashInt64(h, c.JSONLMaxMemory) }},
 	// Context - direct pointer comparison (different context instances are not equal)
 	{"Context",
 		func(a, b Config) bool { return a.Context == b.Context },
@@ -344,6 +385,30 @@ func hashConfigFields(cfg Config) uint64 {
 
 	// CustomEscapes (handled separately due to complexity)
 	h = hashCustomEscapes(h, cfg.CustomEscapes)
+
+	// Hash extension point fields that are not in configFieldList
+	// CustomTypeEncoders - hash by count only (encoders are functions)
+	h = internal.HashInt(h, len(cfg.CustomTypeEncoders))
+	// CustomValidators - hash by count only (validators are interfaces)
+	h = internal.HashInt(h, len(cfg.CustomValidators))
+	// AdditionalDangerousPatterns - hash by count and pattern strings
+	h = internal.HashInt(h, len(cfg.AdditionalDangerousPatterns))
+	for _, p := range cfg.AdditionalDangerousPatterns {
+		h = internal.HashString(h, p.Pattern)
+		h = internal.HashInt(h, int(p.Level))
+	}
+	// Hooks - hash by count only (hooks are interfaces)
+	h = internal.HashInt(h, len(cfg.Hooks))
+	// DisableDefaultPatterns
+	h = internal.HashBool(h, cfg.DisableDefaultPatterns)
+	// CustomEncoder - hash by nil check only (interface)
+	if cfg.CustomEncoder != nil {
+		h = internal.HashBool(h, true)
+	}
+	// CustomPathParser - hash by nil check only (interface)
+	if cfg.CustomPathParser != nil {
+		h = internal.HashBool(h, true)
+	}
 
 	return h
 }
@@ -1193,6 +1258,8 @@ func getProcessorWithConfig(cfg Config) (*Processor, error) {
 // between our delete and their new creation will get a fresh processor, which is safe.
 // GOROUTINE FIX: Uses buffered channel as semaphore to limit concurrent close goroutines
 // and prevent unbounded goroutine growth.
+// DETERMINISM FIX: Uses hash-based eviction order instead of random map iteration
+// to ensure consistent behavior across runs.
 func maybeEvictConfigCache() {
 	configProcessorCacheMu.Lock()
 	defer configProcessorCacheMu.Unlock()
@@ -1208,15 +1275,21 @@ func maybeEvictConfigCache() {
 	}
 
 	var keysToDelete []uint64
-	var validCount int
+	var validEntries []struct {
+		key  uint64
+		proc *Processor
+	}
 
-	// Scan and remove closed/invalid processors
+	// Scan and categorize processors
 	configProcessorCache.Range(func(key, value any) bool {
 		if p, ok := value.(*Processor); ok {
 			if p.IsClosed() {
 				keysToDelete = append(keysToDelete, key.(uint64))
 			} else {
-				validCount++
+				validEntries = append(validEntries, struct {
+					key  uint64
+					proc *Processor
+				}{key.(uint64), p})
 			}
 		} else {
 			keysToDelete = append(keysToDelete, key.(uint64))
@@ -1224,29 +1297,27 @@ func maybeEvictConfigCache() {
 		return true
 	})
 
+	// Delete closed/invalid processors first
 	for _, key := range keysToDelete {
 		configProcessorCache.Delete(key)
 	}
 
-	// If still over limit, evict entries (random eviction)
-	// SECURITY: Delete from cache BEFORE closing to ensure no goroutine
-	// can retrieve this processor while it's being closed.
-	// PERFORMANCE: Close asynchronously to avoid blocking eviction on Close() timeout.
-	if validCount >= configProcessorCacheLimit {
-		var toClose []*Processor
-		evicted := 0
-
-		configProcessorCache.Range(func(key, value any) bool {
-			if evicted >= configProcessorCacheEvictNum {
-				return false
-			}
-			configProcessorCache.Delete(key)
-			if p, ok := value.(*Processor); ok && !p.IsClosed() {
-				toClose = append(toClose, p)
-			}
-			evicted++
-			return true
+	// If still over limit, evict entries using deterministic hash-based order
+	// This ensures consistent eviction behavior across runs
+	if len(validEntries) >= configProcessorCacheLimit {
+		// Sort by key hash to get deterministic eviction order
+		// Keys with lower hash values are evicted first
+		sort.Slice(validEntries, func(i, j int) bool {
+			return validEntries[i].key < validEntries[j].key
 		})
+
+		var toClose []*Processor
+		evictCount := min(configProcessorCacheEvictNum, len(validEntries))
+
+		for i := 0; i < evictCount; i++ {
+			configProcessorCache.Delete(validEntries[i].key)
+			toClose = append(toClose, validEntries[i].proc)
+		}
 
 		// Close evicted processors asynchronously with timeout (best-effort cleanup)
 		// RESOURCE FIX: Added timeout to prevent goroutine leak if Close() hangs

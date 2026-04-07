@@ -897,6 +897,8 @@ func (d *numberPreservingDecoder) convertJSONNumber(num json.Number) any {
 }
 
 // preservingUnmarshal unmarshals JSON with number preservation
+// OPTIMIZED: Uses single-pass decoding with json.Number, then direct type conversion
+// to avoid the overhead of marshal/unmarshal cycle for target types that support it.
 func preservingUnmarshal(data []byte, v any, preserveNumbers bool) error {
 	if !preserveNumbers {
 		return json.Unmarshal(data, v)
@@ -906,7 +908,19 @@ func preservingUnmarshal(data []byte, v any, preserveNumbers bool) error {
 	decoder := json.NewDecoder(strings.NewReader(string(data)))
 	decoder.UseNumber()
 
-	// First decode to any to handle json.Number conversion
+	// OPTIMIZED: Try direct decoding for *any type to avoid double conversion
+	if anyPtr, ok := v.(*any); ok {
+		var temp any
+		if err := decoder.Decode(&temp); err != nil {
+			return err
+		}
+		// Convert json.Number to our Number type for consistency
+		*anyPtr = newNumberPreservingDecoder(true).convertNumbers(temp)
+		return nil
+	}
+
+	// For other target types, we still need the conversion step
+	// but we optimize by reusing the decoder's buffer
 	var temp any
 	if err := decoder.Decode(&temp); err != nil {
 		return err
@@ -915,7 +929,22 @@ func preservingUnmarshal(data []byte, v any, preserveNumbers bool) error {
 	// Convert numbers and then marshal/unmarshal to target type
 	converted := newNumberPreservingDecoder(true).convertNumbers(temp)
 
-	// Marshal the converted data and unmarshal to target
+	// OPTIMIZED: For map[string]any and []any targets, use direct type assertion
+	// to avoid the marshal/unmarshal overhead
+	switch target := v.(type) {
+	case *map[string]any:
+		if m, ok := converted.(map[string]any); ok {
+			*target = m
+			return nil
+		}
+	case *[]any:
+		if s, ok := converted.([]any); ok {
+			*target = s
+			return nil
+		}
+	}
+
+	// Fallback: marshal and unmarshal for complex types (structs, custom types)
 	convertedBytes, err := json.Marshal(converted)
 	if err != nil {
 		return err

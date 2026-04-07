@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"reflect"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -82,10 +83,14 @@ func getPathTypeShard(path string) *pathTypeCacheShard {
 // getPathType determines if a path is simple or complex
 // Simple paths are single keys with no dots or brackets
 // SECURITY: Added size limit with eviction to prevent unbounded memory growth
+// FIX: Added double-check pattern to prevent race condition between RLock and Lock
+// FIX: Use deterministic eviction based on hash to avoid unpredictable map iteration
 func getPathType(path string) pathType {
 	// Check cache first (only for short paths to avoid memory bloat)
 	if len(path) <= 64 {
 		shard := getPathTypeShard(path)
+
+		// Fast path: read lock only
 		shard.mu.RLock()
 		if pt, ok := shard.entries[path]; ok {
 			shard.mu.RUnlock()
@@ -93,6 +98,7 @@ func getPathType(path string) pathType {
 		}
 		shard.mu.RUnlock()
 
+		// Calculate path type (no lock needed)
 		var pt pathType
 		if strings.ContainsAny(path, ".[]") {
 			pt = pathTypeComplex
@@ -100,22 +106,37 @@ func getPathType(path string) pathType {
 			pt = pathTypeSimple
 		}
 
-		// Cache short paths with size limit
+		// Slow path: write lock with double-check to prevent duplicate entries
 		shard.mu.Lock()
-		// Evict entries if shard is full (simple random eviction)
-		if shard.size >= maxEntriesPerShard {
-			// Remove approximately half the entries
-			evictCount := maxEntriesPerShard / 2
-			count := 0
-			for k := range shard.entries {
-				if count >= evictCount {
-					break
-				}
-				delete(shard.entries, k)
-				count++
-			}
-			shard.size -= count
+
+		// Double-check: another goroutine may have filled the entry
+		if existing, ok := shard.entries[path]; ok {
+			shard.mu.Unlock()
+			return existing
 		}
+
+		// Evict entries if shard is full using deterministic hash-based eviction
+		if shard.size >= maxEntriesPerShard {
+			evictCount := maxEntriesPerShard / 2
+
+			// Collect keys for deterministic eviction
+			keys := make([]string, 0, len(shard.entries))
+			for k := range shard.entries {
+				keys = append(keys, k)
+			}
+
+			// Sort by hash value for deterministic eviction order
+			sort.Slice(keys, func(i, j int) bool {
+				return internal.HashStringFNV1a(keys[i]) < internal.HashStringFNV1a(keys[j])
+			})
+
+			// Evict entries with lowest hash values
+			for i := 0; i < evictCount && i < len(keys); i++ {
+				delete(shard.entries, keys[i])
+			}
+			shard.size -= min(evictCount, len(keys))
+		}
+
 		shard.entries[path] = pt
 		shard.size++
 		shard.mu.Unlock()
@@ -283,6 +304,45 @@ func (it *Iterator) Next() (any, bool) {
 	}
 
 	return nil, false
+}
+
+// Reset clears the iterator state and releases cached resources.
+// After calling Reset, the iterator can be reused with new data via ResetWith.
+// This is useful for reducing allocations when iterating over multiple JSON structures.
+//
+// Example:
+//
+//	iter := json.NewIterator(data1)
+//	for iter.HasNext() {
+//	    iter.Next()
+//	}
+//	iter.Reset() // Clear cached keys
+//	iter.ResetWith(data2) // Reuse iterator with new data
+func (it *Iterator) Reset() {
+	it.data = nil
+	it.position = 0
+	// Clear cached keys to release memory
+	it.keys = nil
+	// Reset sync.Once to allow re-initialization with new data
+	it.keysOnce = sync.Once{}
+}
+
+// ResetWith clears the iterator state and initializes it with new data.
+// This allows reusing the iterator to avoid allocations.
+//
+// Example:
+//
+//	iter := json.NewIterator(data1)
+//	// ... iterate over data1 ...
+//	iter.ResetWith(data2) // Reuse iterator with new data
+//	// ... iterate over data2 ...
+func (it *Iterator) ResetWith(data any) {
+	it.data = data
+	it.position = 0
+	// Clear cached keys to release memory
+	it.keys = nil
+	// Reset sync.Once to allow re-initialization with new data
+	it.keysOnce = sync.Once{}
 }
 
 // IterableValue wraps a value to provide convenient access methods during iteration.

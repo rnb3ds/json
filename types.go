@@ -520,16 +520,34 @@ func newResourceMonitor() *resourceMonitor {
 // RecordAllocation records an allocation of the specified size.
 // Note: the peak memory calculation uses a snapshot of allocated/freed counters,
 // so it is approximate under high concurrency. This is acceptable for monitoring.
+// FIX: Limited CAS retries to prevent unbounded loops under high contention.
+// After maxCASRetries, we accept a slightly stale peak value for better throughput.
 func (rm *resourceMonitor) RecordAllocation(bytes int64) {
-	allocated := atomic.AddInt64(&rm.allocatedBytes, bytes)
-	freed := atomic.LoadInt64(&rm.freedBytes)
-	current := allocated - freed
-	for {
+	// Atomically update allocation counter
+	atomic.AddInt64(&rm.allocatedBytes, bytes)
+
+	// FIX: Limit CAS retries to prevent unbounded loops under high contention
+	// This is a reasonable trade-off: we accept slightly stale peak values
+	// in exchange for better throughput and avoiding goroutine starvation
+	const maxCASRetries = 3
+
+	for i := 0; i < maxCASRetries; i++ {
+		allocated := atomic.LoadInt64(&rm.allocatedBytes)
+		freed := atomic.LoadInt64(&rm.freedBytes)
+		current := allocated - freed
+
 		peak := atomic.LoadInt64(&rm.peakMemoryUsage)
-		if current <= peak || atomic.CompareAndSwapInt64(&rm.peakMemoryUsage, peak, current) {
-			break
+		if current <= peak {
+			return // Current is not higher than peak, no update needed
 		}
+
+		if atomic.CompareAndSwapInt64(&rm.peakMemoryUsage, peak, current) {
+			return // Successfully updated peak
+		}
+		// CAS failed - another goroutine updated peak, retry with fresh values
 	}
+	// After maxCASRetries, accept the current peak value
+	// This is acceptable for monitoring purposes where exact precision is not critical
 }
 
 // RecordDeallocation records a deallocation of the specified size

@@ -45,7 +45,7 @@ func main() {
 }
 
 func demonstrateFormatValidation() {
-	fmt.Println("1️⃣  JSON Format Validation")
+	fmt.Println("1. JSON Format Validation")
 	fmt.Println("─────────────────────────")
 
 	testCases := []struct {
@@ -76,7 +76,7 @@ func demonstrateFormatValidation() {
 }
 
 func demonstrateValidationPath() {
-	fmt.Println("\n2️⃣  Path Validation")
+	fmt.Println("\n2. Path Validation")
 	fmt.Println("───────────────────")
 
 	testPaths := []struct {
@@ -113,7 +113,7 @@ func demonstrateValidationPath() {
 }
 
 func demonstrateSchemaValidation() {
-	fmt.Println("\n3️⃣  Schema Validation")
+	fmt.Println("\n3. Schema Validation")
 	fmt.Println("────────────────────")
 
 	// Create a schema for user data
@@ -197,7 +197,7 @@ func demonstrateSchemaValidation() {
 }
 
 func demonstrateSecurityValidation() {
-	fmt.Println("\n4️⃣  Security Validation")
+	fmt.Println("\n4. Security Validation")
 	fmt.Println("───────────────────────")
 
 	// Create a security processor
@@ -238,7 +238,7 @@ func demonstrateSecurityValidation() {
 }
 
 func demonstrateProcessorValidation() {
-	fmt.Println("\n5️⃣  Validation with Processor")
+	fmt.Println("\n5. Validation with Processor")
 	fmt.Println("────────────────────────────")
 
 	// Create processor with validation enabled

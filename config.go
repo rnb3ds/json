@@ -288,6 +288,9 @@ func (c *Config) ValidateWithWarnings() []ConfigWarning {
 	var warnings []ConfigWarning
 
 	// Helper to record clamped int64 values
+	// SEMANTIC: Values <= 0 are considered invalid and set to minimum
+	// This is appropriate for fields where 0 has no meaningful interpretation
+	// (e.g., sizes, counts, limits that must be positive)
 	checkInt64Clamp := func(ptr *int64, min, max int64, fieldName string) {
 		original := *ptr
 		if original <= 0 {
@@ -310,6 +313,8 @@ func (c *Config) ValidateWithWarnings() []ConfigWarning {
 	}
 
 	// Helper to record clamped int values
+	// SEMANTIC: Values <= 0 are considered invalid and set to minimum
+	// This is appropriate for fields where 0 has no meaningful interpretation
 	checkIntClamp := func(ptr *int, min, max int, fieldName string) {
 		original := *ptr
 		if original <= 0 {
@@ -344,6 +349,8 @@ func (c *Config) ValidateWithWarnings() []ConfigWarning {
 	checkInt64Clamp(&c.MaxSecurityValidationSize, 1024*1024, 100*1024*1024, "MaxSecurityValidationSize")
 
 	// Cache settings
+	// SEMANTIC: MaxCacheSize uses < 0 check because 0 is valid (means "disabled")
+	// This differs from checkIntClamp which treats <= 0 as invalid
 	if c.MaxCacheSize < 0 {
 		warnings = append(warnings, ConfigWarning{
 			Field:    "MaxCacheSize",
@@ -363,6 +370,8 @@ func (c *Config) ValidateWithWarnings() []ConfigWarning {
 		c.MaxCacheSize = 2000
 	}
 
+	// SEMANTIC: CacheTTL uses <= 0 check because 0 duration has no meaning
+	// A zero TTL would mean "immediately expire" which is not useful
 	if c.CacheTTL <= 0 {
 		warnings = append(warnings, ConfigWarning{
 			Field:    "CacheTTL",
@@ -374,6 +383,8 @@ func (c *Config) ValidateWithWarnings() []ConfigWarning {
 	}
 
 	// Encoding options
+	// SEMANTIC: MaxDepth uses < 0 check because 0 is valid (means "no limit" in some contexts)
+	// and positive values are meaningful depth limits
 	if c.MaxDepth < 0 || c.MaxDepth > 1000 {
 		warnings = append(warnings, ConfigWarning{
 			Field:    "MaxDepth",
@@ -383,6 +394,8 @@ func (c *Config) ValidateWithWarnings() []ConfigWarning {
 		})
 		c.MaxDepth = 100
 	}
+	// SEMANTIC: FloatPrecision uses -1 as sentinel for "default precision"
+	// Range [-1, 15] where -1=auto, 0-15=explicit precision
 	if c.FloatPrecision < -1 || c.FloatPrecision > 15 {
 		warnings = append(warnings, ConfigWarning{
 			Field:    "FloatPrecision",
@@ -395,6 +408,19 @@ func (c *Config) ValidateWithWarnings() []ConfigWarning {
 
 	// Batch size limits
 	checkIntClamp(&c.MaxBatchSize, 10, 10000, "MaxBatchSize")
+
+	// Large file processing limits
+	checkInt64Clamp(&c.ChunkSize, 64*1024, 100*1024*1024, "ChunkSize")
+	checkInt64Clamp(&c.MaxMemory, 10*1024*1024, 1024*1024*1024, "MaxMemory")
+	checkIntClamp(&c.BufferSize, 4*1024, 1024*1024, "BufferSize")
+	checkIntClamp(&c.SampleSize, 100, 10000, "SampleSize")
+
+	// JSONL configuration limits
+	checkIntClamp(&c.JSONLBufferSize, 4*1024, 1024*1024, "JSONLBufferSize")
+	checkIntClamp(&c.JSONLMaxLineSize, 1024, 100*1024*1024, "JSONLMaxLineSize")
+	checkIntClamp(&c.JSONLWorkers, 1, 64, "JSONLWorkers")
+	checkIntClamp(&c.JSONLChunkSize, 100, 10000, "JSONLChunkSize")
+	checkInt64Clamp(&c.JSONLMaxMemory, 10*1024*1024, 1024*1024*1024, "JSONLMaxMemory")
 
 	return warnings
 }

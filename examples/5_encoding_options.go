@@ -79,7 +79,7 @@ func main() {
 }
 
 func demonstratePrettyVsCompact(user interface{}) {
-	fmt.Println("1️⃣  Pretty vs Compact Formatting")
+	fmt.Println("1️. Pretty vs Compact Formatting")
 	fmt.Println("─────────────────────────────────")
 
 	// Pretty formatting - using new unified Config API
@@ -94,7 +94,7 @@ func demonstratePrettyVsCompact(user interface{}) {
 }
 
 func demonstrateHTMLEscaping() {
-	fmt.Println("\n2️⃣  HTML Escaping Control")
+	fmt.Println("\n2. HTML Escaping Control")
 	fmt.Println("──────────────────────────")
 
 	// Data with HTML content
@@ -126,7 +126,7 @@ func demonstrateHTMLEscaping() {
 }
 
 func demonstrateKeySorting() {
-	fmt.Println("\n3️⃣  Key Sorting")
+	fmt.Println("\n3️. Key Sorting")
 	fmt.Println("───────────────")
 
 	type Data struct {
@@ -158,7 +158,7 @@ func demonstrateKeySorting() {
 }
 
 func demonstrateFloatPrecision() {
-	fmt.Println("\n4️⃣  Float Precision Control")
+	fmt.Println("\n4️. Float Precision Control")
 	fmt.Println("──────────────────────────")
 
 	type Measurement struct {
@@ -210,7 +210,7 @@ func demonstrateFloatPrecision() {
 }
 
 func demonstrateOmitEmpty() {
-	fmt.Println("\n5️⃣  Omit Empty Values")
+	fmt.Println("\n5️. Omit Empty Values")
 	fmt.Println("──────────────────────")
 
 	type Config struct {
@@ -254,7 +254,7 @@ func demonstrateOmitEmpty() {
 }
 
 func demonstrateCustomEscaping() {
-	fmt.Println("\n6️⃣  Custom Escaping Options")
+	fmt.Println("\n6️. Custom Escaping Options")
 	fmt.Println("───────────────────────────")
 
 	// Data with special characters
@@ -298,7 +298,7 @@ func demonstrateCustomEscaping() {
 }
 
 func demonstrateUnicodeEscaping() {
-	fmt.Println("\n7️⃣  Unicode Escaping")
+	fmt.Println("\n7️. Unicode Escaping")
 	fmt.Println("─────────────────────")
 
 	// Data with Unicode characters
@@ -336,7 +336,7 @@ func demonstrateUnicodeEscaping() {
 }
 
 func demonstrateEncodeMethods() {
-	fmt.Println("\n8️⃣  Convenience Encode Methods")
+	fmt.Println("\n8️. Convenience Encode Methods")
 	fmt.Println("────────────────────────────────")
 
 	type Product struct {
