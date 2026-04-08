@@ -10,7 +10,7 @@
 > 一个高性能、功能丰富的 Go JSON 处理库，100% 兼容 `encoding/json`。
 > 强大的路径语法、类型安全、流式处理、生产级性能。
 
-**[English Documentation](README.md)** | **[API 参考](docs/API_REFERENCE.md)** | **[快速参考](docs/QUICK_REFERENCE.md)**
+**[English Documentation](README.md)**
 
 ---
 
@@ -47,7 +47,7 @@
 go get github.com/cybergodev/json
 ```
 
-**要求**: Go 1.25 或更高版本
+**要求**: Go 1.25.0 或更高版本
 
 ---
 
@@ -442,7 +442,6 @@ defer processor.Close()
 | [10_file_operations.go](examples/10_file_operations.go) | 文件 I/O |
 | [11_with_defaults.go](examples/11_with_defaults.go) | 默认值处理 |
 | [12_advanced_delete.go](examples/12_advanced_delete.go) | 删除操作 |
-| [13_streaming_ndjson.go](examples/13_streaming_ndjson.go) | 流式处理 & JSONL |
 | [14_batch_operations.go](examples/14_batch_operations.go) | 批量处理 |
 
 ```bash

@@ -10,7 +10,7 @@
 > A high-performance, feature-rich Go JSON processing library with 100% `encoding/json` compatibility.
 > Powerful path syntax, type safety, streaming processing, production-grade performance.
 
-**[中文文档](README_zh-CN.md)** | **[API Reference](docs/API_REFERENCE.md)** | **[Quick Reference](docs/QUICK_REFERENCE.md)**
+**[中文文档](README_zh-CN.md)**
 
 ---
 
@@ -47,7 +47,7 @@
 go get github.com/cybergodev/json
 ```
 
-**Requirements**: Go 1.25 or later
+**Requirements**: Go 1.25.0 or later
 
 ---
 
@@ -425,7 +425,6 @@ defer processor.Close()
 ---
 
 ## Example Code
-
 | File | Description |
 |------|-------------|
 | [1_basic_usage.go](examples/1_basic_usage.go) | Core operations |
@@ -440,7 +439,6 @@ defer processor.Close()
 | [10_file_operations.go](examples/10_file_operations.go) | File I/O |
 | [11_with_defaults.go](examples/11_with_defaults.go) | Default value handling |
 | [12_advanced_delete.go](examples/12_advanced_delete.go) | Delete operations |
-| [13_streaming_ndjson.go](examples/13_streaming_ndjson.go) | Streaming & JSONL |
 | [14_batch_operations.go](examples/14_batch_operations.go) | Batch processing |
 
 ```bash

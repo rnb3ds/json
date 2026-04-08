@@ -509,13 +509,6 @@ func NewWildcardSegment() PathSegment {
 	}
 }
 
-// NewRecursiveSegment creates a recursive descent segment
-func NewRecursiveSegment() PathSegment {
-	return PathSegment{
-		Type: RecursiveSegment,
-	}
-}
-
 // emptyPathSegments is a cached empty slice for empty/root paths
 // PERFORMANCE: Avoids repeated allocations for common empty path case
 var emptyPathSegments = make([]PathSegment, 0)

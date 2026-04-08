@@ -642,7 +642,6 @@ func IsValidPath(path string) bool {
 //   - Array slice: "items[0:5]", "items[::2]"
 //   - Wildcard: "items[*]", "users.*.name"
 //   - Extraction: "{name,email}", "{flat:tags}"
-//   - Recursive descent: "**.name"
 //
 // Example:
 //

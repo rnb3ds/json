@@ -1356,13 +1356,6 @@ func TestNewSegmentFunctions(t *testing.T) {
 		}
 	})
 
-	t.Run("NewRecursiveSegment", func(t *testing.T) {
-		seg := NewRecursiveSegment()
-		if seg.Type != PathSegmentRecursive {
-			t.Error("NewRecursiveSegment should create recursive segment")
-		}
-	})
-
 	t.Run("NewExtractSegment", func(t *testing.T) {
 		seg := NewExtractSegment("name", false)
 		if seg.Type != PathSegmentExtract {

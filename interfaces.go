@@ -233,12 +233,6 @@ const (
 	// PathSegmentWildcard represents wildcard access (e.g., "items[*]").
 	PathSegmentWildcard PathSegmentType = internal.WildcardSegment
 
-	// PathSegmentRecursive represents recursive descent (e.g., "**.name").
-	PathSegmentRecursive PathSegmentType = internal.RecursiveSegment
-
-	// PathSegmentFilter represents filter expression (e.g., "items[?(@.active)]").
-	PathSegmentFilter PathSegmentType = internal.FilterSegment
-
 	// PathSegmentExtract represents field extraction (e.g., "{name,email}").
 	PathSegmentExtract PathSegmentType = internal.ExtractSegment
 
@@ -509,11 +503,6 @@ func NewArraySliceSegment(start, end, step int, hasStart, hasEnd, hasStep bool) 
 // NewWildcardSegment creates a wildcard segment.
 func NewWildcardSegment() PathSegment {
 	return internal.NewWildcardSegment()
-}
-
-// NewRecursiveSegment creates a recursive descent segment.
-func NewRecursiveSegment() PathSegment {
-	return internal.NewRecursiveSegment()
 }
 
 // NewExtractSegment creates an extraction segment.

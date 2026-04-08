@@ -704,7 +704,7 @@ func MarshalIndent(v any, prefix, indent string) ([]byte, error) {
 // This function is 100% compatible with encoding/json.Compact.
 func Compact(dst *bytes.Buffer, src []byte) error {
 	return withProcessorError(func(p *Processor) error {
-		compacted, err := p.CompactString(string(src))
+		compacted, err := p.Compact(string(src))
 		if err != nil {
 			return err
 		}
@@ -740,7 +740,7 @@ func HTMLEscape(dst *bytes.Buffer, src []byte) {
 // CompactBuffer is an alias for Compact for buffer operations
 func CompactBuffer(dst *bytes.Buffer, src []byte, cfg ...Config) error {
 	return withProcessorError(func(p *Processor) error {
-		compacted, err := p.CompactString(string(src), cfg...)
+		compacted, err := p.Compact(string(src), cfg...)
 		if err != nil {
 			return err
 		}
@@ -826,10 +826,20 @@ func Prettify(jsonStr string, cfg ...Config) (string, error) {
 }
 
 // CompactString removes whitespace from JSON string.
-// This is the recommended function for compacting JSON strings.
+// This is the recommended function for compacting JSON strings to string output.
+//
+// Note: For encoding/json.Compact compatible API (buffer-based), use Compact().
+//
+// Example:
+//
+//	compact, err := json.CompactString(`{
+//	    "name": "Alice",
+//	    "age": 30
+//	}`)
+//	// Output: {"name":"Alice","age":30}
 func CompactString(jsonStr string, cfg ...Config) (string, error) {
 	return withProcessor(func(p *Processor) (string, error) {
-		return p.CompactString(jsonStr, cfg...)
+		return p.Compact(jsonStr, cfg...)
 	})
 }
 

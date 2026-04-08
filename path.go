@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
 
@@ -383,6 +384,93 @@ func (p *Processor) Prettify(jsonStr string, opts ...Config) (string, error) {
 	return result, nil
 }
 
+// printData handles the core logic for Print and PrintPretty
+func (p *Processor) printData(data any, pretty bool) (string, error) {
+	switch v := data.(type) {
+	case string:
+		return p.formatJSONString(v, pretty)
+	case []byte:
+		return p.formatJSONString(string(v), pretty)
+	default:
+		return p.encodeValue(v, pretty)
+	}
+}
+
+// formatJSONString formats a JSON string or encodes a non-JSON string.
+func (p *Processor) formatJSONString(jsonStr string, pretty bool) (string, error) {
+	if isValid, _ := p.Valid(jsonStr); isValid {
+		if pretty {
+			return p.Prettify(jsonStr)
+		}
+		return p.Compact(jsonStr)
+	}
+	// Not valid JSON - encode as a string value
+	cfg := DefaultConfig()
+	cfg.Pretty = pretty
+	return p.EncodeWithConfig(jsonStr, cfg)
+}
+
+// encodeValue encodes any Go value to JSON string.
+func (p *Processor) encodeValue(value any, pretty bool) (string, error) {
+	cfg := DefaultConfig()
+	cfg.Pretty = pretty
+	return p.EncodeWithConfig(value, cfg)
+}
+
+// Print prints any Go value as JSON to stdout in compact format.
+// Note: Writes errors to stderr. Use PrintE for error handling.
+func (p *Processor) Print(data any) {
+	result, err := p.printData(data, false)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "json.Print error: %v\n", err)
+		return
+	}
+	fmt.Println(result)
+}
+
+// PrintE prints any Go value as JSON to stdout in compact format.
+// Returns an error instead of writing to stderr, allowing callers to handle errors.
+func (p *Processor) PrintE(data any) error {
+	result, err := p.printData(data, false)
+	if err != nil {
+		return fmt.Errorf("json.Print error: %w", err)
+	}
+	fmt.Println(result)
+	return nil
+}
+
+// PrintPretty prints any Go value as formatted JSON to stdout.
+// Note: Writes errors to stderr. Use PrintPrettyE for error handling.
+//
+// Example:
+//
+//	p, _ := json.New()
+//	defer p.Close()
+//	p.PrintPretty(map[string]any{"name": "Alice"})
+//	// Output:
+//	// {
+//	//   "name": "Alice"
+//	// }
+func (p *Processor) PrintPretty(data any) {
+	result, err := p.printData(data, true)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "json.PrintPretty error: %v\n", err)
+		return
+	}
+	fmt.Println(result)
+}
+
+// PrintPrettyE prints any Go value as formatted JSON to stdout.
+// Returns an error instead of writing to stderr, allowing callers to handle errors.
+func (p *Processor) PrintPrettyE(data any) error {
+	result, err := p.printData(data, true)
+	if err != nil {
+		return fmt.Errorf("json.PrintPretty error: %w", err)
+	}
+	fmt.Println(result)
+	return nil
+}
+
 // Compact removes whitespace from JSON string.
 // This is useful for minimizing JSON size for transmission or storage.
 // The result is a single-line JSON string with no unnecessary whitespace.
@@ -450,17 +538,6 @@ func (p *Processor) Compact(jsonStr string, opts ...Config) (string, error) {
 	p.setCachedResult(cacheKey, result, options)
 
 	return result, nil
-}
-
-// FormatCompact removes whitespace from JSON string (alias for Compact)
-func (p *Processor) FormatCompact(jsonStr string, opts ...Config) (string, error) {
-	return p.Compact(jsonStr, opts...)
-}
-
-// CompactString removes whitespace from JSON string.
-// This is an alias for Compact for consistency with the package-level CompactString function.
-func (p *Processor) CompactString(jsonStr string, opts ...Config) (string, error) {
-	return p.Compact(jsonStr, opts...)
 }
 
 // CompactBuffer appends to dst the JSON-encoded src with insignificant space characters elided.
