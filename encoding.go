@@ -737,7 +737,10 @@ func needsCustomEncodingOpts(cfg Config) bool {
 		!cfg.IncludeNulls
 }
 
-// ToJsonString converts any Go value to JSON string with HTML escaping (safe for web)
+// ToJsonString converts any Go value to JSON string with HTML escaping (safe for web).
+//
+// Deprecated: Use Encode instead. To match the exact behavior, set cfg.EscapeHTML = true
+// and cfg.Pretty = false before calling Encode.
 func (p *Processor) ToJsonString(value any, cfg ...Config) (string, error) {
 	config := getConfigOrDefault(cfg...)
 	config.Pretty = false
@@ -745,7 +748,10 @@ func (p *Processor) ToJsonString(value any, cfg ...Config) (string, error) {
 	return p.EncodeWithConfig(value, config)
 }
 
-// ToJsonStringPretty converts any Go value to pretty JSON string with HTML escaping
+// ToJsonStringPretty converts any Go value to pretty JSON string with HTML escaping.
+//
+// Deprecated: Use EncodePretty instead. To match the exact behavior, set cfg.EscapeHTML = true
+// before calling EncodePretty, or use EncodePretty directly which defaults to HTML escaping.
 func (p *Processor) ToJsonStringPretty(value any, cfg ...Config) (string, error) {
 	config := getConfigOrDefault(cfg...)
 	config.Pretty = true
@@ -753,7 +759,10 @@ func (p *Processor) ToJsonStringPretty(value any, cfg ...Config) (string, error)
 	return p.EncodeWithConfig(value, config)
 }
 
-// ToJsonStringStandard converts any Go value to compact JSON string without HTML escaping
+// ToJsonStringStandard converts any Go value to compact JSON string without HTML escaping.
+//
+// Deprecated: Use Encode instead. Encode uses the provided Config as-is,
+// which is equivalent to this method's behavior.
 func (p *Processor) ToJsonStringStandard(value any, cfg ...Config) (string, error) {
 	config := getConfigOrDefault(cfg...)
 	return p.EncodeWithConfig(value, config)
@@ -1118,7 +1127,7 @@ func (e *customEncoder) encodeValue(value any) error {
 	}
 
 	// Check if the value implements json.Marshaler interface first
-	if marshaler, ok := value.(Marshaler); ok {
+	if marshaler, ok := value.(marshaler); ok {
 		data, err := marshaler.MarshalJSON()
 		if err != nil {
 			return &MarshalerError{
@@ -1632,10 +1641,11 @@ func (p *Processor) ValidateSchema(jsonStr string, schema *Schema, opts ...Confi
 		return nil, err
 	}
 
-	_, err := p.prepareOptions(opts...)
+	options, err := p.prepareOptions(opts...)
 	if err != nil {
 		return nil, err
 	}
+	defer configPool.Put(options)
 
 	if err := p.validateInput(jsonStr); err != nil {
 		return nil, err

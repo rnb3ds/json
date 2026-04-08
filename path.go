@@ -62,6 +62,7 @@ func (p *Processor) Parse(jsonStr string, target any, opts ...Config) error {
 	if err != nil {
 		return err
 	}
+	defer configPool.Put(options)
 
 	if err := p.validateInput(jsonStr); err != nil {
 		return err
@@ -192,6 +193,7 @@ func (p *Processor) Valid(jsonStr string, opts ...Config) (bool, error) {
 	if err != nil {
 		return false, err
 	}
+	defer configPool.Put(options)
 
 	// Check cache first
 	cacheKey := p.createCacheKey("validate", jsonStr, "", options)
@@ -333,6 +335,7 @@ func (p *Processor) Prettify(jsonStr string, opts ...Config) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	defer configPool.Put(options)
 
 	if err := p.validateInput(jsonStr); err != nil {
 		return "", err
@@ -496,6 +499,7 @@ func (p *Processor) Compact(jsonStr string, opts ...Config) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	defer configPool.Put(options)
 
 	if err := p.validateInput(jsonStr); err != nil {
 		return "", err
@@ -567,25 +571,29 @@ func (p *Processor) IndentBuffer(dst *bytes.Buffer, src []byte, prefix, indent s
 }
 
 // CompactBytes appends to dst the JSON-encoded src with insignificant space characters elided.
-// This is an alias for CompactBuffer without optional Config, providing encoding/json.Compact compatibility.
-// Use this method when you need the exact encoding/json.Compact signature.
+// This is an alias for CompactBuffer without optional Config.
+//
+// Deprecated: Use CompactBuffer instead. CompactBuffer(dst, src) provides the same behavior
+// with optional Config support.
 //
 // Example:
 //
 //	var buf bytes.Buffer
-//	err := processor.CompactBytes(&buf, []byte(`{"name": "Alice"}`))
+//	err := processor.CompactBuffer(&buf, []byte(`{"name": "Alice"}`))
 func (p *Processor) CompactBytes(dst *bytes.Buffer, src []byte) error {
 	return p.CompactBuffer(dst, src)
 }
 
 // IndentBytes appends to dst an indented form of the JSON-encoded src.
-// This is an alias for IndentBuffer without optional Config, providing encoding/json.Indent compatibility.
-// Use this method when you need the exact encoding/json.Indent signature.
+// This is an alias for IndentBuffer without optional Config.
+//
+// Deprecated: Use IndentBuffer instead. IndentBuffer(dst, src, prefix, indent) provides
+// the same behavior with optional Config support.
 //
 // Example:
 //
 //	var buf bytes.Buffer
-//	err := processor.IndentBytes(&buf, []byte(`{"name":"Alice"}`), "", "  ")
+//	err := processor.IndentBuffer(&buf, []byte(`{"name":"Alice"}`), "", "  ")
 func (p *Processor) IndentBytes(dst *bytes.Buffer, src []byte, prefix, indent string) error {
 	return p.IndentBuffer(dst, src, prefix, indent)
 }

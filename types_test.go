@@ -82,8 +82,8 @@ func BenchmarkResourceMonitor(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		rm.RecordAllocation(1024)
-		rm.RecordDeallocation(512)
+		rm.recordAllocation(1024)
+		rm.recordDeallocation(512)
 	}
 }
 
@@ -1032,7 +1032,7 @@ func TestErrorHandling(t *testing.T) {
 		baseErr := ErrPathNotFound
 
 		t.Run("WrapError", func(t *testing.T) {
-			wrapped := WrapError(baseErr, "get_user", "user not found")
+			wrapped := wrapError(baseErr, "get_user", "user not found")
 			helper.AssertNotNil(wrapped)
 
 			// Unwrap should return original
@@ -1041,7 +1041,7 @@ func TestErrorHandling(t *testing.T) {
 		})
 
 		t.Run("WrapPathError", func(t *testing.T) {
-			wrapped := WrapPathError(baseErr, "get_field", "user.profile.email", "field missing")
+			wrapped := wrapPathError(baseErr, "get_field", "user.profile.email", "field missing")
 			helper.AssertNotNil(wrapped)
 
 			// Check error message contains path
@@ -1455,8 +1455,8 @@ func TestHealthCheckSystem(t *testing.T) {
 
 // TestInvalidArrayIndex tests the InvalidArrayIndex constant
 func TestInvalidArrayIndex(t *testing.T) {
-	if InvalidArrayIndex != -999999 {
-		t.Errorf("InvalidArrayIndex = %d, want -999999", InvalidArrayIndex)
+	if invalidArrayIndex != -999999 {
+		t.Errorf("invalidArrayIndex = %d, want -999999", invalidArrayIndex)
 	}
 }
 
@@ -2291,9 +2291,9 @@ func TestResourceMonitor(t *testing.T) {
 	t.Run("RecordAllocation", func(t *testing.T) {
 		rm := newResourceMonitor()
 
-		rm.RecordAllocation(1024)
-		rm.RecordAllocation(2048)
-		rm.RecordDeallocation(512)
+		rm.recordAllocation(1024)
+		rm.recordAllocation(2048)
+		rm.recordDeallocation(512)
 
 		stats := rm.getStats()
 		// Note: AllocatedBytes should be positive (at least the sum of allocations minus deallocations)
@@ -2309,9 +2309,9 @@ func TestResourceMonitor(t *testing.T) {
 	t.Run("RecordPooloperations", func(t *testing.T) {
 		rm := newResourceMonitor()
 
-		rm.RecordPoolHit()
-		rm.RecordPoolMiss()
-		rm.RecordPoolEviction()
+		rm.recordPoolHit()
+		rm.recordPoolMiss()
+		rm.recordPoolEviction()
 
 		stats := rm.getStats()
 		if stats.PoolHits != 1 {
@@ -2328,8 +2328,8 @@ func TestResourceMonitor(t *testing.T) {
 	t.Run("RecordOperation", func(t *testing.T) {
 		rm := newResourceMonitor()
 
-		rm.RecordOperation(100 * time.Millisecond)
-		rm.RecordOperation(200 * time.Millisecond)
+		rm.recordOperation(100 * time.Millisecond)
+		rm.recordOperation(200 * time.Millisecond)
 
 		stats := rm.getStats()
 		if stats.TotalOperations != 2 {
@@ -2344,20 +2344,20 @@ func TestResourceMonitor(t *testing.T) {
 		rm := newResourceMonitor()
 
 		// Record increasing allocations to test peak tracking
-		rm.RecordAllocation(1000)
+		rm.recordAllocation(1000)
 		stats1 := rm.getStats()
 		if stats1.PeakMemoryUsage < 1000 {
 			t.Errorf("Expected peak >= 1000, got %d", stats1.PeakMemoryUsage)
 		}
 
-		rm.RecordAllocation(2000)
+		rm.recordAllocation(2000)
 		stats2 := rm.getStats()
 		// Peak should be at least 3000 (1000 + 2000)
 		if stats2.PeakMemoryUsage < 3000 {
 			t.Errorf("Expected peak >= 3000, got %d", stats2.PeakMemoryUsage)
 		}
 
-		rm.RecordDeallocation(500)
+		rm.recordDeallocation(500)
 		stats3 := rm.getStats()
 		// Peak should remain at maximum (not decrease with deallocations)
 		if stats3.PeakMemoryUsage < stats2.PeakMemoryUsage {
@@ -2369,9 +2369,9 @@ func TestResourceMonitor(t *testing.T) {
 	t.Run("Reset", func(t *testing.T) {
 		rm := newResourceMonitor()
 
-		rm.RecordAllocation(1000)
-		rm.RecordPoolHit()
-		rm.Reset()
+		rm.recordAllocation(1000)
+		rm.recordPoolHit()
+		rm.reset()
 
 		stats := rm.getStats()
 		if stats.AllocatedBytes != 0 {
@@ -2388,7 +2388,7 @@ func TestResourceMonitor_CheckForLeaks(t *testing.T) {
 	rm := newResourceMonitor()
 	rm.leakCheckInterval = 0 // Force immediate check
 
-	issues := rm.CheckForLeaks()
+	issues := rm.checkForLeaks()
 	// Should return nil or empty for normal conditions
 	// The actual result depends on current memory/goroutine state
 	t.Logf("CheckForLeaks returned: %v", issues)
@@ -2399,14 +2399,14 @@ func TestResourceMonitor_EfficiencyMethods(t *testing.T) {
 	t.Run("GetDeallocationRatio", func(t *testing.T) {
 		rm := newResourceMonitor()
 		// Initially 100% (no allocations)
-		if eff := rm.GetDeallocationRatio(); eff != 100.0 {
+		if eff := rm.getDeallocationRatio(); eff != 100.0 {
 			t.Errorf("GetDeallocationRatio() = %v, want 100.0", eff)
 		}
 
-		rm.RecordAllocation(1000)
-		rm.RecordDeallocation(500)
+		rm.recordAllocation(1000)
+		rm.recordDeallocation(500)
 		// 500 / 1000 * 100 = 50%
-		if eff := rm.GetDeallocationRatio(); eff != 50.0 {
+		if eff := rm.getDeallocationRatio(); eff != 50.0 {
 			t.Errorf("GetDeallocationRatio() = %v, want 50.0", eff)
 		}
 	})
@@ -2414,15 +2414,15 @@ func TestResourceMonitor_EfficiencyMethods(t *testing.T) {
 	t.Run("GetPoolEfficiency", func(t *testing.T) {
 		rm := newResourceMonitor()
 		// Initially 100% (no operations)
-		if eff := rm.GetPoolEfficiency(); eff != 100.0 {
+		if eff := rm.getPoolEfficiency(); eff != 100.0 {
 			t.Errorf("GetPoolEfficiency() = %v, want 100.0", eff)
 		}
 
-		rm.RecordPoolHit()
-		rm.RecordPoolHit()
-		rm.RecordPoolMiss()
+		rm.recordPoolHit()
+		rm.recordPoolHit()
+		rm.recordPoolMiss()
 		// 2 / 3 * 100 = 66.67%
-		eff := rm.GetPoolEfficiency()
+		eff := rm.getPoolEfficiency()
 		if eff < 66.0 || eff > 67.0 {
 			t.Errorf("GetPoolEfficiency() = %v, want ~66.67", eff)
 		}

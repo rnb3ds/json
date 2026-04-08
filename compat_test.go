@@ -6,83 +6,83 @@ import (
 	"testing"
 )
 
-// TestCompactBytesMethod tests CompactBytes method (encoding/json.Compact compatibility)
-func TestCompactBytesMethod(t *testing.T) {
+// TestCompactBufferMethod tests CompactBuffer method (encoding/json.Compact compatibility)
+func TestCompactBufferMethod(t *testing.T) {
 	prettyJSON := "{\"name\": \"Alice\", \"age\": 30}"
 
 	processor, _ := New()
 	defer processor.Close()
 
 	var buf bytes.Buffer
-	err := processor.CompactBytes(&buf, []byte(prettyJSON))
+	err := processor.CompactBuffer(&buf, []byte(prettyJSON))
 	if err != nil {
-		t.Fatalf("CompactBytes error: %v", err)
+		t.Fatalf("CompactBuffer error: %v", err)
 	}
 
 	result := buf.String()
 	if strings.Contains(result, "\n") {
-		t.Errorf("CompactBytes should remove newlines, got: %s", result)
+		t.Errorf("CompactBuffer should remove newlines, got: %s", result)
 	}
 	if !strings.Contains(result, `"name"`) || !strings.Contains(result, `"Alice"`) {
-		t.Errorf("CompactBytes lost data, got: %s", result)
+		t.Errorf("CompactBuffer lost data, got: %s", result)
 	}
 }
 
-// TestIndentBytesMethod tests IndentBytes method (encoding/json.Indent compatibility)
-func TestIndentBytesMethod(t *testing.T) {
+// TestIndentBufferMethod tests IndentBuffer method (encoding/json.Indent compatibility)
+func TestIndentBufferMethod(t *testing.T) {
 	compactJSON := `{"name":"Alice","age":30}`
 
 	processor, _ := New()
 	defer processor.Close()
 
 	var buf bytes.Buffer
-	err := processor.IndentBytes(&buf, []byte(compactJSON), "", "  ")
+	err := processor.IndentBuffer(&buf, []byte(compactJSON), "", "  ")
 	if err != nil {
-		t.Fatalf("IndentBytes error: %v", err)
+		t.Fatalf("IndentBuffer error: %v", err)
 	}
 
 	result := buf.String()
 	if !strings.Contains(result, "\n") {
-		t.Errorf("IndentBytes should add newlines, got: %s", result)
+		t.Errorf("IndentBuffer should add newlines, got: %s", result)
 	}
 	if !strings.Contains(result, "  ") {
-		t.Errorf("IndentBytes should add indentation, got: %s", result)
+		t.Errorf("IndentBuffer should add indentation, got: %s", result)
 	}
 	if !strings.Contains(result, `"name"`) || !strings.Contains(result, `"Alice"`) {
-		t.Errorf("IndentBytes lost data, got: %s", result)
+		t.Errorf("IndentBuffer lost data, got: %s", result)
 	}
 }
 
-// TestCompactBytesEmptyInput tests CompactBytes with empty input
-func TestCompactBytesEmptyInput(t *testing.T) {
+// TestCompactBufferEmptyInput tests CompactBuffer with empty input
+func TestCompactBufferEmptyInput(t *testing.T) {
 	processor, _ := New()
 	defer processor.Close()
 
 	var buf bytes.Buffer
-	err := processor.CompactBytes(&buf, []byte("{}"))
+	err := processor.CompactBuffer(&buf, []byte("{}"))
 	if err != nil {
-		t.Fatalf("CompactBytes error: %v", err)
+		t.Fatalf("CompactBuffer error: %v", err)
 	}
 
 	result := buf.String()
 	if result != "{}" {
-		t.Errorf("CompactBytes should preserve empty object, got: %s", result)
+		t.Errorf("CompactBuffer should preserve empty object, got: %s", result)
 	}
 }
 
-// TestIndentBytesEmptyInput tests IndentBytes with empty input
-func TestIndentBytesEmptyInput(t *testing.T) {
+// TestIndentBufferEmptyInput tests IndentBuffer with empty input
+func TestIndentBufferEmptyInput(t *testing.T) {
 	processor, _ := New()
 	defer processor.Close()
 
 	var buf bytes.Buffer
-	err := processor.IndentBytes(&buf, []byte("{}"), "", "  ")
+	err := processor.IndentBuffer(&buf, []byte("{}"), "", "  ")
 	if err != nil {
-		t.Fatalf("IndentBytes error: %v", err)
+		t.Fatalf("IndentBuffer error: %v", err)
 	}
 
 	result := buf.String()
 	if !strings.Contains(result, "{") || !strings.Contains(result, "}") {
-		t.Errorf("IndentBytes lost braces, got: %s", result)
+		t.Errorf("IndentBuffer lost braces, got: %s", result)
 	}
 }

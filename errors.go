@@ -224,8 +224,8 @@ func GetErrorSuggestion(err error) string {
 	return "Check the error message for specific details"
 }
 
-// WrapError wraps an error with additional context
-func WrapError(err error, op, message string) error {
+// wrapError wraps an error with additional context.
+func wrapError(err error, op, message string) error {
 	if err == nil {
 		return nil
 	}
@@ -236,8 +236,8 @@ func WrapError(err error, op, message string) error {
 	}
 }
 
-// WrapPathError wraps an error with path context
-func WrapPathError(err error, op, path, message string) error {
+// wrapPathError wraps an error with path context.
+func wrapPathError(err error, op, path, message string) error {
 	if err == nil {
 		return nil
 	}

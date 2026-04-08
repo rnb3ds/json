@@ -3,6 +3,7 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 
 	"github.com/cybergodev/json"
@@ -185,7 +186,7 @@ func demonstrateMerge() {
 }
 
 func demonstrateFormatting() {
-	fmt.Println("\n3. Formatting (FormatPretty/CompactString)")
+	fmt.Println("\n3. Formatting (Prettify/Compact)")
 	fmt.Println("-------------------------------------------")
 
 	compactJSON := `{"name":"John","age":30,"address":{"city":"NYC","zip":"10001"},"active":true}`
@@ -205,13 +206,15 @@ func demonstrateFormatting() {
 	fmt.Println(pretty)
 
 	// Format as compact
-	compact, err := json.CompactString(pretty)
+	var buf bytes.Buffer
+	err = json.Compact(&buf, []byte(pretty))
 	if err != nil {
 		fmt.Printf("   Error: %v\n", err)
 		return
 	}
+	compact := buf.String()
 
-	fmt.Println("\n   CompactString result:")
+	fmt.Println("\n   Compact result:")
 	fmt.Println(compact)
 
 	fmt.Println("\n   Formatting is reversible!")

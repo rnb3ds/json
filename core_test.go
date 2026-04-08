@@ -2274,7 +2274,7 @@ func TestFastSet(t *testing.T) {
 	})
 }
 
-// TestCompactString tests compact formatting
+// TestCompactString tests compact formatting via processor
 func TestCompactString(t *testing.T) {
 	prettyJSON := `{
 		"user": {
@@ -2283,7 +2283,13 @@ func TestCompactString(t *testing.T) {
 		}
 	}`
 
-	result, err := CompactString(prettyJSON)
+	p, err := New()
+	if err != nil {
+		t.Fatalf("Failed to create processor: %v", err)
+	}
+	defer p.Close()
+
+	result, err := p.Compact(prettyJSON)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -5096,7 +5102,7 @@ func TestProcessor_ForeachMethods(t *testing.T) {
 		err := processor.ForeachWithPathAndControl(jsonStr, "users", func(key any, value any) IteratorControl {
 			count++
 			// Continue iteration
-			return iteratorContinue
+			return IteratorContinue
 		})
 
 		if err != nil {
@@ -5117,9 +5123,9 @@ func TestProcessor_ForeachMethods(t *testing.T) {
 			count++
 			// Break after first item
 			if count == 1 {
-				return iteratorBreak
+				return IteratorBreak
 			}
-			return iteratorContinue
+			return IteratorContinue
 		})
 
 		if err != nil {
@@ -5138,7 +5144,7 @@ func TestProcessor_ForeachMethods(t *testing.T) {
 		paths := []string{}
 		err := processor.ForeachWithPathAndIterator(jsonStr, "users", func(key any, item *IterableValue, currentPath string) IteratorControl {
 			paths = append(paths, currentPath)
-			return iteratorContinue
+			return IteratorContinue
 		})
 
 		if err != nil {

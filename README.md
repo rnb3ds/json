@@ -172,7 +172,9 @@ bytes, _ := json.MarshalIndent(data, "", "  ")
 
 // Quick formatting
 pretty, _    := json.Prettify(jsonStr)      // pretty print
-compact, _   := json.CompactString(jsonStr) // minify
+var buf bytes.Buffer
+json.Compact(&buf, []byte(jsonStr))         // minify
+compact := buf.String()
 json.Print(data)        // compact to stdout
 json.PrintPretty(data)  // pretty to stdout
 

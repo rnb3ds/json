@@ -56,7 +56,7 @@ func TestConcurrentKeyInternMap(t *testing.T) {
 			defer wg.Done()
 			for j := 0; j < iterations; j++ {
 				for _, key := range keys {
-					InternKey(key)
+					internKey(key)
 				}
 			}
 		}()

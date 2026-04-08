@@ -30,9 +30,9 @@ type CustomEncoder interface {
 	Encode(value any) (string, error)
 }
 
-// EncoderConfig provides configuration access for custom encoders.
+// encoderConfig provides configuration access for encoders.
 // Implemented by Config struct.
-type EncoderConfig interface {
+type encoderConfig interface {
 	// HTML escaping
 	IsHTMLEscapeEnabled() bool
 

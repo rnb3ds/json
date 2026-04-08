@@ -702,9 +702,21 @@ func MarshalIndent(v any, prefix, indent string) ([]byte, error) {
 
 // Compact appends to dst the JSON-encoded src with insignificant space characters elided.
 // This function is 100% compatible with encoding/json.Compact.
-func Compact(dst *bytes.Buffer, src []byte) error {
+// Accepts optional Config to control compact behavior (e.g., number preservation).
+//
+// Example:
+//
+//	// encoding/json compatible usage (no Config)
+//	var buf bytes.Buffer
+//	err := json.Compact(&buf, []byte(`{"name": "Alice"}`))
+//
+//	// With configuration
+//	cfg := json.DefaultConfig()
+//	cfg.PreserveNumbers = true
+//	err = json.Compact(&buf, []byte(jsonStr), cfg)
+func Compact(dst *bytes.Buffer, src []byte, cfg ...Config) error {
 	return withProcessorError(func(p *Processor) error {
-		compacted, err := p.Compact(string(src))
+		compacted, err := p.Compact(string(src), cfg...)
 		if err != nil {
 			return err
 		}
@@ -737,34 +749,19 @@ func HTMLEscape(dst *bytes.Buffer, src []byte) {
 	dst.WriteString(internal.HTMLEscape(string(src)))
 }
 
-// CompactBuffer is an alias for Compact for buffer operations
+// CompactBuffer compacts JSON data and writes the result to dst.
+// Delegates to Processor.CompactBuffer for consistent behavior.
 func CompactBuffer(dst *bytes.Buffer, src []byte, cfg ...Config) error {
 	return withProcessorError(func(p *Processor) error {
-		compacted, err := p.Compact(string(src), cfg...)
-		if err != nil {
-			return err
-		}
-		dst.WriteString(compacted)
-		return nil
+		return p.CompactBuffer(dst, src, cfg...)
 	})
 }
 
 // IndentBuffer appends to dst an indented form of the JSON-encoded src.
+// Delegates to Processor.IndentBuffer for consistent behavior.
 func IndentBuffer(dst *bytes.Buffer, src []byte, prefix, indent string, cfg ...Config) error {
 	return withProcessorError(func(p *Processor) error {
-		c := DefaultConfig()
-		if len(cfg) > 0 {
-			c = cfg[0]
-		}
-		c.Pretty = true
-		c.Prefix = prefix
-		c.Indent = indent
-		result, err := p.Prettify(string(src), c)
-		if err != nil {
-			return err
-		}
-		dst.WriteString(result)
-		return nil
+		return p.IndentBuffer(dst, src, prefix, indent, cfg...)
 	})
 }
 
@@ -780,6 +777,23 @@ func HTMLEscapeBuffer(dst *bytes.Buffer, src []byte, cfg ...Config) {
 func Encode(value any, cfg ...Config) (string, error) {
 	return withProcessor(func(p *Processor) (string, error) {
 		return p.EncodeWithConfig(value, cfg...)
+	})
+}
+
+// EncodePretty converts any Go value to pretty-printed JSON string.
+// This is the package-level equivalent of Processor.EncodePretty().
+//
+// Example:
+//
+//	result, err := json.EncodePretty(data)
+//
+//	// With custom configuration
+//	cfg := json.DefaultConfig()
+//	cfg.Indent = "    "
+//	result, err := json.EncodePretty(data, cfg)
+func EncodePretty(value any, cfg ...Config) (string, error) {
+	return withProcessor(func(p *Processor) (string, error) {
+		return p.EncodePretty(value, cfg...)
 	})
 }
 
@@ -822,24 +836,6 @@ func EncodeWithConfig(value any, cfg ...Config) (string, error) {
 func Prettify(jsonStr string, cfg ...Config) (string, error) {
 	return withProcessor(func(p *Processor) (string, error) {
 		return p.Prettify(jsonStr, cfg...)
-	})
-}
-
-// CompactString removes whitespace from JSON string.
-// This is the recommended function for compacting JSON strings to string output.
-//
-// Note: For encoding/json.Compact compatible API (buffer-based), use Compact().
-//
-// Example:
-//
-//	compact, err := json.CompactString(`{
-//	    "name": "Alice",
-//	    "age": 30
-//	}`)
-//	// Output: {"name":"Alice","age":30}
-func CompactString(jsonStr string, cfg ...Config) (string, error) {
-	return withProcessor(func(p *Processor) (string, error) {
-		return p.Compact(jsonStr, cfg...)
 	})
 }
 
@@ -1039,47 +1035,48 @@ func GetHealthStatus() HealthStatus {
 // Unified API - Use these functions for common scenarios
 // =============================================================================
 
-// Parse parses a JSON string and returns the root value.
-// This is the recommended entry point for parsing JSON strings.
+// ParseAny parses a JSON string and returns the root value as any.
+// This is the unified name matching Processor.ParseAny().
 //
-// Layer Architecture:
-//   - Package-level (this function): Convenience wrapper that uses cached processors
-//   - Processor-level: Use Processor.ParseAny() for the same behavior, or Processor.Parse() for unmarshaling into a target
+// For unmarshaling into a specific target type, use Parse() instead.
 //
 // Example:
 //
-//	// Simple parsing (uses default processor)
-//	data, err := json.Parse(jsonStr)
+//	// Parse to any (uses default processor)
+//	data, err := json.ParseAny(jsonStr)
 //
 //	// With configuration (uses config-cached processor)
 //	cfg := json.SecurityConfig()
-//	data, err := json.Parse(jsonStr, cfg)
+//	data, err := json.ParseAny(jsonStr, cfg)
+func ParseAny(jsonStr string, cfg ...Config) (any, error) {
+	return withProcessor(func(p *Processor) (any, error) {
+		return p.ParseAny(jsonStr, cfg...)
+	})
+}
+
+// Parse parses a JSON string into the target variable.
+// This is the unified package-level method matching Processor.Parse().
 //
-// Performance Tips:
-//   - For repeated operations on the same JSON, use Processor.PreParse() to parse once
-//   - For batch operations, use Processor.ProcessBatch()
+// target must be a non-nil pointer. For parsing to any, use ParseAny() instead.
 //
-// Note: Get(jsonStr, "$") is equivalent but slightly less efficient due to path parsing overhead.
-func Parse(jsonStr string, cfg ...Config) (any, error) {
-	var p *Processor
-	var err error
-
-	if len(cfg) > 0 {
-		p, err = getProcessorWithConfig(cfg[0])
-	} else {
-		p, err = getProcessorOrFail()
-	}
-
-	if err != nil {
-		return nil, err
-	}
-
-	// Direct parsing is more efficient than Get(jsonStr, "$")
-	var data any
-	if parseErr := p.Parse(jsonStr, &data); parseErr != nil {
-		return nil, parseErr
-	}
-	return data, nil
+// Example:
+//
+//	// Parse into a map
+//	var obj map[string]any
+//	err := json.Parse(jsonStr, &obj)
+//
+//	// Parse into a struct
+//	var user User
+//	err := json.Parse(jsonStr, &user)
+//
+//	// With configuration
+//	cfg := json.DefaultConfig()
+//	cfg.PreserveNumbers = true
+//	err := json.Parse(jsonStr, &data, cfg)
+func Parse(jsonStr string, target any, cfg ...Config) error {
+	return withProcessorError(func(p *Processor) error {
+		return p.Parse(jsonStr, target, cfg...)
+	})
 }
 
 // SaveToFile saves JSON data to a file with optional configuration.
@@ -1238,26 +1235,33 @@ func getProcessorWithConfig(cfg Config) (*Processor, error) {
 				return ep, nil
 			}
 			// Existing entry is stale; try to replace it atomically
-			// Use CompareAndSwap pattern to avoid race with other goroutines
 			if configProcessorCache.CompareAndSwap(cacheKey, existing, p) {
 				// Successfully replaced stale entry
 				// Close the old stale processor asynchronously
 				go func(stale *Processor) {
 					_ = stale.Close() // best-effort cleanup
 				}(existing.(*Processor))
-				break
+				// Check cache size and evict if necessary
+				maybeEvictConfigCache()
+				return p, nil
 			}
-			// CAS failed - another goroutine modified the entry, retry
+			// CAS failed - close our processor and create a fresh one for retry
+			_ = p.Close()
+			p, err = New(cfg)
+			if err != nil {
+				return nil, err
+			}
 			continue
 		}
 		// Successfully stored new entry
-		break
+		// Check cache size and evict if necessary
+		maybeEvictConfigCache()
+		return p, nil
 	}
 
-	// Check cache size and evict if necessary
-	maybeEvictConfigCache()
-
-	return p, nil
+	// All attempts exhausted - close the orphaned processor
+	_ = p.Close()
+	return nil, newOperationError("get_processor", "failed to store processor in cache after retries", ErrOperationFailed)
 }
 
 // maybeEvictConfigCache checks if the cache exceeds the size limit and evicts if needed.

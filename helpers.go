@@ -1029,23 +1029,18 @@ func handleNullValue[T any]() (T, error) {
 // Delegates to internal.KeyIntern (64-shard with hot cache) for concurrent performance.
 // ============================================================================
 
-// InternKey interns a string key for memory efficiency.
-// Returns an interned version of the key that can be reused across operations.
-//
-// Example:
-//
-//	key := json.InternKey("user_id") // Returns interned string
-func InternKey(key string) string {
+// internKey interns a string key for memory efficiency.
+func internKey(key string) string {
 	return internal.GlobalKeyIntern.Intern(key)
 }
 
-// ClearKeyInternCache clears the global key interning cache.
-func ClearKeyInternCache() {
+// clearKeyInternCache clears the global key interning cache.
+func clearKeyInternCache() {
 	internal.GlobalKeyIntern.Clear()
 }
 
-// GetKeyInternCacheSize returns the number of interned keys in the cache.
-func GetKeyInternCacheSize() int {
+// getKeyInternCacheSize returns the number of interned keys in the cache.
+func getKeyInternCacheSize() int {
 	return internal.GlobalKeyIntern.Size()
 }
 

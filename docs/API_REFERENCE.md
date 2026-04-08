@@ -400,13 +400,13 @@ Formats JSON string with pretty indentation.
 
 ---
 
-### CompactString
+### Compact
 
 ```go
-func CompactString(jsonStr string, cfg ...Config) (string, error)
+func Compact(dst *bytes.Buffer, src []byte, cfg ...Config) error
 ```
 
-Removes whitespace from JSON string.
+Appends compacted JSON to dst. 100% compatible with encoding/json.Compact. Accepts optional Config.
 
 ---
 

@@ -1112,13 +1112,13 @@ func TestGetTypedOrEdgeCases(t *testing.T) {
 func TestParseEdgeCases(t *testing.T) {
 	t.Run("ParseWithConfig", func(t *testing.T) {
 		cfg := Config{MaxJSONSize: -1}
-		result, err := Parse(`{"key":"value"}`, cfg)
+		result, err := ParseAny(`{"key":"value"}`, cfg)
 		_ = err
 		_ = result
 	})
 
 	t.Run("ParseEmptyString", func(t *testing.T) {
-		result, err := Parse(``)
+		result, err := ParseAny(``)
 		if err == nil {
 			t.Errorf("Parse empty string should fail: %v", err)
 		}
@@ -1126,7 +1126,7 @@ func TestParseEdgeCases(t *testing.T) {
 	})
 
 	t.Run("ParseArray", func(t *testing.T) {
-		result, err := Parse(`[1, 2, 3]`)
+		result, err := ParseAny(`[1, 2, 3]`)
 		if err != nil {
 			t.Errorf("Parse array failed: %v", err)
 		}
@@ -4071,7 +4071,7 @@ func TestValidWithConfig(t *testing.T) {
 // TestParseTopLevel tests the top-level Parse function
 func TestParseTopLevel(t *testing.T) {
 	t.Run("ParseToAny", func(t *testing.T) {
-		result, err := Parse(`{"key":"value"}`)
+		result, err := ParseAny(`{"key":"value"}`)
 		if err != nil {
 			t.Errorf("Parse failed: %v", err)
 		}
@@ -4085,7 +4085,7 @@ func TestParseTopLevel(t *testing.T) {
 	})
 
 	t.Run("ParseToArray", func(t *testing.T) {
-		result, err := Parse(`[1, 2, 3]`)
+		result, err := ParseAny(`[1, 2, 3]`)
 		if err != nil {
 			t.Errorf("Parse failed: %v", err)
 		}
@@ -4099,9 +4099,38 @@ func TestParseTopLevel(t *testing.T) {
 	})
 
 	t.Run("ParseInvalidJSON", func(t *testing.T) {
-		_, err := Parse(`{invalid}`)
+		_, err := ParseAny(`{invalid}`)
 		if err == nil {
 			t.Error("Parse with invalid JSON should return error")
+		}
+	})
+
+	t.Run("ParseIntoStruct", func(t *testing.T) {
+		type testUser struct {
+			Name string `json:"name"`
+			Age  int    `json:"age"`
+		}
+		var user testUser
+		err := Parse(`{"name":"Alice","age":30}`, &user)
+		if err != nil {
+			t.Fatalf("Parse into struct failed: %v", err)
+		}
+		if user.Name != "Alice" {
+			t.Errorf("user.Name = %q, want Alice", user.Name)
+		}
+		if user.Age != 30 {
+			t.Errorf("user.Age = %d, want 30", user.Age)
+		}
+	})
+
+	t.Run("ParseIntoMap", func(t *testing.T) {
+		var obj map[string]any
+		err := Parse(`{"key":"value"}`, &obj)
+		if err != nil {
+			t.Fatalf("Parse into map failed: %v", err)
+		}
+		if obj["key"] != "value" {
+			t.Errorf("obj[key] = %v, want value", obj["key"])
 		}
 	})
 }

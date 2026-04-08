@@ -282,10 +282,11 @@ func (p *Processor) ProcessBatch(operations []BatchOperation, opts ...Config) ([
 		return nil, err
 	}
 
-	_, err := p.prepareOptions(opts...)
+	options, err := p.prepareOptions(opts...)
 	if err != nil {
 		return nil, err
 	}
+	defer configPool.Put(options)
 
 	if len(operations) > p.config.MaxBatchSize {
 		return nil, &JsonsError{
@@ -370,6 +371,7 @@ func (p *Processor) WarmupCache(jsonStr string, paths []string, opts ...Config) 
 			Err:     err,
 		}
 	}
+	defer configPool.Put(options)
 
 	// Track warmup statistics
 	successCount := 0
@@ -801,18 +803,11 @@ func (p *Processor) getLogger() *slog.Logger {
 func (p *Processor) checkClosed() error {
 	state := atomic.LoadInt32(&p.state)
 	if state != processorStateActive {
+		msg := "processor is closed"
 		if state == processorStateClosing {
-			return &JsonsError{
-				Op:      "check_closed",
-				Message: "processor is closing",
-				Err:     ErrProcessorClosed,
-			}
+			msg = "processor is closing"
 		}
-		return &JsonsError{
-			Op:      "check_closed",
-			Message: "processor is closed",
-			Err:     ErrProcessorClosed,
-		}
+		return &JsonsError{Op: "check_closed", Message: msg, Err: ErrProcessorClosed}
 	}
 	return nil
 }
@@ -872,6 +867,7 @@ func (p *Processor) Delete(jsonStr, path string, opts ...Config) (string, error)
 	if err != nil {
 		return "", err
 	}
+	defer configPool.Put(options)
 
 	if err := p.validateInput(jsonStr); err != nil {
 		return jsonStr, err
@@ -1170,6 +1166,7 @@ func (p *Processor) Get(jsonStr, path string, opts ...Config) (any, error) {
 		p.incrementErrorCount()
 		return nil, err
 	}
+	defer configPool.Put(options)
 
 	// Get context from options or use background
 	ctx := context.Background()
@@ -1296,6 +1293,7 @@ func (p *Processor) PreParse(jsonStr string, opts ...Config) (*ParsedJSON, error
 	if err != nil {
 		return nil, err
 	}
+	defer configPool.Put(options)
 
 	// Validate input
 	if err := p.validateInput(jsonStr); err != nil {
@@ -1350,6 +1348,7 @@ func (p *Processor) GetFromParsed(parsed *ParsedJSON, path string, opts ...Confi
 	if err != nil {
 		return nil, err
 	}
+	defer configPool.Put(options)
 
 	if err := p.validatePath(path); err != nil {
 		return nil, err
@@ -1368,7 +1367,7 @@ func (p *Processor) GetFromParsed(parsed *ParsedJSON, path string, opts ...Confi
 
 	// Cache result if enabled
 	if p.config.EnableCache && options.CacheResults {
-		cacheKey := p.createCacheKey("get", string(rune(parsed.hash)), path, options)
+		cacheKey := p.createCacheKeyWithHash("get", parsed.hash, path, options)
 		p.setCachedResult(cacheKey, result, options)
 	}
 
@@ -1396,6 +1395,7 @@ func (p *Processor) SetFromParsed(parsed *ParsedJSON, path string, value any, op
 	if err != nil {
 		return nil, err
 	}
+	defer configPool.Put(options)
 
 	if err := p.validatePath(path); err != nil {
 		return nil, err
@@ -1510,10 +1510,11 @@ func (p *Processor) GetMultiple(jsonStr string, paths []string, opts ...Config) 
 		return make(map[string]any), nil
 	}
 
-	_, err := p.prepareOptions(opts...)
+	options, err := p.prepareOptions(opts...)
 	if err != nil {
 		return nil, err
 	}
+	defer configPool.Put(options)
 
 	// Parse JSON once for all operations
 	var data any
@@ -1713,6 +1714,7 @@ func (p *Processor) Set(jsonStr, path string, value any, opts ...Config) (string
 	if err != nil {
 		return jsonStr, err
 	}
+	defer configPool.Put(options)
 
 	if err := p.validateInput(jsonStr); err != nil {
 		return jsonStr, err
@@ -1801,6 +1803,7 @@ func (p *Processor) SetMultiple(jsonStr string, updates map[string]any, opts ...
 	if err != nil {
 		return jsonStr, err
 	}
+	defer configPool.Put(options)
 
 	// Validate JSON input
 	if err := p.validateInput(jsonStr); err != nil {
@@ -1831,20 +1834,12 @@ func (p *Processor) SetMultiple(jsonStr string, updates map[string]any, opts ...
 	}
 
 	// Create a deep copy of the data for modification attempts
-	var dataCopy any
-	if copyBytes, marshalErr := json.Marshal(data); marshalErr == nil {
-		if unmarshalErr := json.Unmarshal(copyBytes, &dataCopy); unmarshalErr != nil {
-			return jsonStr, &JsonsError{
-				Op:      "set_multiple",
-				Message: fmt.Sprintf("failed to create data copy: %v", unmarshalErr),
-				Err:     unmarshalErr,
-			}
-		}
-	} else {
+	dataCopy, copyErr := DeepCopy(data)
+	if copyErr != nil {
 		return jsonStr, &JsonsError{
 			Op:      "set_multiple",
-			Message: fmt.Sprintf("failed to create data copy: %v", marshalErr),
-			Err:     marshalErr,
+			Message: fmt.Sprintf("failed to create data copy: %v", copyErr),
+			Err:     copyErr,
 		}
 	}
 
@@ -1987,7 +1982,6 @@ func (p *Processor) GetHealthStatus() HealthStatus {
 		Checks:    checks,
 	}
 }
-
 
 // EscapeJSONPointer escapes special characters for JSON Pointer
 func EscapeJSONPointer(s string) string {

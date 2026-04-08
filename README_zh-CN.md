@@ -174,7 +174,9 @@ bytes, _ := json.MarshalIndent(data, "", "  ")
 
 // 快速格式化
 pretty, _    := json.Prettify(jsonStr)      // 美化输出
-compact, _   := json.CompactString(jsonStr) // 压缩
+var buf bytes.Buffer
+json.Compact(&buf, []byte(jsonStr))         // 压缩
+compact := buf.String()
 json.Print(data)        // 压缩格式到 stdout
 json.PrintPretty(data)  // 美化格式到 stdout
 

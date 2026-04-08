@@ -86,15 +86,8 @@ const (
 	validationBOMPrefix = "\uFEFF" // UTF-8 BOM prefix to detect and remove
 )
 
-// InvalidArrayIndex is a sentinel value indicating an invalid or out-of-bounds array index.
-// Returned by array parsing functions when the index cannot be determined
-// (e.g., invalid format, overflow, or empty string).
-//
-//	index := processor.ParseArrayIndex(str)
-//	if index == InvalidArrayIndex {
-//	    // Handle invalid index
-//	}
-const InvalidArrayIndex = internal.ArrayIndexInvalid
+// invalidArrayIndex is a sentinel value indicating an invalid or out-of-bounds array index.
+const invalidArrayIndex = internal.ArrayIndexInvalid
 
 // DefaultConfig returns the default configuration.
 // Creates a new instance each time to allow modifications without affecting other callers.
@@ -455,7 +448,7 @@ func (c *Config) ShouldValidateInput() bool    { return c.ValidateInput }
 func (c *Config) GetMaxNestingDepth() int      { return c.MaxNestingDepthSecurity }
 func (c *Config) ShouldValidateFilePath() bool { return c.ValidateFilePath }
 
-// Required by EncoderConfig interface (interfaces.go) for custom encoders.
+// Required by encoderConfig interface (interfaces.go) for encoders.
 // These methods provide read-only access to encoding configuration.
 func (c *Config) IsHTMLEscapeEnabled() bool      { return c.EscapeHTML }
 func (c *Config) IsPrettyEnabled() bool          { return c.Pretty }

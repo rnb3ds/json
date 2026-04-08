@@ -162,12 +162,12 @@ func demonstrateErrorWrapping() {
 	// Wrap errors with additional context
 	baseErr := json.ErrPathNotFound
 
-	// Use WrapError to add context
-	wrapped1 := json.WrapError(baseErr, "get_user", "failed to retrieve user data")
+	// WrapError and WrapPathError are internal helpers; users receive JsonsError
+	// from library operations. To create wrapped errors, use fmt.Errorf with %w:
+	wrapped1 := fmt.Errorf("get_user: failed to retrieve user data: %w", baseErr)
 	fmt.Printf("   Wrapped error 1: %v\n", wrapped1)
 
-	// Use WrapPathError to add path context
-	wrapped2 := json.WrapPathError(baseErr, "get_field", "user.profile.email", "email field not found")
+	wrapped2 := fmt.Errorf("get_field [user.profile.email]: email field not found: %w", baseErr)
 	fmt.Printf("   Wrapped error 2: %v\n", wrapped2)
 
 	// Unwrap to get original error

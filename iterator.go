@@ -30,11 +30,11 @@ const (
 type IteratorControl int
 
 const (
-	_ IteratorControl = iota // reserved
-	// iteratorContinue skips the current item and continues iteration
-	iteratorContinue
-	// iteratorBreak stops iteration entirely
-	iteratorBreak
+	IteratorNormal IteratorControl = iota // continue normally
+	// IteratorContinue skips the current item and continues iteration
+	IteratorContinue
+	// IteratorBreak stops iteration entirely
+	IteratorBreak
 )
 
 // pathTypeCacheShard represents a single shard of the path type cache
@@ -186,7 +186,7 @@ func safeTypeAssert[T any](value any) (T, bool) {
 // Example:
 //
 //	// Iterate over an array
-//	data, _ := json.Parse(`[1, 2, 3]`)
+//	data, _ := json.ParseAny(`[1, 2, 3]`)
 //	iter := json.NewIterator(data)
 //	for iter.HasNext() {
 //	    value, _ := iter.Next()
@@ -194,7 +194,7 @@ func safeTypeAssert[T any](value any) (T, bool) {
 //	}
 //
 //	// Iterate over an object
-//	data, _ := json.Parse(`{"a": 1, "b": 2}`)
+//	data, _ := json.ParseAny(`{"a": 1, "b": 2}`)
 //	iter := json.NewIterator(data)
 //	for iter.HasNext() {
 //	    value, _ := iter.Next()
@@ -216,7 +216,7 @@ type Iterator struct {
 //
 // Example:
 //
-//	data, _ := json.Parse(`{"name": "Alice", "age": 30}`)
+//	data, _ := json.ParseAny(`{"name": "Alice", "age": 30}`)
 //	iter := json.NewIterator(data)
 //	for iter.HasNext() {
 //	    value, ok := iter.Next()
@@ -905,15 +905,19 @@ func (iv *IterableValue) ForeachNested(path string, fn func(key any, item *Itera
 	foreachNestedOnValue(data, fn)
 }
 
-// ForeachWithPathAndControl iterates over JSON arrays or objects and applies a function
-// This is the 3-parameter version used by most code
-func ForeachWithPathAndControl(jsonStr, path string, fn func(key any, value any) IteratorControl) error {
+// ForeachWithPathAndControl iterates over JSON arrays or objects and applies a function.
+// This is the 3-parameter version used by most code.
+// Accepts optional Config for consistency with Processor.ForeachWithPathAndControl.
+func ForeachWithPathAndControl(jsonStr, path string, fn func(key any, value any) IteratorControl, cfg ...Config) error {
 	processor := getDefaultProcessor()
 	if processor == nil {
 		return ErrInternalError
 	}
+	if processor.IsClosed() {
+		return ErrProcessorClosed
+	}
 
-	data, err := processor.Get(jsonStr, path)
+	data, err := processor.Get(jsonStr, path, cfg...)
 	if err != nil {
 		return err
 	}
@@ -921,14 +925,15 @@ func ForeachWithPathAndControl(jsonStr, path string, fn func(key any, value any)
 	return foreachOnValue(data, fn)
 }
 
-// Foreach iterates over JSON arrays or objects with simplified signature (for test compatibility)
-func Foreach(jsonStr string, fn func(key any, item *IterableValue)) {
+// Foreach iterates over JSON arrays or objects with simplified signature (for test compatibility).
+// Accepts optional Config for consistency with Processor.Foreach.
+func Foreach(jsonStr string, fn func(key any, item *IterableValue), cfg ...Config) {
 	processor := getDefaultProcessor()
-	if processor == nil {
+	if processor == nil || processor.IsClosed() {
 		return
 	}
 
-	data, err := processor.Get(jsonStr, ".")
+	data, err := processor.Get(jsonStr, ".", cfg...)
 	if err != nil {
 		return
 	}
@@ -959,14 +964,18 @@ func foreachWithIterableValue(data any, fn func(key any, item *IterableValue)) {
 	}
 }
 
-// ForeachWithPath iterates over JSON arrays or objects with simplified signature (for test compatibility)
-func ForeachWithPath(jsonStr, path string, fn func(key any, item *IterableValue)) error {
+// ForeachWithPath iterates over JSON arrays or objects with simplified signature (for test compatibility).
+// Accepts optional Config for consistency with Processor.ForeachWithPath.
+func ForeachWithPath(jsonStr, path string, fn func(key any, item *IterableValue), cfg ...Config) error {
 	processor := getDefaultProcessor()
 	if processor == nil {
 		return ErrInternalError
 	}
+	if processor.IsClosed() {
+		return ErrProcessorClosed
+	}
 
-	data, err := processor.Get(jsonStr, path)
+	data, err := processor.Get(jsonStr, path, cfg...)
 	if err != nil {
 		return err
 	}
@@ -987,7 +996,7 @@ func foreachWithPathIterableValue(data any, currentPath string, fn func(key any,
 			ctrl := fn(i, iv, path)
 			iv.data = nil
 			iterableValuePool.Put(iv)
-			if ctrl == iteratorBreak {
+			if ctrl == IteratorBreak {
 				return nil
 			}
 		}
@@ -999,7 +1008,7 @@ func foreachWithPathIterableValue(data any, currentPath string, fn func(key any,
 			ctrl := fn(key, iv, path)
 			iv.data = nil
 			iterableValuePool.Put(iv)
-			if ctrl == iteratorBreak {
+			if ctrl == IteratorBreak {
 				return nil
 			}
 		}
@@ -1010,14 +1019,18 @@ func foreachWithPathIterableValue(data any, currentPath string, fn func(key any,
 	return nil
 }
 
-// ForeachReturn is a variant that returns error (for compatibility with test expectations)
-func ForeachReturn(jsonStr string, fn func(key any, item *IterableValue)) (string, error) {
+// ForeachReturn is a variant that returns error (for compatibility with test expectations).
+// Accepts optional Config for consistency with Processor.ForeachReturn.
+func ForeachReturn(jsonStr string, fn func(key any, item *IterableValue), cfg ...Config) (string, error) {
 	processor := getDefaultProcessor()
 	if processor == nil {
 		return "", ErrInternalError
 	}
+	if processor.IsClosed() {
+		return "", ErrProcessorClosed
+	}
 
-	data, err := processor.Get(jsonStr, ".")
+	data, err := processor.Get(jsonStr, ".", cfg...)
 	if err != nil {
 		return "", err
 	}
@@ -1034,13 +1047,13 @@ func foreachOnValue(data any, fn func(key any, value any) IteratorControl) error
 	switch v := data.(type) {
 	case []any:
 		for i, item := range v {
-			if ctrl := fn(i, item); ctrl == iteratorBreak {
+			if ctrl := fn(i, item); ctrl == IteratorBreak {
 				return nil
 			}
 		}
 	case map[string]any:
 		for key, val := range v {
-			if ctrl := fn(key, val); ctrl == iteratorBreak {
+			if ctrl := fn(key, val); ctrl == IteratorBreak {
 				return nil
 			}
 		}
@@ -1051,14 +1064,15 @@ func foreachOnValue(data any, fn func(key any, value any) IteratorControl) error
 	return nil
 }
 
-// ForeachNested iterates over nested JSON structures
-func ForeachNested(jsonStr string, fn func(key any, item *IterableValue)) {
+// ForeachNested iterates over nested JSON structures.
+// Accepts optional Config for consistency with Processor.ForeachNested.
+func ForeachNested(jsonStr string, fn func(key any, item *IterableValue), cfg ...Config) {
 	processor := getDefaultProcessor()
-	if processor == nil {
+	if processor == nil || processor.IsClosed() {
 		return
 	}
 
-	data, err := processor.Get(jsonStr, ".")
+	data, err := processor.Get(jsonStr, ".", cfg...)
 	if err != nil {
 		return
 	}
