@@ -145,13 +145,42 @@ func NewEncoder(w io.Writer, cfg ...Config) *Encoder {
 //
 // See the documentation for Marshal for details about the
 // conversion of Go values to JSON.
+// newline is a pre-allocated byte slice to avoid per-Encode allocation
+var newline = []byte{'\n'}
+
 func (enc *Encoder) Encode(v any) error {
 	// SAFETY: Check for nil processor
 	if enc.processor == nil {
 		return ErrInternalError
 	}
 
-	// Create encoding config based on encoder settings
+	// PERFORMANCE: Fast path for simple types with no custom encoding
+	// Avoids Config creation and EncodeWithConfig overhead for common cases
+	if enc.indent == "" && enc.prefix == "" {
+		// Try fast encoder directly
+		encoder := internal.GetEncoder()
+		err := encoder.EncodeValue(v)
+		if err == nil {
+			data := encoder.Bytes()
+			// Apply HTML escaping if needed
+			if enc.escapeHTML && internal.NeedsHTMLEscapeBytes(data) {
+				escaped := internal.HTMLEscapeBytes(data)
+				_, err = enc.w.Write(escaped)
+				internal.PutHTMLEscapeBytes(escaped)
+			} else {
+				_, err = enc.w.Write(data)
+			}
+			if err == nil {
+				_, err = enc.w.Write(newline)
+			}
+			internal.PutEncoder(encoder)
+			return err
+		}
+		// Fast path failed, fall through to full encoding
+		internal.PutEncoder(encoder)
+	}
+
+	// Full encoding path for complex cases with indentation or config
 	config := DefaultConfig()
 	config.EscapeHTML = enc.escapeHTML
 
@@ -161,14 +190,17 @@ func (enc *Encoder) Encode(v any) error {
 		config.Prefix = enc.prefix
 	}
 
-	// Encode the value
+	// Encode the value using internal method that accepts pre-built config
 	jsonStr, err := enc.processor.EncodeWithConfig(v, config)
 	if err != nil {
 		return err
 	}
 
 	// Write to the output stream with a newline
-	_, err = enc.w.Write([]byte(jsonStr + "\n"))
+	if _, err := enc.w.Write(internal.StringToBytes(jsonStr)); err != nil {
+		return err
+	}
+	_, err = enc.w.Write(newline)
 	return err
 }
 
@@ -200,7 +232,6 @@ type Decoder struct {
 	useNumber             bool
 	disallowUnknownFields bool
 	offset                int64 // total bytes read from input
-	scanp                 int64 // reserved: start of unread data for future buffered scanning
 }
 
 // NewDecoder returns a new decoder that reads from r.
@@ -854,6 +885,9 @@ func (p *Processor) EncodeStream(values any, cfg ...Config) (string, error) {
 //
 //	result, err := processor.EncodeBatch(pairs, json.PrettyConfig())
 func (p *Processor) EncodeBatch(pairs map[string]any, cfg ...Config) (string, error) {
+	if err := p.checkClosed(); err != nil {
+		return "", err
+	}
 	config := getConfigOrDefault(cfg...)
 	return p.EncodeWithConfig(pairs, config)
 }
@@ -865,6 +899,9 @@ func (p *Processor) EncodeBatch(pairs map[string]any, cfg ...Config) (string, er
 //
 //	result, err := processor.EncodeFields(value, []string{"name", "email"}, json.PrettyConfig())
 func (p *Processor) EncodeFields(value any, fields []string, cfg ...Config) (string, error) {
+	if err := p.checkClosed(); err != nil {
+		return "", err
+	}
 	processor := p
 
 	// First convert to JSON and parse back to get map representation
@@ -928,9 +965,12 @@ func (p *Processor) EncodeWithConfig(value any, cfg ...Config) (string, error) {
 	}
 
 	// Get config from variadic parameter
-	config := DefaultConfig()
+	// PERFORMANCE: Only allocate DefaultConfig when no config is provided
+	var config Config
 	if len(cfg) > 0 {
 		config = cfg[0]
+	} else {
+		config = DefaultConfig()
 	}
 
 	// PERFORMANCE: Fast path for simple types without special encoding needs
@@ -1645,7 +1685,7 @@ func (p *Processor) ValidateSchema(jsonStr string, schema *Schema, opts ...Confi
 	if err != nil {
 		return nil, err
 	}
-	defer configPool.Put(options)
+	defer releaseConfig(options)
 
 	if err := p.validateInput(jsonStr); err != nil {
 		return nil, err
@@ -1753,7 +1793,9 @@ func (p *Processor) validateType(value any, expectedType string) bool {
 		return ok
 	case "number":
 		switch value.(type) {
-		case int, int32, int64, float32, float64:
+		case int, int8, int16, int32, int64,
+			uint, uint8, uint16, uint32, uint64,
+			float32, float64:
 			return true
 		}
 		return false

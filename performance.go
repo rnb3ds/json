@@ -27,12 +27,6 @@ func warmupPathCache(commonPaths []string) {
 	warmupPathCacheWith(processor, commonPaths)
 }
 
-// warmupPathCacheWithProcessor pre-populates the path cache using a specific processor.
-// Delegates to internal.GlobalPathIntern for storage.
-func warmupPathCacheWithProcessor(processor *Processor, commonPaths []string) {
-	warmupPathCacheWith(processor, commonPaths)
-}
-
 // warmupPathCacheWith is the shared implementation for path cache warmup.
 func warmupPathCacheWith(processor *Processor, commonPaths []string) {
 	if len(commonPaths) == 0 || processor == nil {
@@ -115,7 +109,6 @@ func (dec *Decoder) reset(r io.Reader) {
 		}
 	}
 	dec.offset = 0
-	dec.scanp = 0
 }
 
 // clear clears all references in the decoder
@@ -127,7 +120,6 @@ func (dec *Decoder) clear() {
 		dec.buf.Reset(bytes.NewReader(nil))
 	}
 	dec.offset = 0
-	dec.scanp = 0
 }
 
 // getPooledDecoder gets a decoder from the global pool
@@ -211,51 +203,6 @@ func isSimplePropertyAccess(path string) bool {
 		}
 	}
 	return true
-}
-
-// ============================================================================
-// BUFFER POOL FOR LARGE OPERATIONS
-// ============================================================================
-
-var largeBufferPool = sync.Pool{
-	New: func() any {
-		buf := make([]byte, 0, 32*1024) // 32KB buffer
-		return &buf
-	},
-}
-
-func getLargeBuffer() *[]byte {
-	buf := largeBufferPool.Get().(*[]byte)
-	*buf = (*buf)[:0]
-	return buf
-}
-
-func putLargeBuffer(buf *[]byte) {
-	if cap(*buf) <= 64*1024 { // Don't pool buffers larger than 64KB
-		largeBufferPool.Put(buf)
-	}
-}
-
-// ============================================================================
-// ENCODE BUFFER POOL
-// ============================================================================
-
-var encodeBufferPool = sync.Pool{
-	New: func() any {
-		return make([]byte, 0, 4*1024) // 4KB initial buffer
-	},
-}
-
-// getEncodeBuffer gets a buffer for encoding operations
-func getEncodeBuffer() []byte {
-	return encodeBufferPool.Get().([]byte)[:0]
-}
-
-// putEncodeBuffer returns a buffer to the pool
-func putEncodeBuffer(buf []byte) {
-	if cap(buf) <= 16*1024 { // Don't pool buffers larger than 16KB
-		encodeBufferPool.Put(buf)
-	}
 }
 
 // ============================================================================

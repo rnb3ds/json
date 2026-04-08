@@ -2414,7 +2414,7 @@ func TestResourceMonitor_EfficiencyMethods(t *testing.T) {
 	t.Run("GetPoolEfficiency", func(t *testing.T) {
 		rm := newResourceMonitor()
 		// Initially 100% (no operations)
-		if eff := rm.getPoolEfficiency(); eff != 100.0 {
+		if eff := rm.getPoolHitRatio(); eff != 100.0 {
 			t.Errorf("GetPoolEfficiency() = %v, want 100.0", eff)
 		}
 
@@ -2422,7 +2422,7 @@ func TestResourceMonitor_EfficiencyMethods(t *testing.T) {
 		rm.recordPoolHit()
 		rm.recordPoolMiss()
 		// 2 / 3 * 100 = 66.67%
-		eff := rm.getPoolEfficiency()
+		eff := rm.getPoolHitRatio()
 		if eff < 66.0 || eff > 67.0 {
 			t.Errorf("GetPoolEfficiency() = %v, want ~66.67", eff)
 		}

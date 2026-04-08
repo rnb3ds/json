@@ -15,7 +15,6 @@ type unifiedResourceManager struct {
 	// Allocation counters for debugging/metrics
 	allocatedSegments int64
 	allocatedBuffers  int64
-	allocatedOptions  int64
 	allocatedMaps     int64
 }
 
@@ -104,7 +103,6 @@ func (urm *unifiedResourceManager) getStats() resourceManagerStats {
 	return resourceManagerStats{
 		allocatedSegments: atomic.LoadInt64(&urm.allocatedSegments),
 		allocatedBuffers:  atomic.LoadInt64(&urm.allocatedBuffers),
-		allocatedOptions:  atomic.LoadInt64(&urm.allocatedOptions),
 		allocatedMaps:     atomic.LoadInt64(&urm.allocatedMaps),
 	}
 }
@@ -112,7 +110,6 @@ func (urm *unifiedResourceManager) getStats() resourceManagerStats {
 type resourceManagerStats struct {
 	allocatedSegments int64
 	allocatedBuffers  int64
-	allocatedOptions  int64
 	allocatedMaps     int64
 }
 

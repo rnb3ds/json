@@ -241,15 +241,15 @@ func (c *Config) Clone() *Config {
 
 // Validate validates the configuration and applies corrections.
 // This is the single source of truth for config validation.
-// DRY FIX: Delegates to ValidateWithWarnings to avoid code duplication
+// DRY FIX: Delegates to ValidateWithWarnings to avoid code duplication.
+// BEHAVIOR: Auto-corrects invalid values (e.g., negative sizes are clamped to minimums).
+// Returns nil after corrections are applied — use ValidateWithWarnings for visibility.
 func (c *Config) Validate() error {
 	if c == nil {
 		return errors.New("config cannot be nil")
 	}
 
-	// Delegate to ValidateWithWarnings, ignoring warnings for silent validation
-	// This ensures both functions use the same validation logic
-	_ = c.ValidateWithWarnings()
+	c.ValidateWithWarnings()
 	return nil
 }
 

@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"log/slog"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -43,7 +42,8 @@ type Processor struct {
 	hashCache   map[uint64]*hashCacheEntry
 	hashCacheMu sync.RWMutex
 	// Extension points for hooks
-	hooks []Hook
+	hooks   []Hook
+	hooksMu sync.Mutex // protects hooks slice for concurrent AddHook
 }
 
 // hashCacheEntry stores a cached hash with its last access time for LRU eviction
@@ -273,7 +273,9 @@ func (p *Processor) IsClosed() bool {
 //	p := json.MustNew()
 //	p.AddHook(&LoggingHook{})
 func (p *Processor) AddHook(hook Hook) {
+	p.hooksMu.Lock()
 	p.hooks = append(p.hooks, hook)
+	p.hooksMu.Unlock()
 }
 
 // ProcessBatch processes multiple operations in a single batch
@@ -286,7 +288,7 @@ func (p *Processor) ProcessBatch(operations []BatchOperation, opts ...Config) ([
 	if err != nil {
 		return nil, err
 	}
-	defer configPool.Put(options)
+	defer releaseConfig(options)
 
 	if len(operations) > p.config.MaxBatchSize {
 		return nil, &JsonsError{
@@ -371,7 +373,7 @@ func (p *Processor) WarmupCache(jsonStr string, paths []string, opts ...Config) 
 			Err:     err,
 		}
 	}
-	defer configPool.Put(options)
+	defer releaseConfig(options)
 
 	// Track warmup statistics
 	successCount := 0
@@ -615,21 +617,13 @@ func (p *Processor) createCacheKeyWithHash(operation string, jsonHash uint64, pa
 		sb.WriteByte(':')
 		sb.WriteString(path)
 
-		// Include relevant options in the key
-		if options != nil {
-			if options.StrictMode {
-				sb.WriteString(":s")
-			}
-			if options.AllowComments {
-				sb.WriteString(":c")
-			}
-			if options.PreserveNumbers {
-				sb.WriteString(":p")
-			}
-			if options.MaxDepth > 0 {
-				sb.WriteString(":d")
-				sb.WriteString(strconv.Itoa(options.MaxDepth))
-			}
+		// Include all options that affect output using config hash.
+		// Ensures different configs never share cached results.
+		// PERFORMANCE: Skip hash computation for default config (common case)
+		if options != nil && !isDefaultConfig(*options) {
+			optHash := hashConfig(*options)
+			sb.WriteByte(':')
+			sb.WriteString(formatUint64HexString(optHash))
 		}
 
 		key = sb.String()
@@ -821,26 +815,43 @@ var configPool = sync.Pool{
 	},
 }
 
-// getConfig gets a Config from the pool, applies defaults or provided config, and validates
-func (p *Processor) getConfig(opts ...Config) (*Config, error) {
+// releaseConfig returns a pooled Config, clearing all reference-type fields first
+// to prevent data leaks back into the pool.
+// SECURITY: Must clear all map/slice/interface fields to avoid cross-request contamination.
+func releaseConfig(cfg *Config) {
+	if cfg == nil {
+		return
+	}
+	cfg.Context = nil
+	cfg.CustomEncoder = nil
+	cfg.CustomPathParser = nil
+	cfg.CustomEscapes = nil
+	cfg.CustomTypeEncoders = nil
+	cfg.CustomValidators = nil
+	cfg.AdditionalDangerousPatterns = nil
+	cfg.Hooks = nil
+	configPool.Put(cfg)
+}
+
+// prepareOptions prepares and validates processor options.
+// Accepts Config values and returns a pointer for internal use.
+// PERFORMANCE: Uses pooled Config objects to reduce allocations.
+// SECURITY: Clears reference fields from pooled objects to prevent leaks.
+func (p *Processor) prepareOptions(opts ...Config) (*Config, error) {
 	cfg := configPool.Get().(*Config)
 	if len(opts) > 0 {
+		cfg.Context = nil
+		cfg.CustomEncoder = nil
+		cfg.CustomPathParser = nil
 		*cfg = opts[0]
 	} else {
 		*cfg = DefaultConfig()
 	}
 	if err := cfg.Validate(); err != nil {
-		configPool.Put(cfg)
+		releaseConfig(cfg)
 		return nil, err
 	}
 	return cfg, nil
-}
-
-// prepareOptions prepares and validates processor options
-// Accepts Config values and returns a pointer for internal use
-// PERFORMANCE: Uses pooled Config objects to reduce allocations
-func (p *Processor) prepareOptions(opts ...Config) (*Config, error) {
-	return p.getConfig(opts...)
 }
 
 // mergeOptionsWithOverride creates a new Config with overrides applied.
@@ -867,7 +878,7 @@ func (p *Processor) Delete(jsonStr, path string, opts ...Config) (string, error)
 	if err != nil {
 		return "", err
 	}
-	defer configPool.Put(options)
+	defer releaseConfig(options)
 
 	if err := p.validateInput(jsonStr); err != nil {
 		return jsonStr, err
@@ -1166,7 +1177,7 @@ func (p *Processor) Get(jsonStr, path string, opts ...Config) (any, error) {
 		p.incrementErrorCount()
 		return nil, err
 	}
-	defer configPool.Put(options)
+	defer releaseConfig(options)
 
 	// Get context from options or use background
 	ctx := context.Background()
@@ -1293,7 +1304,7 @@ func (p *Processor) PreParse(jsonStr string, opts ...Config) (*ParsedJSON, error
 	if err != nil {
 		return nil, err
 	}
-	defer configPool.Put(options)
+	defer releaseConfig(options)
 
 	// Validate input
 	if err := p.validateInput(jsonStr); err != nil {
@@ -1322,7 +1333,6 @@ func (p *Processor) PreParse(jsonStr string, opts ...Config) (*ParsedJSON, error
 	return &ParsedJSON{
 		data:      data,
 		hash:      p.getOrCacheHash(jsonStr),
-		jsonLen:   len(jsonStr),
 		processor: p,
 	}, nil
 }
@@ -1348,7 +1358,7 @@ func (p *Processor) GetFromParsed(parsed *ParsedJSON, path string, opts ...Confi
 	if err != nil {
 		return nil, err
 	}
-	defer configPool.Put(options)
+	defer releaseConfig(options)
 
 	if err := p.validatePath(path); err != nil {
 		return nil, err
@@ -1395,7 +1405,7 @@ func (p *Processor) SetFromParsed(parsed *ParsedJSON, path string, value any, op
 	if err != nil {
 		return nil, err
 	}
-	defer configPool.Put(options)
+	defer releaseConfig(options)
 
 	if err := p.validatePath(path); err != nil {
 		return nil, err
@@ -1421,7 +1431,6 @@ func (p *Processor) SetFromParsed(parsed *ParsedJSON, path string, value any, op
 	return &ParsedJSON{
 		data:      result,
 		hash:      0, // New hash will be computed when needed
-		jsonLen:   0, // Length unknown until serialized
 		processor: p,
 	}, nil
 }
@@ -1514,7 +1523,7 @@ func (p *Processor) GetMultiple(jsonStr string, paths []string, opts ...Config) 
 	if err != nil {
 		return nil, err
 	}
-	defer configPool.Put(options)
+	defer releaseConfig(options)
 
 	// Parse JSON once for all operations
 	var data any
@@ -1714,7 +1723,7 @@ func (p *Processor) Set(jsonStr, path string, value any, opts ...Config) (string
 	if err != nil {
 		return jsonStr, err
 	}
-	defer configPool.Put(options)
+	defer releaseConfig(options)
 
 	if err := p.validateInput(jsonStr); err != nil {
 		return jsonStr, err
@@ -1803,7 +1812,7 @@ func (p *Processor) SetMultiple(jsonStr string, updates map[string]any, opts ...
 	if err != nil {
 		return jsonStr, err
 	}
-	defer configPool.Put(options)
+	defer releaseConfig(options)
 
 	// Validate JSON input
 	if err := p.validateInput(jsonStr); err != nil {

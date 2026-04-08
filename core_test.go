@@ -3556,7 +3556,7 @@ func TestIsPrimitiveType(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := processor.isPrimitiveType(tt.data)
+			result := isPrimitiveType(tt.data)
 			if result != tt.expected {
 				t.Errorf("isPrimitiveType() = %v; want %v", result, tt.expected)
 			}

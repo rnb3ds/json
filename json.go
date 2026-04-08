@@ -161,7 +161,7 @@ func ShutdownGlobalProcessor() {
 
 // shouldSkipJSONLLineFromConfig checks if a line should be skipped based on Config.
 // Uses the unified Config struct with JSONL* fields.
-func shouldSkipJSONLLineFromConfig(line []byte, cfg Config) bool {
+func shouldSkipJSONLLineFromConfig(line []byte, cfg *Config) bool {
 	// Skip empty lines if configured
 	if cfg.JSONLSkipEmpty && len(line) == 0 {
 		return true
@@ -201,13 +201,14 @@ func StreamLinesInto[T any](reader io.Reader, fn func(lineNum int, data T) error
 	} else {
 		config = DefaultConfig()
 	}
+	configPtr := &config
 
 	// Get buffer and line size from config
-	bufSize := config.JSONLBufferSize
+	bufSize := configPtr.JSONLBufferSize
 	if bufSize <= 0 {
 		bufSize = 64 * 1024
 	}
-	maxLineSize := config.JSONLMaxLineSize
+	maxLineSize := configPtr.JSONLMaxLineSize
 	if maxLineSize <= 0 {
 		maxLineSize = 1024 * 1024
 	}
@@ -223,13 +224,13 @@ func StreamLinesInto[T any](reader io.Reader, fn func(lineNum int, data T) error
 		line := scanner.Bytes()
 
 		// Use helper to check if line should be skipped
-		if shouldSkipJSONLLineFromConfig(line, config) {
+		if shouldSkipJSONLLineFromConfig(line, configPtr) {
 			continue
 		}
 
 		var data T
 		if err := json.Unmarshal(line, &data); err != nil {
-			if config.JSONLContinueOnErr {
+			if configPtr.JSONLContinueOnErr {
 				continue
 			}
 			return nil, fmt.Errorf("line %d: %w", lineNum, err)

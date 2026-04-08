@@ -84,7 +84,7 @@ func TestShouldSkipJSONLLineFromConfig(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := shouldSkipJSONLLineFromConfig(tt.line, tt.config)
+			result := shouldSkipJSONLLineFromConfig(tt.line, &tt.config)
 			if result != tt.expected {
 				t.Errorf("shouldSkipJSONLLineFromConfig() = %v, want %v", result, tt.expected)
 			}

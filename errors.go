@@ -175,16 +175,18 @@ func IsSecurityRelated(err error) bool {
 	return errors.Is(err, ErrSecurityViolation)
 }
 
+// userErrorSentinels is the fixed list of user-caused errors, pre-allocated to avoid per-call allocation.
+var userErrorSentinels = []error{
+	ErrInvalidJSON, ErrPathNotFound, ErrTypeMismatch,
+	ErrInvalidPath, ErrUnsupportedPath,
+}
+
 // IsUserError determines if an error is caused by user input
 func IsUserError(err error) bool {
 	if err == nil {
 		return false
 	}
-	userErrors := []error{
-		ErrInvalidJSON, ErrPathNotFound, ErrTypeMismatch,
-		ErrInvalidPath, ErrUnsupportedPath,
-	}
-	for _, userErr := range userErrors {
+	for _, userErr := range userErrorSentinels {
 		if errors.Is(err, userErr) {
 			return true
 		}

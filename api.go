@@ -96,6 +96,11 @@ func hashConfig(cfg Config) uint64 {
 	return hashConfigFields(cfg)
 }
 
+// cachedDefaultConfig is a package-level cached default config to avoid
+// repeated allocation in isDefaultConfig hot path.
+// PERFORMANCE: Eliminates DefaultConfig() allocation on every call.
+var cachedDefaultConfig = DefaultConfig()
+
 // isDefaultConfig checks if the config matches the default configuration.
 // Performs complete comparison including Context field (which JSON ignores).
 // PERFORMANCE: Uses short-circuit evaluation for common mismatches first.
@@ -111,9 +116,8 @@ func isDefaultConfig(cfg Config) bool {
 		return false
 	}
 
-	// Check all fields against default
-	defaultCfg := DefaultConfig()
-	return configFieldsEqual(cfg, defaultCfg)
+	// Check all fields against cached default
+	return configFieldsEqual(cfg, cachedDefaultConfig)
 }
 
 // configFieldAccessor defines how to access and compare/hash a Config field.
@@ -322,13 +326,71 @@ var configFieldList = []configFieldAccessor{
 		}},
 }
 
-// configFieldsEqual compares all fields of two Config structs using the unified field list.
-// PERFORMANCE: Uses direct field comparison instead of reflect.DeepEqual.
+// configFieldsEqual compares all fields of two Config structs.
+// PERFORMANCE: Uses inline field comparisons for the common case (no custom extensions).
+// Falls back to the field list approach only when extension fields are non-nil.
 func configFieldsEqual(a, b Config) bool {
-	for _, field := range configFieldList {
-		if !field.equal(a, b) {
-			return false
-		}
+	// Fast path: inline all scalar field comparisons to avoid closure overhead.
+	// This is the hot path for isDefaultConfig where both configs are default-like.
+	if a.MaxCacheSize != b.MaxCacheSize ||
+		a.CacheTTL != b.CacheTTL ||
+		a.EnableCache != b.EnableCache ||
+		a.CacheResults != b.CacheResults ||
+		a.MaxJSONSize != b.MaxJSONSize ||
+		a.MaxPathDepth != b.MaxPathDepth ||
+		a.MaxBatchSize != b.MaxBatchSize ||
+		a.MaxNestingDepthSecurity != b.MaxNestingDepthSecurity ||
+		a.MaxSecurityValidationSize != b.MaxSecurityValidationSize ||
+		a.MaxObjectKeys != b.MaxObjectKeys ||
+		a.MaxArrayElements != b.MaxArrayElements ||
+		a.FullSecurityScan != b.FullSecurityScan ||
+		a.MaxConcurrency != b.MaxConcurrency ||
+		a.ParallelThreshold != b.ParallelThreshold ||
+		a.EnableValidation != b.EnableValidation ||
+		a.StrictMode != b.StrictMode ||
+		a.CreatePaths != b.CreatePaths ||
+		a.CleanupNulls != b.CleanupNulls ||
+		a.CompactArrays != b.CompactArrays ||
+		a.ContinueOnError != b.ContinueOnError ||
+		a.AllowComments != b.AllowComments ||
+		a.PreserveNumbers != b.PreserveNumbers ||
+		a.ValidateInput != b.ValidateInput ||
+		a.ValidateFilePath != b.ValidateFilePath ||
+		a.SkipValidation != b.SkipValidation ||
+		a.Pretty != b.Pretty ||
+		a.Indent != b.Indent ||
+		a.Prefix != b.Prefix ||
+		a.EscapeHTML != b.EscapeHTML ||
+		a.SortKeys != b.SortKeys ||
+		a.ValidateUTF8 != b.ValidateUTF8 ||
+		a.MaxDepth != b.MaxDepth ||
+		a.DisallowUnknown != b.DisallowUnknown ||
+		a.FloatPrecision != b.FloatPrecision ||
+		a.FloatTruncate != b.FloatTruncate ||
+		a.DisableEscaping != b.DisableEscaping ||
+		a.EscapeUnicode != b.EscapeUnicode ||
+		a.EscapeSlash != b.EscapeSlash ||
+		a.EscapeNewlines != b.EscapeNewlines ||
+		a.EscapeTabs != b.EscapeTabs ||
+		a.IncludeNulls != b.IncludeNulls ||
+		a.EnableMetrics != b.EnableMetrics ||
+		a.EnableHealthCheck != b.EnableHealthCheck ||
+		a.MergeMode != b.MergeMode ||
+		a.ChunkSize != b.ChunkSize ||
+		a.MaxMemory != b.MaxMemory ||
+		a.BufferSize != b.BufferSize ||
+		a.SamplingEnabled != b.SamplingEnabled ||
+		a.SampleSize != b.SampleSize ||
+		a.JSONLBufferSize != b.JSONLBufferSize ||
+		a.JSONLMaxLineSize != b.JSONLMaxLineSize ||
+		a.JSONLSkipEmpty != b.JSONLSkipEmpty ||
+		a.JSONLSkipComments != b.JSONLSkipComments ||
+		a.JSONLContinueOnErr != b.JSONLContinueOnErr ||
+		a.JSONLWorkers != b.JSONLWorkers ||
+		a.JSONLChunkSize != b.JSONLChunkSize ||
+		a.JSONLMaxMemory != b.JSONLMaxMemory ||
+		a.Context != b.Context {
+		return false
 	}
 
 	// CustomEscapes map comparison (handled separately due to complexity)
@@ -885,23 +947,14 @@ func PrintPrettyE(data any) error {
 
 // formatJSONString formats a JSON string or encodes a non-JSON string.
 func formatJSONString(jsonStr string, pretty bool, p *Processor) (string, error) {
-	if isValid, _ := p.Valid(jsonStr); isValid {
-		if pretty {
-			return p.Prettify(jsonStr)
-		}
-		return p.Compact(jsonStr)
-	}
-	// Not valid JSON - encode as a string value
-	cfg := DefaultConfig()
-	cfg.Pretty = pretty
-	return EncodeWithConfig(jsonStr, cfg)
+	return p.formatJSONString(jsonStr, pretty)
 }
 
 // encodeValue encodes any Go value to JSON string.
 func encodeValue(value any, pretty bool) (string, error) {
-	cfg := DefaultConfig()
-	cfg.Pretty = pretty
-	return EncodeWithConfig(value, cfg)
+	return withProcessor(func(p *Processor) (string, error) {
+		return p.encodeValue(value, pretty)
+	})
 }
 
 // printData handles the core logic for Print and PrintPretty
@@ -910,15 +963,7 @@ func printData(data any, pretty bool) (string, error) {
 	if processor == nil {
 		return "", ErrInternalError
 	}
-
-	switch v := data.(type) {
-	case string:
-		return formatJSONString(v, pretty, processor)
-	case []byte:
-		return formatJSONString(string(v), pretty, processor)
-	default:
-		return encodeValue(v, pretty)
-	}
+	return processor.printData(data, pretty)
 }
 
 // Valid reports whether data is valid JSON.

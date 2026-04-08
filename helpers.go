@@ -823,6 +823,10 @@ func CompareJSON(json1, json2 string) (bool, error) {
 		return false, fmt.Errorf("invalid JSON in second argument: %v", err)
 	}
 
+	// Normalize Number to float64 so that 1 and 1.0 compare equal
+	data1 = convertLibraryNumbers(data1)
+	data2 = convertLibraryNumbers(data2)
+
 	bytes1, err := json.Marshal(data1)
 	if err != nil {
 		return false, err

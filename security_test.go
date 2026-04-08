@@ -1400,3 +1400,107 @@ func BenchmarkValidatePathComplex(b *testing.B) {
 		_ = processor.validateFilePath(path)
 	}
 }
+
+// ============================================================================
+// Pattern Registry API Tests (M2 fix)
+// ============================================================================
+
+func TestPatternRegistryAPI(t *testing.T) {
+	t.Run("RegisterAndList", func(t *testing.T) {
+		defer ClearDangerousPatterns()
+
+		RegisterDangerousPattern(DangerousPattern{
+			Pattern: "custom_test_pattern",
+			Name:    "Test Pattern",
+			Level:   PatternLevelCritical,
+		})
+		patterns := ListDangerousPatterns()
+		found := false
+		for _, p := range patterns {
+			if p.Pattern == "custom_test_pattern" {
+				found = true
+				if p.Name != "Test Pattern" {
+					t.Errorf("pattern name = %q, want %q", p.Name, "Test Pattern")
+				}
+			}
+		}
+		if !found {
+			t.Error("registered pattern not found in list")
+		}
+	})
+
+	t.Run("Unregister", func(t *testing.T) {
+		defer ClearDangerousPatterns()
+
+		RegisterDangerousPattern(DangerousPattern{
+			Pattern: "temp_pattern",
+			Name:    "Temporary",
+			Level:   PatternLevelWarning,
+		})
+		UnregisterDangerousPattern("temp_pattern")
+
+		for _, p := range ListDangerousPatterns() {
+			if p.Pattern == "temp_pattern" {
+				t.Error("pattern should have been unregistered")
+			}
+		}
+	})
+
+	t.Run("Clear", func(t *testing.T) {
+		RegisterDangerousPattern(DangerousPattern{
+			Pattern: "clearable_pattern",
+			Name:    "Clearable",
+			Level:   PatternLevelInfo,
+		})
+		ClearDangerousPatterns()
+		if len(ListDangerousPatterns()) != 0 {
+			t.Error("patterns should be empty after clear")
+		}
+	})
+
+	t.Run("GetDefaultPatterns", func(t *testing.T) {
+		defaults := GetDefaultPatterns()
+		if len(defaults) == 0 {
+			t.Error("expected non-empty default patterns")
+		}
+		for _, p := range defaults {
+			if p.Pattern == "" || p.Name == "" {
+				t.Errorf("default pattern has empty field: %+v", p)
+			}
+			if p.Level != PatternLevelCritical {
+				t.Errorf("default pattern level = %v, want Critical", p.Level)
+			}
+		}
+	})
+
+	t.Run("GetCriticalPatterns", func(t *testing.T) {
+		critical := GetCriticalPatterns()
+		if len(critical) == 0 {
+			t.Error("expected non-empty critical patterns")
+		}
+		for _, p := range critical {
+			if p.Level != PatternLevelCritical {
+				t.Errorf("critical pattern level = %v, want Critical", p.Level)
+			}
+		}
+	})
+
+	t.Run("MaxPatternLenDynamic", func(t *testing.T) {
+		defer ClearDangerousPatterns()
+
+		baseLen := maxDangerousPatternLen()
+		longPattern := "this_is_a_very_long_custom_pattern_for_testing"
+		RegisterDangerousPattern(DangerousPattern{
+			Pattern: longPattern,
+			Name:    "Long Pattern",
+			Level:   PatternLevelCritical,
+		})
+		newLen := maxDangerousPatternLen()
+		if newLen < len(longPattern) {
+			t.Errorf("maxDangerousPatternLen() = %d, want >= %d after registering long pattern", newLen, len(longPattern))
+		}
+		if newLen <= baseLen {
+			t.Errorf("maxDangerousPatternLen() should increase after registering a longer pattern: before=%d after=%d", baseLen, newLen)
+		}
+	})
+}

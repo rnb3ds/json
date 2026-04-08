@@ -2,7 +2,9 @@ package json
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
@@ -12,7 +14,9 @@ import (
 )
 
 // isPrimitiveType checks if data is a JSON primitive type
-func (p *Processor) isPrimitiveType(data any) bool {
+// isPrimitiveType checks if data is a JSON primitive type.
+// Package-level function for internal use (e.g., testing).
+func isPrimitiveType(data any) bool {
 	switch data.(type) {
 	case string, int, int8, int16, int32, int64,
 		uint, uint8, uint16, uint32, uint64,
@@ -62,7 +66,7 @@ func (p *Processor) Parse(jsonStr string, target any, opts ...Config) error {
 	if err != nil {
 		return err
 	}
-	defer configPool.Put(options)
+	defer releaseConfig(options)
 
 	if err := p.validateInput(jsonStr); err != nil {
 		return err
@@ -184,16 +188,16 @@ func (p *Processor) Valid(jsonStr string, opts ...Config) (bool, error) {
 		return false, err
 	}
 
-	if err := p.validateInput(jsonStr); err != nil {
-		return false, err
-	}
-
-	// Prepare options
+	// Prepare options before validateInput so caller's config limits are used
 	options, err := p.prepareOptions(opts...)
 	if err != nil {
 		return false, err
 	}
-	defer configPool.Put(options)
+	defer releaseConfig(options)
+
+	if err := p.validateInput(jsonStr); err != nil {
+		return false, err
+	}
 
 	// Check cache first
 	cacheKey := p.createCacheKey("validate", jsonStr, "", options)
@@ -335,7 +339,7 @@ func (p *Processor) Prettify(jsonStr string, opts ...Config) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer configPool.Put(options)
+	defer releaseConfig(options)
 
 	if err := p.validateInput(jsonStr); err != nil {
 		return "", err
@@ -401,7 +405,15 @@ func (p *Processor) printData(data any, pretty bool) (string, error) {
 
 // formatJSONString formats a JSON string or encodes a non-JSON string.
 func (p *Processor) formatJSONString(jsonStr string, pretty bool) (string, error) {
-	if isValid, _ := p.Valid(jsonStr); isValid {
+	isValid, validErr := p.Valid(jsonStr)
+	if validErr != nil {
+		// Distinguish processor errors (closed, context) from invalid JSON
+		// Processor errors should propagate; invalid JSON falls through to string encoding
+		if errors.Is(validErr, ErrProcessorClosed) || errors.Is(validErr, context.Canceled) {
+			return "", validErr
+		}
+	}
+	if isValid {
 		if pretty {
 			return p.Prettify(jsonStr)
 		}
@@ -499,7 +511,7 @@ func (p *Processor) Compact(jsonStr string, opts ...Config) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer configPool.Put(options)
+	defer releaseConfig(options)
 
 	if err := p.validateInput(jsonStr); err != nil {
 		return "", err
@@ -724,6 +736,21 @@ func (p *Processor) navigateJSONPointer(data any, path string) (any, error) {
 
 		if strings.Contains(segment, "~") {
 			segment = p.unescapeJSONPointer(segment)
+		}
+
+		// RFC 6902: Array index access — numeric segments target array elements
+		if arr, ok := current.([]any); ok {
+			if idx, err := strconv.Atoi(segment); err == nil {
+				if idx >= 0 && idx < len(arr) {
+					current = arr[idx]
+					continue
+				}
+				return nil, ErrPathNotFound
+			}
+			// "-" refers to the (nonexistent) element after the end of the array
+			if segment == "-" {
+				return nil, ErrPathNotFound
+			}
 		}
 
 		result := p.handlePropertyAccess(current, segment)

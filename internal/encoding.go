@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"sync"
 	"unicode/utf8"
+	"unsafe"
 )
 
 // MarshalJSON marshals a value to JSON string with optional pretty printing
@@ -177,8 +178,11 @@ func PutByteSliceSecure(b *[]byte) {
 
 // StringToBytes converts string to []byte
 // Using standard conversion for safety and compatibility
+// StringToBytes converts a string to a byte slice without allocation.
+// The returned slice must not be modified — it shares memory with the input string.
+// PERFORMANCE: Zero-allocation conversion using unsafe.
 func StringToBytes(s string) []byte {
-	return []byte(s)
+	return unsafe.Slice(unsafe.StringData(s), len(s))
 }
 
 // ContainsAnyByte checks if string contains any of the specified bytes

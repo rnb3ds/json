@@ -917,26 +917,6 @@ func BenchmarkRegularMapIteration(b *testing.B) {
 	}
 }
 
-// BenchmarkLargeBufferPool benchmarks large buffer pool operations
-func BenchmarkLargeBufferPool(b *testing.B) {
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		buf := getLargeBuffer()
-		*buf = append(*buf, make([]byte, 1024)...)
-		putLargeBuffer(buf)
-	}
-}
-
-// BenchmarkEncodeBufferPool benchmarks encode buffer pool operations
-func BenchmarkEncodeBufferPool(b *testing.B) {
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		buf := getEncodeBuffer()
-		buf = append(buf, make([]byte, 512)...)
-		putEncodeBuffer(buf)
-	}
-}
-
 // BenchmarkIsSimplePropertyAccess benchmarks simple property detection
 func BenchmarkIsSimplePropertyAccess(b *testing.B) {
 	paths := []string{

@@ -2,6 +2,7 @@ package internal
 
 import (
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -83,8 +84,12 @@ func setCachedPathSegments(path string, segments []PathSegment) {
 		lastAccess: time.Now().UnixNano(),
 	}
 
-	pathSegmentCache.Store(path, entry)
-	atomic.AddInt64(&pathCacheSize, 1)
+	// Only increment counter for new entries, not overwrites
+	if _, loaded := pathSegmentCache.LoadOrStore(path, entry); !loaded {
+		atomic.AddInt64(&pathCacheSize, 1)
+	} else {
+		pathSegmentCache.Store(path, entry) // Update existing entry with fresh timestamp
+	}
 }
 
 // evictPathCacheEntries removes oldest entries when cache is full
@@ -116,13 +121,9 @@ func evictPathCacheEntries() {
 	})
 
 	// Sort by access time (oldest first)
-	// Use simple insertion sort - faster than full sort for small datasets
-	for i := 1; i < len(candidates); i++ {
-		j := i
-		for j > 0 && candidates[j].lastAccess < candidates[j-1].lastAccess {
-			candidates[j], candidates[j-1] = candidates[j-1], candidates[j]
-		}
-	}
+	sort.Slice(candidates, func(i, j int) bool {
+		return candidates[i].lastAccess < candidates[j].lastAccess
+	})
 
 	// Remove oldest entries
 	evictCount := pathCacheEvictCount
@@ -157,8 +158,12 @@ func fastParseInt(s string) (int, bool) {
 	}
 
 	// Overflow bounds - use int64 for intermediate calculations
-	// This handles both 32-bit and 64-bit int platforms correctly
-	const overflowThreshold = int64(1<<62) / 10 // Safe threshold for int64
+	// Correct threshold: math.MaxInt64 / 10 = 922337203685477580
+	// Last valid digit for positive: 7 (MaxInt64 % 10 = 7)
+	// Last valid digit for negative: 8 (|MinInt64| last digit)
+	const overflowThreshold = int64(922337203685477580)
+	const overflowDigitPositive = int64(7)
+	const overflowDigitNegative = int64(8)
 
 	var n int64
 	for ; i < len(s); i++ {
@@ -167,9 +172,14 @@ func fastParseInt(s string) (int, bool) {
 			return 0, false
 		}
 		digit := int64(c - '0')
-		// Check overflow before multiplying and adding
-		if n > overflowThreshold || (n == overflowThreshold && digit > 7) {
-			return 0, false
+		if neg {
+			if n > overflowThreshold || (n == overflowThreshold && digit > overflowDigitNegative) {
+				return 0, false
+			}
+		} else {
+			if n > overflowThreshold || (n == overflowThreshold && digit > overflowDigitPositive) {
+				return 0, false
+			}
 		}
 		n = n*10 + digit
 	}
@@ -178,11 +188,9 @@ func fastParseInt(s string) (int, bool) {
 		n = -n
 	}
 
-	// Check if value fits in int (platform-dependent: 32 or 64 bit)
-	// On 64-bit: int is int64, so any int64 value fits
-	// On 32-bit: int is int32, so check bounds
-	const maxInt = int64(1<<31 - 1) // Max int32 for 32-bit platforms
-	const minInt = int64(-1 << 31)  // Min int32 for 32-bit platforms
+	// Platform-specific int size check
+	const maxInt = int64(int(^uint(0) >> 1))
+	const minInt = int64(-maxInt - 1)
 	if n > maxInt || n < minInt {
 		return 0, false
 	}

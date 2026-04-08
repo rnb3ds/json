@@ -180,33 +180,6 @@ func TestDefaultValues(t *testing.T) {
 	})
 }
 
-// TestEncodeBuffer tests encode buffer pooling
-func TestEncodeBuffer(t *testing.T) {
-	buf := getEncodeBuffer()
-	if buf == nil {
-		t.Fatal("getEncodeBuffer returned nil")
-	}
-
-	// Use the buffer
-	buf = append(buf, "test data"...)
-
-	// Return to pool
-	putEncodeBuffer(buf)
-
-	// Get another buffer
-	buf2 := getEncodeBuffer()
-	if buf2 == nil {
-		t.Fatal("getEncodeBuffer returned nil on second call")
-	}
-
-	// Buffer should be reset
-	if len(buf2) != 0 {
-		t.Errorf("Buffer length = %d, want 0", len(buf2))
-	}
-
-	putEncodeBuffer(buf2)
-}
-
 // TestIsSimplePropertyAccess tests simple property access detection
 func TestIsSimplePropertyAccess(t *testing.T) {
 	tests := []struct {
@@ -1392,33 +1365,6 @@ func TestIteratorNext(t *testing.T) {
 	})
 }
 
-// TestLargeBuffer tests large buffer pooling
-func TestLargeBuffer(t *testing.T) {
-	buf := getLargeBuffer()
-	if buf == nil {
-		t.Fatal("getLargeBuffer returned nil")
-	}
-
-	// Use the buffer
-	*buf = append(*buf, "test data"...)
-
-	// Return to pool
-	putLargeBuffer(buf)
-
-	// Get another buffer
-	buf2 := getLargeBuffer()
-	if buf2 == nil {
-		t.Fatal("getLargeBuffer returned nil on second call")
-	}
-
-	// Buffer should be reset
-	if len(*buf2) != 0 {
-		t.Errorf("Buffer length = %d, want 0", len(*buf2))
-	}
-
-	putLargeBuffer(buf2)
-}
-
 // TestNewIterableValue tests creating IterableValue from different data types (internal)
 func TestNewIterableValue(t *testing.T) {
 	tests := []struct {
@@ -1599,7 +1545,7 @@ func TestWarmupPathCacheWithProcessor(t *testing.T) {
 	}
 
 	// Should not panic
-	warmupPathCacheWithProcessor(processor, paths)
-	warmupPathCacheWithProcessor(nil, paths)     // nil processor
-	warmupPathCacheWithProcessor(processor, nil) // nil paths
+	warmupPathCacheWith(processor, paths)
+	warmupPathCacheWith(nil, paths)     // nil processor
+	warmupPathCacheWith(processor, nil) // nil paths
 }

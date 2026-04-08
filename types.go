@@ -232,7 +232,6 @@ func (c *Config) AddDangerousPattern(pattern DangerousPattern) {
 type ParsedJSON struct {
 	data      any
 	hash      uint64
-	jsonLen   int
 	processor *Processor
 }
 
@@ -558,24 +557,33 @@ func (rm *resourceMonitor) recordPoolEviction() {
 	atomic.AddInt64(&rm.poolEvictions, 1)
 }
 
-// RecordOperation records an operation with its duration
+// RecordOperation records an operation with its duration.
+// FIX: Limited CAS retries to prevent unbounded loops under high contention.
+// After maxCASRetries, we accept a slightly stale average for better throughput.
 func (rm *resourceMonitor) recordOperation(duration time.Duration) {
 	atomic.AddInt64(&rm.totalOperations, 1)
 
 	newTime := duration.Nanoseconds()
-	for {
+	const maxCASRetries = 3
+
+	for i := 0; i < maxCASRetries; i++ {
 		oldAvg := atomic.LoadInt64(&rm.avgResponseTime)
 		newAvg := oldAvg + (newTime-oldAvg)/10
 		if atomic.CompareAndSwapInt64(&rm.avgResponseTime, oldAvg, newAvg) {
-			break
+			return
 		}
 	}
+	// After maxCASRetries, accept slightly stale average — acceptable for monitoring
 }
 
-// CheckForLeaks checks for potential resource leaks
+// CheckForLeaks checks for potential resource leaks.
+// FIX: Limited CAS retries to prevent unbounded loops under high contention.
 func (rm *resourceMonitor) checkForLeaks() []string {
-	for {
-		now := time.Now().Unix()
+	const maxCASRetries = 3
+	var now int64
+
+	for i := 0; i < maxCASRetries; i++ {
+		now = time.Now().Unix()
 		lastCheck := atomic.LoadInt64(&rm.lastLeakCheck)
 
 		if now-lastCheck < rm.leakCheckInterval {
@@ -583,9 +591,11 @@ func (rm *resourceMonitor) checkForLeaks() []string {
 		}
 
 		if atomic.CompareAndSwapInt64(&rm.lastLeakCheck, lastCheck, now) {
-			break
+			goto checked
 		}
 	}
+	// After maxCASRetries, proceed with stale check to avoid blocking
+checked:
 
 	var issues []string
 
@@ -663,14 +673,7 @@ func (rm *resourceMonitor) getDeallocationRatio() float64 {
 	return float64(freed) / float64(allocated) * 100.0
 }
 
-// GetPoolEfficiency returns the pool efficiency percentage
-// This is the hit ratio of the pool cache
-func (rm *resourceMonitor) getPoolEfficiency() float64 {
-	return rm.getPoolHitRatio()
-}
-
 // GetPoolHitRatio returns the pool cache hit ratio as a percentage.
-// This is an alias for GetPoolEfficiency with consistent naming.
 func (rm *resourceMonitor) getPoolHitRatio() float64 {
 	hits := atomic.LoadInt64(&rm.poolHits)
 	misses := atomic.LoadInt64(&rm.poolMisses)
@@ -822,11 +825,6 @@ type Result[T any] struct {
 	Value  T     // The result value (exported for backward compatibility)
 	Exists bool  // Whether the path exists
 	Error  error // Error if any
-}
-
-// NewResult creates a new Result with the given value.
-func NewResult[T any](value T, exists bool, err error) Result[T] {
-	return Result[T]{Value: value, Exists: exists, Error: err}
 }
 
 // Ok returns true if the result is valid (no error and exists).
