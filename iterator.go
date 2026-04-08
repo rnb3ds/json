@@ -173,7 +173,10 @@ func safeTypeAssert[T any](value any) (T, bool) {
 
 	if targetType != nil && val.Type().ConvertibleTo(targetType) {
 		converted := val.Convert(targetType)
-		return converted.Interface().(T), true
+		// Use comma-ok to avoid panic if converted value doesn't satisfy T
+		if result, ok := converted.Interface().(T); ok {
+			return result, true
+		}
 	}
 
 	return zero, false
@@ -1675,8 +1678,12 @@ func (it *BatchIterator) Reset() {
 	it.current = 0
 }
 
-// TotalBatches returns the total number of batches
+// TotalBatches returns the total number of batches.
+// Returns 0 if batch size is not positive.
 func (it *BatchIterator) TotalBatches() int {
+	if it.batchSize <= 0 {
+		return 0
+	}
 	return (len(it.data) + it.batchSize - 1) / it.batchSize
 }
 
@@ -1901,8 +1908,6 @@ func (it *ParallelIterator) ForEachBatchWithContext(ctx context.Context, batchSi
 func (it *ParallelIterator) Map(transform func(int, any) (any, error)) ([]any, error) {
 	result := make([]any, len(it.data))
 	var mu sync.Mutex
-	var hasError int32
-	var firstError error
 
 	err := it.ForEach(func(idx int, val any) error {
 		transformed, err := transform(idx, val)
@@ -1919,10 +1924,6 @@ func (it *ParallelIterator) Map(transform func(int, any) (any, error)) ([]any, e
 
 	if err != nil {
 		return nil, err
-	}
-
-	if atomic.LoadInt32(&hasError) == 1 {
-		return nil, firstError
 	}
 
 	return result, nil

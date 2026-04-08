@@ -17,7 +17,7 @@ All notable changes to the cybergodev/json library will be documented in this fi
 - `NewEncoderWithOpts()` → Use `NewEncoderWithConfig()` (deprecated alias removed)
 
 ### Added
-- `CompactBytes()`, `IndentBytes()` - encoding/json signature compatibility
+- `CompactBytes()`, `IndentBytes()` - encoding/json signature compatibility *(removed in v1.4.0, use `CompactBuffer`/`IndentBuffer`)*
 - `GetStringOr()`, `GetIntOr()`, `GetFloatOr()`, `GetBoolOr()` instance methods
 - Streaming-optimized object pools (tiered map/slice pools)
 - Path segment cache with sync.Map (lock-free concurrent reads)

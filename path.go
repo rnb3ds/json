@@ -202,7 +202,10 @@ func (p *Processor) Valid(jsonStr string, opts ...Config) (bool, error) {
 	// Check cache first
 	cacheKey := p.createCacheKey("validate", jsonStr, "", options)
 	if cached, ok := p.getCachedResult(cacheKey); ok {
-		return cached.(bool), nil
+		if val, typeOk := cached.(bool); typeOk {
+				return val, nil
+			}
+			// Cache type mismatch — fall through to recompute
 	}
 
 	// Valid JSON by attempting to parse
@@ -348,7 +351,10 @@ func (p *Processor) Prettify(jsonStr string, opts ...Config) (string, error) {
 	// Check cache first
 	cacheKey := p.createCacheKey("pretty", jsonStr, "", options)
 	if cached, ok := p.getCachedResult(cacheKey); ok {
-		return cached.(string), nil
+		if val, typeOk := cached.(string); typeOk {
+			return val, nil
+		}
+		// Cache type mismatch - fall through to recompute
 	}
 
 	// Parse with number preservation to maintain original number types
@@ -520,7 +526,10 @@ func (p *Processor) Compact(jsonStr string, opts ...Config) (string, error) {
 	// Check cache first
 	cacheKey := p.createCacheKey("compact", jsonStr, "", options)
 	if cached, ok := p.getCachedResult(cacheKey); ok {
-		return cached.(string), nil
+		if val, typeOk := cached.(string); typeOk {
+			return val, nil
+		}
+		// Cache type mismatch - fall through to recompute
 	}
 
 	// Parse with number preservation to maintain original number types
@@ -580,34 +589,6 @@ func (p *Processor) IndentBuffer(dst *bytes.Buffer, src []byte, prefix, indent s
 	}
 	_, err = dst.Write(indented)
 	return err
-}
-
-// CompactBytes appends to dst the JSON-encoded src with insignificant space characters elided.
-// This is an alias for CompactBuffer without optional Config.
-//
-// Deprecated: Use CompactBuffer instead. CompactBuffer(dst, src) provides the same behavior
-// with optional Config support.
-//
-// Example:
-//
-//	var buf bytes.Buffer
-//	err := processor.CompactBuffer(&buf, []byte(`{"name": "Alice"}`))
-func (p *Processor) CompactBytes(dst *bytes.Buffer, src []byte) error {
-	return p.CompactBuffer(dst, src)
-}
-
-// IndentBytes appends to dst an indented form of the JSON-encoded src.
-// This is an alias for IndentBuffer without optional Config.
-//
-// Deprecated: Use IndentBuffer instead. IndentBuffer(dst, src, prefix, indent) provides
-// the same behavior with optional Config support.
-//
-// Example:
-//
-//	var buf bytes.Buffer
-//	err := processor.IndentBuffer(&buf, []byte(`{"name":"Alice"}`), "", "  ")
-func (p *Processor) IndentBytes(dst *bytes.Buffer, src []byte, prefix, indent string) error {
-	return p.IndentBuffer(dst, src, prefix, indent)
 }
 
 // HTMLEscapeBuffer appends to dst the JSON-encoded src with HTML-safe escaping.

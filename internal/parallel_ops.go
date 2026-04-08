@@ -437,9 +437,19 @@ func (wp *WorkerPool) SubmitWait(task func()) error {
 		return errors.New("worker pool is stopped")
 	}
 
-	// Block until task is queued
-	wp.tasks <- task
-	return nil
+	// Block until task is queued, but bail out if pool is stopped
+	// SECURITY FIX: select on stopChan to prevent indefinite blocking if pool
+	// is stopped after the atomic checks above pass but before the send completes.
+	select {
+	case wp.tasks <- task:
+		return nil
+	case <-wp.stopChan:
+		// Pool stopped while waiting to submit - restore task count
+		if atomic.AddInt32(&wp.taskCount, -1) == 0 {
+			wp.doneCond.Broadcast()
+		}
+		return errors.New("worker pool is stopped")
+	}
 }
 
 // Stop stops the worker pool

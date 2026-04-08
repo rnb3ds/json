@@ -79,7 +79,11 @@ var globalDecoderPool = &decoderPool{
 
 // GetDecoder retrieves a decoder from the pool
 func (dp *decoderPool) Get(r io.Reader) *Decoder {
-	dec := dp.pool.Get().(*Decoder)
+	v := dp.pool.Get()
+	dec, ok := v.(*Decoder)
+	if !ok {
+		dec = &Decoder{}
+	}
 	dec.reset(r)
 	return dec
 }

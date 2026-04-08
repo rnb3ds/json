@@ -4793,39 +4793,6 @@ func TestProcessor_EncodeWithOptions(t *testing.T) {
 		}
 	})
 
-	t.Run("ToJsonString", func(t *testing.T) {
-		data := map[string]any{"key": "value"}
-		result, err := processor.ToJsonString(data)
-		if err != nil {
-			t.Errorf("ToJsonString error: %v", err)
-		}
-		if result == "" {
-			t.Error("ToJsonString should return non-empty result")
-		}
-	})
-
-	t.Run("ToJsonStringPretty", func(t *testing.T) {
-		data := map[string]any{"key": "value"}
-		result, err := processor.ToJsonStringPretty(data)
-		if err != nil {
-			t.Errorf("ToJsonStringPretty error: %v", err)
-		}
-		if result == "" {
-			t.Error("ToJsonStringPretty should return non-empty result")
-		}
-	})
-
-	t.Run("ToJsonStringStandard", func(t *testing.T) {
-		data := map[string]any{"key": "value"}
-		result, err := processor.ToJsonStringStandard(data)
-		if err != nil {
-			t.Errorf("ToJsonStringStandard error: %v", err)
-		}
-		if result == "" {
-			t.Error("ToJsonStringStandard should return non-empty result")
-		}
-	})
-
 	t.Run("EncodeBatch", func(t *testing.T) {
 		pairs := map[string]any{"a": 1, "b": 2}
 		cfg := DefaultConfig()

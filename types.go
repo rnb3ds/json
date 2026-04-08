@@ -199,6 +199,9 @@ type Config struct {
 
 // GetSecurityLimits returns a summary of current security limits
 func (c *Config) GetSecurityLimits() map[string]any {
+	if c == nil {
+		return map[string]any{}
+	}
 	return map[string]any{
 		"max_nesting_depth":            c.MaxNestingDepthSecurity,
 		"max_security_validation_size": c.MaxSecurityValidationSize,
@@ -212,17 +215,26 @@ func (c *Config) GetSecurityLimits() map[string]any {
 // AddHook adds an operation hook to the configuration.
 // Hooks are executed in order for Before and in reverse order for After.
 func (c *Config) AddHook(hook Hook) {
+	if c == nil {
+		return
+	}
 	c.Hooks = append(c.Hooks, hook)
 }
 
 // AddValidator adds a custom validator to the configuration.
 // Validators are executed in order; all must pass for operations to proceed.
 func (c *Config) AddValidator(validator Validator) {
+	if c == nil {
+		return
+	}
 	c.CustomValidators = append(c.CustomValidators, validator)
 }
 
 // AddDangerousPattern adds a security pattern to the configuration.
 func (c *Config) AddDangerousPattern(pattern DangerousPattern) {
+	if c == nil {
+		return
+	}
 	c.AdditionalDangerousPatterns = append(c.AdditionalDangerousPatterns, pattern)
 }
 
@@ -237,6 +249,9 @@ type ParsedJSON struct {
 
 // Data returns the underlying parsed data
 func (p *ParsedJSON) Data() any {
+	if p == nil {
+		return nil
+	}
 	return p.data
 }
 
@@ -325,6 +340,9 @@ type InvalidUnmarshalError struct {
 }
 
 func (e *InvalidUnmarshalError) Error() string {
+	if e == nil {
+		return "json: Unmarshal(nil)"
+	}
 	if e.Type == nil {
 		return "json: Unmarshal(nil)"
 	}
@@ -342,7 +360,12 @@ type SyntaxError struct {
 	Offset int64  // error occurred after reading Offset bytes
 }
 
-func (e *SyntaxError) Error() string { return e.msg }
+func (e *SyntaxError) Error() string {
+	if e == nil {
+		return "json: nil syntax error"
+	}
+	return e.msg
+}
 
 // UnmarshalTypeError describes a JSON value that was
 // not appropriate for a value of a specific Go type.
@@ -356,6 +379,9 @@ type UnmarshalTypeError struct {
 }
 
 func (e *UnmarshalTypeError) Error() string {
+	if e == nil {
+		return "json: cannot unmarshal into nil target"
+	}
 	if e.Struct != "" || e.Field != "" {
 		return "json: cannot unmarshal " + e.Value + " into Go struct field " + e.Struct + "." + e.Field + " of type " + e.Type.String()
 	}
@@ -373,6 +399,9 @@ type UnsupportedTypeError struct {
 }
 
 func (e *UnsupportedTypeError) Error() string {
+	if e == nil {
+		return "json: unsupported type: nil"
+	}
 	return "json: unsupported type: " + e.Type.String()
 }
 
@@ -384,6 +413,9 @@ type UnsupportedValueError struct {
 }
 
 func (e *UnsupportedValueError) Error() string {
+	if e == nil {
+		return "json: unsupported value: nil"
+	}
 	return "json: unsupported value: " + e.Str
 }
 
@@ -395,6 +427,9 @@ type MarshalerError struct {
 }
 
 func (e *MarshalerError) Error() string {
+	if e == nil {
+		return "json: nil marshaler error"
+	}
 	srcFunc := e.sourceFunc
 	if srcFunc == "" {
 		srcFunc = "MarshalJSON"

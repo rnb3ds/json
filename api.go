@@ -1283,9 +1283,11 @@ func getProcessorWithConfig(cfg Config) (*Processor, error) {
 			if configProcessorCache.CompareAndSwap(cacheKey, existing, p) {
 				// Successfully replaced stale entry
 				// Close the old stale processor asynchronously
-				go func(stale *Processor) {
-					_ = stale.Close() // best-effort cleanup
-				}(existing.(*Processor))
+				if staleProc, ok := existing.(*Processor); ok {
+					go func(stale *Processor) {
+						_ = stale.Close() // best-effort cleanup
+					}(staleProc)
+				}
 				// Check cache size and evict if necessary
 				maybeEvictConfigCache()
 				return p, nil
@@ -1341,17 +1343,21 @@ func maybeEvictConfigCache() {
 
 	// Scan and categorize processors
 	configProcessorCache.Range(func(key, value any) bool {
+		cacheKey, keyOk := key.(uint64)
+		if !keyOk {
+			return true // skip invalid cache key type
+		}
 		if p, ok := value.(*Processor); ok {
 			if p.IsClosed() {
-				keysToDelete = append(keysToDelete, key.(uint64))
+				keysToDelete = append(keysToDelete, cacheKey)
 			} else {
 				validEntries = append(validEntries, struct {
 					key  uint64
 					proc *Processor
-				}{key.(uint64), p})
+				}{cacheKey, p})
 			}
 		} else {
-			keysToDelete = append(keysToDelete, key.(uint64))
+			keysToDelete = append(keysToDelete, cacheKey)
 		}
 		return true
 	})

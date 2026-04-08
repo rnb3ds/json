@@ -958,6 +958,9 @@ func NewNDJSONProcessor(cfg ...Config) *NDJSONProcessor {
 
 // ProcessFile processes an NDJSON file line by line
 func (np *NDJSONProcessor) ProcessFile(filename string, fn func(lineNum int, obj map[string]any) error) error {
+	if np == nil {
+		return &JsonsError{Op: "ndjson_process", Message: "nil NDJSONProcessor"}
+	}
 	// SECURITY: Validate file path to prevent path traversal attacks
 	if err := validateFilePathStandalone(filename); err != nil {
 		return err

@@ -48,14 +48,19 @@ func getCachedPathSegments(path string) ([]PathSegment, bool) {
 		return nil, false
 	}
 	if v, ok := pathSegmentCache.Load(path); ok {
-		entry := v.(pathCacheEntry)
-		// SECURITY FIX: Update access time by storing new entry
-		// This ensures LRU eviction works correctly under concurrent access
-		// Non-blocking store is acceptable - best-effort update for LRU
-		pathSegmentCache.Store(path, pathCacheEntry{
-			segments:   entry.segments,
-			lastAccess: time.Now().UnixNano(),
-		})
+		entry, ok := v.(pathCacheEntry)
+		if !ok {
+			return nil, false
+		}
+		// PERFORMANCE: Update access time only every ~1 second to avoid
+		// time.Now() syscall on every cache hit. Approximate LRU is sufficient.
+		now := time.Now().UnixNano()
+		if now-entry.lastAccess > int64(time.Second) {
+			pathSegmentCache.Store(path, pathCacheEntry{
+				segments:   entry.segments,
+				lastAccess: now,
+			})
+		}
 		return entry.segments, true
 	}
 	return nil, false
@@ -113,7 +118,7 @@ func evictPathCacheEntries() {
 	pathSegmentCache.Range(func(key, value any) bool {
 		if entry, ok := value.(pathCacheEntry); ok {
 			candidates = append(candidates, evictionCandidate{
-				path:       key.(string),
+				path:       func() string { s, _ := key.(string); return s }(),
 				lastAccess: entry.lastAccess,
 			})
 		}

@@ -87,6 +87,9 @@ type JsonsError struct {
 }
 
 func (e *JsonsError) Error() string {
+	if e == nil {
+		return "json: nil error"
+	}
 	var baseMsg string
 	if e.Path != "" {
 		baseMsg = fmt.Sprintf("JSON %s failed at path '%s': %s", e.Op, e.Path, e.Message)
@@ -103,6 +106,9 @@ func (e *JsonsError) Error() string {
 
 // Unwrap returns the underlying error for error chain support
 func (e *JsonsError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
 	return e.Err
 }
 
@@ -110,6 +116,9 @@ func (e *JsonsError) Unwrap() error {
 // Compares Op, Path, and Err fields for complete equality.
 // Note: Message is intentionally excluded as it's derived from other fields.
 func (e *JsonsError) Is(target error) bool {
+	if e == nil {
+		return target == nil
+	}
 	if target == nil {
 		return false
 	}

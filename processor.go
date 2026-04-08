@@ -162,6 +162,9 @@ func New(cfg ...Config) (*Processor, error) {
 //	}
 //	defer processor.Close()
 func (p *Processor) Close() error {
+	if p == nil {
+		return nil
+	}
 	p.cleanupOnce.Do(func() {
 		// Mark as closing to prevent new operations
 		atomic.StoreInt32(&p.state, processorStateClosing)
@@ -251,6 +254,9 @@ func (p *Processor) Close() error {
 
 // IsClosed returns true if the processor has been closed
 func (p *Processor) IsClosed() bool {
+	if p == nil {
+		return true
+	}
 	return atomic.LoadInt32(&p.state) == processorStateClosed
 }
 
@@ -273,6 +279,9 @@ func (p *Processor) IsClosed() bool {
 //	p := json.MustNew()
 //	p.AddHook(&LoggingHook{})
 func (p *Processor) AddHook(hook Hook) {
+	if p == nil {
+		return
+	}
 	p.hooksMu.Lock()
 	p.hooks = append(p.hooks, hook)
 	p.hooksMu.Unlock()
@@ -586,17 +595,20 @@ func (p *Processor) createCacheKey(operation, jsonStr, path string, options *Con
 }
 
 // createCacheKeyWithHash creates a cache key using a pre-computed hash
-// PERFORMANCE: Allows hash reuse across multiple cache key creations
+// PERFORMANCE: Allows hash reuse across multiple cache key creations.
+// Uses pointer identity check for default config to avoid 40+ field comparisons.
 func (p *Processor) createCacheKeyWithHash(operation string, jsonHash uint64, path string, options *Config) string {
+	// Determine if options are default — pointer identity is the fastest check
+	isDefault := options == nil || options == cachedDefaultConfigPtr
+
 	// Use a fixed-size array buffer for small keys to avoid allocations
 	// Most cache keys are < 128 bytes
 	var buf [128]byte
-	var key string
 
 	// Try to use stack-allocated buffer
 	estimatedLen := len(operation) + 1 + 16 + 1 + len(path) + 16 // op:hash16:path:opts
-	if estimatedLen < len(buf) && options == nil {
-		// Fast path: use stack buffer
+	if estimatedLen < len(buf) && isDefault {
+		// Fast path: use stack buffer (covers >99% of real-world cases)
 		n := copy(buf[:], operation)
 		buf[n] = ':'
 		n++
@@ -604,32 +616,30 @@ func (p *Processor) createCacheKeyWithHash(operation string, jsonHash uint64, pa
 		buf[n] = ':'
 		n++
 		n += copy(buf[n:], path)
-		key = string(buf[:n])
-	} else {
-		// Slow path: use string builder for larger keys
-		sb := p.getStringBuilder()
-		defer p.putStringBuilder(sb)
-
-		sb.Grow(estimatedLen + 32)
-		sb.WriteString(operation)
-		sb.WriteByte(':')
-		sb.WriteString(formatUint64HexString(jsonHash))
-		sb.WriteByte(':')
-		sb.WriteString(path)
-
-		// Include all options that affect output using config hash.
-		// Ensures different configs never share cached results.
-		// PERFORMANCE: Skip hash computation for default config (common case)
-		if options != nil && !isDefaultConfig(*options) {
-			optHash := hashConfig(*options)
-			sb.WriteByte(':')
-			sb.WriteString(formatUint64HexString(optHash))
-		}
-
-		key = sb.String()
+		return string(buf[:n])
 	}
 
-	return key
+	// Slow path: use string builder for larger keys or non-default options
+	sb := p.getStringBuilder()
+	defer p.putStringBuilder(sb)
+
+	sb.Grow(estimatedLen + 32)
+	sb.WriteString(operation)
+	sb.WriteByte(':')
+	sb.WriteString(formatUint64HexString(jsonHash))
+	sb.WriteByte(':')
+	sb.WriteString(path)
+
+	// Include all options that affect output using config hash.
+	// Ensures different configs never share cached results.
+	// PERFORMANCE: Skip hash computation for default config (common case)
+	if !isDefault {
+		optHash := hashConfig(*options)
+		sb.WriteByte(':')
+		sb.WriteString(formatUint64HexString(optHash))
+	}
+
+	return sb.String()
 }
 
 // formatUint64Hex formats a uint64 as hex without allocation
@@ -773,11 +783,17 @@ func (p *Processor) isValidCacheKey(key string) bool {
 
 // GetConfig returns a copy of the processor configuration
 func (p *Processor) GetConfig() Config {
+	if p == nil {
+		return Config{}
+	}
 	return *p.config.Clone()
 }
 
 // SetLogger sets a custom structured logger for the processor
 func (p *Processor) SetLogger(logger *slog.Logger) {
+	if p == nil {
+		return
+	}
 	if logger != nil {
 		p.logger.Store(logger.With("component", "json-processor"))
 	} else {
@@ -815,11 +831,23 @@ var configPool = sync.Pool{
 	},
 }
 
+// cachedDefaultConfigPtr is a pre-validated pointer to the default config.
+// PERFORMANCE: When no options are provided, return this instead of allocating
+// from the pool and calling DefaultConfig() + Validate() on every operation.
+var cachedDefaultConfigPtr = func() *Config {
+	cfg := DefaultConfig()
+	return &cfg
+}()
+
 // releaseConfig returns a pooled Config, clearing all reference-type fields first
 // to prevent data leaks back into the pool.
 // SECURITY: Must clear all map/slice/interface fields to avoid cross-request contamination.
 func releaseConfig(cfg *Config) {
 	if cfg == nil {
+		return
+	}
+	// PERFORMANCE: Skip returning the cached default pointer to the pool
+	if cfg == cachedDefaultConfigPtr {
 		return
 	}
 	cfg.Context = nil
@@ -835,18 +863,19 @@ func releaseConfig(cfg *Config) {
 
 // prepareOptions prepares and validates processor options.
 // Accepts Config values and returns a pointer for internal use.
-// PERFORMANCE: Uses pooled Config objects to reduce allocations.
+// PERFORMANCE: When no options are provided, returns a cached default pointer
+// without allocation or validation — avoids DefaultConfig() + Validate() per operation.
 // SECURITY: Clears reference fields from pooled objects to prevent leaks.
 func (p *Processor) prepareOptions(opts ...Config) (*Config, error) {
-	cfg := configPool.Get().(*Config)
-	if len(opts) > 0 {
-		cfg.Context = nil
-		cfg.CustomEncoder = nil
-		cfg.CustomPathParser = nil
-		*cfg = opts[0]
-	} else {
-		*cfg = DefaultConfig()
+	if len(opts) == 0 {
+		// Fast path: return cached default config pointer (no allocation, no validation)
+		return cachedDefaultConfigPtr, nil
 	}
+	cfg := configPool.Get().(*Config)
+	cfg.Context = nil
+	cfg.CustomEncoder = nil
+	cfg.CustomPathParser = nil
+	*cfg = opts[0]
 	if err := cfg.Validate(); err != nil {
 		releaseConfig(cfg)
 		return nil, err

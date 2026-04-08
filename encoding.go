@@ -768,37 +768,6 @@ func needsCustomEncodingOpts(cfg Config) bool {
 		!cfg.IncludeNulls
 }
 
-// ToJsonString converts any Go value to JSON string with HTML escaping (safe for web).
-//
-// Deprecated: Use Encode instead. To match the exact behavior, set cfg.EscapeHTML = true
-// and cfg.Pretty = false before calling Encode.
-func (p *Processor) ToJsonString(value any, cfg ...Config) (string, error) {
-	config := getConfigOrDefault(cfg...)
-	config.Pretty = false
-	config.EscapeHTML = true
-	return p.EncodeWithConfig(value, config)
-}
-
-// ToJsonStringPretty converts any Go value to pretty JSON string with HTML escaping.
-//
-// Deprecated: Use EncodePretty instead. To match the exact behavior, set cfg.EscapeHTML = true
-// before calling EncodePretty, or use EncodePretty directly which defaults to HTML escaping.
-func (p *Processor) ToJsonStringPretty(value any, cfg ...Config) (string, error) {
-	config := getConfigOrDefault(cfg...)
-	config.Pretty = true
-	config.EscapeHTML = true
-	return p.EncodeWithConfig(value, config)
-}
-
-// ToJsonStringStandard converts any Go value to compact JSON string without HTML escaping.
-//
-// Deprecated: Use Encode instead. Encode uses the provided Config as-is,
-// which is equivalent to this method's behavior.
-func (p *Processor) ToJsonStringStandard(value any, cfg ...Config) (string, error) {
-	config := getConfigOrDefault(cfg...)
-	return p.EncodeWithConfig(value, config)
-}
-
 // Marshal converts any Go value to JSON bytes (similar to json.Marshal)
 // PERFORMANCE: Uses FastEncoder for simple types to avoid reflection overhead
 func (p *Processor) Marshal(value any, opts ...Config) ([]byte, error) {
@@ -808,14 +777,17 @@ func (p *Processor) Marshal(value any, opts ...Config) ([]byte, error) {
 
 	// PERFORMANCE: Fast path for simple types - avoid config processing overhead
 	// Uses HTML escaping to match encoding/json behavior
+	// Encodes directly to []byte to avoid string round-trip
 	if len(opts) == 0 {
-		if result, ok := fastEncodeSimpleWithHTMLEscape(value); ok {
-			return []byte(result), nil
+		if result, ok := fastEncodeSimpleToBytes(value); ok {
+			return result, nil
 		}
 	}
 
 	// Fallback to full encoding path for complex types or custom options
-	jsonStr, err := p.ToJsonString(value, opts...)
+	config := getConfigOrDefault(opts...)
+	config.EscapeHTML = true
+	jsonStr, err := p.EncodeWithConfig(value, config)
 	if err != nil {
 		return nil, err
 	}
@@ -1068,7 +1040,7 @@ func fastEncodeSimpleWithHTMLEscape(value any) (string, bool) {
 		return "", false
 	}
 
-	// PERFORMANCE v3: Work directly with bytes to avoid string conversions
+	// PERFORMANCE: Work directly with bytes to avoid string conversions
 	data := encoder.Bytes()
 	if internal.NeedsHTMLEscapeBytes(data) {
 		escaped := internal.HTMLEscapeBytes(data)
@@ -1078,6 +1050,31 @@ func fastEncodeSimpleWithHTMLEscape(value any) (string, bool) {
 	}
 
 	return string(data), true
+}
+
+// fastEncodeSimpleToBytes encodes directly to []byte, avoiding the
+// []byte -> string -> []byte round-trip when Marshal needs bytes.
+// PERFORMANCE: Saves one allocation and copy compared to fastEncodeSimpleWithHTMLEscape.
+func fastEncodeSimpleToBytes(value any) ([]byte, bool) {
+	encoder := internal.GetEncoder()
+	defer internal.PutEncoder(encoder)
+
+	err := encoder.EncodeValue(value)
+	if err != nil {
+		return nil, false
+	}
+
+	data := encoder.Bytes()
+	if internal.NeedsHTMLEscapeBytes(data) {
+		escaped := internal.HTMLEscapeBytes(data)
+		// escaped is already a fresh []byte, return directly
+		return escaped, true
+	}
+
+	// Copy to new slice since encoder buffer is pooled
+	result := make([]byte, len(data))
+	copy(result, data)
+	return result, true
 }
 
 // Encode converts any Go value to JSON string

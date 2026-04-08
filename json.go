@@ -318,6 +318,9 @@ func NewJSONLWriter(writer io.Writer, cfg ...Config) *JSONLWriter {
 //	writer.Write(map[string]any{"name": "Alice"})  // Writes: {"name":"Alice"}\n
 //	writer.Write([]int{1, 2, 3})                   // Writes: [1,2,3]\n
 func (w *JSONLWriter) Write(data any) error {
+	if w == nil {
+		return &JsonsError{Op: "jsonl_write", Message: "nil JSONLWriter"}
+	}
 	if w.err != nil {
 		return w.err
 	}
@@ -341,6 +344,9 @@ func (w *JSONLWriter) Write(data any) error {
 //	    map[string]any{"id": 2},
 //	})
 func (w *JSONLWriter) WriteAll(data []any) error {
+	if w == nil {
+		return &JsonsError{Op: "jsonl_write_all", Message: "nil JSONLWriter"}
+	}
 	for _, d := range data {
 		if err := w.Write(d); err != nil {
 			return err
@@ -357,6 +363,9 @@ func (w *JSONLWriter) WriteAll(data []any) error {
 //
 //	writer.WriteRaw([]byte(`{"pre":"encoded"}`))
 func (w *JSONLWriter) WriteRaw(line []byte) error {
+	if w == nil {
+		return &JsonsError{Op: "jsonl_write_raw", Message: "nil JSONLWriter"}
+	}
 	if w.err != nil {
 		return w.err
 	}
@@ -384,11 +393,17 @@ func (w *JSONLWriter) WriteRaw(line []byte) error {
 // Err returns any error encountered during previous write operations.
 // Returns nil if no errors have occurred.
 func (w *JSONLWriter) Err() error {
+	if w == nil {
+		return nil
+	}
 	return w.err
 }
 
 // Stats returns writing statistics including lines processed and bytes written.
 func (w *JSONLWriter) Stats() JSONLStats {
+	if w == nil {
+		return JSONLStats{}
+	}
 	return JSONLStats{
 		LinesProcessed: int64(w.lineNum),
 		BytesWritten:   w.bytesOut,
