@@ -86,8 +86,6 @@ const (
 	validationBOMPrefix = "\uFEFF" // UTF-8 BOM prefix to detect and remove
 )
 
-// invalidArrayIndex is a sentinel value indicating an invalid or out-of-bounds array index.
-const invalidArrayIndex = internal.ArrayIndexInvalid
 
 // DefaultConfig returns the default configuration.
 // Creates a new instance each time to allow modifications without affecting other callers.

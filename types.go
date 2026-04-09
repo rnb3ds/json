@@ -615,10 +615,10 @@ func (rm *resourceMonitor) recordOperation(duration time.Duration) {
 // FIX: Limited CAS retries to prevent unbounded loops under high contention.
 func (rm *resourceMonitor) checkForLeaks() []string {
 	const maxCASRetries = 3
-	var now int64
 
+	// Try to update lastLeakCheck timestamp via CAS; proceed if interval elapsed.
 	for i := 0; i < maxCASRetries; i++ {
-		now = time.Now().Unix()
+		now := time.Now().Unix()
 		lastCheck := atomic.LoadInt64(&rm.lastLeakCheck)
 
 		if now-lastCheck < rm.leakCheckInterval {
@@ -626,11 +626,11 @@ func (rm *resourceMonitor) checkForLeaks() []string {
 		}
 
 		if atomic.CompareAndSwapInt64(&rm.lastLeakCheck, lastCheck, now) {
-			goto checked
+			break
 		}
+		// CAS failed - another goroutine updated, retry with fresh values
 	}
-	// After maxCASRetries, proceed with stale check to avoid blocking
-checked:
+	// After maxCASRetries, proceed even without successful CAS to avoid blocking
 
 	var issues []string
 

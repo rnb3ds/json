@@ -31,25 +31,10 @@ import (
 //	    // Handle error
 //	}
 func (p *Processor) LoadFromFile(filePath string, opts ...Config) (string, error) {
-	if err := p.checkClosed(); err != nil {
-		return "", err
-	}
-
-	// Validate file path for security
-	if err := p.validateFilePath(filePath); err != nil {
-		return "", err
-	}
-
-	// Read file
-	data, err := os.ReadFile(filePath)
+	data, err := p.readValidatedFile(filePath)
 	if err != nil {
-		return "", &JsonsError{
-			Op:      "load_from_file",
-			Message: fmt.Sprintf("failed to read file %s: %v", filePath, err),
-			Err:     err,
-		}
+		return "", err
 	}
-
 	return string(data), nil
 }
 
@@ -71,29 +56,33 @@ func (p *Processor) LoadFromFile(filePath string, opts ...Config) (string, error
 //	}
 //	config := data.(map[string]any)
 func (p *Processor) LoadFromFileAsData(filePath string, opts ...Config) (any, error) {
+	data, err := p.readValidatedFile(filePath)
+	if err != nil {
+		return nil, err
+	}
+	var jsonData any
+	err = p.Parse(string(data), &jsonData, opts...)
+	return jsonData, err
+}
+
+// readValidatedFile validates the file path and reads the file content.
+// Shared helper to eliminate duplicate validation+reading code.
+func (p *Processor) readValidatedFile(filePath string) ([]byte, error) {
 	if err := p.checkClosed(); err != nil {
 		return nil, err
 	}
-
-	// Validate file path for security
 	if err := p.validateFilePath(filePath); err != nil {
 		return nil, err
 	}
-
-	// Read file
 	data, err := os.ReadFile(filePath)
 	if err != nil {
 		return nil, &JsonsError{
-			Op:      "load_from_file_as_data",
+			Op:      "load_from_file",
 			Message: fmt.Sprintf("failed to read file %s: %v", filePath, err),
 			Err:     err,
 		}
 	}
-
-	// Parse JSON
-	var jsonData any
-	err = p.Parse(string(data), &jsonData, opts...)
-	return jsonData, err
+	return data, nil
 }
 
 // LoadFromReader loads JSON data from an io.Reader and returns the raw JSON string.
@@ -110,32 +99,10 @@ func (p *Processor) LoadFromFileAsData(filePath string, opts ...Config) (any, er
 //	defer file.Close()
 //	jsonStr, err := processor.LoadFromReader(file)
 func (p *Processor) LoadFromReader(reader io.Reader, opts ...Config) (string, error) {
-	if err := p.checkClosed(); err != nil {
+	data, err := p.readValidatedReader(reader)
+	if err != nil {
 		return "", err
 	}
-
-	// Use LimitReader to prevent excessive memory usage
-	limitedReader := io.LimitReader(reader, p.config.MaxJSONSize)
-
-	// Read all data
-	data, err := io.ReadAll(limitedReader)
-	if err != nil {
-		return "", &JsonsError{
-			Op:      "load_from_reader",
-			Message: fmt.Sprintf("failed to read from reader: %v", err),
-			Err:     err,
-		}
-	}
-
-	// Check if we hit the size limit
-	if int64(len(data)) >= p.config.MaxJSONSize {
-		return "", &JsonsError{
-			Op:      "load_from_reader",
-			Message: fmt.Sprintf("JSON size exceeds maximum %d bytes", p.config.MaxJSONSize),
-			Err:     ErrSizeLimit,
-		}
-	}
-
 	return string(data), nil
 }
 
@@ -153,36 +120,38 @@ func (p *Processor) LoadFromReader(reader io.Reader, opts ...Config) (string, er
 //	defer resp.Body.Close()
 //	data, err := processor.LoadFromReaderAsData(resp.Body)
 func (p *Processor) LoadFromReaderAsData(reader io.Reader, opts ...Config) (any, error) {
+	data, err := p.readValidatedReader(reader)
+	if err != nil {
+		return nil, err
+	}
+	var jsonData any
+	err = p.Parse(string(data), &jsonData, opts...)
+	return jsonData, err
+}
+
+// readValidatedReader reads from a reader with size limiting and validation.
+// Shared helper to eliminate duplicate reader validation code.
+func (p *Processor) readValidatedReader(reader io.Reader) ([]byte, error) {
 	if err := p.checkClosed(); err != nil {
 		return nil, err
 	}
-
-	// Use LimitReader to prevent excessive memory usage
 	limitedReader := io.LimitReader(reader, p.config.MaxJSONSize)
-
-	// Read all data
 	data, err := io.ReadAll(limitedReader)
 	if err != nil {
 		return nil, &JsonsError{
-			Op:      "load_from_reader_as_data",
+			Op:      "load_from_reader",
 			Message: fmt.Sprintf("failed to read from reader: %v", err),
 			Err:     err,
 		}
 	}
-
-	// Check if we hit the size limit
-	if int64(len(data)) >= p.config.MaxJSONSize {
+	if int64(len(data)) > p.config.MaxJSONSize {
 		return nil, &JsonsError{
-			Op:      "load_from_reader_as_data",
+			Op:      "load_from_reader",
 			Message: fmt.Sprintf("JSON size exceeds maximum %d bytes", p.config.MaxJSONSize),
 			Err:     ErrSizeLimit,
 		}
 	}
-
-	// Parse JSON
-	var jsonData any
-	err = p.Parse(string(data), &jsonData, opts...)
-	return jsonData, err
+	return data, nil
 }
 
 // ============================================================================

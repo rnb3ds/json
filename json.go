@@ -483,7 +483,7 @@ func ToJSONL(data []any, cfg ...Config) ([]byte, error) {
 	defer p.Close()
 
 	for _, item := range data {
-		encoded, err := p.EncodeWithConfig(item, cfg...)
+		encoded, err := p.EncodeWithConfig(item, config)
 		if err != nil {
 			return nil, err
 		}

@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -37,28 +36,10 @@ type Processor struct {
 	recursiveProcessor *recursiveProcessor
 	// Wait group for tracking active operations during Close()
 	activeOps sync.WaitGroup
-	// OPTIMIZED: Hash cache for large JSON strings to avoid repeated hash calculations
-	// Uses uint64 keys directly instead of hex strings for memory efficiency
-	hashCache   map[uint64]*hashCacheEntry
-	hashCacheMu sync.RWMutex
 	// Extension points for hooks
 	hooks   []Hook
 	hooksMu sync.Mutex // protects hooks slice for concurrent AddHook
 }
-
-// hashCacheEntry stores a cached hash with its last access time for LRU eviction
-type hashCacheEntry struct {
-	hash       uint64 // The actual hash value of the JSON string
-	lastAccess int64  // Last access timestamp for LRU eviction
-	expiresAt  int64  // Expiration timestamp for TTL-based cleanup
-}
-
-// hashCacheTTL is the time-to-live for hash cache entries (5 minutes)
-// Entries older than this are recomputed on next access
-const hashCacheTTL = int64(5 * time.Minute) // 5 minutes in nanoseconds
-
-// hashCacheMaxSize is the maximum number of entries in the hash cache
-const hashCacheMaxSize = 64
 
 type processorResources struct {
 	lastPoolReset   int64
@@ -132,8 +113,6 @@ func New(cfg ...Config) (*Processor, error) {
 			concurrencySemaphore: make(chan struct{}, config.MaxConcurrency),
 			enabled:              config.EnableMetrics,
 		},
-		// OPTIMIZED: Initialize hash cache for large JSON strings
-		hashCache: make(map[uint64]*hashCacheEntry, hashCacheMaxSize),
 	}
 
 	// Initialize logger atomically for thread safety
@@ -235,9 +214,6 @@ func (p *Processor) Close() error {
 		if p.securityValidator != nil {
 			p.securityValidator.Close()
 		}
-
-		// Clear global path type cache to prevent memory leaks in long-running services
-		clearPathTypeCache()
 
 		// Reset resource tracking
 		if p.resources != nil {
@@ -405,14 +381,9 @@ func (p *Processor) WarmupCache(jsonStr string, paths []string, opts ...Config) 
 			continue
 		}
 
-		// Try to get the value (this will cache it if successful)
-		// Handle nil options to prevent nil pointer dereference
-		var err error
-		if options != nil {
-			_, err = p.Get(jsonStr, path, *options)
-		} else {
-			_, err = p.Get(jsonStr, path)
-		}
+			// Try to get the value (this will cache it if successful)
+			// options is guaranteed non-nil after prepareOptions()
+			_, err := p.Get(jsonStr, path, *options)
 		if err != nil {
 			errorCount++
 			failedPaths = append(failedPaths, path)
@@ -463,134 +434,11 @@ func hashStringToUint64(s string) uint64 {
 	return internal.HashStringFNV1a(s)
 }
 
-// computeHashCacheKey computes a cache lookup key for JSON strings.
-// Delegates to hashStringToUint64 for consistent implementation.
-// PERFORMANCE: Uses sampled FNV-1a hash for large strings.
-func computeHashCacheKey(s string) uint64 {
-	return hashStringToUint64(s)
-}
-
-// evictOldestHashCacheEntriesLocked removes the oldest entries from the hash cache using LRU strategy.
-// PERFORMANCE: LRU eviction keeps frequently accessed entries in cache for better hit rate.
-// CONCURRENCY: Must be called with hashCacheMu.Lock() held.
-func (p *Processor) evictOldestHashCacheEntriesLocked(count int) {
-	if count <= 0 || len(p.hashCache) == 0 {
-		return
-	}
-
-	// Collect entries with their access times for LRU eviction
-	type entryWithTime struct {
-		key        uint64
-		lastAccess int64
-	}
-
-	entries := make([]entryWithTime, 0, len(p.hashCache))
-	for key, entry := range p.hashCache {
-		entries = append(entries, entryWithTime{key: key, lastAccess: entry.lastAccess})
-	}
-
-	// Sort by lastAccess ascending (oldest first)
-	// For small counts, use simple selection instead of full sort
-	if count < len(entries)/2 {
-		// Partial selection sort - find the oldest 'count' entries
-		for i := 0; i < count && i < len(entries); i++ {
-			oldestIdx := i
-			for j := i + 1; j < len(entries); j++ {
-				if entries[j].lastAccess < entries[oldestIdx].lastAccess {
-					oldestIdx = j
-				}
-			}
-			entries[i], entries[oldestIdx] = entries[oldestIdx], entries[i]
-		}
-	} else {
-		// Full sort for larger evictions
-		sort.Slice(entries, func(i, j int) bool {
-			return entries[i].lastAccess < entries[j].lastAccess
-		})
-	}
-
-	// Remove the oldest entries
-	for i := 0; i < count && i < len(entries); i++ {
-		delete(p.hashCache, entries[i].key)
-	}
-}
-
-// getOrCacheHash gets a cached hash for a JSON string, or computes and caches it
-// OPTIMIZED: Caches hashes for large JSON strings to avoid repeated calculations
-// Uses uint64 keys directly instead of hex strings for memory efficiency
-// CONCURRENCY FIX: Uses double-checked locking to avoid TOCTOU race condition
-// where multiple goroutines could compute the same hash simultaneously
-func (p *Processor) getOrCacheHash(jsonStr string) uint64 {
-	// For small strings, just compute directly (no caching overhead)
-	if len(jsonStr) <= 4096 {
-		return hashStringToUint64(jsonStr)
-	}
-
-	// For large strings, try to use cache
-	// PERFORMANCE: Use strong FNV-1a hash of first/last 1KB + length for cache key
-	cacheLookupKey := computeHashCacheKey(jsonStr)
-
-	// Fast path: read lock lookup with TTL check
-	p.hashCacheMu.RLock()
-	if entry, ok := p.hashCache[cacheLookupKey]; ok {
-		// Check if entry has expired
-		if now := time.Now().UnixNano(); now > entry.expiresAt {
-			p.hashCacheMu.RUnlock()
-			// Entry expired, compute fresh hash (will replace in slow path)
-			h := hashStringToUint64(jsonStr)
-			// Try to update cache with new entry
-			p.hashCacheMu.Lock()
-			// Double-check after acquiring write lock
-			if e, exists := p.hashCache[cacheLookupKey]; exists && e.expiresAt == entry.expiresAt {
-				p.hashCache[cacheLookupKey] = &hashCacheEntry{
-					hash:       h,
-					lastAccess: now,
-					expiresAt:  now + hashCacheTTL,
-				}
-			}
-			p.hashCacheMu.Unlock()
-			return h
-		}
-		hash := entry.hash
-		p.hashCacheMu.RUnlock()
-		return hash
-	}
-	p.hashCacheMu.RUnlock()
-
-	// Slow path: compute hash outside of lock to avoid blocking other goroutines
-	h := hashStringToUint64(jsonStr)
-	now := time.Now().UnixNano()
-
-	// Double-checked locking: re-verify under write lock
-	// This prevents multiple goroutines from computing and storing the same hash
-	p.hashCacheMu.Lock()
-	// Check if another goroutine already stored this hash
-	if entry, ok := p.hashCache[cacheLookupKey]; ok {
-		p.hashCacheMu.Unlock()
-		return entry.hash
-	}
-
-	// Cache the result with size limit
-	if len(p.hashCache) >= hashCacheMaxSize {
-		// Evict 25% to make room using LRU
-		p.evictOldestHashCacheEntriesLocked(len(p.hashCache) / 4)
-	}
-	p.hashCache[cacheLookupKey] = &hashCacheEntry{
-		hash:       h,
-		lastAccess: now,
-		expiresAt:  now + hashCacheTTL,
-	}
-	p.hashCacheMu.Unlock()
-
-	return h
-}
 
 // createCacheKey creates a cache key with optimized efficiency
 // Uses direct hash values instead of hex strings for better performance
-// OPTIMIZED: Uses cached hash for large JSON strings
 func (p *Processor) createCacheKey(operation, jsonStr, path string, options *Config) string {
-	// OPTIMIZED: Use cached hash for large JSON strings
-	jsonHash := p.getOrCacheHash(jsonStr)
+	jsonHash := hashStringToUint64(jsonStr)
 	return p.createCacheKeyWithHash(operation, jsonHash, path, options)
 }
 
@@ -767,6 +615,15 @@ func (p *Processor) setCachedResultInternal(key string, result any) {
 	}
 
 	p.cache.Set(key, result)
+}
+
+// invalidateCachedResult removes a cache entry by key.
+// Used when a cached value has a type mismatch (corrupted entry).
+func (p *Processor) invalidateCachedResult(key string) {
+	if !p.config.EnableCache {
+		return
+	}
+	p.cache.Delete(key)
 }
 
 // containsSensitiveData checks if the result contains sensitive information
@@ -1233,7 +1090,7 @@ func (p *Processor) Get(jsonStr, path string, opts ...Config) (any, error) {
 	}()
 
 	// PERFORMANCE: Compute hash ONCE for entire operation, reuse for all cache keys
-	jsonHash := p.getOrCacheHash(jsonStr)
+	jsonHash := hashStringToUint64(jsonStr)
 
 	// Check cache first with optimized key generation (BEFORE validation for performance)
 	cacheKey := p.createCacheKeyWithHash("get", jsonHash, path, options)
@@ -1243,6 +1100,14 @@ func (p *Processor) Get(jsonStr, path string, opts ...Config) (any, error) {
 			p.metrics.collector.RecordCacheHit()
 		}
 		recordMetrics(true)
+		// Return a copy of mutable types to prevent cache corruption.
+		// Primitives (string, int, float64, bool, nil) are immutable and safe to return directly.
+		switch cached.(type) {
+		case map[string]any, []any, map[any]any:
+			if copied, err := DeepCopy(cached); err == nil {
+				return copied, nil
+			}
+		}
 		return cached, nil
 	}
 
@@ -1361,7 +1226,7 @@ func (p *Processor) PreParse(jsonStr string, opts ...Config) (*ParsedJSON, error
 
 	return &ParsedJSON{
 		data:      data,
-		hash:      p.getOrCacheHash(jsonStr),
+		hash:      hashStringToUint64(jsonStr),
 		processor: p,
 	}, nil
 }
@@ -1494,44 +1359,46 @@ func (p *Processor) GetObject(jsonStr, path string, opts ...Config) (map[string]
 	return getTypedWithProcessor[map[string]any](p, jsonStr, path, opts...)
 }
 
-// GetStringOr retrieves a string value from JSON at the specified path with a default fallback.
+// getTypedOrWithProcessor is the shared implementation for all Get*Or methods.
 // Returns defaultValue if: path not found, value is null, or type conversion fails.
-func (p *Processor) GetStringOr(jsonStr, path string, defaultValue string, opts ...Config) string {
-	result, err := p.GetString(jsonStr, path, opts...)
+// Fixes documented behavior: null values now return defaultValue instead of zero value.
+func getTypedOrWithProcessor[T any](p *Processor, jsonStr, path string, defaultValue T, opts ...Config) T {
+	rawValue, err := p.Get(jsonStr, path, opts...)
+	if err != nil {
+		return defaultValue
+	}
+	if rawValue == nil {
+		return defaultValue
+	}
+	result, err := convertToTypedCore[T](rawValue, path)
 	if err != nil {
 		return defaultValue
 	}
 	return result
+}
+
+// GetStringOr retrieves a string value from JSON at the specified path with a default fallback.
+// Returns defaultValue if: path not found, value is null, or type conversion fails.
+func (p *Processor) GetStringOr(jsonStr, path string, defaultValue string, opts ...Config) string {
+	return getTypedOrWithProcessor(p, jsonStr, path, defaultValue, opts...)
 }
 
 // GetIntOr retrieves an int value from JSON at the specified path with a default fallback.
 // Returns defaultValue if: path not found, value is null, or type conversion fails.
 func (p *Processor) GetIntOr(jsonStr, path string, defaultValue int, opts ...Config) int {
-	result, err := p.GetInt(jsonStr, path, opts...)
-	if err != nil {
-		return defaultValue
-	}
-	return result
+	return getTypedOrWithProcessor(p, jsonStr, path, defaultValue, opts...)
 }
 
 // GetFloatOr retrieves a float64 value from JSON at the specified path with a default fallback.
 // Returns defaultValue if: path not found, value is null, or type conversion fails.
 func (p *Processor) GetFloatOr(jsonStr, path string, defaultValue float64, opts ...Config) float64 {
-	result, err := p.GetFloat(jsonStr, path, opts...)
-	if err != nil {
-		return defaultValue
-	}
-	return result
+	return getTypedOrWithProcessor(p, jsonStr, path, defaultValue, opts...)
 }
 
 // GetBoolOr retrieves a bool value from JSON at the specified path with a default fallback.
 // Returns defaultValue if: path not found, value is null, or type conversion fails.
 func (p *Processor) GetBoolOr(jsonStr, path string, defaultValue bool, opts ...Config) bool {
-	result, err := p.GetBool(jsonStr, path, opts...)
-	if err != nil {
-		return defaultValue
-	}
-	return result
+	return getTypedOrWithProcessor(p, jsonStr, path, defaultValue, opts...)
 }
 
 // GetMultiple retrieves multiple values from JSON using multiple path expressions
@@ -2031,41 +1898,6 @@ func UnescapeJSONPointer(s string) string {
 	return internal.UnescapeJSONPointer(s)
 }
 
-// IsContainer checks if the data is a container type (map or slice)
-func IsContainer(data any) bool {
-	switch data.(type) {
-	case map[string]any, map[any]any, []any:
-		return true
-	default:
-		return false
-	}
-}
-
-// GetContainerSize returns the size of a container
-func GetContainerSize(data any) int {
-	switch v := data.(type) {
-	case map[string]any:
-		return len(v)
-	case map[any]any:
-		return len(v)
-	case []any:
-		return len(v)
-	default:
-		return 0
-	}
-}
-
-// CreateEmptyContainer creates an empty container of the specified type
-func CreateEmptyContainer(containerType string) any {
-	switch containerType {
-	case "object":
-		return make(map[string]any)
-	case "array":
-		return make([]any, 0)
-	default:
-		return make(map[string]any) // Default to object
-	}
-}
 
 // validateInput validates JSON input string with optimized security checks
 func (p *Processor) validateInput(jsonString string) error {

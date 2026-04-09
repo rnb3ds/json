@@ -1161,25 +1161,25 @@ func TestValidEdgeCases(t *testing.T) {
 	})
 }
 
-// TestFormatJSONStringEdgeCases tests formatJSONString edge cases
+// TestFormatJSONStringEdgeCases tests Processor.formatJSONString edge cases
 func TestFormatJSONStringEdgeCases(t *testing.T) {
 	p, _ := New()
 	defer p.Close()
 
 	t.Run("InvalidJSONReturnsOriginal", func(t *testing.T) {
-		result, err := formatJSONString("{invalid}", false, p)
+		result, err := p.formatJSONString("{invalid}", false)
 		// Invalid JSON may return original or error depending on implementation
 		_ = err
 		_ = result
 	})
 
 	t.Run("ValidJSON", func(t *testing.T) {
-		result, err := formatJSONString(`{"key":"value"}`, false, p)
+		result, err := p.formatJSONString(`{"key":"value"}`, false)
 		if err != nil {
-			t.Errorf("formatJSONString failed: %v", err)
+			t.Errorf("Processor.formatJSONString failed: %v", err)
 		}
 		if result == "" {
-			t.Error("formatJSONString should return non-empty result")
+			t.Error("Processor.formatJSONString should return non-empty result")
 		}
 	})
 }

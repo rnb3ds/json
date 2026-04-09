@@ -247,18 +247,16 @@ func (p *Processor) deleteValueAtPath(data any, path string) error {
 	return p.deleteValueDotNotation(data, path)
 }
 
-func (p *Processor) deleteValueDotNotation(data any, path string) error {
-	// Parse path
-	segments, err := p.parsePath(path)
-	if err != nil {
-		return err
-	}
 
+// navigateToParent navigates through data to the parent container of the final segment.
+// Returns the parent container and the final segment key/index.
+// Shared by deleteValueDotNotation and deleteValueJSONPointer to avoid duplicating
+// the map[string]any/map[any]any/[]any switch logic.
+func (p *Processor) navigateToParent(data any, segments []string) (any, string, error) {
 	if len(segments) == 0 {
-		return fmt.Errorf("empty path")
+		return nil, "", fmt.Errorf("empty path")
 	}
 
-	// Navigate to parent
 	current := data
 	for i := 0; i < len(segments)-1; i++ {
 		segment := segments[i]
@@ -268,29 +266,39 @@ func (p *Processor) deleteValueDotNotation(data any, path string) error {
 			if next, exists := v[segment]; exists {
 				current = next
 			} else {
-				return fmt.Errorf("path not found: %s", segment)
+				return nil, "", fmt.Errorf("path not found: %s", segment)
 			}
 		case map[any]any:
-			// Handle map[any]any for robustness with non-JSON map types
 			if next, exists := v[segment]; exists {
 				current = next
 			} else {
-				return fmt.Errorf("path not found: %s", segment)
+				return nil, "", fmt.Errorf("path not found: %s", segment)
 			}
 		case []any:
 			if index, ok := internal.ParseAndValidateArrayIndex(segment, len(v)); ok {
 				current = v[index]
 			} else {
-				return fmt.Errorf("invalid array index: %s", segment)
+				return nil, "", fmt.Errorf("invalid array index: %s", segment)
 			}
 		default:
-			return fmt.Errorf("cannot navigate through %T at segment %s", current, segment)
+			return nil, "", fmt.Errorf("cannot navigate through %T at segment %s", current, segment)
 		}
 	}
 
-	// Delete final property
-	finalSegment := segments[len(segments)-1]
-	return p.deletePropertyValue(current, finalSegment)
+	return current, segments[len(segments)-1], nil
+}
+
+func (p *Processor) deleteValueDotNotation(data any, path string) error {
+	segments, err := p.parsePath(path)
+	if err != nil {
+		return err
+	}
+
+	parent, finalSegment, err := p.navigateToParent(data, segments)
+	if err != nil {
+		return err
+	}
+	return p.deletePropertyValue(parent, finalSegment)
 }
 
 func (p *Processor) deleteValueJSONPointer(data any, path string) error {
@@ -298,52 +306,19 @@ func (p *Processor) deleteValueJSONPointer(data any, path string) error {
 		return fmt.Errorf("cannot delete root")
 	}
 
-	// Remove leading slash and split
-	pathWithoutSlash := path[1:]
-	segments := strings.Split(pathWithoutSlash, "/")
-
-	// Navigate to parent
-	current := data
-	for i := 0; i < len(segments)-1; i++ {
-		segment := segments[i]
-
-		// Unescape JSON Pointer characters
-		if strings.Contains(segment, "~") {
-			segment = p.unescapeJSONPointer(segment)
-		}
-
-		switch v := current.(type) {
-		case map[string]any:
-			if next, exists := v[segment]; exists {
-				current = next
-			} else {
-				return fmt.Errorf("path not found: %s", segment)
-			}
-		case map[any]any:
-			// Handle map[any]any for robustness with non-JSON map types
-			if next, exists := v[segment]; exists {
-				current = next
-			} else {
-				return fmt.Errorf("path not found: %s", segment)
-			}
-		case []any:
-			if index, ok := internal.ParseAndValidateArrayIndex(segment, len(v)); ok {
-				current = v[index]
-			} else {
-				return fmt.Errorf("invalid array index: %s", segment)
-			}
-		default:
-			return fmt.Errorf("cannot navigate through %T at segment %s", current, segment)
+	// Split and unescape JSON Pointer segments upfront
+	segments := strings.Split(path[1:], "/")
+	for i := range segments {
+		if strings.Contains(segments[i], "~") {
+			segments[i] = p.unescapeJSONPointer(segments[i])
 		}
 	}
 
-	// Delete final property
-	finalSegment := segments[len(segments)-1]
-	if strings.Contains(finalSegment, "~") {
-		finalSegment = p.unescapeJSONPointer(finalSegment)
+	parent, finalSegment, err := p.navigateToParent(data, segments)
+	if err != nil {
+		return err
 	}
-
-	return p.deletePropertyValue(current, finalSegment)
+	return p.deletePropertyValue(parent, finalSegment)
 }
 
 func (p *Processor) deletePropertyValue(current any, property string) error {

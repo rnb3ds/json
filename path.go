@@ -13,7 +13,6 @@ import (
 	"github.com/cybergodev/json/internal"
 )
 
-// isPrimitiveType checks if data is a JSON primitive type
 // isPrimitiveType checks if data is a JSON primitive type.
 // Package-level function for internal use (e.g., testing).
 func isPrimitiveType(data any) bool {
@@ -205,7 +204,8 @@ func (p *Processor) Valid(jsonStr string, opts ...Config) (bool, error) {
 		if val, typeOk := cached.(bool); typeOk {
 				return val, nil
 			}
-			// Cache type mismatch — fall through to recompute
+			// Cache type mismatch — evict corrupted entry
+			p.invalidateCachedResult(cacheKey)
 	}
 
 	// Valid JSON by attempting to parse
@@ -354,7 +354,8 @@ func (p *Processor) Prettify(jsonStr string, opts ...Config) (string, error) {
 		if val, typeOk := cached.(string); typeOk {
 			return val, nil
 		}
-		// Cache type mismatch - fall through to recompute
+		// Cache type mismatch - evict corrupted entry
+			p.invalidateCachedResult(cacheKey)
 	}
 
 	// Parse with number preservation to maintain original number types
@@ -529,7 +530,8 @@ func (p *Processor) Compact(jsonStr string, opts ...Config) (string, error) {
 		if val, typeOk := cached.(string); typeOk {
 			return val, nil
 		}
-		// Cache type mismatch - fall through to recompute
+		// Cache type mismatch - evict corrupted entry
+			p.invalidateCachedResult(cacheKey)
 	}
 
 	// Parse with number preservation to maintain original number types

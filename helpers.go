@@ -321,10 +321,9 @@ func ConvertToBool(value any) (bool, bool) {
 // getTypedWithProcessor retrieves a typed value from JSON using a specific processor.
 // This is the core implementation used by GetTyped and GetTypedOr.
 func getTypedWithProcessor[T any](processor *Processor, jsonStr, path string, cfg ...Config) (T, error) {
-	var zero T
-
 	value, err := processor.Get(jsonStr, path, cfg...)
 	if err != nil {
+		var zero T
 		return zero, err
 	}
 
@@ -332,32 +331,7 @@ func getTypedWithProcessor[T any](processor *Processor, jsonStr, path string, cf
 		return handleNullValue[T]()
 	}
 
-	if converted, ok := unifiedTypeConversion[T](value); ok {
-		return converted, nil
-	}
-
-	// Fallback: re-marshal and unmarshal for complex types
-	jsonBytes, err := json.Marshal(value)
-	if err != nil {
-		return zero, &JsonsError{
-			Op:      "get_typed",
-			Path:    path,
-			Message: fmt.Sprintf("failed to marshal value for type conversion: %v", err),
-			Err:     ErrTypeMismatch,
-		}
-	}
-
-	var finalResult T
-	if err := json.Unmarshal(jsonBytes, &finalResult); err != nil {
-		return zero, &JsonsError{
-			Op:      "get_typed",
-			Path:    path,
-			Message: fmt.Sprintf("failed to convert value to type %T: %v", finalResult, err),
-			Err:     ErrTypeMismatch,
-		}
-	}
-
-	return finalResult, nil
+	return convertToTypedCore[T](value, path)
 }
 
 // unifiedTypeConversion provides optimized type conversion with comprehensive support
@@ -900,6 +874,16 @@ func MergeJSON(json1, json2 string, cfg ...Config) (string, error) {
 // convertLibraryNumbers recursively converts the library's Number type to float64
 // This is needed because the library's NumberPreservingDecoder returns Number (not json.Number)
 func convertLibraryNumbers(data any) any {
+	return convertLibraryNumbersWithDepth(data, 0)
+}
+
+// convertLibraryNumbersWithDepth performs recursive Number conversion with depth tracking.
+// SECURITY: Depth limit prevents stack overflow from deeply nested structures.
+func convertLibraryNumbersWithDepth(data any, depth int) any {
+	if depth > deepCopyMaxDepth {
+		return data // Safety: stop recursion for excessively deep structures
+	}
+
 	switch v := data.(type) {
 	case Number:
 		f, err := v.Float64()
@@ -910,13 +894,13 @@ func convertLibraryNumbers(data any) any {
 	case map[string]any:
 		result := make(map[string]any, len(v))
 		for key, value := range v {
-			result[key] = convertLibraryNumbers(value)
+			result[key] = convertLibraryNumbersWithDepth(value, depth+1)
 		}
 		return result
 	case []any:
 		result := make([]any, len(v))
 		for i, item := range v {
-			result[i] = convertLibraryNumbers(item)
+			result[i] = convertLibraryNumbersWithDepth(item, depth+1)
 		}
 		return result
 	default:
@@ -968,11 +952,17 @@ func MergeJSONManyWithConfig(cfg Config, jsons ...string) (string, error) {
 // convertValueToType converts a pre-parsed value to the target type T.
 // Used by GetTypedOr to avoid re-parsing when the raw value is already available.
 func convertValueToType[T any](value any, path string) (T, error) {
-	var zero T
-
 	if value == nil {
+		var zero T
 		return zero, ErrPathNotFound
 	}
+	return convertToTypedCore[T](value, path)
+}
+
+// convertToTypedCore is the shared core logic for converting a value to type T.
+// DRY: Eliminates duplication between getTypedWithProcessor and convertValueToType.
+func convertToTypedCore[T any](value any, path string) (T, error) {
+	var zero T
 
 	if converted, ok := unifiedTypeConversion[T](value); ok {
 		return converted, nil
@@ -1038,15 +1028,6 @@ func internKey(key string) string {
 	return internal.GlobalKeyIntern.Intern(key)
 }
 
-// clearKeyInternCache clears the global key interning cache.
-func clearKeyInternCache() {
-	internal.GlobalKeyIntern.Clear()
-}
-
-// getKeyInternCacheSize returns the number of interned keys in the cache.
-func getKeyInternCacheSize() int {
-	return internal.GlobalKeyIntern.Size()
-}
 
 // ============================================================================
 // VALUE UTILITIES

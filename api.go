@@ -324,103 +324,61 @@ var configFieldList = []configFieldAccessor{
 			}
 			return h
 		}},
+		// Extension fields
+		{"CustomEscapes",
+			func(a, b Config) bool { return customEscapesEqual(a.CustomEscapes, b.CustomEscapes) },
+			func(h uint64, c Config) uint64 { return hashCustomEscapes(h, c.CustomEscapes) }},
+		{"CustomEncoder",
+			func(a, b Config) bool { return (a.CustomEncoder == nil) == (b.CustomEncoder == nil) },
+			func(h uint64, c Config) uint64 {
+				if c.CustomEncoder != nil {
+					return internal.HashBool(h, true)
+				}
+				return h
+			}},
+		{"CustomTypeEncoders",
+			func(a, b Config) bool { return len(a.CustomTypeEncoders) == len(b.CustomTypeEncoders) },
+			func(h uint64, c Config) uint64 { return internal.HashInt(h, len(c.CustomTypeEncoders)) }},
+		{"CustomValidators",
+			func(a, b Config) bool { return len(a.CustomValidators) == len(b.CustomValidators) },
+			func(h uint64, c Config) uint64 { return internal.HashInt(h, len(c.CustomValidators)) }},
+		{"AdditionalDangerousPatterns",
+			func(a, b Config) bool {
+				return len(a.AdditionalDangerousPatterns) == len(b.AdditionalDangerousPatterns)
+			},
+			func(h uint64, c Config) uint64 {
+				h = internal.HashInt(h, len(c.AdditionalDangerousPatterns))
+				for _, p := range c.AdditionalDangerousPatterns {
+					h = internal.HashString(h, p.Pattern)
+					h = internal.HashInt(h, int(p.Level))
+				}
+				return h
+			}},
+		{"DisableDefaultPatterns",
+			func(a, b Config) bool { return a.DisableDefaultPatterns == b.DisableDefaultPatterns },
+			func(h uint64, c Config) uint64 { return internal.HashBool(h, c.DisableDefaultPatterns) }},
+		{"Hooks",
+			func(a, b Config) bool { return len(a.Hooks) == len(b.Hooks) },
+			func(h uint64, c Config) uint64 { return internal.HashInt(h, len(c.Hooks)) }},
+		{"CustomPathParser",
+			func(a, b Config) bool { return (a.CustomPathParser == nil) == (b.CustomPathParser == nil) },
+			func(h uint64, c Config) uint64 {
+				if c.CustomPathParser != nil {
+					return internal.HashBool(h, true)
+				}
+				return h
+			}},
 }
 
 // configFieldsEqual compares all fields of two Config structs.
-// PERFORMANCE: Uses inline field comparisons for the common case (no custom extensions).
-// Falls back to the field list approach only when extension fields are non-nil.
+// MAINTENANCE: To add new Config fields, add entries to configFieldList only.
+// This function is the single consumer of configFieldList.equal for comparisons.
 func configFieldsEqual(a, b Config) bool {
-	// Fast path: inline all scalar field comparisons to avoid closure overhead.
-	// This is the hot path for isDefaultConfig where both configs are default-like.
-	if a.MaxCacheSize != b.MaxCacheSize ||
-		a.CacheTTL != b.CacheTTL ||
-		a.EnableCache != b.EnableCache ||
-		a.CacheResults != b.CacheResults ||
-		a.MaxJSONSize != b.MaxJSONSize ||
-		a.MaxPathDepth != b.MaxPathDepth ||
-		a.MaxBatchSize != b.MaxBatchSize ||
-		a.MaxNestingDepthSecurity != b.MaxNestingDepthSecurity ||
-		a.MaxSecurityValidationSize != b.MaxSecurityValidationSize ||
-		a.MaxObjectKeys != b.MaxObjectKeys ||
-		a.MaxArrayElements != b.MaxArrayElements ||
-		a.FullSecurityScan != b.FullSecurityScan ||
-		a.MaxConcurrency != b.MaxConcurrency ||
-		a.ParallelThreshold != b.ParallelThreshold ||
-		a.EnableValidation != b.EnableValidation ||
-		a.StrictMode != b.StrictMode ||
-		a.CreatePaths != b.CreatePaths ||
-		a.CleanupNulls != b.CleanupNulls ||
-		a.CompactArrays != b.CompactArrays ||
-		a.ContinueOnError != b.ContinueOnError ||
-		a.AllowComments != b.AllowComments ||
-		a.PreserveNumbers != b.PreserveNumbers ||
-		a.ValidateInput != b.ValidateInput ||
-		a.ValidateFilePath != b.ValidateFilePath ||
-		a.SkipValidation != b.SkipValidation ||
-		a.Pretty != b.Pretty ||
-		a.Indent != b.Indent ||
-		a.Prefix != b.Prefix ||
-		a.EscapeHTML != b.EscapeHTML ||
-		a.SortKeys != b.SortKeys ||
-		a.ValidateUTF8 != b.ValidateUTF8 ||
-		a.MaxDepth != b.MaxDepth ||
-		a.DisallowUnknown != b.DisallowUnknown ||
-		a.FloatPrecision != b.FloatPrecision ||
-		a.FloatTruncate != b.FloatTruncate ||
-		a.DisableEscaping != b.DisableEscaping ||
-		a.EscapeUnicode != b.EscapeUnicode ||
-		a.EscapeSlash != b.EscapeSlash ||
-		a.EscapeNewlines != b.EscapeNewlines ||
-		a.EscapeTabs != b.EscapeTabs ||
-		a.IncludeNulls != b.IncludeNulls ||
-		a.EnableMetrics != b.EnableMetrics ||
-		a.EnableHealthCheck != b.EnableHealthCheck ||
-		a.MergeMode != b.MergeMode ||
-		a.ChunkSize != b.ChunkSize ||
-		a.MaxMemory != b.MaxMemory ||
-		a.BufferSize != b.BufferSize ||
-		a.SamplingEnabled != b.SamplingEnabled ||
-		a.SampleSize != b.SampleSize ||
-		a.JSONLBufferSize != b.JSONLBufferSize ||
-		a.JSONLMaxLineSize != b.JSONLMaxLineSize ||
-		a.JSONLSkipEmpty != b.JSONLSkipEmpty ||
-		a.JSONLSkipComments != b.JSONLSkipComments ||
-		a.JSONLContinueOnErr != b.JSONLContinueOnErr ||
-		a.JSONLWorkers != b.JSONLWorkers ||
-		a.JSONLChunkSize != b.JSONLChunkSize ||
-		a.JSONLMaxMemory != b.JSONLMaxMemory ||
-		a.Context != b.Context {
-		return false
+	for _, field := range configFieldList {
+		if !field.equal(a, b) {
+			return false
+		}
 	}
-
-	// CustomEscapes map comparison (handled separately due to complexity)
-	if !customEscapesEqual(a.CustomEscapes, b.CustomEscapes) {
-		return false
-	}
-
-	// Extension points - compare by nil check and length for slices
-	if (a.CustomEncoder == nil) != (b.CustomEncoder == nil) {
-		return false
-	}
-	if len(a.CustomTypeEncoders) != len(b.CustomTypeEncoders) {
-		return false
-	}
-	if len(a.CustomValidators) != len(b.CustomValidators) {
-		return false
-	}
-	if len(a.AdditionalDangerousPatterns) != len(b.AdditionalDangerousPatterns) {
-		return false
-	}
-	if a.DisableDefaultPatterns != b.DisableDefaultPatterns {
-		return false
-	}
-	if len(a.Hooks) != len(b.Hooks) {
-		return false
-	}
-	if (a.CustomPathParser == nil) != (b.CustomPathParser == nil) {
-		return false
-	}
-
 	return true
 }
 
@@ -438,40 +396,13 @@ func customEscapesEqual(a, b map[rune]string) bool {
 }
 
 // hashConfigFields hashes all Config fields using the unified field list.
+// MAINTENANCE: To add new Config fields, add entries to configFieldList only.
+// This function is the single consumer of configFieldList.hash for hashing.
 func hashConfigFields(cfg Config) uint64 {
 	h := internal.FNVOffsetBasis
-
 	for _, field := range configFieldList {
 		h = field.hash(h, cfg)
 	}
-
-	// CustomEscapes (handled separately due to complexity)
-	h = hashCustomEscapes(h, cfg.CustomEscapes)
-
-	// Hash extension point fields that are not in configFieldList
-	// CustomTypeEncoders - hash by count only (encoders are functions)
-	h = internal.HashInt(h, len(cfg.CustomTypeEncoders))
-	// CustomValidators - hash by count only (validators are interfaces)
-	h = internal.HashInt(h, len(cfg.CustomValidators))
-	// AdditionalDangerousPatterns - hash by count and pattern strings
-	h = internal.HashInt(h, len(cfg.AdditionalDangerousPatterns))
-	for _, p := range cfg.AdditionalDangerousPatterns {
-		h = internal.HashString(h, p.Pattern)
-		h = internal.HashInt(h, int(p.Level))
-	}
-	// Hooks - hash by count only (hooks are interfaces)
-	h = internal.HashInt(h, len(cfg.Hooks))
-	// DisableDefaultPatterns
-	h = internal.HashBool(h, cfg.DisableDefaultPatterns)
-	// CustomEncoder - hash by nil check only (interface)
-	if cfg.CustomEncoder != nil {
-		h = internal.HashBool(h, true)
-	}
-	// CustomPathParser - hash by nil check only (interface)
-	if cfg.CustomPathParser != nil {
-		h = internal.HashBool(h, true)
-	}
-
 	return h
 }
 
@@ -621,24 +552,11 @@ func GetObject(jsonStr, path string, cfg ...Config) (map[string]any, error) {
 //	name := json.GetOr[string](data, "user.name", "unknown")
 //	age := json.GetOr[int](data, "user.age", 0)
 func GetTypedOr[T any](jsonStr, path string, defaultValue T, cfg ...Config) T {
-	// PERFORMANCE: Single parse - get raw value once, then convert
-	result, err := withProcessor(func(p *Processor) (T, error) {
-		rawValue, err := p.Get(jsonStr, path, cfg...)
-		if err != nil {
-			var zero T
-			return zero, err
-		}
-		if rawValue == nil {
-			var zero T
-			return zero, ErrPathNotFound // Return error to trigger default
-		}
-		// Convert the already-parsed value
-		return convertValueToType[T](rawValue, path)
-	})
+	p, err := getProcessorOrFail()
 	if err != nil {
 		return defaultValue
 	}
-	return result
+	return getTypedOrWithProcessor(p, jsonStr, path, defaultValue, cfg...)
 }
 
 // GetStringOr retrieves a string value from JSON at the specified path with a default fallback.
@@ -945,25 +863,12 @@ func PrintPrettyE(data any) error {
 	return nil
 }
 
-// formatJSONString formats a JSON string or encodes a non-JSON string.
-func formatJSONString(jsonStr string, pretty bool, p *Processor) (string, error) {
-	return p.formatJSONString(jsonStr, pretty)
-}
-
-// encodeValue encodes any Go value to JSON string.
-func encodeValue(value any, pretty bool) (string, error) {
-	return withProcessor(func(p *Processor) (string, error) {
-		return p.encodeValue(value, pretty)
-	})
-}
-
-// printData handles the core logic for Print and PrintPretty
+// printData handles the core logic for Print and PrintPretty.
+// Delegates to Processor.printData to avoid duplication.
 func printData(data any, pretty bool) (string, error) {
-	processor := getDefaultProcessor()
-	if processor == nil {
-		return "", ErrInternalError
-	}
-	return processor.printData(data, pretty)
+	return withProcessor(func(p *Processor) (string, error) {
+		return p.printData(data, pretty)
+	})
 }
 
 // Valid reports whether data is valid JSON.

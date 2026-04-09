@@ -106,19 +106,12 @@ func (dec *Decoder) reset(r io.Reader) {
 	} else {
 		dec.buf.Reset(r)
 	}
-	if dec.processor == nil {
-		p := getDefaultProcessor()
-		if p != nil {
-			dec.processor = p
-		}
-	}
 	dec.offset = 0
 }
 
 // clear clears all references in the decoder
 func (dec *Decoder) clear() {
 	dec.r = nil
-	dec.processor = nil
 	// Reset the bufio.Reader to an empty reader to release the buffer
 	if dec.buf != nil {
 		dec.buf.Reset(bytes.NewReader(nil))

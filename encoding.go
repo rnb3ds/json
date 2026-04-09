@@ -96,7 +96,6 @@ func putEncoderBuffer(buf *bytes.Buffer) {
 // This type is fully compatible with encoding/json.Encoder.
 type Encoder struct {
 	w          io.Writer
-	processor  *Processor
 	escapeHTML bool
 	indent     string
 	prefix     string
@@ -118,10 +117,8 @@ type Encoder struct {
 //	cfg.Pretty = true
 //	encoder := json.NewEncoder(writer, cfg)
 func NewEncoder(w io.Writer, cfg ...Config) *Encoder {
-	p := getDefaultProcessor()
 	enc := &Encoder{
 		w:          w,
-		processor:  p,
 		escapeHTML: true, // Default behavior matches encoding/json
 	}
 
@@ -149,8 +146,10 @@ func NewEncoder(w io.Writer, cfg ...Config) *Encoder {
 var newline = []byte{'\n'}
 
 func (enc *Encoder) Encode(v any) error {
-	// SAFETY: Check for nil processor
-	if enc.processor == nil {
+	// Get the current processor on each Encode call to avoid stale references
+	// after SetGlobalProcessor or ShutdownGlobalProcessor.
+	processor := getDefaultProcessor()
+	if processor == nil {
 		return ErrInternalError
 	}
 
@@ -181,7 +180,9 @@ func (enc *Encoder) Encode(v any) error {
 	}
 
 	// Full encoding path for complex cases with indentation or config
-	config := DefaultConfig()
+	// Use processor's config as base to inherit settings like PreserveNumbers,
+	// FloatPrecision, etc. Encoder's explicit fields take priority.
+	config := processor.GetConfig()
 	config.EscapeHTML = enc.escapeHTML
 
 	if enc.indent != "" || enc.prefix != "" {
@@ -191,7 +192,7 @@ func (enc *Encoder) Encode(v any) error {
 	}
 
 	// Encode the value using internal method that accepts pre-built config
-	jsonStr, err := enc.processor.EncodeWithConfig(v, config)
+	jsonStr, err := processor.EncodeWithConfig(v, config)
 	if err != nil {
 		return err
 	}
@@ -228,7 +229,6 @@ func (enc *Encoder) SetIndent(prefix, indent string) {
 type Decoder struct {
 	r                     io.Reader
 	buf                   *bufio.Reader
-	processor             *Processor
 	useNumber             bool
 	disallowUnknownFields bool
 	offset                int64 // total bytes read from input
@@ -250,11 +250,9 @@ type Decoder struct {
 //	cfg.DisallowUnknown = true
 //	decoder := json.NewDecoder(reader, cfg)
 func NewDecoder(r io.Reader, cfg ...Config) *Decoder {
-	p := getDefaultProcessor()
 	dec := &Decoder{
 		r:         r,
 		buf:       bufio.NewReader(r),
-		processor: p,
 	}
 	// Apply config if provided
 	if len(cfg) > 0 {
@@ -265,8 +263,9 @@ func NewDecoder(r io.Reader, cfg ...Config) *Decoder {
 
 // Decode reads the next JSON-encoded value from its input and stores it in v.
 func (dec *Decoder) Decode(v any) error {
-	// SAFETY: Check for nil processor
-	if dec.processor == nil {
+	// Get the current processor on each Decode call to avoid stale references.
+	processor := getDefaultProcessor()
+	if processor == nil {
 		return ErrInternalError
 	}
 
@@ -309,7 +308,7 @@ func (dec *Decoder) Decode(v any) error {
 	}
 
 	// Use the processor's Unmarshal method for normal cases
-	return dec.processor.Unmarshal(data, v)
+	return processor.Unmarshal(data, v)
 }
 
 func (dec *Decoder) UseNumber() {

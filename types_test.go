@@ -1455,8 +1455,8 @@ func TestHealthCheckSystem(t *testing.T) {
 
 // TestInvalidArrayIndex tests the InvalidArrayIndex constant
 func TestInvalidArrayIndex(t *testing.T) {
-	if invalidArrayIndex != -999999 {
-		t.Errorf("invalidArrayIndex = %d, want -999999", invalidArrayIndex)
+	if internal.ArrayIndexInvalid != -999999 {
+		t.Errorf("ArrayIndexInvalid = %d, want -999999", internal.ArrayIndexInvalid)
 	}
 }
 
