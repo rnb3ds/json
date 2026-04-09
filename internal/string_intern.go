@@ -140,13 +140,16 @@ func (si *StringIntern) InternBytes(b []byte) string {
 // Returns true if entries were evicted, false if no entries to evict
 // SECURITY: Must be called with lock already held
 // NOTE: Go map iteration order is random, so eviction is effectively random
+// PERFORMANCE: Evicts 1/4 of entries (not 1/2) to avoid sudden performance
+// degradation after eviction. Gradual eviction allows the intern to rebuild
+// its working set more smoothly.
 func (si *StringIntern) evictRandomLocked() bool {
 	if len(si.strings) == 0 {
 		return false
 	}
-	// Remove half the entries
+	// Remove a quarter of entries for smoother eviction
 	count := 0
-	target := len(si.strings) / 2
+	target := len(si.strings) / 4
 	target = max(target, 1)
 	for k := range si.strings {
 		if count >= target {
@@ -176,9 +179,9 @@ func (si *StringIntern) GetStats() InternStats {
 	return InternStats{
 		Entries:   len(si.strings),
 		Size:      si.size,
-		Hits:      si.hits,
-		Misses:    si.misses,
-		Evictions: si.evictions,
+		Hits:      atomic.LoadInt64(&si.hits),
+		Misses:    atomic.LoadInt64(&si.misses),
+		Evictions: atomic.LoadInt64(&si.evictions),
 	}
 }
 
@@ -211,6 +214,7 @@ type KeyIntern struct {
 	shardMask   uint64
 	hotKeys     sync.Map // Lock-free cache for frequently accessed keys
 	hotKeyCount int64    // Atomic counter for hot key cache size
+	trimming    int32    // Atomic flag: 1 = trim in progress, prevents concurrent trimHotCache
 }
 
 type keyInternShard struct {
@@ -299,14 +303,11 @@ func (ki *KeyIntern) Intern(key string) string {
 // promoteToHotCache adds a key to the hot cache with size limiting
 // SECURITY: Prevents unbounded growth of the hot key cache
 func (ki *KeyIntern) promoteToHotCache(key, interned string) {
-	// Check if already in cache
-	if _, exists := ki.hotKeys.Load(key); exists {
+	// Use LoadOrStore for atomic check-and-set to prevent counter overcounting
+	if _, loaded := ki.hotKeys.LoadOrStore(key, interned); loaded {
 		return
 	}
 
-	// Store first, then increment counter to prevent overcounting
-	// for keys that might be stored concurrently
-	ki.hotKeys.Store(key, interned)
 	count := atomic.AddInt64(&ki.hotKeyCount, 1)
 	if count > maxHotKeys {
 		// Trim cache: delete ~25% of entries
@@ -316,7 +317,15 @@ func (ki *KeyIntern) promoteToHotCache(key, interned string) {
 
 // trimHotCache removes approximately 25% of hot cache entries
 // SECURITY: Prevents memory exhaustion from unbounded hot key cache
+// Uses CAS flag to prevent multiple goroutines from trimming simultaneously,
+// which could cause hotKeyCount to go negative.
 func (ki *KeyIntern) trimHotCache() {
+	// CAS guard: only one goroutine trims at a time
+	if !atomic.CompareAndSwapInt32(&ki.trimming, 0, 1) {
+		return
+	}
+	defer atomic.StoreInt32(&ki.trimming, 0)
+
 	toDelete := maxHotKeys / 4
 	deleted := int64(0)
 
@@ -329,8 +338,11 @@ func (ki *KeyIntern) trimHotCache() {
 		return true
 	})
 
-	// Update counter (approximately, as there might be concurrent additions)
-	atomic.AddInt64(&ki.hotKeyCount, -deleted)
+	// Update counter, clamped to prevent negative values
+	newCount := atomic.AddInt64(&ki.hotKeyCount, -deleted)
+	if newCount < 0 {
+		atomic.StoreInt64(&ki.hotKeyCount, 0)
+	}
 }
 
 // evictShardLocked removes entries when shard size limit is reached
@@ -341,7 +353,7 @@ func (ki *KeyIntern) evictShardLocked(shard *keyInternShard) bool {
 		return false
 	}
 
-	// Remove half the entries
+	// Remove half the entries (aggressive eviction to prevent memory bloat)
 	target := len(shard.strings) / 2
 	target = max(target, 1)
 
@@ -540,6 +552,7 @@ func (pi *PathIntern) Clear() {
 	pi.mu.Lock()
 	defer pi.mu.Unlock()
 	pi.paths = make(map[string][]PathSegment, pi.maxSize/2)
+	pi.size = 0
 }
 
 // ============================================================================

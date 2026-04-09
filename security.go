@@ -690,21 +690,24 @@ func (sv *securityValidator) validateJSONSecurityFull(jsonStr string) error {
 	// Most legitimate JSON with these characters is still safe
 	// We only need to scan for actual dangerous patterns,
 	// Check HTML/XSS related patterns (require '<')
+	// SECURITY: Use case-insensitive matching to prevent bypass via mixed case (e.g., <Script>)
 	if hasAngleBracket {
+		lower := strings.ToLower(jsonStr)
 		htmlPatterns := []string{"<script", "<iframe", "<object", "<embed", "<svg", "onerror", "onload", "onclick"}
 		for _, pattern := range htmlPatterns {
-			if strings.Contains(jsonStr, pattern) {
+			if strings.Contains(lower, pattern) {
 				return newSecurityError("validate_json_security", fmt.Sprintf("dangerous HTML pattern: %s", pattern))
 			}
 		}
 	}
 
 	// Check function-related patterns (require '(')
+	// SECURITY: Case-insensitive to prevent bypass via mixed case
 	if hasFunctionCall {
-		// Only check the most common dangerous function patterns
-		funcPatterns := []string{"eval(", "function(", "setTimeout(", "setInterval(", "new Function("}
+		lower := strings.ToLower(jsonStr)
+		funcPatterns := []string{"eval(", "function(", "settimeout(", "setinterval(", "new function("}
 		for _, pattern := range funcPatterns {
-			if strings.Contains(jsonStr, pattern) {
+			if strings.Contains(lower, pattern) {
 				return newSecurityError("validate_json_security", fmt.Sprintf("dangerous function pattern: %s", pattern))
 			}
 		}
@@ -1098,10 +1101,49 @@ func isWhitespace(c byte) bool {
 }
 
 func (sv *securityValidator) validateNestingDepth(jsonStr string) error {
-	// PERFORMANCE: For small JSON (< 64KB), skip detailed nesting validation
-	// The standard library json.Unmarshal already handles this efficiently
-	// Only do detailed scan for large JSON where DoS attacks are more likely
+	// SECURITY: Validate nesting depth for all inputs regardless of size.
+	// Use a faster scan for small JSON (< 64KB) by only checking depth,
+	// and full scan for larger inputs that also track total brackets.
+	// Small but deeply nested JSON can still cause stack overflow during processing.
 	if len(jsonStr) < securityNestingValidationThreshold {
+		// Fast path for small JSON: only check max depth, no bracket counting
+		depth := 0
+		inString := false
+		escaped := false
+		maxCheckDepth := sv.maxNestingDepth
+		if maxCheckDepth <= 0 {
+			maxCheckDepth = 100
+		}
+		for i := 0; i < len(jsonStr); i++ {
+			c := jsonStr[i]
+			if escaped {
+				escaped = false
+				continue
+			}
+			if inString {
+				if c == byte(0x5c) {
+					escaped = true
+				} else if c == '"' {
+					inString = false
+				}
+				continue
+			}
+			switch c {
+			case '"':
+				inString = true
+			case '{', '[':
+				depth++
+				if depth > maxCheckDepth {
+					return fmt.Errorf("nesting depth %d exceeds maximum %d", depth, maxCheckDepth)
+				}
+			case '}', ']':
+				depth--
+			case byte(0x5c):
+				if inString {
+					escaped = true
+				}
+			}
+		}
 		return nil
 	}
 

@@ -689,8 +689,8 @@ func TestPathLengthValidation(t *testing.T) {
 	processor, _ := New()
 	defer processor.Close()
 
-	// Create a path that exceeds MaxPathLength
-	longPath := strings.Repeat("a", MaxPathLength+1)
+	// Create a path that exceeds maxPathLength
+	longPath := strings.Repeat("a", maxPathLength+1)
 
 	tests := []struct {
 		name        string
@@ -706,7 +706,7 @@ func TestPathLengthValidation(t *testing.T) {
 		},
 		{
 			name:        "exactly max length",
-			filePath:    strings.Repeat("b", MaxPathLength),
+			filePath:    strings.Repeat("b", maxPathLength),
 			expectError: false,
 			description: "Path at maximum length",
 		},

@@ -152,19 +152,19 @@ func demonstrateMerge() {
 
 	// Verify merge results
 	fmt.Println("\n   Verification:")
-	host, _ := json.GetString(merged, "database.host")
+	host := json.GetString(merged, "database.host", "")
 	fmt.Printf("   - database.host: %s (from override)\n", host)
 
-	port, _ := json.GetInt(merged, "database.port")
+	port := json.GetInt(merged, "database.port", 0)
 	fmt.Printf("   - database.port: %d (from base)\n", port)
 
-	ssl, _ := json.GetBool(merged, "database.ssl")
+	ssl := json.GetBool(merged, "database.ssl", false)
 	fmt.Printf("   - database.ssl: %t (from override)\n", ssl)
 
-	debug, _ := json.GetBool(merged, "debug")
+	debug := json.GetBool(merged, "debug", false)
 	fmt.Printf("   - debug: %t (from base)\n", debug)
 
-	monitoring, _ := json.GetBool(merged, "monitoring")
+	monitoring := json.GetBool(merged, "monitoring", false)
 	fmt.Printf("   - monitoring: %t (from override)\n", monitoring)
 
 	// Demonstrate different merge modes

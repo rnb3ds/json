@@ -30,7 +30,7 @@ import (
 //	if err != nil {
 //	    // Handle error
 //	}
-func (p *Processor) LoadFromFile(filePath string, opts ...Config) (string, error) {
+func (p *Processor) LoadFromFile(filePath string, cfg ...Config) (string, error) {
 	data, err := p.readValidatedFile(filePath)
 	if err != nil {
 		return "", err
@@ -55,13 +55,13 @@ func (p *Processor) LoadFromFile(filePath string, opts ...Config) (string, error
 //	    // Handle error
 //	}
 //	config := data.(map[string]any)
-func (p *Processor) LoadFromFileAsData(filePath string, opts ...Config) (any, error) {
+func (p *Processor) LoadFromFileAsData(filePath string, cfg ...Config) (any, error) {
 	data, err := p.readValidatedFile(filePath)
 	if err != nil {
 		return nil, err
 	}
 	var jsonData any
-	err = p.Parse(string(data), &jsonData, opts...)
+	err = p.Parse(string(data), &jsonData, cfg...)
 	return jsonData, err
 }
 
@@ -98,7 +98,7 @@ func (p *Processor) readValidatedFile(filePath string) ([]byte, error) {
 //	file, _ := os.Open("data.json")
 //	defer file.Close()
 //	jsonStr, err := processor.LoadFromReader(file)
-func (p *Processor) LoadFromReader(reader io.Reader, opts ...Config) (string, error) {
+func (p *Processor) LoadFromReader(reader io.Reader, cfg ...Config) (string, error) {
 	data, err := p.readValidatedReader(reader)
 	if err != nil {
 		return "", err
@@ -119,13 +119,13 @@ func (p *Processor) LoadFromReader(reader io.Reader, opts ...Config) (string, er
 //	resp, _ := http.Get(url)
 //	defer resp.Body.Close()
 //	data, err := processor.LoadFromReaderAsData(resp.Body)
-func (p *Processor) LoadFromReaderAsData(reader io.Reader, opts ...Config) (any, error) {
+func (p *Processor) LoadFromReaderAsData(reader io.Reader, cfg ...Config) (any, error) {
 	data, err := p.readValidatedReader(reader)
 	if err != nil {
 		return nil, err
 	}
 	var jsonData any
-	err = p.Parse(string(data), &jsonData, opts...)
+	err = p.Parse(string(data), &jsonData, cfg...)
 	return jsonData, err
 }
 
@@ -135,7 +135,13 @@ func (p *Processor) readValidatedReader(reader io.Reader) ([]byte, error) {
 	if err := p.checkClosed(); err != nil {
 		return nil, err
 	}
-	limitedReader := io.LimitReader(reader, p.config.MaxJSONSize)
+	// Guard against zero-value MaxJSONSize which would limit reads to 1 byte
+	maxSize := p.config.MaxJSONSize
+	if maxSize <= 0 {
+		maxSize = int64(DefaultMaxJSONSize)
+	}
+	// Read one byte beyond MaxJSONSize to detect truncation
+	limitedReader := io.LimitReader(reader, maxSize+1)
 	data, err := io.ReadAll(limitedReader)
 	if err != nil {
 		return nil, &JsonsError{
@@ -144,6 +150,7 @@ func (p *Processor) readValidatedReader(reader io.Reader) ([]byte, error) {
 			Err:     err,
 		}
 	}
+	// If we read exactly MaxJSONSize+1 bytes, the input was truncated
 	if int64(len(data)) > p.config.MaxJSONSize {
 		return nil, &JsonsError{
 			Op:      "load_from_reader",
@@ -405,7 +412,7 @@ func (p *Processor) MarshalToFile(path string, data any, cfg ...Config) error {
 //
 //	var config Config
 //	err := processor.UnmarshalFromFile("config.json", &config)
-func (p *Processor) UnmarshalFromFile(path string, v any, opts ...Config) error {
+func (p *Processor) UnmarshalFromFile(path string, v any, cfg ...Config) error {
 	if err := p.checkClosed(); err != nil {
 		return err
 	}
@@ -446,7 +453,7 @@ func (p *Processor) UnmarshalFromFile(path string, v any, opts ...Config) error 
 	}
 
 	// Unmarshal JSON data using processor's Unmarshal method
-	if err := p.Unmarshal(data, v, opts...); err != nil {
+	if err := p.Unmarshal(data, v, cfg...); err != nil {
 		return &JsonsError{
 			Op:      "unmarshal_from_file",
 			Path:    path,
@@ -528,9 +535,9 @@ func normalizeAndAbsPath(filePath string) (string, error) {
 	cleanPath := filepath.Clean(filePath)
 
 	// Check path length after cleaning
-	if len(cleanPath) > MaxPathLength {
+	if len(cleanPath) > maxPathLength {
 		return "", newOperationError("validate_file_path",
-			fmt.Sprintf("path too long: %d > %d", len(cleanPath), MaxPathLength),
+			fmt.Sprintf("path too long: %d > %d", len(cleanPath), maxPathLength),
 			ErrOperationFailed)
 	}
 
@@ -907,9 +914,6 @@ type NDJSONProcessor struct {
 //	cfg := json.DefaultConfig()
 //	cfg.JSONLBufferSize = 128 * 1024
 //	processor := json.NewNDJSONProcessor(cfg)
-//
-//	// Legacy pattern (backward compatible)
-//	processor := json.NewNDJSONProcessorWithSize(128 * 1024)
 func NewNDJSONProcessor(cfg ...Config) *NDJSONProcessor {
 	var config Config
 	if len(cfg) > 0 {
@@ -941,30 +945,7 @@ func (np *NDJSONProcessor) ProcessFile(filename string, fn func(lineNum int, obj
 	}
 	defer func() { _ = file.Close() }() // best-effort cleanup; error ignored in defer
 
-	scanner := bufio.NewScanner(file)
-	buf := make([]byte, 0, np.bufferSize)
-	scanner.Buffer(buf, 10*1024*1024) // 10MB max line size
-
-	lineNum := 0
-	for scanner.Scan() {
-		lineNum++
-		line := scanner.Bytes()
-
-		if len(line) == 0 {
-			continue
-		}
-
-		var obj map[string]any
-		if err := json.Unmarshal(line, &obj); err != nil {
-			continue // Skip invalid lines
-		}
-
-		if err := fn(lineNum, obj); err != nil {
-			return err
-		}
-	}
-
-	return scanner.Err()
+	return np.ProcessReader(file, fn)
 }
 
 // ProcessReader processes NDJSON from a reader

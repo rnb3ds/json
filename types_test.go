@@ -47,7 +47,7 @@ func BenchmarkConvertToFloat64(b *testing.B) {
 	input := 3.14
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, _ = ConvertToFloat64(input)
+		_, _ = convertToFloat64(input)
 	}
 }
 
@@ -55,7 +55,7 @@ func BenchmarkConvertToInt(b *testing.B) {
 	input := 42
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, _ = ConvertToInt(input)
+		_, _ = convertToInt(input)
 	}
 }
 
@@ -63,7 +63,7 @@ func BenchmarkConvertToInt64(b *testing.B) {
 	input := int64(42)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, _ = ConvertToInt64(input)
+		_, _ = convertToInt64(input)
 	}
 }
 
@@ -180,12 +180,12 @@ func TestConfigConstantsComprehensive(t *testing.T) {
 		helper.AssertTrue(config.IsCacheEnabled())
 		helper.AssertTrue(config.GetMaxCacheSize() > 0)
 		helper.AssertTrue(config.GetCacheTTL() > 0)
-		helper.AssertTrue(config.GetMaxJSONSize() > 0)
-		helper.AssertTrue(config.GetMaxPathDepth() > 0)
-		helper.AssertTrue(config.GetMaxConcurrency() > 0)
-		helper.AssertTrue(config.GetMaxNestingDepth() >= 0)
+		helper.AssertTrue(config.getMaxJSONSize() > 0)
+		helper.AssertTrue(config.getMaxPathDepth() > 0)
+		helper.AssertTrue(config.getMaxConcurrency() > 0)
+		helper.AssertTrue(config.getMaxNestingDepth() >= 0)
 
-		limits := config.GetSecurityLimits()
+		limits := config.getSecurityLimits()
 		helper.AssertNotNil(limits)
 	})
 
@@ -232,7 +232,7 @@ func TestConfigConstantsComprehensive(t *testing.T) {
 		helper.AssertTrue(defaultCacheSize > 0)
 		helper.AssertTrue(DefaultMaxJSONSize > 0)
 		helper.AssertTrue(DefaultMaxNestingDepth > 0)
-		helper.AssertTrue(MaxPathLength > 0)
+		helper.AssertTrue(maxPathLength > 0)
 		helper.AssertTrue(defaultOperationTimeout > 0)
 	})
 
@@ -254,7 +254,7 @@ func TestConfig_GetSecurityLimits(t *testing.T) {
 		MaxPathDepth:              50,
 	}
 
-	limits := config.GetSecurityLimits()
+	limits := config.getSecurityLimits()
 
 	if limits["max_nesting_depth"].(int) != 100 {
 		t.Errorf("GetSecurityLimits max_nesting_depth = %v, want 100", limits["max_nesting_depth"])
@@ -264,7 +264,7 @@ func TestConfig_GetSecurityLimits(t *testing.T) {
 	}
 }
 
-// TestConvertToBool tests boolean conversion
+// TestconvertToBool tests boolean conversion
 func TestConvertToBool(t *testing.T) {
 	tests := []struct {
 		name          string
@@ -420,18 +420,18 @@ func TestConvertToBool(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result, ok := ConvertToBool(tt.input)
+			result, ok := convertToBool(tt.input)
 			if ok != tt.shouldSucceed {
-				t.Errorf("ConvertToBool(%v) success = %v; want %v", tt.input, ok, tt.shouldSucceed)
+				t.Errorf("convertToBool(%v) success = %v; want %v", tt.input, ok, tt.shouldSucceed)
 			}
 			if ok && result != tt.expected {
-				t.Errorf("ConvertToBool(%v) = %v; want %v", tt.input, result, tt.expected)
+				t.Errorf("convertToBool(%v) = %v; want %v", tt.input, result, tt.expected)
 			}
 		})
 	}
 }
 
-// TestConvertToFloat64 tests float64 conversion
+// TestconvertToFloat64 tests float64 conversion
 func TestConvertToFloat64(t *testing.T) {
 	tests := []struct {
 		name          string
@@ -503,18 +503,18 @@ func TestConvertToFloat64(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result, ok := ConvertToFloat64(tt.input)
+			result, ok := convertToFloat64(tt.input)
 			if ok != tt.shouldSucceed {
-				t.Errorf("ConvertToFloat64(%v) success = %v; want %v", tt.input, ok, tt.shouldSucceed)
+				t.Errorf("convertToFloat64(%v) success = %v; want %v", tt.input, ok, tt.shouldSucceed)
 			}
 			if ok && result != tt.expected {
-				t.Errorf("ConvertToFloat64(%v) = %f; want %f", tt.input, result, tt.expected)
+				t.Errorf("convertToFloat64(%v) = %f; want %f", tt.input, result, tt.expected)
 			}
 		})
 	}
 }
 
-// TestConvertToInt tests integer conversion with various types
+// TestconvertToInt tests integer conversion with various types
 func TestConvertToInt(t *testing.T) {
 	tests := []struct {
 		name          string
@@ -658,18 +658,18 @@ func TestConvertToInt(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result, ok := ConvertToInt(tt.input)
+			result, ok := convertToInt(tt.input)
 			if ok != tt.shouldSucceed {
-				t.Errorf("ConvertToInt(%v) success = %v; want %v", tt.input, ok, tt.shouldSucceed)
+				t.Errorf("convertToInt(%v) success = %v; want %v", tt.input, ok, tt.shouldSucceed)
 			}
 			if ok && result != tt.expected {
-				t.Errorf("ConvertToInt(%v) = %d; want %d", tt.input, result, tt.expected)
+				t.Errorf("convertToInt(%v) = %d; want %d", tt.input, result, tt.expected)
 			}
 		})
 	}
 }
 
-// TestConvertToInt64 tests int64 conversion
+// TestconvertToInt64 tests int64 conversion
 func TestConvertToInt64(t *testing.T) {
 	tests := []struct {
 		name          string
@@ -723,18 +723,18 @@ func TestConvertToInt64(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result, ok := ConvertToInt64(tt.input)
+			result, ok := convertToInt64(tt.input)
 			if ok != tt.shouldSucceed {
-				t.Errorf("ConvertToInt64(%v) success = %v; want %v", tt.input, ok, tt.shouldSucceed)
+				t.Errorf("convertToInt64(%v) success = %v; want %v", tt.input, ok, tt.shouldSucceed)
 			}
 			if ok && result != tt.expected {
-				t.Errorf("ConvertToInt64(%v) = %d; want %d", tt.input, result, tt.expected)
+				t.Errorf("convertToInt64(%v) = %d; want %d", tt.input, result, tt.expected)
 			}
 		})
 	}
 }
 
-// TestConvertToString tests string conversion
+// TestconvertToString tests string conversion
 func TestConvertToString(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -775,15 +775,15 @@ func TestConvertToString(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := ConvertToString(tt.input)
+			result := convertToString(tt.input)
 			if result != tt.expected {
-				t.Errorf("ConvertToString(%v) = %s; want %s", tt.input, result, tt.expected)
+				t.Errorf("convertToString(%v) = %s; want %s", tt.input, result, tt.expected)
 			}
 		})
 	}
 }
 
-// TestConvertToUint64 tests uint64 conversion
+// TestconvertToUint64 tests uint64 conversion
 func TestConvertToUint64(t *testing.T) {
 	tests := []struct {
 		name          string
@@ -849,12 +849,12 @@ func TestConvertToUint64(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result, ok := ConvertToUint64(tt.input)
+			result, ok := convertToUint64(tt.input)
 			if ok != tt.shouldSucceed {
-				t.Errorf("ConvertToUint64(%v) success = %v; want %v", tt.input, ok, tt.shouldSucceed)
+				t.Errorf("convertToUint64(%v) success = %v; want %v", tt.input, ok, tt.shouldSucceed)
 			}
 			if ok && result != tt.expected {
-				t.Errorf("ConvertToUint64(%v) = %d; want %d", tt.input, result, tt.expected)
+				t.Errorf("convertToUint64(%v) = %d; want %d", tt.input, result, tt.expected)
 			}
 		})
 	}
@@ -925,7 +925,7 @@ func TestEncodeConfig_Clone_Zero(t *testing.T) {
 func TestErrorClassifier(t *testing.T) {
 	helper := newTestHelper(t)
 
-	t.Run("IsSecurityRelated", func(t *testing.T) {
+	t.Run("isSecurityRelated", func(t *testing.T) {
 		tests := []struct {
 			name     string
 			err      error
@@ -937,13 +937,13 @@ func TestErrorClassifier(t *testing.T) {
 
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
-				result := IsSecurityRelated(tt.err)
+				result := isSecurityRelated(tt.err)
 				helper.AssertEqual(tt.expected, result)
 			})
 		}
 	})
 
-	t.Run("IsUserError", func(t *testing.T) {
+	t.Run("isUserError", func(t *testing.T) {
 		tests := []struct {
 			name     string
 			err      error
@@ -957,13 +957,13 @@ func TestErrorClassifier(t *testing.T) {
 
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
-				result := IsUserError(tt.err)
+				result := isUserError(tt.err)
 				helper.AssertEqual(tt.expected, result)
 			})
 		}
 	})
 
-	t.Run("IsRetryable", func(t *testing.T) {
+	t.Run("isRetryable", func(t *testing.T) {
 		tests := []struct {
 			name     string
 			err      error
@@ -977,13 +977,13 @@ func TestErrorClassifier(t *testing.T) {
 
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
-				result := IsRetryable(tt.err)
+				result := isRetryable(tt.err)
 				helper.AssertEqual(tt.expected, result)
 			})
 		}
 	})
 
-	t.Run("GetErrorSuggestion", func(t *testing.T) {
+	t.Run("getErrorSuggestion", func(t *testing.T) {
 		tests := []struct {
 			name               string
 			err                error
@@ -997,7 +997,7 @@ func TestErrorClassifier(t *testing.T) {
 
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
-				suggestion := GetErrorSuggestion(tt.err)
+				suggestion := getErrorSuggestion(tt.err)
 				helper.AssertNotNil(suggestion)
 				helper.AssertTrue(
 					len(suggestion) > 0,
@@ -1111,13 +1111,9 @@ func TestErrorMessages(t *testing.T) {
 	t.Run("TypeMismatchMessage", func(t *testing.T) {
 		testData := `{"value": "not a number"}`
 
-		_, err := GetInt(testData, "value")
-		helper.AssertError(err)
-
-		var jsonErr *JsonsError
-		if errors.As(err, &jsonErr) {
-			helper.AssertEqual(ErrTypeMismatch, jsonErr.Err)
-		}
+		// GetInt returns default value on type mismatch
+		result := GetInt(testData, "value", 0)
+		helper.AssertEqual(0, result)
 	})
 }
 
@@ -1133,7 +1129,7 @@ func TestErrorRecovery(t *testing.T) {
 
 		for _, err := range retryableErrors {
 			t.Run(err.Error(), func(t *testing.T) {
-				helper.AssertTrue(IsRetryable(err))
+				helper.AssertTrue(isRetryable(err))
 			})
 		}
 	})
@@ -1147,7 +1143,7 @@ func TestErrorRecovery(t *testing.T) {
 
 		for _, err := range nonRetryableErrors {
 			t.Run(err.Error(), func(t *testing.T) {
-				helper.AssertFalse(IsRetryable(err))
+				helper.AssertFalse(isRetryable(err))
 			})
 		}
 	})
@@ -1164,8 +1160,8 @@ func TestErrorRecovery(t *testing.T) {
 
 		successCount := 0
 		for _, path := range paths {
-			_, err := GetString(testData, path)
-			if err == nil {
+			value := GetString(testData, path, "")
+			if value != "" {
 				successCount++
 			}
 		}
@@ -1232,26 +1228,33 @@ func TestErrorScenarios(t *testing.T) {
 		testData := `{"str": "value", "num": 42, "bool": true}`
 
 		t.Run("StringAsInt", func(t *testing.T) {
-			_, err := GetInt(testData, "str")
-			helper.AssertError(err)
+			// GetInt returns default value on type mismatch
+			result := GetInt(testData, "str", 0)
+			helper.AssertEqual(0, result)
 		})
 
 		t.Run("NumberAsString", func(t *testing.T) {
-			_, err := GetString(testData, "num")
-			// This might succeed with conversion
-			_ = err
+			// GetString returns default value on type mismatch
+			result := GetString(testData, "num", "")
+			_ = result
 		})
 
 		t.Run("BoolAsInt", func(t *testing.T) {
-			// Bool to int might convert (true=1, false=0)
-			_, err := GetInt(testData, "bool")
-			_ = err // Don't assert error, library may convert
+			// GetInt returns default value on type mismatch
+			result := GetInt(testData, "bool", 0)
+			_ = result // Don't assert value, library may convert
 		})
 
-		t.Run("ObjectAsArray", func(t *testing.T) {
-			_, err := GetArray(testData, "str")
-			helper.AssertError(err)
-		})
+			t.Run("ObjectAsArray", func(t *testing.T) {
+				// GetArray returns default value on type mismatch
+				result := GetArray(testData, "str", nil)
+				_ = result
+			})
+
+
+
+
+
 	})
 
 	t.Run("NullHandling", func(t *testing.T) {
@@ -1264,9 +1267,9 @@ func TestErrorScenarios(t *testing.T) {
 		})
 
 		t.Run("GetAsNull", func(t *testing.T) {
-			_, err := GetTyped[string](testData, "null_value")
-			// Null to string might error or return "null"
-			_ = err
+			// GetTyped returns default value for null
+			result := GetTyped[string](testData, "null_value", "")
+			_ = result
 		})
 
 		t.Run("GetMissingField", func(t *testing.T) {
@@ -1330,7 +1333,7 @@ func TestErrorScenarios(t *testing.T) {
 	})
 }
 
-// TestFormatNumber tests number formatting
+// TestformatNumber tests number formatting
 func TestFormatNumber(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -1371,9 +1374,9 @@ func TestFormatNumber(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := FormatNumber(tt.input)
+			result := formatNumber(tt.input)
 			if result != tt.expected {
-				t.Errorf("FormatNumber(%v) = %s; want %s", tt.input, result, tt.expected)
+				t.Errorf("formatNumber(%v) = %s; want %s", tt.input, result, tt.expected)
 			}
 		})
 	}
@@ -2449,7 +2452,7 @@ func TestRootDataTypeConversionError(t *testing.T) {
 	_ = nilErr                              // use the variable to avoid compiler warnings
 }
 
-// TestSafeConvertToInt64 tests safe int64 conversion with error handling
+// TestsafeConvertToInt64 tests safe int64 conversion with error handling
 func TestSafeConvertToInt64(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -2479,7 +2482,7 @@ func TestSafeConvertToInt64(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result, err := SafeConvertToInt64(tt.input)
+			result, err := safeConvertToInt64(tt.input)
 			if tt.expectError && err == nil {
 				t.Errorf("Expected error for input %v, but got none", tt.input)
 			}
@@ -2487,13 +2490,13 @@ func TestSafeConvertToInt64(t *testing.T) {
 				t.Errorf("Unexpected error for input %v: %v", tt.input, err)
 			}
 			if !tt.expectError && result != tt.expected {
-				t.Errorf("SafeConvertToInt64(%v) = %d; want %d", tt.input, result, tt.expected)
+				t.Errorf("safeConvertToInt64(%v) = %d; want %d", tt.input, result, tt.expected)
 			}
 		})
 	}
 }
 
-// TestSafeConvertToUint64 tests safe uint64 conversion with error handling
+// TestsafeConvertToUint64 tests safe uint64 conversion with error handling
 func TestSafeConvertToUint64(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -2523,7 +2526,7 @@ func TestSafeConvertToUint64(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result, err := SafeConvertToUint64(tt.input)
+			result, err := safeConvertToUint64(tt.input)
 			if tt.expectError && err == nil {
 				t.Errorf("Expected error for input %v, but got none", tt.input)
 			}
@@ -2531,7 +2534,7 @@ func TestSafeConvertToUint64(t *testing.T) {
 				t.Errorf("Unexpected error for input %v: %v", tt.input, err)
 			}
 			if !tt.expectError && result != tt.expected {
-				t.Errorf("SafeConvertToUint64(%v) = %d; want %d", tt.input, result, tt.expected)
+				t.Errorf("safeConvertToUint64(%v) = %d; want %d", tt.input, result, tt.expected)
 			}
 		})
 	}
@@ -2830,42 +2833,42 @@ func TestSyntaxError(t *testing.T) {
 // TestTypeConversionBoundaryConditions tests edge cases in type conversion
 func TestTypeConversionBoundaryConditions(t *testing.T) {
 	t.Run("max int64", func(t *testing.T) {
-		result, ok := ConvertToInt64(int64(math.MaxInt64))
+		result, ok := convertToInt64(int64(math.MaxInt64))
 		if !ok || result != math.MaxInt64 {
 			t.Errorf("Failed to convert max int64")
 		}
 	})
 
 	t.Run("min int64", func(t *testing.T) {
-		result, ok := ConvertToInt64(int64(math.MinInt64))
+		result, ok := convertToInt64(int64(math.MinInt64))
 		if !ok || result != math.MinInt64 {
 			t.Errorf("Failed to convert min int64")
 		}
 	})
 
 	t.Run("max uint64", func(t *testing.T) {
-		result, ok := ConvertToUint64(uint64(math.MaxUint64))
+		result, ok := convertToUint64(uint64(math.MaxUint64))
 		if !ok || result != math.MaxUint64 {
 			t.Errorf("Failed to convert max uint64")
 		}
 	})
 
 	t.Run("max float64", func(t *testing.T) {
-		result, ok := ConvertToFloat64(math.MaxFloat64)
+		result, ok := convertToFloat64(math.MaxFloat64)
 		if !ok || result != math.MaxFloat64 {
 			t.Errorf("Failed to convert max float64")
 		}
 	})
 
 	t.Run("infinity float64", func(t *testing.T) {
-		result, ok := ConvertToFloat64(math.Inf(1))
+		result, ok := convertToFloat64(math.Inf(1))
 		if !ok || result != math.Inf(1) {
 			t.Errorf("Failed to convert infinity")
 		}
 	})
 
 	t.Run("NaN float64", func(t *testing.T) {
-		result, ok := ConvertToFloat64(math.NaN())
+		result, ok := convertToFloat64(math.NaN())
 		if !ok || !math.IsNaN(result) {
 			t.Errorf("Failed to convert NaN")
 		}

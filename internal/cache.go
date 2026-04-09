@@ -271,7 +271,7 @@ func (cm *CacheManager) Get(key string) (any, bool) {
 				delete(shard.items, entry.key)
 				shard.evictList.Remove(element)
 				shard.size--
-				atomic.AddInt64(&cm.memoryUsage, -int64(entry.size))
+				cm.decMemoryUsage(int64(entry.size))
 				atomic.AddInt64(&cm.missCount, 1)
 
 				// Return entry to pool if available
@@ -375,6 +375,10 @@ func (cm *CacheManager) Set(key string, value any) {
 	if oldElement, exists := shard.items[key]; exists {
 		oldEntry := oldElement.Value.(*lruEntry)
 		atomic.AddInt64(&cm.memoryUsage, int64(entrySize)-int64(oldEntry.size))
+		// Clamp to prevent negative values from estimation inaccuracies
+		if atomic.LoadInt64(&cm.memoryUsage) < 0 {
+			atomic.StoreInt64(&cm.memoryUsage, 0)
+		}
 		// Update existing entry in-place to avoid pool churn and race conditions
 		oldEntry.value = value
 		oldEntry.timestamp = now
@@ -434,13 +438,17 @@ func (cm *CacheManager) Set(key string, value any) {
 
 // Delete removes a value from the cache
 func (cm *CacheManager) Delete(key string) {
+	if cm.config == nil || !cm.config.IsCacheEnabled() {
+		return
+	}
+
 	shard := cm.getShard(key)
 	shard.mu.Lock()
 	defer shard.mu.Unlock()
 
 	if element, exists := shard.items[key]; exists {
 		entry := element.Value.(*lruEntry)
-		atomic.AddInt64(&cm.memoryUsage, -int64(entry.size))
+		cm.decMemoryUsage(int64(entry.size))
 		delete(shard.items, key)
 		shard.evictList.Remove(element)
 		shard.size--
@@ -453,10 +461,20 @@ func (cm *CacheManager) Delete(key string) {
 	}
 }
 
-// Clear removes all entries from the cache
+// Clear removes all entries from the cache.
+// Returns all lruEntry objects to the pool to prevent memory leaks.
 func (cm *CacheManager) Clear() {
 	for _, shard := range cm.shards {
 		shard.mu.Lock()
+		// Return all entries to pool before discarding maps
+		if cm.entryPool != nil {
+			for _, element := range shard.items {
+				if entry, ok := element.Value.(*lruEntry); ok {
+					entry.reset()
+					cm.entryPool.Put(entry)
+				}
+			}
+		}
 		shard.items = make(map[string]*list.Element, shard.maxSize)
 		shard.evictList = list.New()
 		shard.size = 0
@@ -590,7 +608,7 @@ func (cm *CacheManager) evictLRU(shard *cacheShard) {
 	delete(shard.items, entry.key)
 	shard.evictList.Remove(bestCandidate)
 	shard.size--
-	atomic.AddInt64(&cm.memoryUsage, -int64(entry.size))
+	cm.decMemoryUsage(int64(entry.size))
 	atomic.AddInt64(&cm.evictions, 1)
 
 	// PERFORMANCE: Probabilistic frequency decay
@@ -641,7 +659,7 @@ func (cm *CacheManager) cleanupShard(shard *cacheShard) {
 			delete(shard.items, entry.key)
 			shard.evictList.Remove(element)
 			shard.size--
-			atomic.AddInt64(&cm.memoryUsage, -int64(entry.size))
+			cm.decMemoryUsage(int64(entry.size))
 
 			// Reset and return entry to pool
 			entry.reset()
@@ -739,6 +757,14 @@ func (cm *CacheManager) estimateSize(value any) int {
 	default:
 		// Conservative estimate for unknown types
 		return 128
+	}
+}
+
+// decMemoryUsage decrements memoryUsage by delta and clamps to zero
+// to prevent negative values from estimation inaccuracies.
+func (cm *CacheManager) decMemoryUsage(delta int64) {
+	if atomic.AddInt64(&cm.memoryUsage, -delta) < 0 {
+		atomic.StoreInt64(&cm.memoryUsage, 0)
 	}
 }
 

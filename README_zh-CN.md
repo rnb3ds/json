@@ -21,7 +21,7 @@
 | 路径访问 | 手动解析 | `json.Get(data, "users[0].name")` |
 | 负索引 | ❌ | `items[-1]` 获取最后一个元素 |
 | 扁平化嵌套数组 | ❌ | `users{flat:tags}` |
-| 类型安全默认值 | ❌ | `GetStringOr(data, "path", "default")` |
+| 类型安全默认值 | ❌ | `GetString(data, "path", "default")` |
 | 大文件流式处理 | ❌ | 内置流式处理器 |
 | Schema 验证 | ❌ | JSON Schema 验证 |
 | 内存池 | ❌ | 热路径使用 `sync.Pool` |
@@ -35,7 +35,7 @@
 - **100% 兼容** - 直接替换 `encoding/json`，零学习成本
 - **强大路径** - 直观语法：`users[0].name`、`items[-1]`、`data{flat:tags}`
 - **高性能** - 智能缓存、内存池、优化的热路径
-- **类型安全** - 泛型支持，使用 `GetTyped[T]` 和 `GetTypedOr[T]`
+- **类型安全** - 泛型支持，使用 `GetTyped[T]` 内置默认值
 - **功能丰富** - 批量操作、流式处理、文件I/O、Schema验证、深度合并
 - **生产就绪** - 线程安全、完善的错误处理、安全加固
 
@@ -130,11 +130,11 @@ json.GetTyped[[]int](data, "numbers")
 json.GetTyped[User](data, "user")      // 自定义结构体
 
 // 带默认值（路径不存在时不报错）
-json.GetStringOr(data, "user.name", "Anonymous")
-json.GetIntOr(data, "user.age", 0)
-json.GetBoolOr(data, "user.active", false)
-json.GetFloatOr(data, "user.score", 0.0)
-json.GetTypedOr[[]any](data, "user.tags", []any{})
+json.GetString(data, "user.name", "Anonymous")
+json.GetInt(data, "user.age", 0)
+json.GetBool(data, "user.active", false)
+json.GetFloat(data, "user.score", 0.0)
+json.GetTyped[[]any](data, "user.tags", []any{})
 
 // 批量获取
 results, err := json.GetMultiple(data, []string{"user.name", "user.age"})
@@ -356,9 +356,9 @@ config := `{
 }`
 
 // 类型安全带默认值
-dbHost := json.GetStringOr(config, "database.host", "localhost")
-dbPort := json.GetIntOr(config, "database.port", 5432)
-cacheEnabled := json.GetBoolOr(config, "cache.enabled", false)
+dbHost := json.GetString(config, "database.host", "localhost")
+dbPort := json.GetInt(config, "database.port", 5432)
+cacheEnabled := json.GetBool(config, "cache.enabled", false)
 
 // 动态更新
 updated, _ := json.SetMultiple(config, map[string]any{

@@ -24,8 +24,8 @@
 //
 // Type-safe operations:
 //
-//	name, err := json.GetString(jsonStr, "user.name")
-//	age, err := json.GetInt(jsonStr, "user.age")
+//	name := json.GetString(jsonStr, "user.name", "")
+//	age := json.GetInt(jsonStr, "user.age", 0)
 //
 // Advanced processor for complex operations:
 //
@@ -46,9 +46,6 @@
 //	if err != nil {
 //	    // handle error
 //	}
-//	defer processor.Close()
-//
-//
 //	defer processor.Close()
 //
 // # Key Features

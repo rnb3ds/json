@@ -176,7 +176,7 @@ defer processor.Close()
 Check current security configuration:
 
 ```go
-limits := config.GetSecurityLimits()
+limits := config.getSecurityLimits()
 fmt.Printf("Security Limits: %+v\n", limits)
 // Output (DefaultConfig values):
 // {

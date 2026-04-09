@@ -28,28 +28,28 @@ func TestCompactBufferMethod(t *testing.T) {
 	}
 }
 
-// TestIndentBufferMethod tests IndentBuffer method (encoding/json.Indent compatibility)
-func TestIndentBufferMethod(t *testing.T) {
+// TestIndentMethod tests Indent method (encoding/json.Indent compatibility)
+func TestIndentMethod(t *testing.T) {
 	compactJSON := `{"name":"Alice","age":30}`
 
 	processor, _ := New()
 	defer processor.Close()
 
 	var buf bytes.Buffer
-	err := processor.IndentBuffer(&buf, []byte(compactJSON), "", "  ")
+	err := processor.Indent(&buf, []byte(compactJSON), "", "  ")
 	if err != nil {
-		t.Fatalf("IndentBuffer error: %v", err)
+		t.Fatalf("Indent error: %v", err)
 	}
 
 	result := buf.String()
 	if !strings.Contains(result, "\n") {
-		t.Errorf("IndentBuffer should add newlines, got: %s", result)
+		t.Errorf("Indent should add newlines, got: %s", result)
 	}
 	if !strings.Contains(result, "  ") {
-		t.Errorf("IndentBuffer should add indentation, got: %s", result)
+		t.Errorf("Indent should add indentation, got: %s", result)
 	}
 	if !strings.Contains(result, `"name"`) || !strings.Contains(result, `"Alice"`) {
-		t.Errorf("IndentBuffer lost data, got: %s", result)
+		t.Errorf("Indent lost data, got: %s", result)
 	}
 }
 
@@ -70,19 +70,19 @@ func TestCompactBufferEmptyInput(t *testing.T) {
 	}
 }
 
-// TestIndentBufferEmptyInput tests IndentBuffer with empty input
-func TestIndentBufferEmptyInput(t *testing.T) {
+// TestIndentEmptyInput tests Indent with empty input
+func TestIndentEmptyInput(t *testing.T) {
 	processor, _ := New()
 	defer processor.Close()
 
 	var buf bytes.Buffer
-	err := processor.IndentBuffer(&buf, []byte("{}"), "", "  ")
+	err := processor.Indent(&buf, []byte("{}"), "", "  ")
 	if err != nil {
-		t.Fatalf("IndentBuffer error: %v", err)
+		t.Fatalf("Indent error: %v", err)
 	}
 
 	result := buf.String()
 	if !strings.Contains(result, "{") || !strings.Contains(result, "}") {
-		t.Errorf("IndentBuffer lost braces, got: %s", result)
+		t.Errorf("Indent lost braces, got: %s", result)
 	}
 }

@@ -94,11 +94,11 @@ func demonstrateComplexPaths(data string) {
 	fmt.Println("-----------------------")
 
 	// Access first team of first department
-	firstTeam, _ := json.GetString(data, "departments[0].teams[0].name")
+	firstTeam := json.GetString(data, "departments[0].teams[0].name", "")
 	fmt.Printf("   First team: %s\n", firstTeam)
 
 	// Access last member of last team using negative index
-	lastMember, _ := json.GetString(data, "departments[0].teams[-1].members[-1].name")
+	lastMember := json.GetString(data, "departments[0].teams[-1].members[-1].name", "")
 	fmt.Printf("   Last member of last team: %s\n", lastMember)
 
 	// Array slicing - get first 2 departments
@@ -106,11 +106,11 @@ func demonstrateComplexPaths(data string) {
 	fmt.Printf("   First two departments: %v\n", firstTwoDepts)
 
 	// Deep nested access
-	aliceRole, _ := json.GetString(data, "departments[0].teams[0].members[0].role")
+	aliceRole := json.GetString(data, "departments[0].teams[0].members[0].role", "")
 	fmt.Printf("   Alice's role: %s\n", aliceRole)
 
 	// Access skill within nested arrays
-	firstSkill, _ := json.GetString(data, "departments[0].teams[0].members[0].skills[0]")
+	firstSkill := json.GetString(data, "departments[0].teams[0].members[0].skills[0]", "")
 	fmt.Printf("   Alice's first skill: %s\n", firstSkill)
 }
 
@@ -164,7 +164,7 @@ func demonstrateDeepModifications(data string) {
 
 	// Modify deep nested value
 	updated, _ := json.Set(data, "departments[0].teams[0].members[0].role", "Senior Lead")
-	newRole, _ := json.GetString(updated, "departments[0].teams[0].members[0].role")
+	newRole := json.GetString(updated, "departments[0].teams[0].members[0].role", "")
 	fmt.Printf("   Updated role: %s\n", newRole)
 
 	// Add new member to team
@@ -200,9 +200,9 @@ func demonstrateBatchOperations(data string) {
 	}
 	updated, _ := json.SetMultiple(data, updates)
 
-	newDeptName, _ := json.GetString(updated, "departments[0].name")
-	newMemberName, _ := json.GetString(updated, "departments[0].teams[0].members[0].name")
-	newTag, _ := json.GetString(updated, "metadata.tags[0]")
+	newDeptName := json.GetString(updated, "departments[0].name", "")
+	newMemberName := json.GetString(updated, "departments[0].teams[0].members[0].name", "")
+	newTag := json.GetString(updated, "metadata.tags[0]", "")
 
 	fmt.Printf("   After batch update:\n")
 	fmt.Printf("   - Department: %s\n", newDeptName)

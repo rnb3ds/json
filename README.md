@@ -21,7 +21,7 @@
 | Path-based access | Manual unmarshal | `json.Get(data, "users[0].name")` |
 | Negative index | ❌ | `items[-1]` gets last element |
 | Flatten nested arrays | ❌ | `users{flat:tags}` |
-| Type-safe defaults | ❌ | `GetStringOr(data, "path", "default")` |
+| Type-safe defaults | ❌ | `GetString(data, "path", "default")` |
 | Streaming large files | ❌ | Built-in streaming processors |
 | Schema validation | ❌ | JSON Schema validation |
 | Memory pooling | ❌ | `sync.Pool` for hot paths |
@@ -35,7 +35,7 @@
 - **100% Compatible** - Drop-in replacement for `encoding/json`, zero learning curve
 - **Powerful Paths** - Intuitive syntax: `users[0].name`, `items[-1]`, `data{flat:tags}`
 - **High Performance** - Smart caching, memory pooling, optimized hot paths
-- **Type Safe** - Generics support with `GetTyped[T]` and `GetTypedOr[T]`
+- **Type Safe** - Generics support with `GetTyped[T]` with built-in defaults
 - **Feature Rich** - Batch operations, streaming, file I/O, schema validation, deep merge
 - **Production Ready** - Thread-safe, comprehensive error handling, security hardened
 
@@ -69,11 +69,11 @@ func main() {
     fmt.Println(name) // "Alice"
 
     // Type-safe retrieval with generics
-    age, _ := json.GetTyped[int](data, "user.age")
+    age := json.GetTyped[int](data, "user.age", 0)
     fmt.Println(age) // 28
 
     // With default value (no error on missing path)
-    email := json.GetTypedOr[string](data, "user.email", "unknown@example.com")
+    email := json.GetTyped[string](data, "user.email", "unknown@example.com")
     fmt.Println(email) // "unknown@example.com"
 
     // Negative indexing (last element)
@@ -82,7 +82,7 @@ func main() {
 
     // Modify data
     updated, _ := json.Set(data, "user.age", 29)
-    newAge, _ := json.GetInt(updated, "user.age")
+    newAge := json.GetInt(updated, "user.age", 0)
     fmt.Println(newAge) // 29
 
     // 100% encoding/json compatible
@@ -123,16 +123,16 @@ json.GetArray(data, "user.tags")       // ([]any, error)
 json.GetObject(data, "user.profile")   // (map[string]any, error)
 
 // Type-safe generic retrieval
-json.GetTyped[string](data, "user.name")
-json.GetTyped[[]int](data, "numbers")
-json.GetTyped[User](data, "user")      // custom struct
+json.GetTyped[string](data, "user.name", "")
+json.GetTyped[[]int](data, "numbers", nil)
+json.GetTyped[User](data, "user", User{})  // custom struct
 
-// With defaults (no error when path doesn't exist)
-json.GetStringOr(data, "user.name", "Anonymous")
-json.GetIntOr(data, "user.age", 0)
-json.GetBoolOr(data, "user.active", false)
-json.GetFloatOr(data, "user.score", 0.0)
-json.GetTypedOr[[]any](data, "user.tags", []any{})
+// Typed getters with defaults
+json.GetString(data, "user.name", "Anonymous")
+json.GetInt(data, "user.age", 0)
+json.GetBool(data, "user.active", false)
+json.GetFloat(data, "user.score", 0.0)
+json.GetTyped[[]any](data, "user.tags", []any{})
 
 // Batch retrieval
 results, err := json.GetMultiple(data, []string{"user.name", "user.age"})
@@ -354,9 +354,9 @@ config := `{
 }`
 
 // Type-safe with defaults
-dbHost := json.GetStringOr(config, "database.host", "localhost")
-dbPort := json.GetIntOr(config, "database.port", 5432)
-cacheEnabled := json.GetBoolOr(config, "cache.enabled", false)
+dbHost := json.GetString(config, "database.host", "localhost")
+dbPort := json.GetInt(config, "database.port", 5432)
+cacheEnabled := json.GetBool(config, "cache.enabled", false)
 
 // Dynamic update
 updated, _ := json.SetMultiple(config, map[string]any{

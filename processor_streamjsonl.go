@@ -20,21 +20,6 @@ const (
 	defaultMaxLineSize = 1024 * 1024
 )
 
-// StreamJSONLResult holds the result of a JSONL streaming operation
-type StreamJSONLResult struct {
-	// LinesProcessed is the total number of lines processed
-	LinesProcessed int64
-
-	// BytesRead is the total bytes read
-	BytesRead int64
-
-	// Errors is the collection of errors encountered during streaming
-	Errors []error
-
-	// Stopped indicates if streaming was stopped early
-	Stopped bool
-}
-
 // StreamJSONL streams JSONL data from a reader with IterableValue callback support.
 //
 // This method provides line-by-line processing of JSONL (NDJSON) files with

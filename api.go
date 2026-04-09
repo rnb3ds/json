@@ -324,50 +324,91 @@ var configFieldList = []configFieldAccessor{
 			}
 			return h
 		}},
-		// Extension fields
-		{"CustomEscapes",
-			func(a, b Config) bool { return customEscapesEqual(a.CustomEscapes, b.CustomEscapes) },
-			func(h uint64, c Config) uint64 { return hashCustomEscapes(h, c.CustomEscapes) }},
-		{"CustomEncoder",
-			func(a, b Config) bool { return (a.CustomEncoder == nil) == (b.CustomEncoder == nil) },
-			func(h uint64, c Config) uint64 {
-				if c.CustomEncoder != nil {
-					return internal.HashBool(h, true)
+	// Extension fields
+	{"CustomEscapes",
+		func(a, b Config) bool { return customEscapesEqual(a.CustomEscapes, b.CustomEscapes) },
+		func(h uint64, c Config) uint64 { return hashCustomEscapes(h, c.CustomEscapes) }},
+	{"CustomEncoder",
+		func(a, b Config) bool { return (a.CustomEncoder == nil) == (b.CustomEncoder == nil) },
+		func(h uint64, c Config) uint64 {
+			if c.CustomEncoder != nil {
+				return internal.HashBool(h, true)
+			}
+			return h
+		}},
+	{"CustomTypeEncoders",
+		func(a, b Config) bool {
+			if len(a.CustomTypeEncoders) != len(b.CustomTypeEncoders) {
+				return false
+			}
+			for k, v := range a.CustomTypeEncoders {
+				if bv, ok := b.CustomTypeEncoders[k]; !ok || v != bv {
+					return false
 				}
-				return h
-			}},
-		{"CustomTypeEncoders",
-			func(a, b Config) bool { return len(a.CustomTypeEncoders) == len(b.CustomTypeEncoders) },
-			func(h uint64, c Config) uint64 { return internal.HashInt(h, len(c.CustomTypeEncoders)) }},
-		{"CustomValidators",
-			func(a, b Config) bool { return len(a.CustomValidators) == len(b.CustomValidators) },
-			func(h uint64, c Config) uint64 { return internal.HashInt(h, len(c.CustomValidators)) }},
-		{"AdditionalDangerousPatterns",
-			func(a, b Config) bool {
-				return len(a.AdditionalDangerousPatterns) == len(b.AdditionalDangerousPatterns)
-			},
-			func(h uint64, c Config) uint64 {
-				h = internal.HashInt(h, len(c.AdditionalDangerousPatterns))
-				for _, p := range c.AdditionalDangerousPatterns {
-					h = internal.HashString(h, p.Pattern)
-					h = internal.HashInt(h, int(p.Level))
+			}
+			return true
+		},
+		func(h uint64, c Config) uint64 {
+			h = internal.HashInt(h, len(c.CustomTypeEncoders))
+			for typ, enc := range c.CustomTypeEncoders {
+				h = internal.HashString(h, typ.String())
+				h = internal.HashBool(h, enc != nil)
+			}
+			return h
+		}},
+	{"CustomValidators",
+		func(a, b Config) bool {
+			if len(a.CustomValidators) != len(b.CustomValidators) {
+				return false
+			}
+			for i, v := range a.CustomValidators {
+				if v != b.CustomValidators[i] {
+					return false
 				}
-				return h
-			}},
-		{"DisableDefaultPatterns",
-			func(a, b Config) bool { return a.DisableDefaultPatterns == b.DisableDefaultPatterns },
-			func(h uint64, c Config) uint64 { return internal.HashBool(h, c.DisableDefaultPatterns) }},
-		{"Hooks",
-			func(a, b Config) bool { return len(a.Hooks) == len(b.Hooks) },
-			func(h uint64, c Config) uint64 { return internal.HashInt(h, len(c.Hooks)) }},
-		{"CustomPathParser",
-			func(a, b Config) bool { return (a.CustomPathParser == nil) == (b.CustomPathParser == nil) },
-			func(h uint64, c Config) uint64 {
-				if c.CustomPathParser != nil {
-					return internal.HashBool(h, true)
+			}
+			return true
+		},
+		func(h uint64, c Config) uint64 {
+			h = internal.HashInt(h, len(c.CustomValidators))
+			for _, v := range c.CustomValidators {
+				h = internal.HashBool(h, v != nil)
+			}
+			return h
+		}},
+	{"AdditionalDangerousPatterns",
+		func(a, b Config) bool {
+			if len(a.AdditionalDangerousPatterns) != len(b.AdditionalDangerousPatterns) {
+				return false
+			}
+			for i, p := range a.AdditionalDangerousPatterns {
+				if p != b.AdditionalDangerousPatterns[i] {
+					return false
 				}
-				return h
-			}},
+			}
+			return true
+		},
+		func(h uint64, c Config) uint64 {
+			h = internal.HashInt(h, len(c.AdditionalDangerousPatterns))
+			for _, p := range c.AdditionalDangerousPatterns {
+				h = internal.HashString(h, p.Pattern)
+				h = internal.HashInt(h, int(p.Level))
+			}
+			return h
+		}},
+	{"DisableDefaultPatterns",
+		func(a, b Config) bool { return a.DisableDefaultPatterns == b.DisableDefaultPatterns },
+		func(h uint64, c Config) uint64 { return internal.HashBool(h, c.DisableDefaultPatterns) }},
+	{"Hooks",
+		func(a, b Config) bool { return len(a.Hooks) == len(b.Hooks) },
+		func(h uint64, c Config) uint64 { return internal.HashInt(h, len(c.Hooks)) }},
+	{"CustomPathParser",
+		func(a, b Config) bool { return (a.CustomPathParser == nil) == (b.CustomPathParser == nil) },
+		func(h uint64, c Config) uint64 {
+			if c.CustomPathParser != nil {
+				return internal.HashBool(h, true)
+			}
+			return h
+		}},
 }
 
 // configFieldsEqual compares all fields of two Config structs.
@@ -451,152 +492,105 @@ func Get(jsonStr, path string, cfg ...Config) (any, error) {
 }
 
 // =============================================================================
-// Typed Get Operations - Unified Naming Convention (GetAs)
+// Typed Get Operations
 // =============================================================================
 
 // GetTyped retrieves a typed value from JSON at the specified path.
-// This is the generic typed getter - use this for custom types.
+// Returns defaultValue if provided, otherwise zero value of T when: path not found, value is null, or type conversion fails.
 //
 // Example:
 //
-//	type User struct { Name string }
-//	user, err := json.GetAs[User](data, "user")
-func GetTyped[T any](jsonStr, path string, cfg ...Config) (T, error) {
-	return withProcessor(func(p *Processor) (T, error) {
-		return getTypedWithProcessor[T](p, jsonStr, path, cfg...)
-	})
+//	name := json.GetTyped[string](data, "user.name", "unknown")
+//	age := json.GetTyped[int](data, "user.age", 0)
+//	name := json.GetTyped[string](data, "user.name") // returns "" if not found
+func GetTyped[T any](jsonStr, path string, defaultValue ...T) T {
+	p, err := getProcessorOrFail()
+	if err != nil {
+		if len(defaultValue) > 0 {
+			return defaultValue[0]
+		}
+		var zero T
+		return zero
+	}
+	return getTypedWithDefault[T](p, jsonStr, path, defaultValue...)
 }
 
 // GetString retrieves a string value from JSON at the specified path.
-//
-// Errors:
-//   - ErrInvalidJSON: jsonStr is not valid JSON
-//   - ErrPathNotFound: path does not exist
-//   - ErrTypeMismatch: value is not a string type
-func GetString(jsonStr, path string, cfg ...Config) (string, error) {
-	return withProcessor(func(p *Processor) (string, error) {
-		return p.GetString(jsonStr, path, cfg...)
-	})
+// Returns defaultValue if provided, otherwise "" when: path not found, value is null, or type conversion fails.
+func GetString(jsonStr, path string, defaultValue ...string) string {
+	p, err := getProcessorOrFail()
+	if err != nil {
+		if len(defaultValue) > 0 {
+			return defaultValue[0]
+		}
+		return ""
+	}
+	return p.GetString(jsonStr, path, defaultValue...)
 }
 
 // GetInt retrieves an int value from JSON at the specified path.
-//
-// Errors:
-//   - ErrInvalidJSON: jsonStr is not valid JSON
-//   - ErrPathNotFound: path does not exist
-//   - ErrTypeMismatch: value is not an integer type or cannot be converted
-func GetInt(jsonStr, path string, cfg ...Config) (int, error) {
-	return withProcessor(func(p *Processor) (int, error) {
-		return p.GetInt(jsonStr, path, cfg...)
-	})
+// Returns defaultValue if provided, otherwise 0 when: path not found, value is null, or type conversion fails.
+func GetInt(jsonStr, path string, defaultValue ...int) int {
+	p, err := getProcessorOrFail()
+	if err != nil {
+		if len(defaultValue) > 0 {
+			return defaultValue[0]
+		}
+		return 0
+	}
+	return p.GetInt(jsonStr, path, defaultValue...)
 }
 
 // GetFloat retrieves a float64 value from JSON at the specified path.
-//
-// Errors:
-//   - ErrInvalidJSON: jsonStr is not valid JSON
-//   - ErrPathNotFound: path does not exist
-//   - ErrTypeMismatch: value is not a numeric type or cannot be converted
-func GetFloat(jsonStr, path string, cfg ...Config) (float64, error) {
-	return withProcessor(func(p *Processor) (float64, error) {
-		return p.GetFloat(jsonStr, path, cfg...)
-	})
+// Returns defaultValue if provided, otherwise 0.0 when: path not found, value is null, or type conversion fails.
+func GetFloat(jsonStr, path string, defaultValue ...float64) float64 {
+	p, err := getProcessorOrFail()
+	if err != nil {
+		if len(defaultValue) > 0 {
+			return defaultValue[0]
+		}
+		return 0
+	}
+	return p.GetFloat(jsonStr, path, defaultValue...)
 }
 
 // GetBool retrieves a bool value from JSON at the specified path.
-//
-// Errors:
-//   - ErrInvalidJSON: jsonStr is not valid JSON
-//   - ErrPathNotFound: path does not exist
-//   - ErrTypeMismatch: value is not a boolean type
-func GetBool(jsonStr, path string, cfg ...Config) (bool, error) {
-	return withProcessor(func(p *Processor) (bool, error) {
-		return p.GetBool(jsonStr, path, cfg...)
-	})
+// Returns defaultValue if provided, otherwise false when: path not found, value is null, or type conversion fails.
+func GetBool(jsonStr, path string, defaultValue ...bool) bool {
+	p, err := getProcessorOrFail()
+	if err != nil {
+		if len(defaultValue) > 0 {
+			return defaultValue[0]
+		}
+		return false
+	}
+	return p.GetBool(jsonStr, path, defaultValue...)
 }
 
 // GetArray retrieves an array value from JSON at the specified path.
-//
-// Errors:
-//   - ErrInvalidJSON: jsonStr is not valid JSON
-//   - ErrPathNotFound: path does not exist
-//   - ErrTypeMismatch: value is not an array type
-func GetArray(jsonStr, path string, cfg ...Config) ([]any, error) {
-	return withProcessor(func(p *Processor) ([]any, error) {
-		return p.GetArray(jsonStr, path, cfg...)
-	})
+// Returns defaultValue if provided, otherwise nil when: path not found, value is null, or type conversion fails.
+func GetArray(jsonStr, path string, defaultValue ...[]any) []any {
+	p, err := getProcessorOrFail()
+	if err != nil {
+		if len(defaultValue) > 0 {
+			return defaultValue[0]
+		}
+		return nil
+	}
+	return p.GetArray(jsonStr, path, defaultValue...)
 }
 
 // GetObject retrieves an object value from JSON at the specified path.
-//
-// Errors:
-//   - ErrInvalidJSON: jsonStr is not valid JSON
-//   - ErrPathNotFound: path does not exist
-//   - ErrTypeMismatch: value is not an object type
-func GetObject(jsonStr, path string, cfg ...Config) (map[string]any, error) {
-	return withProcessor(func(p *Processor) (map[string]any, error) {
-		return p.GetObject(jsonStr, path, cfg...)
-	})
-}
-
-// =============================================================================
-// Get with Default - Unified Naming Convention (GetOr)
-// =============================================================================
-
-// GetTypedOr retrieves a typed value from JSON at the specified path with a default fallback.
-// Returns defaultValue if: path not found, value is null, or type conversion fails.
-// This is the recommended generic function for getting values with defaults.
-//
-// Example:
-//
-//	name := json.GetOr[string](data, "user.name", "unknown")
-//	age := json.GetOr[int](data, "user.age", 0)
-func GetTypedOr[T any](jsonStr, path string, defaultValue T, cfg ...Config) T {
+// Returns defaultValue if provided, otherwise nil when: path not found, value is null, or type conversion fails.
+func GetObject(jsonStr, path string, defaultValue ...map[string]any) map[string]any {
 	p, err := getProcessorOrFail()
 	if err != nil {
-		return defaultValue
+		if len(defaultValue) > 0 {
+			return defaultValue[0]
+		}
+		return nil
 	}
-	return getTypedOrWithProcessor(p, jsonStr, path, defaultValue, cfg...)
-}
-
-// GetStringOr retrieves a string value from JSON at the specified path with a default fallback.
-// Returns defaultValue if: path not found, value is null, or type conversion fails.
-func GetStringOr(jsonStr, path string, defaultValue string, cfg ...Config) string {
-	p, err := getProcessorOrFail()
-	if err != nil {
-		return defaultValue
-	}
-	return p.GetStringOr(jsonStr, path, defaultValue, cfg...)
-}
-
-// GetIntOr retrieves an int value from JSON at the specified path with a default fallback.
-// Returns defaultValue if: path not found, value is null, or type conversion fails.
-func GetIntOr(jsonStr, path string, defaultValue int, cfg ...Config) int {
-	p, err := getProcessorOrFail()
-	if err != nil {
-		return defaultValue
-	}
-	return p.GetIntOr(jsonStr, path, defaultValue, cfg...)
-}
-
-// GetFloatOr retrieves a float64 value from JSON at the specified path with a default fallback.
-// Returns defaultValue if: path not found, value is null, or type conversion fails.
-func GetFloatOr(jsonStr, path string, defaultValue float64, cfg ...Config) float64 {
-	p, err := getProcessorOrFail()
-	if err != nil {
-		return defaultValue
-	}
-	return p.GetFloatOr(jsonStr, path, defaultValue, cfg...)
-}
-
-// GetBoolOr retrieves a bool value from JSON at the specified path with a default fallback.
-// Returns defaultValue if: path not found, value is null, or type conversion fails.
-func GetBoolOr(jsonStr, path string, defaultValue bool, cfg ...Config) bool {
-	p, err := getProcessorOrFail()
-	if err != nil {
-		return defaultValue
-	}
-	return p.GetBoolOr(jsonStr, path, defaultValue, cfg...)
+	return p.GetObject(jsonStr, path, defaultValue...)
 }
 
 // GetMultiple retrieves multiple values from JSON at the specified paths.
@@ -608,6 +602,24 @@ func GetMultiple(jsonStr string, paths []string, cfg ...Config) (map[string]any,
 	return withProcessor(func(p *Processor) (map[string]any, error) {
 		return p.GetMultiple(jsonStr, paths, cfg...)
 	})
+}
+
+// SafeGet performs a type-safe get operation returning an AccessResult
+// with type conversion methods (AsString, AsInt, AsFloat64, AsBool).
+// Accepts optional Config for controlling validation, security, and caching behavior.
+//
+// Example:
+//
+//	result := json.SafeGet(data, "user.age")
+//	if result.Ok() {
+//	    age, _ := result.AsInt()
+//	}
+func SafeGet(jsonStr, path string, cfg ...Config) AccessResult {
+	p, err := getProcessorOrFail()
+	if err != nil {
+		return AccessResult{Exists: false}
+	}
+	return p.SafeGet(jsonStr, path, cfg...)
 }
 
 // Set sets a value in JSON at the specified path.
@@ -707,26 +719,33 @@ func Compact(dst *bytes.Buffer, src []byte, cfg ...Config) error {
 
 // Indent appends to dst an indented form of the JSON-encoded src.
 // This function is 100% compatible with encoding/json.Indent.
-func Indent(dst *bytes.Buffer, src []byte, prefix, indent string) error {
+// Accepts optional Config for controlling indentation behavior.
+//
+// Example:
+//
+//	var buf bytes.Buffer
+//	err := json.Indent(&buf, []byte(`{"name":"Alice"}`), "", "  ")
+func Indent(dst *bytes.Buffer, src []byte, prefix, indent string, cfg ...Config) error {
 	return withProcessorError(func(p *Processor) error {
-		cfg := DefaultConfig()
-		cfg.Pretty = true
-		cfg.Prefix = prefix
-		cfg.Indent = indent
-		result, err := p.Prettify(string(src), cfg)
-		if err != nil {
-			return err
-		}
-		dst.WriteString(result)
-		return nil
+		return p.Indent(dst, src, prefix, indent, cfg...)
 	})
 }
 
 // HTMLEscape appends to dst the JSON-encoded src with <, >, &, U+2028, and U+2029 characters escaped.
 // This function is 100% compatible with encoding/json.HTMLEscape.
-func HTMLEscape(dst *bytes.Buffer, src []byte) {
-	// Use shared implementation from internal package
-	dst.WriteString(internal.HTMLEscape(string(src)))
+// Accepts optional Config for consistent API pattern.
+//
+// Example:
+//
+//	var buf bytes.Buffer
+//	json.HTMLEscape(&buf, []byte(`{"url":"<script>alert(1)</script>"}`))
+func HTMLEscape(dst *bytes.Buffer, src []byte, cfg ...Config) {
+	p := getDefaultProcessor()
+	if p == nil {
+		internal.HTMLEscapeTo(dst, string(src))
+		return
+	}
+	p.HTMLEscape(dst, src, cfg...)
 }
 
 // CompactBuffer compacts JSON data and writes the result to dst.
@@ -737,19 +756,18 @@ func CompactBuffer(dst *bytes.Buffer, src []byte, cfg ...Config) error {
 	})
 }
 
-// IndentBuffer appends to dst an indented form of the JSON-encoded src.
-// Delegates to Processor.IndentBuffer for consistent behavior.
+// IndentBuffer is an alias for Indent.
+//
+// Deprecated: Use Indent for unified naming with Processor.Indent.
 func IndentBuffer(dst *bytes.Buffer, src []byte, prefix, indent string, cfg ...Config) error {
-	return withProcessorError(func(p *Processor) error {
-		return p.IndentBuffer(dst, src, prefix, indent, cfg...)
-	})
+	return Indent(dst, src, prefix, indent, cfg...)
 }
 
-// HTMLEscapeBuffer is an alias for HTMLEscape for buffer operations
+// HTMLEscapeBuffer is an alias for HTMLEscape.
+//
+// Deprecated: Use HTMLEscape for unified naming with Processor.HTMLEscape.
 func HTMLEscapeBuffer(dst *bytes.Buffer, src []byte, cfg ...Config) {
-	// Use shared implementation - cfg is ignored for HTMLEscape (encoding/json compatible behavior)
-	_ = cfg // cfg parameter kept for API consistency
-	dst.WriteString(internal.HTMLEscape(string(src)))
+	HTMLEscape(dst, src, cfg...)
 }
 
 // Encode converts any Go value to JSON string.

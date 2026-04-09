@@ -159,7 +159,7 @@ func newSecurityError(operation, message string) error {
 }
 
 // IsRetryable determines if an error is retryable
-func IsRetryable(err error) bool {
+func isRetryable(err error) bool {
 	if err == nil {
 		return false
 	}
@@ -177,7 +177,7 @@ func IsRetryable(err error) bool {
 }
 
 // IsSecurityRelated determines if an error is security-related
-func IsSecurityRelated(err error) bool {
+func isSecurityRelated(err error) bool {
 	if err == nil {
 		return false
 	}
@@ -191,7 +191,7 @@ var userErrorSentinels = []error{
 }
 
 // IsUserError determines if an error is caused by user input
-func IsUserError(err error) bool {
+func isUserError(err error) bool {
 	if err == nil {
 		return false
 	}
@@ -204,7 +204,7 @@ func IsUserError(err error) bool {
 }
 
 // GetErrorSuggestion provides suggestions for common errors
-func GetErrorSuggestion(err error) string {
+func getErrorSuggestion(err error) string {
 	if err == nil {
 		return ""
 	}

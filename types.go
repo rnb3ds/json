@@ -197,8 +197,8 @@ type Config struct {
 	CustomPathParser PathParser
 }
 
-// GetSecurityLimits returns a summary of current security limits
-func (c *Config) GetSecurityLimits() map[string]any {
+// getSecurityLimits returns a summary of current security limits
+func (c *Config) getSecurityLimits() map[string]any {
 	if c == nil {
 		return map[string]any{}
 	}
@@ -949,8 +949,8 @@ func (r AccessResult) AsStringConverted() (string, error) {
 }
 
 // AsInt safely converts the result to int with overflow and precision checks.
-// Unlike ConvertToInt, this method is stricter and does NOT convert bool to int.
-// Use ConvertToInt directly if you need more permissive conversion.
+// Unlike convertToInt, this method is stricter and does NOT convert bool to int.
+// Use convertToInt directly if you need more permissive conversion.
 func (r AccessResult) AsInt() (int, error) {
 	if !r.Exists {
 		return 0, ErrPathNotFound
@@ -962,7 +962,7 @@ func (r AccessResult) AsInt() (int, error) {
 		return 0, fmt.Errorf("cannot convert bool to int")
 	}
 
-	result, ok := ConvertToInt(r.Value)
+	result, ok := convertToInt(r.Value)
 	if !ok {
 		return 0, fmt.Errorf("cannot convert %T to int", r.Value)
 	}
@@ -970,8 +970,8 @@ func (r AccessResult) AsInt() (int, error) {
 }
 
 // AsFloat64 safely converts the result to float64 with precision checks.
-// Unlike ConvertToFloat64, this method is stricter and does NOT convert bool to float64.
-// Use ConvertToFloat64 directly if you need more permissive conversion.
+// Unlike convertToFloat64, this method is stricter and does NOT convert bool to float64.
+// Use convertToFloat64 directly if you need more permissive conversion.
 func (r AccessResult) AsFloat64() (float64, error) {
 	if !r.Exists {
 		return 0, ErrPathNotFound
@@ -983,7 +983,7 @@ func (r AccessResult) AsFloat64() (float64, error) {
 		return 0, fmt.Errorf("cannot convert bool to float64")
 	}
 
-	result, ok := ConvertToFloat64(r.Value)
+	result, ok := convertToFloat64(r.Value)
 	if !ok {
 		return 0, fmt.Errorf("cannot convert %T to float64", r.Value)
 	}

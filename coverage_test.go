@@ -661,7 +661,7 @@ func (e *testTypeEncoder) Encode(v reflect.Value) (string, error) {
 type testPathParser struct{}
 
 func (p *testPathParser) ParsePath(path string) ([]PathSegment, error) {
-	return []PathSegment{NewPropertySegment(path)}, nil
+	return []PathSegment{newPropertySegment(path)}, nil
 }
 
 // TestMaybeEvictConfigCache tests the cache eviction logic
@@ -1084,8 +1084,8 @@ func TestWithProcessorErrorPaths(t *testing.T) {
 	})
 }
 
-// TestGetTypedOrEdgeCases tests GetTypedOr edge cases
-func TestGetTypedOrEdgeCases(t *testing.T) {
+// TestGetTypedEdgeCases tests GetTyped edge cases
+func TestGetTypedEdgeCases(t *testing.T) {
 	tests := []struct {
 		name    string
 		jsonStr string
@@ -1100,9 +1100,9 @@ func TestGetTypedOrEdgeCases(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := GetTypedOr(tt.jsonStr, tt.path, tt.defVal)
+			result := GetTyped(tt.jsonStr, tt.path, tt.defVal)
 			if result != tt.wantVal {
-				t.Errorf("GetTypedOr() = %q, want %q", result, tt.wantVal)
+				t.Errorf("GetTyped() = %q, want %q", result, tt.wantVal)
 			}
 		})
 	}
@@ -1214,24 +1214,24 @@ func TestNewSchemaWithConfigEdgeCases(t *testing.T) {
 
 // TestHelperFunctions tests various helper functions
 func TestHelperFunctions(t *testing.T) {
-	t.Run("IsValidJSON", func(t *testing.T) {
-		if !IsValidJSON(`{"key":"value"}`) {
-			t.Error("IsValidJSON should return true for valid JSON")
+	t.Run("isValidJSON", func(t *testing.T) {
+		if !isValidJSON(`{"key":"value"}`) {
+			t.Error("isValidJSON should return true for valid JSON")
 		}
-		if IsValidJSON(`{invalid}`) {
-			t.Error("IsValidJSON should return false for invalid JSON")
-		}
-	})
-
-	t.Run("IsValidPath", func(t *testing.T) {
-		if !IsValidPath("key.nested") {
-			t.Error("IsValidPath should return true for valid path")
+		if isValidJSON(`{invalid}`) {
+			t.Error("isValidJSON should return false for invalid JSON")
 		}
 	})
 
-	t.Run("ValidatePath", func(t *testing.T) {
-		if err := ValidatePath("key.nested"); err != nil {
-			t.Errorf("ValidatePath should return nil for valid path: %v", err)
+	t.Run("isValidPath", func(t *testing.T) {
+		if !isValidPath("key.nested") {
+			t.Error("isValidPath should return true for valid path")
+		}
+	})
+
+	t.Run("validatePath", func(t *testing.T) {
+		if err := validatePath("key.nested"); err != nil {
+			t.Errorf("validatePath should return nil for valid path: %v", err)
 		}
 	})
 
@@ -1248,30 +1248,30 @@ func TestEncoderConfigMethods(t *testing.T) {
 	cfg := DefaultConfig()
 
 	t.Run("ShouldEscapeUnicode", func(t *testing.T) {
-		result := cfg.ShouldEscapeUnicode()
+		result := cfg.shouldEscapeUnicode()
 		_ = result
 	})
 
 	t.Run("ShouldEscapeSlash", func(t *testing.T) {
-		result := cfg.ShouldEscapeSlash()
+		result := cfg.shouldEscapeSlash()
 		_ = result
 	})
 
 	t.Run("ShouldEscapeNewlines", func(t *testing.T) {
-		result := cfg.ShouldEscapeNewlines()
+		result := cfg.shouldEscapeNewlines()
 		_ = result
 	})
 
 	t.Run("ShouldEscapeTabs", func(t *testing.T) {
-		result := cfg.ShouldEscapeTabs()
+		result := cfg.shouldEscapeTabs()
 		_ = result
 	})
 }
 
-// TestValidationChain tests ValidationChain
+// TestValidationChain tests validationChain
 func TestValidationChain(t *testing.T) {
 	t.Run("EmptyChain", func(t *testing.T) {
-		chain := ValidationChain{}
+		chain := validationChain{}
 		err := chain.Validate(`{"key":"value"}`)
 		if err != nil {
 			t.Errorf("Empty chain should pass: %v", err)
@@ -1279,7 +1279,7 @@ func TestValidationChain(t *testing.T) {
 	})
 
 	t.Run("ChainWithValidators", func(t *testing.T) {
-		chain := ValidationChain{&testValidatorImpl{}}
+		chain := validationChain{&testValidatorImpl{}}
 		err := chain.Validate(`{"key":"value"}`)
 		if err != nil {
 			t.Errorf("Chain should pass: %v", err)
@@ -1328,45 +1328,45 @@ func TestPatternLevel(t *testing.T) {
 
 // TestNewSegmentFunctions tests segment creation functions
 func TestNewSegmentFunctions(t *testing.T) {
-	t.Run("NewPropertySegment", func(t *testing.T) {
-		seg := NewPropertySegment("test")
-		if seg.Type != PathSegmentProperty {
-			t.Error("NewPropertySegment should create property segment")
+	t.Run("newPropertySegment", func(t *testing.T) {
+		seg := newPropertySegment("test")
+		if seg.Type != internal.PropertySegment {
+			t.Error("newPropertySegment should create property segment")
 		}
 	})
 
-	t.Run("NewArrayIndexSegment", func(t *testing.T) {
-		seg := NewArrayIndexSegment(0)
-		if seg.Type != PathSegmentArrayIndex {
-			t.Error("NewArrayIndexSegment should create array index segment")
+	t.Run("newArrayIndexSegment", func(t *testing.T) {
+		seg := newArrayIndexSegment(0)
+		if seg.Type != internal.ArrayIndexSegment {
+			t.Error("newArrayIndexSegment should create array index segment")
 		}
 	})
 
-	t.Run("NewArraySliceSegment", func(t *testing.T) {
-		seg := NewArraySliceSegment(0, 10, 1, true, true, true)
-		if seg.Type != PathSegmentArraySlice {
-			t.Error("NewArraySliceSegment should create array slice segment")
+	t.Run("newArraySliceSegment", func(t *testing.T) {
+		seg := newArraySliceSegment(0, 10, 1, true, true, true)
+		if seg.Type != internal.ArraySliceSegment {
+			t.Error("newArraySliceSegment should create array slice segment")
 		}
 	})
 
-	t.Run("NewWildcardSegment", func(t *testing.T) {
-		seg := NewWildcardSegment()
-		if seg.Type != PathSegmentWildcard {
-			t.Error("NewWildcardSegment should create wildcard segment")
+	t.Run("newWildcardSegment", func(t *testing.T) {
+		seg := newWildcardSegment()
+		if seg.Type != internal.WildcardSegment {
+			t.Error("newWildcardSegment should create wildcard segment")
 		}
 	})
 
-	t.Run("NewExtractSegment", func(t *testing.T) {
-		seg := NewExtractSegment("name", false)
-		if seg.Type != PathSegmentExtract {
-			t.Error("NewExtractSegment should create extract segment")
+	t.Run("newExtractSegment", func(t *testing.T) {
+		seg := newExtractSegment("name", false)
+		if seg.Type != internal.ExtractSegment {
+			t.Error("newExtractSegment should create extract segment")
 		}
 	})
 
-	t.Run("NewAppendSegment", func(t *testing.T) {
-		seg := NewAppendSegment()
-		if seg.Type != PathSegmentAppend {
-			t.Error("NewAppendSegment should create append segment")
+	t.Run("newAppendSegment", func(t *testing.T) {
+		seg := newAppendSegment()
+		if seg.Type != internal.AppendSegment {
+			t.Error("newAppendSegment should create append segment")
 		}
 	})
 }
@@ -1450,7 +1450,7 @@ func TestValidateUnixPath(t *testing.T) {
 	}
 }
 
-// TestValidatePathPlatform tests the validatePathPlatform function
+// TestvalidatePathPlatform tests the validatePathPlatform function
 func TestValidatePathPlatform(t *testing.T) {
 	t.Run("CurrentPlatform", func(t *testing.T) {
 		// This test should pass on any platform
@@ -1473,7 +1473,7 @@ func TestValidatePathPlatform(t *testing.T) {
 	})
 }
 
-// TestValidatePathSymlinks tests the validatePathSymlinks function
+// TestvalidatePathSymlinks tests the validatePathSymlinks function
 func TestValidatePathSymlinks(t *testing.T) {
 	t.Run("NonExistentPath", func(t *testing.T) {
 		err := validatePathSymlinks("/non/existent/path/test.json")
@@ -1554,7 +1554,7 @@ func TestValidateFilePathStandalone(t *testing.T) {
 	})
 }
 
-// TestValidatePathFileSize tests the validatePathFileSize function
+// TestvalidatePathFileSize tests the validatePathFileSize function
 func TestValidatePathFileSize(t *testing.T) {
 	processor, err := New()
 	if err != nil {
@@ -1649,7 +1649,7 @@ func TestNormalizeAndAbsPath(t *testing.T) {
 	})
 }
 
-// TestValidatePathBasic tests the validatePathBasic function
+// TestvalidatePathBasic tests the validatePathBasic function
 func TestValidatePathBasic(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -1679,7 +1679,7 @@ func TestValidatePathBasic(t *testing.T) {
 	}
 }
 
-// TestValidatePathSecurity tests the validatePathSecurity function
+// TestvalidatePathSecurity tests the validatePathSecurity function
 func TestValidatePathSecurity(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -2113,34 +2113,34 @@ func TestProcessorBufferMethods(t *testing.T) {
 		}
 	})
 
-	t.Run("IndentBuffer", func(t *testing.T) {
+	t.Run("Indent", func(t *testing.T) {
 		var dst bytes.Buffer
 		src := []byte(`{"key":"value"}`)
-		err := processor.IndentBuffer(&dst, src, "", "  ")
+		err := processor.Indent(&dst, src, "", "  ")
 		if err != nil {
-			t.Errorf("IndentBuffer failed: %v", err)
+			t.Errorf("Indent failed: %v", err)
 		}
 		if !strings.Contains(dst.String(), "\n") {
-			t.Error("IndentBuffer should produce indented output")
+			t.Error("Indent should produce indented output")
 		}
 	})
 
-	t.Run("HTMLEscapeBuffer", func(t *testing.T) {
+	t.Run("HTMLEscape", func(t *testing.T) {
 		var dst bytes.Buffer
 		src := []byte(`{"html":"<script>"}`)
-		processor.HTMLEscapeBuffer(&dst, src)
+		processor.HTMLEscape(&dst, src)
 		if dst.Len() == 0 {
-			t.Error("HTMLEscapeBuffer should write to dst")
+			t.Error("HTMLEscape should write to dst")
 		}
 	})
 
-	t.Run("HTMLEscapeBufferInvalidJSON", func(t *testing.T) {
+	t.Run("HTMLEscapeInvalidJSON", func(t *testing.T) {
 		var dst bytes.Buffer
 		src := []byte(`{invalid}`)
-		processor.HTMLEscapeBuffer(&dst, src)
+		processor.HTMLEscape(&dst, src)
 		// Should write original content on error
 		if dst.String() != string(src) {
-			t.Error("HTMLEscapeBuffer should write original on error")
+			t.Error("HTMLEscape should write original on error")
 		}
 	})
 }
@@ -2245,12 +2245,12 @@ func TestRecursiveProcessor(t *testing.T) {
 // DEEP COPY TESTS
 // ============================================================================
 
-// TestDeepCopy tests deep copy functionality
+// TestdeepCopy tests deep copy functionality
 func TestDeepCopy(t *testing.T) {
 	processor, _ := New()
 	defer processor.Close()
 
-	t.Run("DeepCopyMap", func(t *testing.T) {
+	t.Run("deepCopyMap", func(t *testing.T) {
 		original := map[string]any{
 			"key": "value",
 			"nested": map[string]any{
@@ -2258,9 +2258,9 @@ func TestDeepCopy(t *testing.T) {
 			},
 		}
 
-		copy, err := DeepCopy(original)
+		copy, err := deepCopy(original)
 		if err != nil {
-			t.Fatalf("DeepCopy() error: %v", err)
+			t.Fatalf("deepCopy() error: %v", err)
 		}
 
 		// Modify original
@@ -2277,15 +2277,15 @@ func TestDeepCopy(t *testing.T) {
 		}
 	})
 
-	t.Run("DeepCopyArray", func(t *testing.T) {
+	t.Run("deepCopyArray", func(t *testing.T) {
 		original := []any{
 			1,
 			map[string]any{"key": "value"},
 		}
 
-		copy, err := DeepCopy(original)
+		copy, err := deepCopy(original)
 		if err != nil {
-			t.Fatalf("DeepCopy() error: %v", err)
+			t.Fatalf("deepCopy() error: %v", err)
 		}
 
 		// Modify original
@@ -2302,7 +2302,7 @@ func TestDeepCopy(t *testing.T) {
 		}
 	})
 
-	t.Run("DeepCopyPrimitives", func(t *testing.T) {
+	t.Run("deepCopyPrimitives", func(t *testing.T) {
 		tests := []any{
 			"string",
 			42,
@@ -2312,9 +2312,9 @@ func TestDeepCopy(t *testing.T) {
 		}
 
 		for _, original := range tests {
-			copy, err := DeepCopy(original)
+			copy, err := deepCopy(original)
 			if err != nil {
-				t.Fatalf("DeepCopy() error: %v", err)
+				t.Fatalf("deepCopy() error: %v", err)
 			}
 			if copy != original {
 				t.Errorf("Deep copy of primitive %v should return same value", original)
@@ -2379,7 +2379,7 @@ func TestBatchOperationsAdditional(t *testing.T) {
 	})
 }
 
-// TestFormatNumberBoost tests FormatNumber function
+// TestformatNumberBoost tests formatNumber function
 func TestFormatNumberBoost(t *testing.T) {
 	tests := []struct {
 		input float64
@@ -2391,9 +2391,9 @@ func TestFormatNumberBoost(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		result := FormatNumber(tt.input)
+		result := formatNumber(tt.input)
 		if !tt.check(result) {
-			t.Errorf("FormatNumber(%v) = %q, check failed", tt.input, result)
+			t.Errorf("formatNumber(%v) = %q, check failed", tt.input, result)
 		}
 	}
 }
@@ -2630,7 +2630,7 @@ func TestEncodeFieldsBoost(t *testing.T) {
 // JSON POINTER ESCAPE TESTS
 // ============================================================================
 
-// TestEscapeJSONPointer tests EscapeJSONPointer function
+// TestescapeJSONPointer tests escapeJSONPointer function
 func TestEscapeJSONPointer(t *testing.T) {
 	tests := []struct {
 		input    string
@@ -2643,9 +2643,9 @@ func TestEscapeJSONPointer(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		result := EscapeJSONPointer(tt.input)
+		result := escapeJSONPointer(tt.input)
 		if result != tt.expected {
-			t.Errorf("EscapeJSONPointer(%q) = %q, want %q", tt.input, result, tt.expected)
+			t.Errorf("escapeJSONPointer(%q) = %q, want %q", tt.input, result, tt.expected)
 		}
 	}
 }
@@ -3921,8 +3921,8 @@ func TestStringFormatValidation(t *testing.T) {
 // TOP-LEVEL API FUNCTIONS - Missing coverage tests
 // ============================================================================
 
-// TestGetStringOr tests the top-level GetStringOr function
-func TestGetStringOr(t *testing.T) {
+// TestGetStringDefault tests the top-level GetString function with default values
+func TestGetStringDefault(t *testing.T) {
 	tests := []struct {
 		name         string
 		jsonStr      string
@@ -3937,16 +3937,16 @@ func TestGetStringOr(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := GetStringOr(tt.jsonStr, tt.path, tt.defaultValue)
+			result := GetString(tt.jsonStr, tt.path, tt.defaultValue)
 			if result != tt.expected {
-				t.Errorf("GetStringOr() = %q, want %q", result, tt.expected)
+				t.Errorf("GetString() = %q, want %q", result, tt.expected)
 			}
 		})
 	}
 }
 
-// TestGetIntOr tests the top-level GetIntOr function
-func TestGetIntOr(t *testing.T) {
+// TestGetIntDefault tests the top-level GetInt function with default values
+func TestGetIntDefault(t *testing.T) {
 	tests := []struct {
 		name         string
 		jsonStr      string
@@ -3960,16 +3960,16 @@ func TestGetIntOr(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := GetIntOr(tt.jsonStr, tt.path, tt.defaultValue)
+			result := GetInt(tt.jsonStr, tt.path, tt.defaultValue)
 			if result != tt.expected {
-				t.Errorf("GetIntOr() = %d, want %d", result, tt.expected)
+				t.Errorf("GetInt() = %d, want %d", result, tt.expected)
 			}
 		})
 	}
 }
 
-// TestGetFloatOr tests the top-level GetFloatOr function
-func TestGetFloatOr(t *testing.T) {
+// TestGetFloatDefault tests the top-level GetFloat function with default values
+func TestGetFloatDefault(t *testing.T) {
 	tests := []struct {
 		name         string
 		jsonStr      string
@@ -3984,16 +3984,16 @@ func TestGetFloatOr(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := GetFloatOr(tt.jsonStr, tt.path, tt.defaultValue)
+			result := GetFloat(tt.jsonStr, tt.path, tt.defaultValue)
 			if result != tt.expected {
-				t.Errorf("GetFloatOr() = %f, want %f", result, tt.expected)
+				t.Errorf("GetFloat() = %f, want %f", result, tt.expected)
 			}
 		})
 	}
 }
 
-// TestGetBoolOr tests the top-level GetBoolOr function
-func TestGetBoolOr(t *testing.T) {
+// TestGetBoolDefault tests the top-level GetBool function with default values
+func TestGetBoolDefault(t *testing.T) {
 	tests := []struct {
 		name         string
 		jsonStr      string
@@ -4008,9 +4008,9 @@ func TestGetBoolOr(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := GetBoolOr(tt.jsonStr, tt.path, tt.defaultValue)
+			result := GetBool(tt.jsonStr, tt.path, tt.defaultValue)
 			if result != tt.expected {
-				t.Errorf("GetBoolOr() = %v, want %v", result, tt.expected)
+				t.Errorf("GetBool() = %v, want %v", result, tt.expected)
 			}
 		})
 	}
@@ -4156,67 +4156,67 @@ func TestConfigEncodingMethods(t *testing.T) {
 	}
 
 	t.Run("IsHTMLEscapeEnabled", func(t *testing.T) {
-		if !cfg.IsHTMLEscapeEnabled() {
+		if !cfg.isHTMLEscapeEnabled() {
 			t.Error("IsHTMLEscapeEnabled should return true")
 		}
 	})
 
 	t.Run("IsPrettyEnabled", func(t *testing.T) {
-		if !cfg.IsPrettyEnabled() {
+		if !cfg.isPrettyEnabled() {
 			t.Error("IsPrettyEnabled should return true")
 		}
 	})
 
 	t.Run("GetIndent", func(t *testing.T) {
-		if cfg.GetIndent() != "  " {
-			t.Errorf("GetIndent = %q, want %q", cfg.GetIndent(), "  ")
+		if cfg.getIndent() != "  " {
+			t.Errorf("GetIndent = %q, want %q", cfg.getIndent(), "  ")
 		}
 	})
 
 	t.Run("GetPrefix", func(t *testing.T) {
-		if cfg.GetPrefix() != "> " {
-			t.Errorf("GetPrefix = %q, want %q", cfg.GetPrefix(), "> ")
+		if cfg.getPrefix() != "> " {
+			t.Errorf("GetPrefix = %q, want %q", cfg.getPrefix(), "> ")
 		}
 	})
 
 	t.Run("IsSortKeysEnabled", func(t *testing.T) {
-		if !cfg.IsSortKeysEnabled() {
+		if !cfg.isSortKeysEnabled() {
 			t.Error("IsSortKeysEnabled should return true")
 		}
 	})
 
 	t.Run("GetFloatPrecision", func(t *testing.T) {
-		if cfg.GetFloatPrecision() != 4 {
-			t.Errorf("GetFloatPrecision = %d, want 4", cfg.GetFloatPrecision())
+		if cfg.getFloatPrecision() != 4 {
+			t.Errorf("GetFloatPrecision = %d, want 4", cfg.getFloatPrecision())
 		}
 	})
 
 	t.Run("IsTruncateFloatEnabled", func(t *testing.T) {
-		if !cfg.IsTruncateFloatEnabled() {
+		if !cfg.isTruncateFloatEnabled() {
 			t.Error("IsTruncateFloatEnabled should return true")
 		}
 	})
 
 	t.Run("GetMaxDepth", func(t *testing.T) {
-		if cfg.GetMaxDepth() != 50 {
-			t.Errorf("GetMaxDepth = %d, want 50", cfg.GetMaxDepth())
+		if cfg.getMaxDepth() != 50 {
+			t.Errorf("GetMaxDepth = %d, want 50", cfg.getMaxDepth())
 		}
 	})
 
 	t.Run("ShouldIncludeNulls", func(t *testing.T) {
-		if !cfg.ShouldIncludeNulls() {
+		if !cfg.shouldIncludeNulls() {
 			t.Error("ShouldIncludeNulls should return true")
 		}
 	})
 
 	t.Run("ShouldValidateUTF8", func(t *testing.T) {
-		if !cfg.ShouldValidateUTF8() {
+		if !cfg.shouldValidateUTF8() {
 			t.Error("ShouldValidateUTF8 should return true")
 		}
 	})
 
 	t.Run("IsDisallowUnknownEnabled", func(t *testing.T) {
-		if !cfg.IsDisallowUnknownEnabled() {
+		if !cfg.isDisallowUnknownEnabled() {
 			t.Error("IsDisallowUnknownEnabled should return true")
 		}
 	})
@@ -4227,26 +4227,26 @@ func TestConfigEncodingMethodsDefaults(t *testing.T) {
 	cfg := Config{} // Zero value
 
 	t.Run("DefaultIsHTMLEscapeEnabled", func(t *testing.T) {
-		if cfg.IsHTMLEscapeEnabled() {
+		if cfg.isHTMLEscapeEnabled() {
 			t.Error("Zero-value IsHTMLEscapeEnabled should return false")
 		}
 	})
 
 	t.Run("DefaultIsPrettyEnabled", func(t *testing.T) {
-		if cfg.IsPrettyEnabled() {
+		if cfg.isPrettyEnabled() {
 			t.Error("Zero-value IsPrettyEnabled should return false")
 		}
 	})
 
 	t.Run("DefaultGetIndent", func(t *testing.T) {
-		if cfg.GetIndent() != "" {
-			t.Errorf("Zero-value GetIndent = %q, want empty", cfg.GetIndent())
+		if cfg.getIndent() != "" {
+			t.Errorf("Zero-value GetIndent = %q, want empty", cfg.getIndent())
 		}
 	})
 
 	t.Run("DefaultGetPrefix", func(t *testing.T) {
-		if cfg.GetPrefix() != "" {
-			t.Errorf("Zero-value GetPrefix = %q, want empty", cfg.GetPrefix())
+		if cfg.getPrefix() != "" {
+			t.Errorf("Zero-value GetPrefix = %q, want empty", cfg.getPrefix())
 		}
 	})
 }
@@ -4673,17 +4673,17 @@ func TestTypeConversionErrors(t *testing.T) {
 
 	t.Run("TypeConversionFailures", func(t *testing.T) {
 		// Test type conversion error handling
-		_, ok := ConvertToInt("not a number")
+		_, ok := convertToInt("not a number")
 		if ok {
 			t.Error("Converting non-numeric string to int should fail")
 		}
 
-		_, ok = ConvertToFloat64("not a number")
+		_, ok = convertToFloat64("not a number")
 		if ok {
 			t.Error("Converting non-numeric string to float should fail")
 		}
 
-		_, ok = ConvertToBool("maybe")
+		_, ok = convertToBool("maybe")
 		if ok {
 			t.Error("Converting invalid bool string should fail")
 		}

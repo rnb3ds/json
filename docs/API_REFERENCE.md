@@ -136,91 +136,93 @@ value, err := json.Get(data, "users[0].name")
 ### GetString
 
 ```go
-func GetString(jsonStr, path string, cfg ...Config) (string, error)
+func GetString(jsonStr, path string, defaultValue string, cfg ...Config) string
 ```
 
-Retrieves a string value from JSON at the specified path.
+Retrieves a string value from JSON at the specified path. Returns `defaultValue` if path not found or conversion fails. Accepts optional `Config` for validation, security, and caching.
 
 ---
 
 ### GetInt
 
 ```go
-func GetInt(jsonStr, path string, cfg ...Config) (int, error)
+func GetInt(jsonStr, path string, defaultValue int, cfg ...Config) int
 ```
 
-Retrieves an integer value from JSON at the specified path.
+Retrieves an integer value from JSON at the specified path. Returns `defaultValue` if path not found or conversion fails. Accepts optional `Config` for validation, security, and caching.
 
 ---
 
 ### GetFloat
 
 ```go
-func GetFloat(jsonStr, path string, cfg ...Config) (float64, error)
+func GetFloat(jsonStr, path string, defaultValue float64, cfg ...Config) float64
 ```
 
-Retrieves a float64 value from JSON at the specified path.
+Retrieves a float64 value from JSON at the specified path. Returns `defaultValue` if path not found or conversion fails. Accepts optional `Config` for validation, security, and caching.
 
 ---
 
 ### GetBool
 
 ```go
-func GetBool(jsonStr, path string, cfg ...Config) (bool, error)
+func GetBool(jsonStr, path string, defaultValue bool, cfg ...Config) bool
 ```
 
-Retrieves a boolean value from JSON at the specified path.
+Retrieves a boolean value from JSON at the specified path. Returns `defaultValue` if path not found or conversion fails. Accepts optional `Config` for validation, security, and caching.
 
 ---
 
 ### GetArray
 
 ```go
-func GetArray(jsonStr, path string, cfg ...Config) ([]any, error)
+func GetArray(jsonStr, path string, defaultValue []any, cfg ...Config) []any
 ```
 
-Retrieves an array value from JSON at the specified path.
+Retrieves an array value from JSON at the specified path. Returns `defaultValue` if path not found or conversion fails. Accepts optional `Config` for validation, security, and caching.
 
 ---
 
 ### GetObject
 
 ```go
-func GetObject(jsonStr, path string, cfg ...Config) (map[string]any, error)
+func GetObject(jsonStr, path string, defaultValue map[string]any, cfg ...Config) map[string]any
 ```
 
-Retrieves an object value from JSON at the specified path.
+Retrieves an object value from JSON at the specified path. Returns `defaultValue` if path not found or conversion fails. Accepts optional `Config` for validation, security, and caching.
+
+---
+
+### SafeGet
+
+```go
+func SafeGet(jsonStr, path string, cfg ...Config) AccessResult
+```
+
+Performs a type-safe get returning an `AccessResult` with conversion methods (`AsString`, `AsInt`, `AsFloat64`, `AsBool`). Accepts optional `Config` for validation, security, and caching.
+
+**Example:**
+```go
+result := json.SafeGet(data, "user.age")
+if result.Ok() {
+    age, _ := result.AsInt()
+}
+```
 
 ---
 
 ### GetTyped[T]
 
 ```go
-func GetTyped[T any](jsonStr, path string, cfg ...Config) (T, error)
+func GetTyped[T any](jsonStr, path string, defaultValue T, cfg ...Config) T
 ```
 
-Retrieves a typed value from JSON at the specified path using generics.
+Retrieves a typed value from JSON at the specified path using generics. Returns `defaultValue` if path not found or conversion fails. Accepts optional `Config` for validation, security, and caching.
 
 **Example:**
 ```go
-name, err := json.GetTyped[string](data, "user.name")
-numbers, err := json.GetTyped[[]int](data, "scores")
-```
-
----
-
-### GetTypedOr[T]
-
-```go
-func GetTypedOr[T any](jsonStr, path string, defaultValue T, cfg ...Config) T
-```
-
-Retrieves a typed value with a default fallback if path not found or error occurs.
-
-**Example:**
-```go
-name := json.GetTypedOr[string](data, "user.name", "Anonymous")
-age := json.GetTypedOr[int](data, "user.age", 0)
+name := json.GetTyped[string](data, "user.name", "Anonymous")
+age := json.GetTyped[int](data, "user.age", 0)
 ```
 
 ---
@@ -407,6 +409,26 @@ func Compact(dst *bytes.Buffer, src []byte, cfg ...Config) error
 ```
 
 Appends compacted JSON to dst. 100% compatible with encoding/json.Compact. Accepts optional Config.
+
+---
+
+### Indent
+
+```go
+func Indent(dst *bytes.Buffer, src []byte, prefix, indent string, cfg ...Config) error
+```
+
+Appends indented JSON to dst. 100% compatible with encoding/json.Indent. Accepts optional Config.
+
+---
+
+### HTMLEscape
+
+```go
+func HTMLEscape(dst *bytes.Buffer, src []byte, cfg ...Config)
+```
+
+Appends HTML-escaped JSON to dst. 100% compatible with encoding/json.HTMLEscape. Accepts optional Config.
 
 ---
 
@@ -775,25 +797,35 @@ result, err := json.MergeJSON(a, b, cfg)
 
 ---
 
-### MergeJSONMany
+### MergeMany
 
 ```go
-func MergeJSONMany(jsons ...string) (string, error)
-func MergeJSONManyWithConfig(cfg Config, jsons ...string) (string, error)
+func MergeMany(jsons []string, cfg ...Config) (string, error)
 ```
 
-Merges multiple JSON objects. `MergeJSONMany` uses default Union mode. `MergeJSONManyWithConfig` allows custom configuration.
+Merges multiple JSON objects using the unified Config pattern. Uses `Config.MergeMode` to determine the merge strategy (default: `MergeUnion`).
 
 **Example:**
 ```go
 // Union merge (default)
-result, err := json.MergeJSONMany(config1, config2, config3)
+result, err := json.MergeMany([]string{config1, config2, config3})
 
 // Intersection merge with config
 cfg := json.DefaultConfig()
 cfg.MergeMode = json.MergeIntersection
-result, err := json.MergeJSONManyWithConfig(cfg, config1, config2, config3)
+result, err := json.MergeMany([]string{config1, config2, config3}, cfg)
 ```
+
+### MergeJSONMany (Deprecated)
+
+```go
+// Deprecated: Use MergeMany
+func MergeJSONMany(jsons ...string) (string, error)
+// Deprecated: Use MergeMany
+func MergeJSONManyWithConfig(cfg Config, jsons ...string) (string, error)
+```
+
+These functions are kept for backward compatibility. Use `MergeMany` for new code.
 
 ---
 
@@ -857,7 +889,7 @@ Returns a configuration for pretty-printed JSON output.
 ```go
 func (c *Config) Clone() *Config
 func (c *Config) Validate() error
-func (c *Config) GetSecurityLimits() map[string]any
+func (c *Config) getSecurityLimits() map[string]any
 ```
 
 ---

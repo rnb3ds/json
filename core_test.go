@@ -305,9 +305,9 @@ func BenchmarkSet(b *testing.B) {
 	}
 }
 
-// TestArrayExtensionNeededError tests the Error method
-func TestArrayExtensionNeededError(t *testing.T) {
-	err := &arrayExtensionNeededError{
+// TestArrayExtensionSignal tests the Error method
+func TestArrayExtensionSignal(t *testing.T) {
+	err := &arrayExtensionSignal{
 		requiredLength: 10,
 		currentLength:  5,
 		start:          0,
@@ -571,23 +571,21 @@ func TestBoundaryConditions(t *testing.T) {
 			helper.AssertNoError(err)
 			helper.AssertEqual("", result)
 
-			withDefault := GetTypedOr[string](testData, "missing", "default")
+			withDefault := GetTyped[string](testData, "missing", "default")
 			helper.AssertEqual("default", withDefault)
 		})
 
 		t.Run("EmptyArray", func(t *testing.T) {
 			testData := `{"empty": [], "normal": [1, 2, 3]}`
 
-			result, err := GetArray(testData, "empty")
-			helper.AssertNoError(err)
+			result := GetArray(testData, "empty", nil)
 			helper.AssertEqual(0, len(result))
 		})
 
 		t.Run("EmptyObject", func(t *testing.T) {
 			testData := `{"empty": {}, "normal": {"key": "value"}}`
 
-			result, err := GetObject(testData, "empty")
-			helper.AssertNoError(err)
+			result := GetObject(testData, "empty", nil)
 			helper.AssertEqual(0, len(result))
 		})
 
@@ -651,13 +649,13 @@ func TestBoundaryConditions(t *testing.T) {
 		t.Run("ZeroValues", func(t *testing.T) {
 			testData := `{"int_zero": 0, "float_zero": 0.0, "bool_false": false}`
 
-			intZero, _ := GetInt(testData, "int_zero")
+			intZero := GetInt(testData, "int_zero", 0)
 			helper.AssertEqual(0, intZero)
 
-			floatZero, _ := GetFloat(testData, "float_zero")
+			floatZero := GetFloat(testData, "float_zero", 0.0)
 			helper.AssertEqual(0.0, floatZero)
 
-			boolFalse, _ := GetBool(testData, "bool_false")
+			boolFalse := GetBool(testData, "bool_false", false)
 			helper.AssertFalse(boolFalse)
 		})
 	})
@@ -728,8 +726,7 @@ func TestBoundaryConditions(t *testing.T) {
 			}
 			testData := `{"large": [` + strings.Join(elements, ",") + `]}`
 
-			result, err := GetArray(testData, "large")
-			helper.AssertNoError(err)
+			result := GetArray(testData, "large", nil)
 			helper.AssertEqual(1000, len(result))
 		})
 
@@ -770,8 +767,7 @@ func TestBoundaryConditions(t *testing.T) {
 			}
 			testData := `{"many": {` + strings.Join(pairs, ",") + `}}`
 
-			result, err := GetObject(testData, "many")
-			helper.AssertNoError(err)
+			result := GetObject(testData, "many", nil)
 			helper.AssertEqual(100, len(result))
 		})
 
@@ -837,12 +833,10 @@ func TestBoundaryConditions(t *testing.T) {
 	t.Run("BooleanBoundaries", func(t *testing.T) {
 		testData := `{"true": true, "false": false}`
 
-		trueVal, err := GetBool(testData, "true")
-		helper.AssertNoError(err)
+		trueVal := GetBool(testData, "true", false)
 		helper.AssertTrue(trueVal)
 
-		falseVal, err := GetBool(testData, "false")
-		helper.AssertNoError(err)
+		falseVal := GetBool(testData, "false", true)
 		helper.AssertFalse(falseVal)
 
 		conversionTests := []struct {
@@ -866,7 +860,7 @@ func TestBoundaryConditions(t *testing.T) {
 				name = "false"
 			}
 			t.Run("Convert_"+name, func(t *testing.T) {
-				result, ok := ConvertToBool(tt.value)
+				result, ok := convertToBool(tt.value)
 				helper.AssertTrue(ok)
 				helper.AssertEqual(tt.expected, result)
 			})
@@ -876,12 +870,10 @@ func TestBoundaryConditions(t *testing.T) {
 	t.Run("TimestampEdgeCases", func(t *testing.T) {
 		testData := `{"timestamp": "2024-01-15T10:30:00Z", "epoch": 1705319400}`
 
-		timestamp, err := GetString(testData, "timestamp")
-		helper.AssertNoError(err)
+		timestamp := GetString(testData, "timestamp", "")
 		helper.AssertEqual("2024-01-15T10:30:00Z", timestamp)
 
-		epoch, err := GetInt(testData, "epoch")
-		helper.AssertNoError(err)
+		epoch := GetInt(testData, "epoch", 0)
 		helper.AssertEqual(1705319400, epoch)
 	})
 }
@@ -1023,13 +1015,13 @@ func TestConfig_AccessorMethods(t *testing.T) {
 		got      bool
 		expected bool
 	}{
-		{"IsCommentsAllowed", cfg.IsCommentsAllowed(), true},
-		{"ShouldPreserveNumbers", cfg.ShouldPreserveNumbers(), true},
-		{"ShouldCreatePaths", cfg.ShouldCreatePaths(), true},
-		{"ShouldCleanupNulls", cfg.ShouldCleanupNulls(), true},
-		{"ShouldCompactArrays", cfg.ShouldCompactArrays(), true},
-		{"ShouldValidateInput", cfg.ShouldValidateInput(), true},
-		{"ShouldValidateFilePath", cfg.ShouldValidateFilePath(), true},
+		{"IsCommentsAllowed", cfg.isCommentsAllowed(), true},
+		{"ShouldPreserveNumbers", cfg.shouldPreserveNumbers(), true},
+		{"ShouldCreatePaths", cfg.shouldCreatePaths(), true},
+		{"ShouldCleanupNulls", cfg.shouldCleanupNulls(), true},
+		{"ShouldCompactArrays", cfg.shouldCompactArrays(), true},
+		{"ShouldValidateInput", cfg.shouldValidateInput(), true},
+		{"ShouldValidateFilePath", cfg.shouldValidateFilePath(), true},
 	}
 
 	for _, tt := range tests {
@@ -1042,7 +1034,7 @@ func TestConfig_AccessorMethods(t *testing.T) {
 
 	// Test false values
 	cfgFalse := &Config{}
-	if cfgFalse.IsCommentsAllowed() {
+	if cfgFalse.isCommentsAllowed() {
 		t.Error("IsCommentsAllowed should return false for default config")
 	}
 }
@@ -1202,12 +1194,12 @@ func TestConfiguration(t *testing.T) {
 		helper.AssertTrue(config.IsCacheEnabled())
 		helper.AssertEqual(config.MaxCacheSize, config.GetMaxCacheSize())
 		helper.AssertEqual(config.CacheTTL, config.GetCacheTTL())
-		helper.AssertEqual(config.MaxJSONSize, config.GetMaxJSONSize())
-		helper.AssertEqual(config.MaxPathDepth, config.GetMaxPathDepth())
-		helper.AssertEqual(config.MaxConcurrency, config.GetMaxConcurrency())
-		helper.AssertEqual(config.EnableMetrics, config.IsMetricsEnabled())
-		helper.AssertEqual(config.EnableHealthCheck, config.IsHealthCheckEnabled())
-		helper.AssertEqual(config.StrictMode, config.IsStrictMode())
+		helper.AssertEqual(config.MaxJSONSize, config.getMaxJSONSize())
+		helper.AssertEqual(config.MaxPathDepth, config.getMaxPathDepth())
+		helper.AssertEqual(config.MaxConcurrency, config.getMaxConcurrency())
+		helper.AssertEqual(config.EnableMetrics, config.isMetricsEnabled())
+		helper.AssertEqual(config.EnableHealthCheck, config.isHealthCheckEnabled())
+		helper.AssertEqual(config.StrictMode, config.isStrictMode())
 	})
 }
 
@@ -1361,8 +1353,7 @@ func TestConfigurationIntegration(t *testing.T) {
 		// Test with large array
 		largeArrayData := generateLargeArray(10000)
 
-		result, err := GetArray(largeArrayData, "items")
-		helper.AssertNoError(err)
+		result := GetArray(largeArrayData, "items", nil)
 		helper.AssertTrue(len(result) > 0)
 	})
 
@@ -1390,8 +1381,7 @@ func TestConfigurationIntegration(t *testing.T) {
 
 		testData := `{"items": [1, 2, 3, 4, 5]}`
 
-		result, err := processor.GetArray(testData, "items")
-		helper.AssertNoError(err)
+		result := processor.GetArray(testData, "items", nil)
 		helper.AssertEqual(5, len(result))
 	})
 
@@ -2386,72 +2376,72 @@ func TestForwardSlice(t *testing.T) {
 	}
 }
 
-// TestGetOrSlice tests GetTypedOr[[]any] function
+// TestGetOrSlice tests GetTyped[[]any] function
 func TestGetOrSlice(t *testing.T) {
 	jsonStr := `{"items": [1, 2, 3]}`
 	defaultArr := []any{"default"}
 
 	t.Run("existing array", func(t *testing.T) {
-		result := GetTypedOr[[]any](jsonStr, "items", defaultArr)
+		result := GetTyped[[]any](jsonStr, "items", defaultArr)
 		if len(result) != 3 {
 			t.Errorf("GetOr[[]any](items) length = %d; want 3", len(result))
 		}
 	})
 
 	t.Run("missing returns default", func(t *testing.T) {
-		result := GetTypedOr[[]any](jsonStr, "missing", defaultArr)
+		result := GetTyped[[]any](jsonStr, "missing", defaultArr)
 		if len(result) != 1 || result[0] != "default" {
 			t.Errorf("GetOr[[]any](missing) = %v; want default", result)
 		}
 	})
 }
 
-// TestGetOrBool tests GetTypedOr[bool] function
+// TestGetOrBool tests GetTyped[bool] function
 func TestGetOrBool(t *testing.T) {
 	jsonStr := `{"enabled": true, "disabled": false}`
 
 	t.Run("existing true", func(t *testing.T) {
-		result := GetTypedOr[bool](jsonStr, "enabled", false)
+		result := GetTyped[bool](jsonStr, "enabled", false)
 		if result != true {
 			t.Errorf("GetOr[bool](enabled) = %v; want true", result)
 		}
 	})
 
 	t.Run("existing false", func(t *testing.T) {
-		result := GetTypedOr[bool](jsonStr, "disabled", true)
+		result := GetTyped[bool](jsonStr, "disabled", true)
 		if result != false {
 			t.Errorf("GetOr[bool](disabled) = %v; want false", result)
 		}
 	})
 
 	t.Run("missing returns default", func(t *testing.T) {
-		result := GetTypedOr[bool](jsonStr, "missing", true)
+		result := GetTyped[bool](jsonStr, "missing", true)
 		if result != true {
 			t.Errorf("GetOr[bool](missing) = %v; want true", result)
 		}
 	})
 }
 
-// TestGetOrFloat64 tests GetTypedOr[float64] function
+// TestGetOrFloat64 tests GetTyped[float64] function
 func TestGetOrFloat64(t *testing.T) {
 	jsonStr := `{"price": 19.99, "count": 5}`
 
 	t.Run("existing float", func(t *testing.T) {
-		result := GetTypedOr[float64](jsonStr, "price", 0.0)
+		result := GetTyped[float64](jsonStr, "price", 0.0)
 		if result != 19.99 {
 			t.Errorf("GetOr[float64](price) = %f; want 19.99", result)
 		}
 	})
 
 	t.Run("int converted to float", func(t *testing.T) {
-		result := GetTypedOr[float64](jsonStr, "count", 0.0)
+		result := GetTyped[float64](jsonStr, "count", 0.0)
 		if result != 5.0 {
 			t.Errorf("GetOr[float64](count) = %f; want 5.0", result)
 		}
 	})
 
 	t.Run("missing returns default", func(t *testing.T) {
-		result := GetTypedOr[float64](jsonStr, "missing", 99.99)
+		result := GetTyped[float64](jsonStr, "missing", 99.99)
 		if result != 99.99 {
 			t.Errorf("GetOr[float64](missing) = %f; want 99.99", result)
 		}
@@ -2542,20 +2532,20 @@ func TestGetMultiple(t *testing.T) {
 	}
 }
 
-// TestGetOrMap tests GetTypedOr[map[string]any] function
+// TestGetOrMap tests GetTyped[map[string]any] function
 func TestGetOrMap(t *testing.T) {
 	jsonStr := `{"config": {"theme": "dark"}}`
 	defaultObj := map[string]any{"default": true}
 
 	t.Run("existing object", func(t *testing.T) {
-		result := GetTypedOr[map[string]any](jsonStr, "config", defaultObj)
+		result := GetTyped[map[string]any](jsonStr, "config", defaultObj)
 		if result["theme"] != "dark" {
 			t.Errorf("GetOr[map[string]any](config) = %v; want theme=dark", result)
 		}
 	})
 
 	t.Run("missing returns default", func(t *testing.T) {
-		result := GetTypedOr[map[string]any](jsonStr, "missing", defaultObj)
+		result := GetTyped[map[string]any](jsonStr, "missing", defaultObj)
 		if result["default"] != true {
 			t.Errorf("GetOr[map[string]any](missing) = %v; want default", result)
 		}
@@ -2564,9 +2554,9 @@ func TestGetOrMap(t *testing.T) {
 
 // TestGetResultBuffer tests buffer pool operations
 func TestGetResultBuffer(t *testing.T) {
-	buf := GetResultBuffer()
+	buf := getResultBuffer()
 	if buf == nil {
-		t.Fatal("GetResultBuffer returned nil")
+		t.Fatal("getResultBuffer returned nil")
 	}
 
 	*buf = append(*buf, "test data"...)
@@ -2574,7 +2564,7 @@ func TestGetResultBuffer(t *testing.T) {
 		t.Errorf("Buffer content = %q, want %q", string(*buf), "test data")
 	}
 
-	PutResultBuffer(buf)
+	putResultBuffer(buf)
 }
 
 // TestGetStats tests statistics retrieval
@@ -2593,35 +2583,35 @@ func TestGetOr(t *testing.T) {
 	jsonStr := `{"user": {"name": "Alice", "age": 30}}`
 
 	t.Run("existing value", func(t *testing.T) {
-		name := GetTypedOr[string](jsonStr, "user.name", "Unknown")
+		name := GetTyped[string](jsonStr, "user.name", "Unknown")
 		if name != "Alice" {
 			t.Errorf("Expected 'Alice', got '%s'", name)
 		}
 	})
 
 	t.Run("missing value with default", func(t *testing.T) {
-		name := GetTypedOr[string](jsonStr, "user.email", "unknown@example.com")
+		name := GetTyped[string](jsonStr, "user.email", "unknown@example.com")
 		if name != "unknown@example.com" {
 			t.Errorf("Expected default value, got '%s'", name)
 		}
 	})
 
 	t.Run("int with default", func(t *testing.T) {
-		age := GetTypedOr[int](jsonStr, "user.age", 0)
+		age := GetTyped[int](jsonStr, "user.age", 0)
 		if age != 30 {
 			t.Errorf("Expected 30, got %d", age)
 		}
 	})
 
 	t.Run("missing int with default", func(t *testing.T) {
-		score := GetTypedOr[int](jsonStr, "user.score", 100)
+		score := GetTyped[int](jsonStr, "user.score", 100)
 		if score != 100 {
 			t.Errorf("Expected default 100, got %d", score)
 		}
 	})
 }
 
-// TestGetOrGeneric tests the generic GetTypedOr function with generics
+// TestGetOrGeneric tests the generic GetTyped function with generics
 func TestGetOrGeneric(t *testing.T) {
 	jsonStr := `{"user": {"name": "Alice", "age": 30, "active": true}}`
 
@@ -2673,17 +2663,17 @@ func TestGetOrGeneric(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			switch def := tt.defaultValue.(type) {
 			case string:
-				result := GetTypedOr[string](jsonStr, tt.path, def)
+				result := GetTyped[string](jsonStr, tt.path, def)
 				if result != tt.expected.(string) {
 					t.Errorf("GetOr[string](%s) = %v; want %v", tt.path, result, tt.expected)
 				}
 			case int:
-				result := GetTypedOr[int](jsonStr, tt.path, def)
+				result := GetTyped[int](jsonStr, tt.path, def)
 				if result != tt.expected.(int) {
 					t.Errorf("GetOr[int](%s) = %d; want %d", tt.path, result, tt.expected)
 				}
 			case bool:
-				result := GetTypedOr[bool](jsonStr, tt.path, def)
+				result := GetTyped[bool](jsonStr, tt.path, def)
 				if result != tt.expected.(bool) {
 					t.Errorf("GetOr[bool](%s) = %v; want %v", tt.path, result, tt.expected)
 				}
@@ -2998,17 +2988,17 @@ func TestGlobalProcessor_WithPackageFunctions(t *testing.T) {
 	ShutdownGlobalProcessor()
 }
 
-// TestHTMLEscapeBuffer tests HTMLEscapeBuffer function
-func TestHTMLEscapeBuffer(t *testing.T) {
+// TestHTMLEscape tests HTMLEscape function
+func TestHTMLEscape(t *testing.T) {
 	htmlContent := `{"html":"<script>alert('xss')</script>","amp":"a & b"}`
 
 	var buf bytes.Buffer
-	HTMLEscapeBuffer(&buf, []byte(htmlContent))
+	HTMLEscape(&buf, []byte(htmlContent))
 
 	result := buf.String()
 	// Check that HTML characters are escaped
 	if strings.Contains(result, "<script>") {
-		t.Errorf("HTMLEscapeBuffer should escape HTML, got: %s", result)
+		t.Errorf("HTMLEscape should escape HTML, got: %s", result)
 	}
 }
 
@@ -3347,22 +3337,22 @@ func TestHandleStructAccess(t *testing.T) {
 	})
 }
 
-// TestIndentBuffer tests IndentBuffer function
-func TestIndentBuffer(t *testing.T) {
+// TestIndent tests Indent function
+func TestIndent(t *testing.T) {
 	compactJSON := `{"name":"Alice","age":30}`
 
 	var buf bytes.Buffer
-	err := IndentBuffer(&buf, []byte(compactJSON), "", "  ")
+	err := Indent(&buf, []byte(compactJSON), "", "  ")
 	if err != nil {
-		t.Fatalf("IndentBuffer error: %v", err)
+		t.Fatalf("Indent error: %v", err)
 	}
 
 	result := buf.String()
 	if !strings.Contains(result, "\n") {
-		t.Errorf("IndentBuffer should add newlines, got: %s", result)
+		t.Errorf("Indent should add newlines, got: %s", result)
 	}
 	if !strings.Contains(result, "  ") {
-		t.Errorf("IndentBuffer should add indentation, got: %s", result)
+		t.Errorf("Indent should add indentation, got: %s", result)
 	}
 }
 
@@ -3556,15 +3546,15 @@ func TestIsPrimitiveType(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := isPrimitiveType(tt.data)
+			result := internal.IsJSONPrimitive(tt.data)
 			if result != tt.expected {
-				t.Errorf("isPrimitiveType() = %v; want %v", result, tt.expected)
+				t.Errorf("IsJSONPrimitive() = %v; want %v", result, tt.expected)
 			}
 		})
 	}
 }
 
-// TestIsEmptyOrZero tests the IsEmptyOrZero exported function
+// TestisEmptyOrZero tests the isEmptyOrZero exported function
 func TestIsEmptyOrZero(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -3591,9 +3581,9 @@ func TestIsEmptyOrZero(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := IsEmptyOrZero(tt.input)
+			result := isEmptyOrZero(tt.input)
 			if result != tt.expected {
-				t.Errorf("IsEmptyOrZero(%v) = %v; want %v", tt.input, result, tt.expected)
+				t.Errorf("isEmptyOrZero(%v) = %v; want %v", tt.input, result, tt.expected)
 			}
 		})
 	}
@@ -3758,13 +3748,13 @@ func TestNullAndMissingFields(t *testing.T) {
 	})
 
 	t.Run("NullWithDefault", func(t *testing.T) {
-		result := GetTypedOr[string](testData, "null_field", "default")
+		result := GetTyped[string](testData, "null_field", "default")
 		helper.AssertEqual("default", result)
 
-		result = GetTypedOr[string](testData, "missing_field", "default")
+		result = GetTyped[string](testData, "missing_field", "default")
 		helper.AssertEqual("default", result)
 
-		result = GetTypedOr[string](testData, "string_field", "default")
+		result = GetTyped[string](testData, "string_field", "default")
 		helper.AssertEqual("value", result)
 	})
 
@@ -4275,7 +4265,7 @@ func TestPathReconstruction(t *testing.T) {
 			defer processor.putPathSegments(segments)
 
 			segments = processor.splitPath(tt.path, segments)
-			reconstructed := processor.reconstructPath(segments)
+			reconstructed := internal.ReconstructPath(segments)
 
 			if !strings.Contains(reconstructed, tt.contains) {
 				t.Errorf("Reconstructed path '%s' does not contain '%s'", reconstructed, tt.contains)
@@ -5523,9 +5513,9 @@ func TestPropertyValidation(t *testing.T) {
 // TestPutResultBuffer tests returning buffer to pool
 func TestPutResultBuffer(t *testing.T) {
 	t.Run("non-nil buffer", func(t *testing.T) {
-		buf := GetResultBuffer()
+		buf := getResultBuffer()
 		*buf = append(*buf, "data"...)
-		PutResultBuffer(buf)
+		putResultBuffer(buf)
 		// Should not panic
 	})
 }
@@ -6380,10 +6370,7 @@ func TestPathEscapeIntegration(t *testing.T) {
 		jsonStr := `{"user.name": "Alice"}`
 
 		// Access using escaped dot notation (backslash-dot)
-		result, err := GetString(jsonStr, `user\.name`)
-		if err != nil {
-			t.Fatalf("GetString error: %v", err)
-		}
+		result := GetString(jsonStr, `user\.name`, "")
 		if result != "Alice" {
 			t.Errorf("GetString(%q) = %q, want Alice", `user\.name`, result)
 		}
@@ -6393,10 +6380,7 @@ func TestPathEscapeIntegration(t *testing.T) {
 		jsonStr := `{"a.b.c": "nested"}`
 
 		// Access with multiple escaped dots
-		result, err := GetString(jsonStr, `a\.b\.c`)
-		if err != nil {
-			t.Fatalf("GetString error: %v", err)
-		}
+		result := GetString(jsonStr, `a\.b\.c`, "")
 		if result != "nested" {
 			t.Errorf("GetString(%q) = %q, want nested", `a\.b\.c`, result)
 		}
@@ -6406,10 +6390,7 @@ func TestPathEscapeIntegration(t *testing.T) {
 		jsonStr := `{"user.name": {"first": "John", "last": "Doe"}}`
 
 		// Access with escaped dot then normal property
-		result, err := GetString(jsonStr, `user\.name.first`)
-		if err != nil {
-			t.Fatalf("GetString error: %v", err)
-		}
+		result := GetString(jsonStr, `user\.name.first`, "")
 		if result != "John" {
 			t.Errorf("GetString(%q) = %q, want John", `user\.name.first`, result)
 		}
@@ -6425,10 +6406,7 @@ func TestPathEscapeIntegration(t *testing.T) {
 		}
 
 		// Verify the set worked
-		name, err := GetString(result, `user\.name`)
-		if err != nil {
-			t.Fatalf("GetString error: %v", err)
-		}
+		name := GetString(result, `user\.name`, "")
 		if name != "Alice" {
 			t.Errorf("Set did not update value correctly, got %q, want Alice", name)
 		}
@@ -6439,10 +6417,7 @@ func TestPathEscapeIntegration(t *testing.T) {
 		jsonStr := `{"user.name": "Alice"}`
 
 		// Access using JSON Pointer format
-		result, err := GetString(jsonStr, "/user.name")
-		if err != nil {
-			t.Fatalf("GetString error: %v", err)
-		}
+		result := GetString(jsonStr, "/user.name", "")
 		if result != "Alice" {
 			t.Errorf("GetString(%q) = %q, want Alice", "/user.name", result)
 		}

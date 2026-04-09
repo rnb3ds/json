@@ -27,6 +27,13 @@ type MetricsCollector struct {
 	maxConcurrentOps      int64
 	errorsByType          sync.Map
 	startTime             time.Time
+	// errorsMu protects errorsByType during Reset to prevent data race
+	// Uses RWMutex so RecordError (RLock) and Reset (Lock) are properly synchronized
+	errorsMu sync.RWMutex
+	// Cached runtime memory stats to avoid STW on every GetMetrics call.
+	// Refreshed lazily in maybeRefreshMemStats with a minimum interval.
+	lastMemStats   atomic.Int64 // unix nano of last refresh
+	cachedMemStats atomic.Pointer[runtime.MemStats]
 }
 
 // NewMetricsCollector creates a new metrics collector
@@ -34,9 +41,13 @@ func NewMetricsCollector() *MetricsCollector {
 	return &MetricsCollector{
 		errorsByType:      sync.Map{},
 		startTime:         time.Now(),
-		minProcessingTime: 1<<63 - 1, // Max int64 value
+		minProcessingTime: -1, // -1 means not yet recorded
 	}
 }
+
+// memStatsRefreshInterval is the minimum interval between runtime.ReadMemStats calls.
+// This avoids frequent STW pauses while still providing reasonably fresh data.
+const memStatsRefreshInterval = int64(5 * time.Second)
 
 // RecordOperation records a completed operation
 func (mc *MetricsCollector) RecordOperation(duration time.Duration, success bool, memoryUsed int64) {
@@ -52,14 +63,35 @@ func (mc *MetricsCollector) RecordOperation(duration time.Duration, success bool
 	if durationNs > 0 {
 		atomic.AddInt64(&mc.totalProcessingTime, durationNs)
 		updateMax(&mc.maxProcessingTime, durationNs)
-		updateMin(&mc.minProcessingTime, durationNs)
 	}
+	// Always update min (including zero-duration ops) since initial value is 0
+	updateMin(&mc.minProcessingTime, durationNs)
 
 	if memoryUsed > 0 {
 		atomic.AddInt64(&mc.totalMemoryAllocated, memoryUsed)
 		newUsage := atomic.AddInt64(&mc.cumulativeMemoryUsage, memoryUsed)
 		updateMax(&mc.peakMemoryUsage, newUsage)
 	}
+
+	// Lazily refresh cached memory stats to avoid STW in GetMetrics
+	mc.maybeRefreshMemStats()
+}
+
+// maybeRefreshMemStats refreshes the cached runtime.MemStats if enough time has
+// elapsed since the last refresh. Uses CAS to ensure only one goroutine performs
+// the refresh, avoiding duplicate STW pauses.
+func (mc *MetricsCollector) maybeRefreshMemStats() {
+	now := time.Now().UnixNano()
+	last := mc.lastMemStats.Load()
+	if now-last < memStatsRefreshInterval {
+		return
+	}
+	if !mc.lastMemStats.CompareAndSwap(last, now) {
+		return // another goroutine is already refreshing
+	}
+	var ms runtime.MemStats
+	runtime.ReadMemStats(&ms)
+	mc.cachedMemStats.Store(&ms)
 }
 
 // RecordCacheHit records a cache hit
@@ -83,8 +115,11 @@ func (mc *MetricsCollector) EndConcurrentOperation() {
 	atomic.AddInt64(&mc.activeConcurrentOps, -1)
 }
 
-// RecordError records an error by type
+// RecordError records an error by type.
+// Uses RLock to synchronize with Reset() which replaces the entire map.
 func (mc *MetricsCollector) RecordError(errorType string) {
+	mc.errorsMu.RLock()
+	defer mc.errorsMu.RUnlock()
 	actual, _ := mc.errorsByType.LoadOrStore(errorType, new(int64))
 	counter := actual.(*int64)
 	atomic.AddInt64(counter, 1)
@@ -100,6 +135,10 @@ func (mc *MetricsCollector) GetMetrics() Metrics {
 		avgProcessingTime = time.Duration(totalTime / totalOps)
 	}
 
+	// Acquire read lock for consistent snapshot of errorsByType.
+	// Reset() replaces the entire sync.Map under write lock, so without
+	// this we could iterate over a stale/partial map during a reset.
+	mc.errorsMu.RLock()
 	errorsByType := make(map[string]int64)
 	mc.errorsByType.Range(func(key, value any) bool {
 		if k, ok := key.(string); ok {
@@ -109,6 +148,7 @@ func (mc *MetricsCollector) GetMetrics() Metrics {
 		}
 		return true
 	})
+	mc.errorsMu.RUnlock()
 
 	metrics := Metrics{
 		TotalOperations:      totalOps,
@@ -119,7 +159,7 @@ func (mc *MetricsCollector) GetMetrics() Metrics {
 		TotalProcessingTime:  time.Duration(totalTime),
 		AvgProcessingTime:    avgProcessingTime,
 		MaxProcessingTime:    time.Duration(atomic.LoadInt64(&mc.maxProcessingTime)),
-		MinProcessingTime:    time.Duration(atomic.LoadInt64(&mc.minProcessingTime)),
+		MinProcessingTime:    minProcessingTimeToDuration(atomic.LoadInt64(&mc.minProcessingTime)),
 		TotalMemoryAllocated: atomic.LoadInt64(&mc.totalMemoryAllocated),
 		PeakMemoryUsage:      atomic.LoadInt64(&mc.peakMemoryUsage),
 		CurrentMemoryUsage:   atomic.LoadInt64(&mc.cumulativeMemoryUsage),
@@ -129,7 +169,11 @@ func (mc *MetricsCollector) GetMetrics() Metrics {
 		ErrorsByType:         errorsByType,
 	}
 
-	runtime.ReadMemStats(&metrics.RuntimeMemStats)
+	// Use cached memory stats instead of triggering STW with runtime.ReadMemStats.
+	// Stats are refreshed lazily in RecordOperation at most once every 5 seconds.
+	if p := mc.cachedMemStats.Load(); p != nil {
+		metrics.RuntimeMemStats = *p
+	}
 	return metrics
 }
 
@@ -142,13 +186,16 @@ func (mc *MetricsCollector) Reset() {
 	atomic.StoreInt64(&mc.cacheMisses, 0)
 	atomic.StoreInt64(&mc.totalProcessingTime, 0)
 	atomic.StoreInt64(&mc.maxProcessingTime, 0)
-	atomic.StoreInt64(&mc.minProcessingTime, 1<<63-1) // Max int64 value
+	atomic.StoreInt64(&mc.minProcessingTime, -1) // Reset to not-yet-recorded
 	atomic.StoreInt64(&mc.totalMemoryAllocated, 0)
 	atomic.StoreInt64(&mc.peakMemoryUsage, 0)
 	atomic.StoreInt64(&mc.cumulativeMemoryUsage, 0)
 	atomic.StoreInt64(&mc.activeConcurrentOps, 0)
 	atomic.StoreInt64(&mc.maxConcurrentOps, 0)
+	// Atomically replace errorsByType to prevent race with concurrent RecordError
+	mc.errorsMu.Lock()
 	mc.errorsByType = sync.Map{}
+	mc.errorsMu.Unlock()
 	mc.startTime = time.Now()
 }
 
@@ -219,6 +266,15 @@ type Metrics struct {
 	ErrorsByType    map[string]int64 `json:"errors_by_type"`
 }
 
+// minProcessingTimeToDuration converts the stored min value to time.Duration.
+// Returns 0 if no operations have been recorded yet (sentinel: -1).
+func minProcessingTimeToDuration(val int64) time.Duration {
+	if val < 0 {
+		return 0
+	}
+	return time.Duration(val)
+}
+
 // updateMax atomically updates target to value if value is greater
 func updateMax(target *int64, value int64) {
 	for {
@@ -229,11 +285,12 @@ func updateMax(target *int64, value int64) {
 	}
 }
 
-// updateMin atomically updates target to value if value is smaller
+// updateMin atomically updates target to value if value is smaller.
+// Handles sentinel value -1 (meaning "not yet recorded") by always updating.
 func updateMin(target *int64, value int64) {
 	for {
 		current := atomic.LoadInt64(target)
-		if value >= current || atomic.CompareAndSwapInt64(target, current, value) {
+		if current < 0 || value >= current || atomic.CompareAndSwapInt64(target, current, value) {
 			return
 		}
 	}

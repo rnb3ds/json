@@ -30,20 +30,20 @@ import "github.com/cybergodev/json"
 // Get any type
 value, err := json.Get(data, "path")
 
-// Get string
-str, err := json.GetString(data, "user.name")
+// Get string (with default value)
+str := json.GetString(data, "user.name", "unknown")
 
-// Get integer
-num, err := json.GetInt(data, "user.age")
+// Get integer (with default value)
+num := json.GetInt(data, "user.age", 0)
 
-// Get boolean
-flag, err := json.GetBool(data, "user.active")
+// Get boolean (with default value)
+flag := json.GetBool(data, "user.active", false)
 
-// Get float
-price, err := json.GetFloat(data, "product.price")
+// Get float (with default value)
+price := json.GetFloat(data, "product.price", 0.0)
 
-// Get array
-arr, err := json.GetArray(data, "items")
+// Get array (with default value)
+arr := json.GetArray(data, "items", nil)
 
 // Get object
 obj, err := json.GetObject(data, "user.profile")
@@ -52,13 +52,13 @@ obj, err := json.GetObject(data, "user.profile")
 ### Retrieval with Default Values
 
 ```go
-// Recommended: Use GetTypedOr[T] for type-safe defaults
-name := json.GetTypedOr[string](data, "user.name", "Anonymous")
-age := json.GetTypedOr[int](data, "user.age", 0)
-active := json.GetTypedOr[bool](data, "user.active", false)
-price := json.GetTypedOr[float64](data, "product.price", 0.0)
-tags := json.GetTypedOr[[]any](data, "user.tags", []any{})
-settings := json.GetTypedOr[map[string]any](data, "settings", map[string]any{})
+// Recommended: Use GetTyped[T] for type-safe defaults
+name := json.GetTyped[string](data, "user.name", "Anonymous")
+age := json.GetTyped[int](data, "user.age", 0)
+active := json.GetTyped[bool](data, "user.active", false)
+price := json.GetTyped[float64](data, "product.price", 0.0)
+tags := json.GetTyped[[]any](data, "user.tags", []any{})
+settings := json.GetTyped[map[string]any](data, "settings", map[string]any{})
 ```
 
 ### Type-Safe Retrieval (Generics)
@@ -439,16 +439,17 @@ if json.IsValidPath("user.profile.name") {
 ### Recommended Patterns
 
 ```go
-// 1. Check errors
-result, err := json.GetString(data, "user.name")
+// 1. Use Get for error handling
+result, err := json.Get(data, "user.name")
 if err != nil {
     log.Printf("Get failed: %v", err)
     return err
 }
+name := result.(string)
 
-// 2. Use default values (recommended: GetTypedOr[T])
-name := json.GetTypedOr[string](data, "user.name", "Anonymous")
-age := json.GetTypedOr[int](data, "user.age", 0)
+// 2. Use default values (recommended: GetTyped[T])
+name := json.GetTyped[string](data, "user.name", "Anonymous")
+age := json.GetTyped[int](data, "user.age", 0)
 
 // 3. Type checking
 if errors.Is(err, json.ErrTypeMismatch) {

@@ -20,8 +20,8 @@
 //	result, err := json.Set(`{"user":{}}`, "user.age", 30)
 //
 //	// Type-safe operations
-//	name, err := json.GetString(jsonStr, "user.name")
-//	age, err := json.GetInt(jsonStr, "user.age")
+//	name := json.GetString(jsonStr, "user.name", "")
+//	age := json.GetInt(jsonStr, "user.age", 0)
 //
 //	// Advanced processor for complex operations
 //	processor := json.New() // Use default config
@@ -51,6 +51,10 @@ var (
 // init initializes the fallback processor at package load time.
 // SAFETY: Ensures a fallback processor is always available for error recovery.
 func init() {
+	// Align internal error sentinels with root package so that
+	// errors.Is(err, json.ErrPathNotFound) works across package boundaries.
+	internal.SetErrorSentinels(ErrPathNotFound, ErrTypeMismatch, ErrInvalidPath)
+
 	// Single attempt with default config - should always succeed
 	p, err := New()
 	if err != nil {
@@ -278,11 +282,11 @@ type JSONLStats struct {
 //	writer.Write(map[string]any{"name": "Alice", "id": 1})
 //	writer.Write(map[string]any{"name": "Bob", "id": 2})
 type JSONLWriter struct {
-	writer   io.Writer
-	encoder  *json.Encoder
-	lineNum  int
-	err      error
-	bytesOut int64
+	writer    io.Writer
+	escapeHTML bool
+	lineNum   int
+	err       error
+	bytesOut  int64
 }
 
 // NewJSONLWriter creates a new JSONL writer that writes to the provided io.Writer.
@@ -301,11 +305,9 @@ type JSONLWriter struct {
 //	writer := json.NewJSONLWriter(&buf, cfg)
 func NewJSONLWriter(writer io.Writer, cfg ...Config) *JSONLWriter {
 	config := getConfigOrDefault(cfg...)
-	encoder := json.NewEncoder(writer)
-	encoder.SetEscapeHTML(config.EscapeHTML)
 	return &JSONLWriter{
-		writer:  writer,
-		encoder: encoder,
+		writer:     writer,
+		escapeHTML: config.EscapeHTML,
 	}
 }
 
@@ -325,10 +327,26 @@ func (w *JSONLWriter) Write(data any) error {
 		return w.err
 	}
 
-	if err := w.encoder.Encode(data); err != nil {
+	// Marshal to bytes first so we can track exact byte count
+	encoded, err := json.Marshal(data)
+	if err != nil {
 		w.err = err
 		return err
 	}
+
+	// Write encoded JSON + newline
+	n, err := w.writer.Write(encoded)
+	if err != nil {
+		w.err = err
+		return err
+	}
+	w.bytesOut += int64(n)
+	n, err = w.writer.Write([]byte{'\n'})
+	if err != nil {
+		w.err = err
+		return err
+	}
+	w.bytesOut += int64(n)
 
 	w.lineNum++
 	return nil

@@ -95,9 +95,11 @@ func demonstrateErrorClassification() {
 
 	fmt.Println("   Error classification results:")
 	for _, tc := range testCases {
-		isSecurity := json.IsSecurityRelated(tc.err)
-		isUser := json.IsUserError(tc.err)
-		isRetryable := json.IsRetryable(tc.err)
+		isSecurity := errors.Is(tc.err, json.ErrSecurityViolation)
+		isUser := errors.Is(tc.err, json.ErrInvalidJSON) || errors.Is(tc.err, json.ErrPathNotFound) ||
+			errors.Is(tc.err, json.ErrTypeMismatch) || errors.Is(tc.err, json.ErrInvalidPath) ||
+			errors.Is(tc.err, json.ErrUnsupportedPath)
+		isRetryable := errors.Is(tc.err, json.ErrOperationTimeout) || errors.Is(tc.err, json.ErrConcurrencyLimit)
 
 		fmt.Printf("   [%s]\n", tc.name)
 		fmt.Printf("     Security-related: %t\n", isSecurity)
@@ -121,11 +123,16 @@ func demonstrateErrorSuggestions() {
 		json.ErrSecurityViolation,
 	}
 
-	fmt.Println("   Error suggestions:")
+	fmt.Println("   Error suggestions (use errors.Is for matching):")
 	for _, err := range errs {
-		suggestion := json.GetErrorSuggestion(err)
 		fmt.Printf("\n   [%v]\n", err)
-		fmt.Printf("   💡 Suggestion: %s\n", suggestion)
+		if errors.Is(err, json.ErrInvalidJSON) {
+			fmt.Printf("   Suggestion: Check JSON syntax - ensure proper quotes, brackets, and commas\n")
+		} else if errors.Is(err, json.ErrPathNotFound) {
+			fmt.Printf("   Suggestion: Verify the path exists in the JSON structure\n")
+		} else {
+			fmt.Printf("   Suggestion: Check the error message for specific details\n")
+		}
 	}
 }
 
@@ -146,7 +153,7 @@ func demonstrateRetryLogic() {
 
 	fmt.Println("   Retry decision for each error:")
 	for _, test := range testErrors {
-		retryable := json.IsRetryable(test.err)
+		retryable := errors.Is(test.err, json.ErrOperationTimeout) || errors.Is(test.err, json.ErrConcurrencyLimit)
 		action := "Skip retry"
 		if retryable {
 			action = "Attempt retry"

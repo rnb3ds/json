@@ -155,10 +155,10 @@ func demonstrateCacheWarmup() {
 
 	// Now access the warmed paths - should be faster
 	fmt.Println("\n   Accessing warmed paths:")
-	name, _ := json.GetString(jsonStr, "users[0].name")
+	name := json.GetString(jsonStr, "users[0].name", "")
 	fmt.Printf("   - users[0].name: %s\n", name)
 
-	version, _ := json.GetString(jsonStr, "config.version")
+	version := json.GetString(jsonStr, "config.version", "")
 	fmt.Printf("   - config.version: %s\n", version)
 
 	// Clear cache when done with this data

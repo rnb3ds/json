@@ -72,10 +72,9 @@ const (
 	// Internal constant for hash optimization.
 	largeStringHashThreshold = internal.LargeStringHashThreshold
 
-	// MaxPathLength is the maximum allowed path string length (1024).
+	// maxPathLength is the maximum allowed path string length.
 	// Paths longer than this will be rejected for security reasons.
-	// This is a security limit to prevent path traversal attacks.
-	MaxPathLength = internal.MaxPathLength
+	maxPathLength = internal.MaxPathLength
 
 	// DefaultCacheTTL is the default cache entry time-to-live (5 minutes).
 	// Cached values expire after this duration.
@@ -417,52 +416,46 @@ func (c *Config) ValidateWithWarnings() []ConfigWarning {
 }
 
 // Config accessor methods.
-// These methods implement interfaces (CacheConfig, EncoderConfig) and provide
-// consistent API for testing and interface-based programming.
 
 // Required by CacheConfig interface (internal/cache.go) - do not remove.
+// These MUST remain exported for cross-package interface satisfaction.
 func (c *Config) IsCacheEnabled() bool       { return c.EnableCache }
 func (c *Config) GetMaxCacheSize() int       { return c.MaxCacheSize }
 func (c *Config) GetCacheTTL() time.Duration { return c.CacheTTL }
 
-// Convenience accessor methods for testing and interface-based usage.
-// Rationale: These methods enable mock-based testing and potential future
-// interface abstraction. In application code, direct field access is preferred:
-//
-//	cfg.MaxJSONSize instead of cfg.GetMaxJSONSize()
-//	cfg.StrictMode instead of cfg.IsStrictMode()
-func (c *Config) GetMaxJSONSize() int64        { return c.MaxJSONSize }
-func (c *Config) GetMaxPathDepth() int         { return c.MaxPathDepth }
-func (c *Config) GetMaxConcurrency() int       { return c.MaxConcurrency }
-func (c *Config) IsMetricsEnabled() bool       { return c.EnableMetrics }
-func (c *Config) IsHealthCheckEnabled() bool   { return c.EnableHealthCheck }
-func (c *Config) IsStrictMode() bool           { return c.StrictMode }
-func (c *Config) IsCommentsAllowed() bool      { return c.AllowComments }
-func (c *Config) ShouldPreserveNumbers() bool  { return c.PreserveNumbers }
-func (c *Config) ShouldCreatePaths() bool      { return c.CreatePaths }
-func (c *Config) ShouldCleanupNulls() bool     { return c.CleanupNulls }
-func (c *Config) ShouldCompactArrays() bool    { return c.CompactArrays }
-func (c *Config) ShouldValidateInput() bool    { return c.ValidateInput }
-func (c *Config) GetMaxNestingDepth() int      { return c.MaxNestingDepthSecurity }
-func (c *Config) ShouldValidateFilePath() bool { return c.ValidateFilePath }
+// Internal accessor methods.
+// Users should access Config fields directly (e.g., cfg.MaxJSONSize).
+func (c *Config) getMaxJSONSize() int64        { return c.MaxJSONSize }
+func (c *Config) getMaxPathDepth() int         { return c.MaxPathDepth }
+func (c *Config) getMaxConcurrency() int       { return c.MaxConcurrency }
+func (c *Config) isMetricsEnabled() bool       { return c.EnableMetrics }
+func (c *Config) isHealthCheckEnabled() bool   { return c.EnableHealthCheck }
+func (c *Config) isStrictMode() bool           { return c.StrictMode }
+func (c *Config) isCommentsAllowed() bool      { return c.AllowComments }
+func (c *Config) shouldPreserveNumbers() bool  { return c.PreserveNumbers }
+func (c *Config) shouldCreatePaths() bool      { return c.CreatePaths }
+func (c *Config) shouldCleanupNulls() bool     { return c.CleanupNulls }
+func (c *Config) shouldCompactArrays() bool    { return c.CompactArrays }
+func (c *Config) shouldValidateInput() bool    { return c.ValidateInput }
+func (c *Config) getMaxNestingDepth() int      { return c.MaxNestingDepthSecurity }
+func (c *Config) shouldValidateFilePath() bool { return c.ValidateFilePath }
 
-// Required by encoderConfig interface (interfaces.go) for encoders.
-// These methods provide read-only access to encoding configuration.
-func (c *Config) IsHTMLEscapeEnabled() bool      { return c.EscapeHTML }
-func (c *Config) IsPrettyEnabled() bool          { return c.Pretty }
-func (c *Config) GetIndent() string              { return c.Indent }
-func (c *Config) GetPrefix() string              { return c.Prefix }
-func (c *Config) IsSortKeysEnabled() bool        { return c.SortKeys }
-func (c *Config) GetFloatPrecision() int         { return c.FloatPrecision }
-func (c *Config) IsTruncateFloatEnabled() bool   { return c.FloatTruncate }
-func (c *Config) GetMaxDepth() int               { return c.MaxDepth }
-func (c *Config) ShouldIncludeNulls() bool       { return c.IncludeNulls }
-func (c *Config) ShouldValidateUTF8() bool       { return c.ValidateUTF8 }
-func (c *Config) IsDisallowUnknownEnabled() bool { return c.DisallowUnknown }
-func (c *Config) ShouldEscapeUnicode() bool      { return c.EscapeUnicode }
-func (c *Config) ShouldEscapeSlash() bool        { return c.EscapeSlash }
-func (c *Config) ShouldEscapeNewlines() bool     { return c.EscapeNewlines }
-func (c *Config) ShouldEscapeTabs() bool         { return c.EscapeTabs }
+// Required by encoderConfig interface (interfaces.go) for internal use.
+func (c *Config) isHTMLEscapeEnabled() bool      { return c.EscapeHTML }
+func (c *Config) isPrettyEnabled() bool          { return c.Pretty }
+func (c *Config) getIndent() string              { return c.Indent }
+func (c *Config) getPrefix() string              { return c.Prefix }
+func (c *Config) isSortKeysEnabled() bool        { return c.SortKeys }
+func (c *Config) getFloatPrecision() int         { return c.FloatPrecision }
+func (c *Config) isTruncateFloatEnabled() bool   { return c.FloatTruncate }
+func (c *Config) getMaxDepth() int               { return c.MaxDepth }
+func (c *Config) shouldIncludeNulls() bool       { return c.IncludeNulls }
+func (c *Config) shouldValidateUTF8() bool       { return c.ValidateUTF8 }
+func (c *Config) isDisallowUnknownEnabled() bool { return c.DisallowUnknown }
+func (c *Config) shouldEscapeUnicode() bool      { return c.EscapeUnicode }
+func (c *Config) shouldEscapeSlash() bool        { return c.EscapeSlash }
+func (c *Config) shouldEscapeNewlines() bool     { return c.EscapeNewlines }
+func (c *Config) shouldEscapeTabs() bool         { return c.EscapeTabs }
 
 // =============================================================================
 // API Unification - Config presets for common scenarios
@@ -484,7 +477,7 @@ func (c *Config) ShouldEscapeTabs() bool         { return c.EscapeTabs }
 //   - Conservative limits for untrusted payloads
 //   - Caching enabled for repeated operations
 //
-// This function unifies HighSecurityConfig and WebAPIConfig into a single entry point.
+// This function provides a single entry point for security-focused configuration.
 func SecurityConfig() Config {
 	config := DefaultConfig()
 	// Security settings - conservative limits for untrusted input

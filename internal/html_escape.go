@@ -19,8 +19,7 @@ var htmlEscapeBufferPool = sync.Pool{
 // Compatible with encoding/json: escapes <, >, &, U+2028, U+2029.
 //
 // This is the centralized implementation used by:
-//   - json.HTMLEscape() for encoding/json compatibility
-//   - json.HTMLEscapeBuffer() for buffer operations
+//   - json.HTMLEscape() for encoding/json compatibility and buffer operations
 //   - Any other internal components needing HTML escaping
 //
 // PERFORMANCE v2: Uses pooled buffer and byte-level scanning for speed.

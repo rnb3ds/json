@@ -251,8 +251,8 @@ type Decoder struct {
 //	decoder := json.NewDecoder(reader, cfg)
 func NewDecoder(r io.Reader, cfg ...Config) *Decoder {
 	dec := &Decoder{
-		r:         r,
-		buf:       bufio.NewReader(r),
+		r:   r,
+		buf: bufio.NewReader(r),
 	}
 	// Apply config if provided
 	if len(cfg) > 0 {
@@ -435,8 +435,9 @@ func (dec *Decoder) readStringValue(buf *bytes.Buffer) ([]byte, error) {
 	}
 }
 
-// readContainerValue reads a complete JSON object or array
-func (dec *Decoder) readContainerValue(buf *bytes.Buffer, _ byte) ([]byte, error) {
+// readContainerValue reads a complete JSON object or array.
+// openChar is the opening delimiter ('{' or '[') used to validate matching close delimiters.
+func (dec *Decoder) readContainerValue(buf *bytes.Buffer, openChar byte) ([]byte, error) {
 	depth := 1
 	inString := false
 	escaped := false
@@ -445,7 +446,7 @@ func (dec *Decoder) readContainerValue(buf *bytes.Buffer, _ byte) ([]byte, error
 		b, err := dec.buf.ReadByte()
 		if err != nil {
 			if err == io.EOF && buf.Len() > 0 {
-				break
+				return nil, fmt.Errorf("unexpected EOF in JSON container")
 			}
 			return nil, err
 		}
@@ -459,7 +460,7 @@ func (dec *Decoder) readContainerValue(buf *bytes.Buffer, _ byte) ([]byte, error
 
 		if inString {
 			switch b {
-			case '\\':
+			case byte(0x5c):
 				escaped = true
 			case '"':
 				inString = false
@@ -473,6 +474,15 @@ func (dec *Decoder) readContainerValue(buf *bytes.Buffer, _ byte) ([]byte, error
 		case '{', '[':
 			depth++
 		case '}', ']':
+			if depth == 1 {
+				expectedClose := byte('}')
+				if openChar == '[' {
+					expectedClose = ']'
+				}
+				if b != expectedClose {
+					return nil, fmt.Errorf("mismatched JSON delimiters: expected '%c' but got '%c'", expectedClose, b)
+				}
+			}
 			depth--
 			if depth == 0 {
 				result := make([]byte, buf.Len())
@@ -481,10 +491,6 @@ func (dec *Decoder) readContainerValue(buf *bytes.Buffer, _ byte) ([]byte, error
 			}
 		}
 	}
-
-	result := make([]byte, buf.Len())
-	copy(result, buf.Bytes())
-	return result, nil
 }
 
 // readPrimitiveValue reads a JSON primitive (number, boolean, null)
@@ -769,7 +775,7 @@ func needsCustomEncodingOpts(cfg Config) bool {
 
 // Marshal converts any Go value to JSON bytes (similar to json.Marshal)
 // PERFORMANCE: Uses FastEncoder for simple types to avoid reflection overhead
-func (p *Processor) Marshal(value any, opts ...Config) ([]byte, error) {
+func (p *Processor) Marshal(value any, cfg ...Config) ([]byte, error) {
 	if err := p.checkClosed(); err != nil {
 		return nil, err
 	}
@@ -777,14 +783,14 @@ func (p *Processor) Marshal(value any, opts ...Config) ([]byte, error) {
 	// PERFORMANCE: Fast path for simple types - avoid config processing overhead
 	// Uses HTML escaping to match encoding/json behavior
 	// Encodes directly to []byte to avoid string round-trip
-	if len(opts) == 0 {
+	if len(cfg) == 0 {
 		if result, ok := fastEncodeSimpleToBytes(value); ok {
 			return result, nil
 		}
 	}
 
 	// Fallback to full encoding path for complex types or custom options
-	config := getConfigOrDefault(opts...)
+	config := getConfigOrDefault(cfg...)
 	config.EscapeHTML = true
 	jsonStr, err := p.EncodeWithConfig(value, config)
 	if err != nil {
@@ -813,7 +819,7 @@ func (p *Processor) MarshalIndent(value any, prefix, indent string, cfg ...Confi
 // Unmarshal parses the JSON-encoded data and stores the result in the value pointed to by v.
 // This method is fully compatible with encoding/json.Unmarshal.
 // PERFORMANCE: Fast path for simple cases to avoid string conversion overhead.
-func (p *Processor) Unmarshal(data []byte, v any, opts ...Config) error {
+func (p *Processor) Unmarshal(data []byte, v any, cfg ...Config) error {
 	if err := p.checkClosed(); err != nil {
 		return err
 	}
@@ -824,7 +830,7 @@ func (p *Processor) Unmarshal(data []byte, v any, opts ...Config) error {
 
 	// PERFORMANCE: Fast path when no options are provided
 	// Use encoding/json directly to avoid string conversion overhead
-	if len(opts) == 0 {
+	if len(cfg) == 0 {
 		return json.Unmarshal(data, v)
 	}
 
@@ -832,7 +838,7 @@ func (p *Processor) Unmarshal(data []byte, v any, opts ...Config) error {
 	jsonStr := string(data)
 
 	// Use the existing Parse method which handles all the validation and parsing logic
-	return p.Parse(jsonStr, v, opts...)
+	return p.Parse(jsonStr, v, cfg...)
 }
 
 // EncodeStream encodes multiple values as a JSON array stream.
@@ -1672,12 +1678,12 @@ func (e *customEncoder) isEmpty(v reflect.Value) bool {
 }
 
 // ValidateSchema validates JSON data against a schema
-func (p *Processor) ValidateSchema(jsonStr string, schema *Schema, opts ...Config) ([]ValidationError, error) {
+func (p *Processor) ValidateSchema(jsonStr string, schema *Schema, cfg ...Config) ([]ValidationError, error) {
 	if err := p.checkClosed(); err != nil {
 		return nil, err
 	}
 
-	options, err := p.prepareOptions(opts...)
+	options, err := p.prepareOptions(cfg...)
 	if err != nil {
 		return nil, err
 	}
@@ -1698,7 +1704,7 @@ func (p *Processor) ValidateSchema(jsonStr string, schema *Schema, opts ...Confi
 	// Parse JSON
 
 	var data any
-	err = p.Parse(jsonStr, &data, opts...)
+	err = p.Parse(jsonStr, &data, cfg...)
 	if err != nil {
 		return nil, err
 	}
@@ -1875,7 +1881,7 @@ func (p *Processor) validateArray(arr []any, schema *Schema, path string, errors
 // validateString validates a string against a schema with type safety
 func (p *Processor) validateString(str string, schema *Schema, path string, errors *[]ValidationError) {
 	// Length validation
-	strLen := len(str)
+	strLen := utf8.RuneCountInString(str)
 	if schema.HasMinLength() && strLen < schema.MinLength {
 		*errors = append(*errors, ValidationError{
 			Path:    path,
@@ -1974,7 +1980,12 @@ func (p *Processor) validateNumber(value any, schema *Schema, path string, error
 
 	// Multiple of validation
 	if schema.MultipleOf > 0 {
-		if remainder := num / schema.MultipleOf; remainder != float64(int(remainder)) {
+		// Use tolerance-based comparison to handle IEEE 754 floating-point imprecision
+		quotient := num / schema.MultipleOf
+		roundedQuotient := float64(int(quotient + 0.5))
+		remainder := num - schema.MultipleOf*roundedQuotient
+		const epsilon = 1e-9
+		if remainder < -epsilon || remainder > epsilon {
 			*errors = append(*errors, ValidationError{
 				Path:    path,
 				Message: fmt.Sprintf("number %g is not a multiple of %g", num, schema.MultipleOf),

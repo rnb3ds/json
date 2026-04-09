@@ -99,27 +99,27 @@ func demonstrateTypeSafe(data string) {
 	fmt.Println("\n2. Type-Safe Operations")
 	fmt.Println("-----------------------")
 
-	// Type-safe getters with automatic conversion
-	name, _ := json.GetString(data, "user.name")
+	// Type-safe getters with automatic conversion and default values
+	name := json.GetString(data, "user.name", "")
 	fmt.Printf("   Name (string): %s\n", name)
 
-	age, _ := json.GetInt(data, "user.age")
+	age := json.GetInt(data, "user.age", 0)
 	fmt.Printf("   Age (int): %d\n", age)
 
-	balance, _ := json.GetFloat(data, "user.balance")
+	balance := json.GetFloat(data, "user.balance", 0.0)
 	fmt.Printf("   Balance (float64): %.2f\n", balance)
 
-	active, _ := json.GetBool(data, "user.active")
+	active := json.GetBool(data, "user.active", false)
 	fmt.Printf("   Active (bool): %t\n", active)
 
-	tags, _ := json.GetArray(data, "user.tags")
+	tags := json.GetArray(data, "user.tags", nil)
 	fmt.Printf("   Tags (array): %v\n", tags)
 
-	settings, _ := json.GetObject(data, "settings")
+	settings := json.GetObject(data, "settings", nil)
 	fmt.Printf("   Settings (object): %v\n", settings)
 
-	// Generic GetAs for custom types
-	id, _ := json.GetTyped[int](data, "user.id")
+	// Generic GetTyped for custom types with default value
+	id := json.GetTyped[int](data, "user.id", 0)
 	fmt.Printf("   ID (generic): %d\n", id)
 }
 
@@ -129,29 +129,29 @@ func demonstrateSet(data string) {
 
 	// Set simple field
 	updated, _ := json.Set(data, "user.age", 29)
-	newAge, _ := json.GetInt(updated, "user.age")
+	newAge := json.GetInt(updated, "user.age", 0)
 	fmt.Printf("   Updated age: %d\n", newAge)
 
 	// Set nested field
 	updated2, _ := json.Set(data, "settings.theme", "light")
-	newTheme, _ := json.GetString(updated2, "settings.theme")
+	newTheme := json.GetString(updated2, "settings.theme", "")
 	fmt.Printf("   Updated theme: %s\n", newTheme)
 
 	// Set with auto-create paths using fluent config
 	cfg := json.DefaultConfig()
 	cfg.CreatePaths = true
 	updated3, _ := json.Set(data, "user.premium.level", "gold", cfg)
-	level, _ := json.GetString(updated3, "user.premium.level")
+	level := json.GetString(updated3, "user.premium.level", "")
 	fmt.Printf("   New premium level (auto-created): %s\n", level)
 
 	// Set array element
 	updated4, _ := json.Set(data, "user.tags[0]", "VIP")
-	firstTag, _ := json.GetString(updated4, "user.tags[0]")
+	firstTag := json.GetString(updated4, "user.tags[0]", "")
 	fmt.Printf("   Updated first tag: %s\n", firstTag)
 
 	// Append array element
 	updated5, _ := json.Set(data, "user.tags[+]", "Testers")
-	lastTag, _ := json.GetString(updated5, "user.tags[-1]")
+	lastTag := json.GetString(updated5, "user.tags[-1]", "")
 	fmt.Printf("   Append tag: %s\n", lastTag)
 
 }
@@ -165,7 +165,7 @@ func demonstrateArrays(data string) {
 	fmt.Printf("   First two tags: %v\n", firstTwo)
 
 	// Extract all values from array
-	allTags, _ := json.GetArray(data, "user.tags")
+	allTags := json.GetArray(data, "user.tags", nil)
 	fmt.Printf("   All tags: %v, Count: %d\n", allTags, len(allTags))
 
 	// Array with negative indices
@@ -195,9 +195,9 @@ func demonstrateBatch(data string) {
 	updated, _ := json.SetMultiple(data, updates)
 
 	// Verify updates
-	newAge, _ := json.GetInt(updated, "user.age")
-	newTheme, _ := json.GetString(updated, "settings.theme")
-	newActive, _ := json.GetBool(updated, "user.active")
+	newAge := json.GetInt(updated, "user.age", 0)
+	newTheme := json.GetString(updated, "settings.theme", "")
+	newActive := json.GetBool(updated, "user.active", false)
 	fmt.Printf("   After batch set - Age: %d, Theme: %s, Active: %t\n",
 		newAge, newTheme, newActive)
 
@@ -209,7 +209,7 @@ func demonstrateBatch(data string) {
 	cfg := json.DefaultConfig()
 	cfg.CreatePaths = true
 	updated2, _ := json.SetMultiple(data, newUpdates, cfg)
-	logins, _ := json.GetInt(updated2, "user.stats.logins")
+	logins := json.GetInt(updated2, "user.stats.logins", 0)
 	fmt.Printf("   New stats.logins: %d\n", logins)
 }
 

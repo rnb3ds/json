@@ -446,7 +446,7 @@ func (iv *IterableValue) GetString(key string) string {
 		if str, ok := val.(string); ok {
 			return str
 		}
-		return ConvertToString(val)
+		return convertToString(val)
 	case pathTypeSimple:
 		obj, ok := iv.data.(map[string]any)
 		if !ok {
@@ -462,7 +462,7 @@ func (iv *IterableValue) GetString(key string) string {
 			return str
 		}
 
-		return ConvertToString(val)
+		return convertToString(val)
 	}
 	return ""
 }
@@ -477,7 +477,7 @@ func (iv *IterableValue) GetInt(key string) int {
 		if val == nil {
 			return 0
 		}
-		if result, ok := ConvertToInt(val); ok {
+		if result, ok := convertToInt(val); ok {
 			return result
 		}
 		return 0
@@ -492,7 +492,7 @@ func (iv *IterableValue) GetInt(key string) int {
 			return 0
 		}
 
-		if result, ok := ConvertToInt(val); ok {
+		if result, ok := convertToInt(val); ok {
 			return result
 		}
 	}
@@ -509,7 +509,7 @@ func (iv *IterableValue) GetFloat64(key string) float64 {
 		if val == nil {
 			return 0
 		}
-		if result, ok := ConvertToFloat64(val); ok {
+		if result, ok := convertToFloat64(val); ok {
 			return result
 		}
 		return 0
@@ -524,7 +524,7 @@ func (iv *IterableValue) GetFloat64(key string) float64 {
 			return 0
 		}
 
-		if result, ok := ConvertToFloat64(val); ok {
+		if result, ok := convertToFloat64(val); ok {
 			return result
 		}
 	}
@@ -541,7 +541,7 @@ func (iv *IterableValue) GetBool(key string) bool {
 		if val == nil {
 			return false
 		}
-		if result, ok := ConvertToBool(val); ok {
+		if result, ok := convertToBool(val); ok {
 			return result
 		}
 		return false
@@ -556,7 +556,7 @@ func (iv *IterableValue) GetBool(key string) bool {
 			return false
 		}
 
-		if result, ok := ConvertToBool(val); ok {
+		if result, ok := convertToBool(val); ok {
 			return result
 		}
 	}
@@ -696,7 +696,7 @@ func (iv *IterableValue) GetIntWithDefault(key string, defaultValue int) int {
 		if val == nil {
 			return defaultValue
 		}
-		if result, ok := ConvertToInt(val); ok {
+		if result, ok := convertToInt(val); ok {
 			return result
 		}
 		return defaultValue
@@ -711,7 +711,7 @@ func (iv *IterableValue) GetIntWithDefault(key string, defaultValue int) int {
 			return defaultValue
 		}
 
-		if result, ok := ConvertToInt(val); ok {
+		if result, ok := convertToInt(val); ok {
 			return result
 		}
 	}
@@ -728,7 +728,7 @@ func (iv *IterableValue) GetFloat64WithDefault(key string, defaultValue float64)
 		if val == nil {
 			return defaultValue
 		}
-		if result, ok := ConvertToFloat64(val); ok {
+		if result, ok := convertToFloat64(val); ok {
 			return result
 		}
 		return defaultValue
@@ -743,7 +743,7 @@ func (iv *IterableValue) GetFloat64WithDefault(key string, defaultValue float64)
 			return defaultValue
 		}
 
-		if result, ok := ConvertToFloat64(val); ok {
+		if result, ok := convertToFloat64(val); ok {
 			return result
 		}
 	}
@@ -760,7 +760,7 @@ func (iv *IterableValue) GetBoolWithDefault(key string, defaultValue bool) bool 
 		if val == nil {
 			return defaultValue
 		}
-		if result, ok := ConvertToBool(val); ok {
+		if result, ok := convertToBool(val); ok {
 			return result
 		}
 		return defaultValue
@@ -775,7 +775,7 @@ func (iv *IterableValue) GetBoolWithDefault(key string, defaultValue bool) bool 
 			return defaultValue
 		}
 
-		if result, ok := ConvertToBool(val); ok {
+		if result, ok := convertToBool(val); ok {
 			return result
 		}
 	}

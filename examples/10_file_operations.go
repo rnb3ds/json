@@ -121,9 +121,9 @@ func demonstrateLoadFromFile(tempDir string) {
 	fmt.Printf("   ✓ Loaded from: %s\n", filepath.Base(filePath))
 
 	// Process the loaded JSON
-	name, _ := json.GetString(jsonStr, "user")
-	age, _ := json.GetInt(jsonStr, "age")
-	active, _ := json.GetBool(jsonStr, "active")
+	name := json.GetString(jsonStr, "user", "")
+	age := json.GetInt(jsonStr, "age", 0)
+	active := json.GetBool(jsonStr, "active", false)
 
 	fmt.Printf("   User: %s, Age: %d, Active: %t\n", name, age, active)
 }
