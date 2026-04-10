@@ -23,7 +23,7 @@ import (
 // - Path cache warmup
 // - Performance optimization techniques
 //
-// Run: go run -tags=example examples/14_batch_operations.go
+// Run: go run -tags=example examples/13_batch_operations.go
 
 func main() {
 	fmt.Println("⚡ JSON Library - Batch Operations")

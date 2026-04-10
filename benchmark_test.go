@@ -155,31 +155,11 @@ func BenchmarkStringIntern_Batch(b *testing.B) {
 // ----------------------------------------------------------------------------
 
 func generateLargeJSONArray(size int) string {
-	var sb strings.Builder
-	sb.WriteString("[")
-	for i := 0; i < size; i++ {
-		if i > 0 {
-			sb.WriteString(",")
-		}
-		sb.WriteString(fmt.Sprintf(`{"id":%d,"name":"user%d","email":"user%d@example.com","active":true,"score":%.2f}`,
-			i, i, i, float64(i)*1.5))
-	}
-	sb.WriteString("]")
-	return sb.String()
+	return genJSONArrayRaw(size)
 }
 
 func generateLargeJSONObject(size int) string {
-	var sb strings.Builder
-	sb.WriteString("{")
-	for i := 0; i < size; i++ {
-		if i > 0 {
-			sb.WriteString(",")
-		}
-		sb.WriteString(fmt.Sprintf(`"key%d":{"value":%d,"label":"Label %d"}`,
-			i, i, i))
-	}
-	sb.WriteString("}")
-	return sb.String()
+	return genJSONObject(size)
 }
 
 func BenchmarkLargeJSONArray_Parse_1000(b *testing.B) {
@@ -471,15 +451,7 @@ func BenchmarkConcurrent_Marshal(b *testing.B) {
 // ----------------------------------------------------------------------------
 
 func generateDeepNestedJSON(depth int) string {
-	var sb strings.Builder
-	for i := 0; i < depth; i++ {
-		sb.WriteString(fmt.Sprintf(`{"level%d":`, i))
-	}
-	sb.WriteString(`"value"`)
-	for i := 0; i < depth; i++ {
-		sb.WriteString("}")
-	}
-	return sb.String()
+	return genNestedJSONDynamicKeys(depth)
 }
 
 func BenchmarkDeepNesting_Parse_10(b *testing.B) {

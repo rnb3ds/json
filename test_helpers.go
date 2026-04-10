@@ -306,8 +306,6 @@ func (g *testDataGenerator) GenerateInvalidJSON() []string {
 		`{invalid json}`,
 		`{"unclosed": "string}`,
 		`{"trailing": "comma",}`,
-		// Note: JSON allows duplicate keys, last one wins, so this is actually valid
-		// `{"duplicate": 1, "duplicate": 2}`,
 		`{unquoted: "key"}`,
 		`{"number": 123.45.67}`,
 		`{"array": [1, 2, 3,]}`,
@@ -356,4 +354,131 @@ func (ct *concurrencyTester) Run(operation func(workerID, iteration int) error) 
 			ct.t.Errorf("Concurrent operation failed: %v", err)
 		}
 	}
+}
+
+// ============================================================================
+// Shared Test Data Generators
+// ============================================================================
+
+// genJSONArraySize generates a large JSON array wrapped in an object with n items.
+// Produces: {"items": [{"id": 0}, {"id": 1}, ...]}
+func genJSONArraySize(n int) string {
+	var sb strings.Builder
+	sb.WriteString(`{"items": [`)
+	for i := 0; i < n; i++ {
+		if i > 0 {
+			sb.WriteByte(',')
+		}
+		fmt.Fprintf(&sb, `{"id": %d}`, i)
+	}
+	sb.WriteString("]}")
+	return sb.String()
+}
+
+// genJSONArrayRaw generates a raw JSON array with n richly-typed objects.
+// Produces: [{"id":0,"name":"user0",...}, ...]
+func genJSONArrayRaw(n int) string {
+	var sb strings.Builder
+	sb.WriteByte('[')
+	for i := 0; i < n; i++ {
+		if i > 0 {
+			sb.WriteByte(',')
+		}
+		fmt.Fprintf(&sb, `{"id":%d,"name":"user%d","email":"user%d@example.com","active":true,"score":%.2f}`,
+			i, i, i, float64(i)*1.5)
+	}
+	sb.WriteByte(']')
+	return sb.String()
+}
+
+// genJSONObject generates a flat JSON object with n keys.
+// Produces: {"key0":{"value":0,...}, ...}
+func genJSONObject(n int) string {
+	var sb strings.Builder
+	sb.WriteByte('{')
+	for i := 0; i < n; i++ {
+		if i > 0 {
+			sb.WriteByte(',')
+		}
+		fmt.Fprintf(&sb, `"key%d":{"value":%d,"label":"Label %d"}`, i, i, i)
+	}
+	sb.WriteByte('}')
+	return sb.String()
+}
+
+// genNestedJSON generates depth-level nested JSON with a fixed key.
+// Produces: {"a":{"a":...:"leaf"}}
+func genNestedJSON(depth int, leaf string) string {
+	var sb strings.Builder
+	sb.Grow(depth*6 + len(leaf) + depth)
+	for i := 0; i < depth; i++ {
+		sb.WriteString(`{"a":`)
+	}
+	sb.WriteString(`"` + leaf + `"`)
+	for i := 0; i < depth; i++ {
+		sb.WriteByte('}')
+	}
+	return sb.String()
+}
+
+// genNestedJSONDynamicKeys generates depth-level nested JSON with dynamic keys.
+// Produces: {"level0":{"level1":...:"value"}}
+func genNestedJSONDynamicKeys(depth int) string {
+	var sb strings.Builder
+	for i := 0; i < depth; i++ {
+		fmt.Fprintf(&sb, `{"level%d":`, i)
+	}
+	sb.WriteString(`"value"`)
+	for i := 0; i < depth; i++ {
+		sb.WriteByte('}')
+	}
+	return sb.String()
+}
+
+// genLargeJSONBytes generates JSON of approximately targetSize bytes.
+func genLargeJSONBytes(targetSize int) string {
+	var sb strings.Builder
+	sb.Grow(targetSize + 20)
+	sb.WriteString(`{"data": [`)
+	item := `{"value":"data"},`
+	itemLen := len(item)
+	remaining := targetSize - 12
+	for remaining >= itemLen {
+		sb.WriteString(item)
+		remaining -= itemLen
+	}
+	str := sb.String()
+	if len(str) > 0 && str[len(str)-1] == ',' {
+		str = str[:len(str)-1]
+	}
+	return str + `]}`
+}
+
+// genUserFragments generates comma-separated user JSON objects.
+func genUserFragments(count int) string {
+	users := make([]string, count)
+	for i := 0; i < count; i++ {
+		users[i] = fmt.Sprintf(`{"id": %d, "name": "User%d"}`, i, i)
+	}
+	return strings.Join(users, ",")
+}
+
+// genItemFragments generates comma-separated item JSON objects.
+func genItemFragments(count int) string {
+	items := make([]string, count)
+	for i := 0; i < count; i++ {
+		items[i] = fmt.Sprintf(`{"id": %d}`, i)
+	}
+	return strings.Join(items, ",")
+}
+
+// newTestProcessor creates a Processor for test scope and closes it on cleanup.
+func newTestProcessor(t *testing.T) *Processor {
+	t.Helper()
+	p, err := New()
+	if err != nil {
+		t.Fatalf("New(): %v", err)
+	}
+	t.Cleanup(func() { p.Close() })
+	return p
 }

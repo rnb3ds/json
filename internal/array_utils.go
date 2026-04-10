@@ -91,7 +91,7 @@ func NormalizeSlice(start, end, length int) (int, int) {
 func PerformArraySlice(arr []any, start, end, step *int) []any {
 	length := len(arr)
 	if length == 0 {
-		return []any{}
+		return nil
 	}
 
 	startIdx, endIdx, stepVal := 0, length, 1
@@ -99,7 +99,7 @@ func PerformArraySlice(arr []any, start, end, step *int) []any {
 	if step != nil {
 		stepVal = *step
 		if stepVal == 0 {
-			return []any{}
+			return nil
 		}
 	}
 
@@ -126,8 +126,6 @@ func PerformArraySlice(arr []any, start, end, step *int) []any {
 		}
 	}
 
-	var result []any
-
 	if stepVal > 0 {
 		if startIdx < 0 {
 			startIdx = 0
@@ -136,41 +134,34 @@ func PerformArraySlice(arr []any, start, end, step *int) []any {
 			endIdx = length
 		}
 		if startIdx >= endIdx {
-			return []any{}
+			return nil
 		}
 
 		rangeSize := endIdx - startIdx
 		capacity := calculateSliceCapacity(rangeSize, stepVal)
-		if capacity > 0 && capacity <= length {
-			result = make([]any, 0, capacity)
-		} else {
-			result = []any{}
-		}
 
+		result := make([]any, 0, capacity)
 		for i := startIdx; i < endIdx; i += stepVal {
 			result = append(result, arr[i])
 		}
-	} else {
-		if startIdx >= length {
-			startIdx = length - 1
-		}
-		if startIdx < 0 {
-			startIdx = 0
-		}
-
-		rangeSize := startIdx - endIdx
-		capacity := calculateSliceCapacity(rangeSize, -stepVal)
-		if capacity > 0 && capacity <= length {
-			result = make([]any, 0, capacity)
-		} else {
-			result = []any{}
-		}
-
-		for i := startIdx; i > endIdx; i += stepVal {
-			result = append(result, arr[i])
-		}
+		return result
 	}
 
+	// Negative step
+	if startIdx >= length {
+		startIdx = length - 1
+	}
+	if startIdx < 0 {
+		startIdx = 0
+	}
+
+	rangeSize := startIdx - endIdx
+	capacity := calculateSliceCapacity(rangeSize, -stepVal)
+
+	result := make([]any, 0, capacity)
+	for i := startIdx; i > endIdx; i += stepVal {
+		result = append(result, arr[i])
+	}
 	return result
 }
 

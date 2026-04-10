@@ -2,6 +2,7 @@ package json
 
 import (
 	"bytes"
+	"fmt"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -783,4 +784,104 @@ func TestStreamJSONL_IterableValueMethods(t *testing.T) {
 	if results[0]["city"] != "NYC" {
 		t.Errorf("Expected city NYC, got %v", results[0]["city"])
 	}
+}
+
+// TestProcessor_FirstJSONL_NotFound tests FirstJSONL when no match exists
+func TestProcessor_FirstJSONL_NotFound(t *testing.T) {
+	processor, err := New()
+	if err != nil {
+		t.Fatalf("Failed to create processor: %v", err)
+	}
+	defer processor.Close()
+
+	input := `{"name":"Alice"}
+{"name":"Bob"}`
+
+	item, found, err := processor.FirstJSONL(strings.NewReader(input), func(item *IterableValue) bool {
+		return false // never match
+	})
+
+	if err != nil {
+		t.Errorf("Unexpected error: %v", err)
+	}
+	if found {
+		t.Error("Expected found=false when no match")
+	}
+	if item != nil {
+		t.Errorf("Expected nil item, got %v", item)
+	}
+}
+
+// TestProcessor_JSONLEdgeCases tests edge cases for JSONL methods
+func TestProcessor_JSONLEdgeCases(t *testing.T) {
+	processor, err := New()
+	if err != nil {
+		t.Fatalf("Failed to create processor: %v", err)
+	}
+	defer processor.Close()
+
+	t.Run("empty input", func(t *testing.T) {
+		err := processor.StreamJSONL(strings.NewReader(""), func(lineNum int, item *IterableValue) error {
+			t.Error("should not be called on empty input")
+			return nil
+		})
+		if err != nil {
+			t.Errorf("Unexpected error: %v", err)
+		}
+	})
+
+	t.Run("blank lines skipped", func(t *testing.T) {
+		input := "\n\n{\"a\":1}\n\n{\"b\":2}\n\n"
+		var count int
+		err := processor.StreamJSONL(strings.NewReader(input), func(lineNum int, item *IterableValue) error {
+			count++
+			return nil
+		})
+		if err != nil {
+			t.Errorf("Unexpected error: %v", err)
+		}
+		if count != 2 {
+			t.Errorf("Expected 2 items, got %d", count)
+		}
+	})
+
+	t.Run("malformed JSON returns error", func(t *testing.T) {
+		input := "{\"valid\":1}\n{bad json}"
+		err := processor.StreamJSONL(strings.NewReader(input), func(lineNum int, item *IterableValue) error {
+			return nil
+		})
+		if err == nil {
+			t.Error("Expected error for malformed JSON")
+		}
+	})
+
+	t.Run("ForeachJSONL error propagation", func(t *testing.T) {
+		input := "{\"a\":1}\n{\"a\":2}"
+		err := processor.ForeachJSONL(strings.NewReader(input), func(lineNum int, item *IterableValue) error {
+			return fmt.Errorf("stop at line %d", lineNum)
+		})
+		if err == nil || !strings.Contains(err.Error(), "stop at line") {
+			t.Errorf("Expected propagated error, got %v", err)
+		}
+	})
+
+	t.Run("CollectJSONL empty", func(t *testing.T) {
+		items, err := processor.CollectJSONL(strings.NewReader(""))
+		if err != nil {
+			t.Errorf("Unexpected error: %v", err)
+		}
+		if len(items) != 0 {
+			t.Errorf("Expected 0 items, got %d", len(items))
+		}
+	})
+
+	t.Run("MapJSONL error", func(t *testing.T) {
+		input := "{\"a\":1}"
+		_, err := processor.MapJSONL(strings.NewReader(input), func(lineNum int, item *IterableValue) (any, error) {
+			return nil, fmt.Errorf("map error")
+		})
+		if err == nil || !strings.Contains(err.Error(), "map error") {
+			t.Errorf("Expected map error, got %v", err)
+		}
+	})
 }

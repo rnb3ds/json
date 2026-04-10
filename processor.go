@@ -676,16 +676,25 @@ func (p *Processor) SetLogger(logger *slog.Logger) {
 	}
 }
 
-// getLogger safely retrieves the current logger (thread-safe)
+// getLogger safely retrieves the current logger (thread-safe).
+// Returns slog.Default() when called on a nil Processor.
 func (p *Processor) getLogger() *slog.Logger {
+	if p == nil {
+		return slog.Default().With("component", "json-processor")
+	}
 	if l, ok := p.logger.Load().(*slog.Logger); ok {
 		return l
 	}
 	return slog.Default().With("component", "json-processor")
 }
 
-// checkClosed returns an error if the processor is closed or closing
+// checkClosed returns an error if the processor is closed or closing.
+// Returns ErrProcessorClosed when called on a nil Processor to prevent
+// nil-pointer panics on every public method that delegates here.
 func (p *Processor) checkClosed() error {
+	if p == nil {
+		return &JsonsError{Op: "check_closed", Message: "processor is nil", Err: ErrProcessorClosed}
+	}
 	state := atomic.LoadInt32(&p.state)
 	if state != processorStateActive {
 		msg := "processor is closed"

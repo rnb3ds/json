@@ -138,7 +138,7 @@ func TestSecurityValidation(t *testing.T) {
 			defer processor.Close()
 
 			// Generate deeply nested JSON
-			deepJSON := generateDeepNesting(50) // 50 levels
+			deepJSON := genNestedJSON(50, "deep") // 50 levels
 
 			_, err := processor.Get(deepJSON, "a")
 			// SecurityConfig has conservative nesting depth limits
@@ -334,47 +334,7 @@ func TestSecurityEdgeCases(t *testing.T) {
 // Helper functions for test data generation
 
 func generateLargeJSON(size int) string {
-	var sb strings.Builder
-
-	// Pre-allocate to avoid reallocations
-	sb.Grow(size + 20) // Add some buffer
-
-	sb.WriteString(`{"data": [`)
-
-	remaining := size - 12 // len(`{"data": []}`) approximately
-	item := `{"value":"data"},`
-	itemLen := len(item)
-
-	for remaining >= itemLen {
-		sb.WriteString(item)
-		remaining -= itemLen
-	}
-
-	// Remove trailing comma and close
-	str := sb.String()
-	if len(str) > 0 && str[len(str)-1] == ',' {
-		str = str[:len(str)-1]
-	}
-	var result strings.Builder
-	result.Grow(len(str) + 3)
-	result.WriteString(str)
-	result.WriteString(`]}`)
-	return result.String()
-}
-
-func generateDeepNesting(depth int) string {
-	var sb strings.Builder
-	// Pre-allocate: each level adds ~7 chars {"a": and 1 char for }
-	sb.Grow(depth*8 + 10)
-
-	for i := 0; i < depth; i++ {
-		sb.WriteString(`{"a":`)
-	}
-	sb.WriteString(`"deep"`)
-	for i := 0; i < depth; i++ {
-		sb.WriteString(`}`)
-	}
-	return sb.String()
+	return genLargeJSONBytes(size)
 }
 
 // ============================================================================

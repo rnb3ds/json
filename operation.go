@@ -225,7 +225,14 @@ func (p *Processor) cleanupNullValuesWithReconstruction(data any, compactArrays 
 func (p *Processor) cleanupDeletedMarkers(data any) any {
 	switch v := data.(type) {
 	case []any:
-		result := make([]any, 0, len(v))
+		// PERFORMANCE: Count non-deleted elements for precise pre-allocation
+		n := 0
+		for _, item := range v {
+			if item != deletedMarker {
+				n++
+			}
+		}
+		result := make([]any, 0, n)
 		for _, item := range v {
 			if item != deletedMarker {
 				result = append(result, p.cleanupDeletedMarkers(item))
@@ -234,7 +241,7 @@ func (p *Processor) cleanupDeletedMarkers(data any) any {
 		return result
 
 	case map[string]any:
-		result := make(map[string]any)
+		result := make(map[string]any, len(v))
 		for key, value := range v {
 			if value != deletedMarker {
 				result[key] = p.cleanupDeletedMarkers(value)
@@ -2427,7 +2434,7 @@ func (p *Processor) BatchDeleteOptimized(jsonStr string, paths []string) (string
 // ============================================================================
 
 // FastGetMultiple performs multiple Get operations with single parse
-// PERFORMANCE v2: Uses pooled map for results to reduce allocations
+// PERFORMANCE v3: Direct allocation with pre-sized map — avoids pool overhead and double-copy
 func (p *Processor) FastGetMultiple(jsonStr string, paths []string) (map[string]any, error) {
 	if err := p.checkClosed(); err != nil {
 		return nil, err
@@ -2443,15 +2450,15 @@ func (p *Processor) FastGetMultiple(jsonStr string, paths []string) (map[string]
 		return nil, err
 	}
 
-	// Use pooled map internally, then copy to avoid returning pooled data to caller
-	pooled := internal.GetBatchResultsMap(len(paths))
+	// Pre-allocate result map to exact size — single allocation, no pool overhead
+	results := make(map[string]any, len(paths))
 
 	for _, path := range paths {
 		// Fast path for simple access
 		if isSimplePropertyAccess(path) {
 			if obj, ok := data.(map[string]any); ok {
 				if val, exists := obj[path]; exists {
-					pooled[path] = val
+					results[path] = val
 				}
 				continue
 			}
@@ -2460,16 +2467,9 @@ func (p *Processor) FastGetMultiple(jsonStr string, paths []string) (map[string]
 		// Use navigation for complex paths
 		val, err := p.navigateToPath(data, path)
 		if err == nil {
-			pooled[path] = val
+			results[path] = val
 		}
 	}
-
-	// Copy results to a fresh map before returning pooled map to pool
-	results := make(map[string]any, len(pooled))
-	for k, v := range pooled {
-		results[k] = v
-	}
-	internal.PutBatchResultsMap(pooled)
 
 	return results, nil
 }

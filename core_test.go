@@ -8,7 +8,6 @@ import (
 	"io"
 	"math"
 	"os"
-	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -23,15 +22,12 @@ import (
 // Test Helper Functions
 // ============================================================================
 
-// captureStdout captures output written to stdout
-func captureStdout(f func()) string {
-	old := os.Stdout
+// captureOutput captures output written to the given file (os.Stdout or os.Stderr).
+func captureOutput(file **os.File, f func()) string {
+	old := *file
 	r, w, _ := os.Pipe()
-	os.Stdout = w
+	*file = w
 
-	// Run f() in a goroutine to avoid deadlock
-	// If f() writes more than the pipe buffer size, it will block
-	// until io.Copy reads from the pipe
 	done := make(chan struct{})
 	go func() {
 		f()
@@ -42,32 +38,15 @@ func captureStdout(f func()) string {
 	var buf bytes.Buffer
 	io.Copy(&buf, r)
 	<-done
-	os.Stdout = old
+	*file = old
 	return buf.String()
 }
 
-// captureStderr captures output written to stderr
-func captureStderr(f func()) string {
-	old := os.Stderr
-	r, w, _ := os.Pipe()
-	os.Stderr = w
+// captureStdout captures output written to stdout.
+func captureStdout(f func()) string { return captureOutput(&os.Stdout, f) }
 
-	// Run f() in a goroutine to avoid deadlock
-	// If f() writes more than the pipe buffer size, it will block
-	// until io.Copy reads from the pipe
-	done := make(chan struct{})
-	go func() {
-		f()
-		w.Close()
-		close(done)
-	}()
-
-	var buf bytes.Buffer
-	io.Copy(&buf, r)
-	<-done
-	os.Stderr = old
-	return buf.String()
-}
+// captureStderr captures output written to stderr.
+func captureStderr(f func()) string { return captureOutput(&os.Stderr, f) }
 
 // intPtr returns a pointer to an int
 func intPtr(i int) *int {
@@ -95,35 +74,41 @@ func slicesEqual(a, b []any) bool {
 	return true
 }
 
-// generateLargeArray generates a large JSON array for testing
-func generateLargeArray(size int) string {
-	result := `{"items": [`
-	for i := 0; i < size; i++ {
-		if i > 0 {
-			result += ","
-		}
-		result += `{"id": ` + fmt.Sprint(i) + `}`
-	}
-	result += `]}`
-	return result
-}
+// ============================================================================
+// SafeGet API Tests (migrated from api_access_test.go)
+// ============================================================================
 
-// generateUserJSON generates user JSON for testing
-func generateUserJSON(count int) string {
-	users := make([]string, count)
-	for i := 0; i < count; i++ {
-		users[i] = `{"id": ` + fmt.Sprint(i) + `, "name": "User` + fmt.Sprint(i) + `"}`
+func TestSafeGetAPI(t *testing.T) {
+	tests := []struct {
+		name      string
+		jsonStr   string
+		path      string
+		wantExist bool
+		wantType  string
+	}{
+		{"string value", `{"name":"Alice"}`, "name", true, "string"},
+		{"number value", `{"age":30}`, "age", true, "float64"},
+		{"bool value", `{"active":true}`, "active", true, "bool"},
+		{"null value", `{"val":null}`, "val", true, "null"},
+		{"nested path", `{"a":{"b":1}}`, "a.b", true, "float64"},
+		{"array index", `{"a":[1,2]}`, "a[0]", true, "float64"},
+		{"missing path", `{"a":1}`, "missing", false, ""},
+		{"empty json", "", "path", false, ""},
+		{"empty path", `{"a":1}`, "", false, ""},
+		{"invalid json", "invalid", "x", false, ""},
 	}
-	return strings.Join(users, ",")
-}
 
-// generateArrayItems generates array items for testing
-func generateArrayItems(count int) string {
-	items := make([]string, count)
-	for i := 0; i < count; i++ {
-		items[i] = `{"id": ` + fmt.Sprint(i) + `}`
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := SafeGet(tt.jsonStr, tt.path)
+			if result.Exists != tt.wantExist {
+				t.Errorf("SafeGet(%q, %q).Exists = %v, want %v", tt.jsonStr, tt.path, result.Exists, tt.wantExist)
+			}
+			if tt.wantExist && result.Type != tt.wantType {
+				t.Errorf("SafeGet(%q, %q).Type = %q, want %q", tt.jsonStr, tt.path, result.Type, tt.wantType)
+			}
+		})
 	}
-	return strings.Join(items, ",")
 }
 
 // ============================================================================
@@ -1039,38 +1024,6 @@ func TestConfig_AccessorMethods(t *testing.T) {
 	}
 }
 
-func TestConfig_Clone(t *testing.T) {
-	original := Config{
-		EnableCache:     true,
-		MaxCacheSize:    1000,
-		CacheTTL:        time.Minute,
-		MaxJSONSize:     1048576,
-		MaxPathDepth:    50,
-		MaxConcurrency:  10,
-		AllowComments:   true,
-		PreserveNumbers: true,
-	}
-
-	cloned := (&original).Clone()
-
-	// Values should be equal — use reflect.DeepEqual for struct comparison
-	if !reflect.DeepEqual(original, *cloned) {
-		t.Error("Clone should return equal values")
-	}
-
-	// But modifying clone should not affect original
-	cloned.MaxCacheSize = 999
-	if original.MaxCacheSize == 999 {
-		t.Error("Modifying clone should not affect original")
-	}
-	if cloned.EnableCache != original.EnableCache {
-		t.Error("EnableCache should be copied")
-	}
-	if original.MaxCacheSize != 1000 { // original should still be 1000
-		t.Error("Original MaxCacheSize should remain unchanged")
-	}
-}
-
 // TestConfiguration tests configuration creation, validation, and cloning
 func TestConfiguration(t *testing.T) {
 	helper := newTestHelper(t)
@@ -1326,7 +1279,7 @@ func TestConfigurationIntegration(t *testing.T) {
 		defer processor.Close()
 
 		// Test that security limits are enforced
-		deepJSON := generateDeepNesting(30)
+		deepJSON := genNestedJSON(30, "deep")
 
 		_, err := processor.Get(deepJSON, "a")
 		// Should error due to depth limit
@@ -1351,7 +1304,7 @@ func TestConfigurationIntegration(t *testing.T) {
 		defer processor.Close()
 
 		// Test with large array
-		largeArrayData := generateLargeArray(10000)
+		largeArrayData := genJSONArraySize(10000)
 
 		result := GetArray(largeArrayData, "items", nil)
 		helper.AssertTrue(len(result) > 0)
@@ -1460,28 +1413,6 @@ func TestDeleteWithCleanupNullsOption(t *testing.T) {
 			}
 		})
 	}
-}
-
-// TestDeleteWithCleanupNulls tests deletion with cleanup nulls
-func TestDeleteWithCleanupNulls(t *testing.T) {
-	processor, _ := New(DefaultConfig())
-	defer processor.Close()
-
-	t.Run("delete with cleanup", func(t *testing.T) {
-		jsonStr := `{"a": 1, "b": null, "c": 3}`
-		result, err := processor.Delete(jsonStr, "b")
-		if err != nil {
-			t.Fatalf("Delete error: %v", err)
-		}
-		// Verify 'b' is deleted
-		var parsed map[string]any
-		if err := json.Unmarshal([]byte(result), &parsed); err != nil {
-			t.Fatalf("Failed to parse result: %v", err)
-		}
-		if _, exists := parsed["b"]; exists {
-			t.Error("key 'b' should be deleted")
-		}
-	})
 }
 
 func TestDelim_TypeMethods(t *testing.T) {
@@ -2146,120 +2077,74 @@ func TestMultiFieldExtraction(t *testing.T) {
 }
 
 // TestFastDelete tests the FastDelete function
-func TestFastDelete(t *testing.T) {
+func TestFastOperations(t *testing.T) {
 	processor, _ := New()
 	defer processor.Close()
 
-	t.Run("simple property delete", func(t *testing.T) {
-		jsonStr := `{"name": "test", "age": 30}`
-		result, err := processor.FastDelete(jsonStr, "name")
-		if err != nil {
-			t.Fatalf("FastDelete error: %v", err)
+	t.Run("FastDelete", func(t *testing.T) {
+		tests := []struct {
+			name, json, path string
+		}{
+			{"simple", `{"name":"test","age":30}`, "name"},
+			{"nested", `{"user":{"name":"test","email":"t@e.com"}}`, "user.email"},
+			{"array", `{"items":[1,2,3]}`, "items[1]"},
 		}
-		if result == "" {
-			t.Error("FastDelete returned empty result")
-		}
-	})
-
-	t.Run("nested property delete", func(t *testing.T) {
-		jsonStr := `{"user": {"name": "test", "email": "test@example.com"}}`
-		result, err := processor.FastDelete(jsonStr, "user.email")
-		if err != nil {
-			t.Fatalf("FastDelete error: %v", err)
-		}
-		if result == "" {
-			t.Error("FastDelete returned empty result")
-		}
-	})
-
-	t.Run("delete array element", func(t *testing.T) {
-		jsonStr := `{"items": [1, 2, 3]}`
-		result, err := processor.FastDelete(jsonStr, "items[1]")
-		if err != nil {
-			t.Fatalf("FastDelete error: %v", err)
-		}
-		if result == "" {
-			t.Error("FastDelete returned empty result")
-		}
-	})
-}
-
-// TestFastGetMultiple tests the FastGetMultiple function
-func TestFastGetMultiple(t *testing.T) {
-	processor, _ := New()
-	defer processor.Close()
-
-	t.Run("get multiple paths", func(t *testing.T) {
-		jsonStr := `{"a": 1, "b": 2, "c": 3}`
-		paths := []string{"a", "b", "c"}
-		results, err := processor.FastGetMultiple(jsonStr, paths)
-		if err != nil {
-			t.Fatalf("FastGetMultiple error: %v", err)
-		}
-		if len(results) != 3 {
-			t.Errorf("FastGetMultiple returned %d results, want 3", len(results))
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				result, err := processor.FastDelete(tt.json, tt.path)
+				if err != nil {
+					t.Fatalf("FastDelete error: %v", err)
+				}
+				if result == "" {
+					t.Error("FastDelete returned empty result")
+				}
+			})
 		}
 	})
 
-	t.Run("empty paths", func(t *testing.T) {
-		jsonStr := `{"a": 1}`
-		paths := []string{}
-		results, err := processor.FastGetMultiple(jsonStr, paths)
-		if err != nil {
-			t.Fatalf("FastGetMultiple error: %v", err)
+	t.Run("FastGetMultiple", func(t *testing.T) {
+		tests := []struct {
+			name        string
+			json        string
+			paths       []string
+			expectedLen int
+		}{
+			{"multiple", `{"a":1,"b":2,"c":3}`, []string{"a", "b", "c"}, 3},
+			{"empty", `{"a":1}`, []string{}, 0},
 		}
-		if len(results) != 0 {
-			t.Errorf("FastGetMultiple returned %d results, want 0", len(results))
-		}
-	})
-}
-
-// TestFastSet tests the FastSet function
-func TestFastSet(t *testing.T) {
-	processor, _ := New()
-	defer processor.Close()
-
-	t.Run("simple property set", func(t *testing.T) {
-		jsonStr := `{"name": "old"}`
-		result, err := processor.FastSet(jsonStr, "name", "new")
-		if err != nil {
-			t.Fatalf("FastSet error: %v", err)
-		}
-		if result == "" {
-			t.Error("FastSet returned empty result")
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				results, err := processor.FastGetMultiple(tt.json, tt.paths)
+				if err != nil {
+					t.Fatalf("FastGetMultiple error: %v", err)
+				}
+				if len(results) != tt.expectedLen {
+					t.Errorf("FastGetMultiple returned %d results, want %d", len(results), tt.expectedLen)
+				}
+			})
 		}
 	})
 
-	t.Run("nested property set", func(t *testing.T) {
-		jsonStr := `{"user": {"name": "old"}}`
-		result, err := processor.FastSet(jsonStr, "user.name", "new")
-		if err != nil {
-			t.Fatalf("FastSet error: %v", err)
+	t.Run("FastSet", func(t *testing.T) {
+		tests := []struct {
+			name, json, path string
+			value            any
+		}{
+			{"simple", `{"name":"old"}`, "name", "new"},
+			{"nested", `{"user":{"name":"old"}}`, "user.name", "new"},
+			{"new_prop", `{"name":"test"}`, "age", 30},
+			{"array", `{"items":[1,2,3]}`, "items[1]", 10},
 		}
-		if result == "" {
-			t.Error("FastSet returned empty result")
-		}
-	})
-
-	t.Run("set new property", func(t *testing.T) {
-		jsonStr := `{"name": "test"}`
-		result, err := processor.FastSet(jsonStr, "age", 30)
-		if err != nil {
-			t.Fatalf("FastSet error: %v", err)
-		}
-		if result == "" {
-			t.Error("FastSet returned empty result")
-		}
-	})
-
-	t.Run("set array element", func(t *testing.T) {
-		jsonStr := `{"items": [1, 2, 3]}`
-		result, err := processor.FastSet(jsonStr, "items[1]", 10)
-		if err != nil {
-			t.Fatalf("FastSet error: %v", err)
-		}
-		if result == "" {
-			t.Error("FastSet returned empty result")
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				result, err := processor.FastSet(tt.json, tt.path, tt.value)
+				if err != nil {
+					t.Fatalf("FastSet error: %v", err)
+				}
+				if result == "" {
+					t.Error("FastSet returned empty result")
+				}
+			})
 		}
 	})
 }
@@ -4578,12 +4463,14 @@ func TestPreprocessPath(t *testing.T) {
 }
 
 // TestPrintE tests PrintE function
-func TestPrintE(t *testing.T) {
-	t.Run("valid data", func(t *testing.T) {
+func TestPrintFunctions(t *testing.T) {
+	data := map[string]any{"test": "value"}
+	badData := make(chan int)
+
+	t.Run("PrintE valid", func(t *testing.T) {
 		output := captureStdout(func() {
-			err := PrintE(map[string]any{"test": "value"})
-			if err != nil {
-				t.Errorf("PrintE returned unexpected error: %v", err)
+			if err := PrintE(data); err != nil {
+				t.Errorf("PrintE error: %v", err)
 			}
 		})
 		if !strings.Contains(output, "test") || !strings.Contains(output, "value") {
@@ -4591,33 +4478,23 @@ func TestPrintE(t *testing.T) {
 		}
 	})
 
-	t.Run("invalid data returns error", func(t *testing.T) {
-		err := PrintE(make(chan int))
-		if err == nil {
+	t.Run("PrintE invalid", func(t *testing.T) {
+		if err := PrintE(badData); err == nil {
 			t.Error("PrintE should return error for unserializable data")
 		}
 	})
-}
 
-func TestPrintError(t *testing.T) {
-	// Test that Print handles errors by writing to stderr
-	stderr := captureStderr(func() {
-		// Channel is not serializable, should cause an error
-		Print(make(chan int))
+	t.Run("PrintError stderr", func(t *testing.T) {
+		stderr := captureStderr(func() { Print(badData) })
+		if stderr == "" {
+			t.Error("Print() should write error to stderr for unserializable data")
+		}
 	})
 
-	if stderr == "" {
-		t.Error("Print() should write error to stderr for unserializable data")
-	}
-}
-
-// TestPrintPrettyE tests PrintPrettyE function
-func TestPrintPrettyE(t *testing.T) {
-	t.Run("valid data", func(t *testing.T) {
+	t.Run("PrintPrettyE valid", func(t *testing.T) {
 		output := captureStdout(func() {
-			err := PrintPrettyE(map[string]any{"test": "value"})
-			if err != nil {
-				t.Errorf("PrintPrettyE returned unexpected error: %v", err)
+			if err := PrintPrettyE(data); err != nil {
+				t.Errorf("PrintPrettyE error: %v", err)
 			}
 		})
 		if !strings.Contains(output, "\n") {
@@ -4625,24 +4502,18 @@ func TestPrintPrettyE(t *testing.T) {
 		}
 	})
 
-	t.Run("invalid data returns error", func(t *testing.T) {
-		err := PrintPrettyE(make(chan int))
-		if err == nil {
+	t.Run("PrintPrettyE invalid", func(t *testing.T) {
+		if err := PrintPrettyE(badData); err == nil {
 			t.Error("PrintPrettyE should return error for unserializable data")
 		}
 	})
-}
 
-func TestPrintPrettyError(t *testing.T) {
-	// Test that PrintPretty handles errors by writing to stderr
-	stderr := captureStderr(func() {
-		// Channel is not serializable, should cause an error
-		PrintPretty(make(chan int))
+	t.Run("PrintPrettyError stderr", func(t *testing.T) {
+		stderr := captureStderr(func() { PrintPretty(badData) })
+		if stderr == "" {
+			t.Error("PrintPretty() should write error to stderr for unserializable data")
+		}
 	})
-
-	if stderr == "" {
-		t.Error("PrintPretty() should write error to stderr for unserializable data")
-	}
 }
 
 // TestProcessBatch tests batch processing

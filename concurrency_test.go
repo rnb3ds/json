@@ -8,181 +8,140 @@ import (
 	"github.com/cybergodev/json/internal"
 )
 
-// TestConcurrentPathTypeCache tests concurrent access to pathTypeCacheShards
-func TestConcurrentPathTypeCache(t *testing.T) {
-	var wg sync.WaitGroup
-	concurrency := 20
-	iterations := 100
+// TestConcurrentCacheSafety tests concurrent access to various caches and
+// shared state. All caches follow the same access pattern, so they are
+// consolidated into a single table-driven test.
+func TestConcurrentCacheSafety(t *testing.T) {
+	cache := internal.GetGlobalCompiledPathCache()
 
-	paths := []string{
-		"simple",
-		"nested.path",
-		"array[0]",
-		"complex.nested[1].key",
-		"very.deep.nested.path.with.many.segments",
-	}
-
-	for i := 0; i < concurrency; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for j := 0; j < iterations; j++ {
-				for _, path := range paths {
+	tests := []struct {
+		name        string
+		concurrency int
+		iterations  int
+		workload    func(workerID, iteration int) error
+	}{
+		{
+			name:        "PathTypeCache",
+			concurrency: 20,
+			iterations:  100,
+			workload: func(_, _ int) error {
+				for _, path := range []string{"simple", "nested.path", "array[0]", "complex.nested[1].key", "very.deep.nested.path.with.many.segments"} {
 					_ = getPathType(path)
 				}
-			}
-		}()
-	}
-	wg.Wait()
-}
-
-// TestConcurrentKeyInternMap tests concurrent access to key interning
-func TestConcurrentKeyInternMap(t *testing.T) {
-	var wg sync.WaitGroup
-	concurrency := 20
-	iterations := 100
-
-	keys := []string{
-		"id",
-		"name",
-		"value",
-		"timestamp",
-		"metadata",
-	}
-
-	for i := 0; i < concurrency; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for j := 0; j < iterations; j++ {
-				for _, key := range keys {
+				return nil
+			},
+		},
+		{
+			name:        "KeyInternMap",
+			concurrency: 20,
+			iterations:  100,
+			workload: func(_, _ int) error {
+				for _, key := range []string{"id", "name", "value", "timestamp", "metadata"} {
 					internKey(key)
 				}
-			}
-		}()
-	}
-	wg.Wait()
-}
-
-// TestConcurrentDefaultProcessor tests concurrent access to default processor
-func TestConcurrentDefaultProcessor(t *testing.T) {
-	var wg sync.WaitGroup
-	concurrency := 20
-
-	for i := 0; i < concurrency; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			p := getDefaultProcessor()
-			if p == nil {
-				t.Error("Expected non-nil processor")
-				return
-			}
-			_, err := p.Get(`{"test": 1}`, "test")
-			if err != nil {
-				t.Errorf("Get failed: %v", err)
-			}
-		}()
-	}
-	wg.Wait()
-}
-
-// TestConcurrentPathSegmentCache tests concurrent access to GlobalPathIntern
-func TestConcurrentPathSegmentCache(t *testing.T) {
-	var wg sync.WaitGroup
-	concurrency := 20
-	iterations := 50
-
-	paths := []string{
-		"simple",
-		"nested.path",
-		"array[0].item",
-	}
-
-	for i := 0; i < concurrency; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for j := 0; j < iterations; j++ {
-				for _, path := range paths {
+				return nil
+			},
+		},
+		{
+			name:        "DefaultProcessor",
+			concurrency: 20,
+			iterations:  1,
+			workload: func(_, _ int) error {
+				p := getDefaultProcessor()
+				if p == nil {
+					return errPtr("expected non-nil processor")
+				}
+				_, err := p.Get(`{"test": 1}`, "test")
+				return err
+			},
+		},
+		{
+			name:        "PathSegmentCache",
+			concurrency: 20,
+			iterations:  50,
+			workload: func(_, _ int) error {
+				for _, path := range []string{"simple", "nested.path", "array[0].item"} {
 					if segments, ok := internal.GlobalPathIntern.Get(path); ok {
 						if len(segments) == 0 {
-							t.Errorf("Empty segments for path %s", path)
+							return errPtr("empty segments for path " + path)
 						}
 					}
 				}
-			}
-		}()
-	}
-	wg.Wait()
-}
-
-// TestConcurrentCompiledPathCache tests concurrent access to globalCompiledPathCache
-func TestConcurrentCompiledPathCache(t *testing.T) {
-	cache := internal.GetGlobalCompiledPathCache()
-	var wg sync.WaitGroup
-	concurrency := 20
-	iterations := 50
-
-	paths := []string{
-		"simple",
-		"nested.path",
-		"array[0]",
-	}
-
-	for i := 0; i < concurrency; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for j := 0; j < iterations; j++ {
-				for _, path := range paths {
+				return nil
+			},
+		},
+		{
+			name:        "CompiledPathCache",
+			concurrency: 20,
+			iterations:  50,
+			workload: func(_, _ int) error {
+				for _, path := range []string{"simple", "nested.path", "array[0]"} {
 					cp, err := cache.Get(path)
 					if err != nil {
-						t.Errorf("Get failed for path %s: %v", path, err)
-						continue
+						return err
 					}
 					if cp == nil {
-						t.Errorf("expected non-nil CompiledPath for %s", path)
+						return errPtr("nil CompiledPath for " + path)
 					}
 					cp.Release()
 				}
-			}
-		}()
-	}
-	wg.Wait()
-}
-
-// TestConcurrentValidationCache tests concurrent access to security validator cache
-func TestConcurrentValidationCache(t *testing.T) {
-	p, err := New()
-	if err != nil {
-		t.Fatalf("Failed to create processor: %v", err)
-	}
-	defer p.Close()
-
-	var wg sync.WaitGroup
-	concurrency := 10
-	iterations := 50
-
-	jsonStrings := []string{
-		`{"test": 1}`,
-		`{"nested": {"key": "value"}}`,
-		`{"array": [1, 2, 3]}`,
-	}
-
-	for i := 0; i < concurrency; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for j := 0; j < iterations; j++ {
-				for _, jsonStr := range jsonStrings {
+				return nil
+			},
+		},
+		{
+			name:        "ValidationCache",
+			concurrency: 10,
+			iterations:  50,
+			workload: func(_, _ int) error {
+				p, err := New()
+				if err != nil {
+					return err
+				}
+				defer p.Close()
+				for _, jsonStr := range []string{`{"test": 1}`, `{"nested": {"key": "value"}}`, `{"array": [1, 2, 3]}`} {
 					_, err := p.Get(jsonStr, "test")
 					if err != nil && !strings.Contains(err.Error(), "not found") {
-						t.Errorf("Get failed: %v", err)
+						return err
 					}
 				}
-			}
-		}()
+				return nil
+			},
+		},
 	}
-	wg.Wait()
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var wg sync.WaitGroup
+			errCh := make(chan error, tt.concurrency)
+
+			for i := 0; i < tt.concurrency; i++ {
+				wg.Add(1)
+				go func(workerID int) {
+					defer wg.Done()
+					for j := 0; j < tt.iterations; j++ {
+						if err := tt.workload(workerID, j); err != nil {
+							select {
+							case errCh <- err:
+							default:
+							}
+							return
+						}
+					}
+				}(i)
+			}
+
+			wg.Wait()
+			close(errCh)
+			for err := range errCh {
+				t.Errorf("concurrent %s failed: %v", tt.name, err)
+			}
+		})
+	}
 }
+
+// errPtr is a helper to create an error from a string for use in table-driven tests.
+func errPtr(msg string) error { return &testErr{msg: msg} }
+
+type testErr struct{ msg string }
+
+func (e *testErr) Error() string { return e.msg }

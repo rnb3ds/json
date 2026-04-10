@@ -22,20 +22,27 @@ var (
 	ErrInvalidPath error = errors.New("invalid path format")
 )
 
+// errorSentinelsOnce ensures SetErrorSentinels writes values exactly once,
+// preventing data races if called concurrently after init.
+var errorSentinelsOnce sync.Once
+
 // SetErrorSentinels sets the error sentinel values used by compiled path operations.
 // The root package calls this during initialization to ensure errors.Is() works
 // correctly across package boundaries. Without this, users cannot match internal
 // errors against the public json.ErrPathNotFound, json.ErrTypeMismatch, etc.
+// Safe for concurrent use — only the first call takes effect.
 func SetErrorSentinels(pathNotFound, typeMismatch, invalidPath error) {
-	if pathNotFound != nil {
-		ErrPathNotFound = pathNotFound
-	}
-	if typeMismatch != nil {
-		ErrTypeMismatch = typeMismatch
-	}
-	if invalidPath != nil {
-		ErrInvalidPath = invalidPath
-	}
+	errorSentinelsOnce.Do(func() {
+		if pathNotFound != nil {
+			ErrPathNotFound = pathNotFound
+		}
+		if typeMismatch != nil {
+			ErrTypeMismatch = typeMismatch
+		}
+		if invalidPath != nil {
+			ErrInvalidPath = invalidPath
+		}
+	})
 }
 
 // ============================================================================

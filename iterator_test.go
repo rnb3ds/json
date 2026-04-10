@@ -1549,3 +1549,137 @@ func TestWarmupPathCacheWithProcessor(t *testing.T) {
 	warmupPathCacheWith(nil, paths)     // nil processor
 	warmupPathCacheWith(processor, nil) // nil paths
 }
+
+// TestIterableValueIsNullAndEmptyData tests IsNullData and IsEmptyData (companion methods)
+func TestIterableValueIsNullAndEmptyData(t *testing.T) {
+	t.Run("IsNullData", func(t *testing.T) {
+		if !newIterableValue(nil).IsNullData() {
+			t.Error("IsNullData should return true for nil data")
+		}
+		if newIterableValue(map[string]any{"a": 1}).IsNullData() {
+			t.Error("IsNullData should return false for non-nil data")
+		}
+	})
+
+	t.Run("IsEmptyData", func(t *testing.T) {
+		tests := []struct {
+			data any
+			want bool
+		}{
+			{nil, true},
+			{[]any{}, true},
+			{map[string]any{}, true},
+			{"", true},
+			{[]any{1}, false},
+			{map[string]any{"a": 1}, false},
+			{"x", false},
+			{42, false},
+		}
+		for _, tt := range tests {
+			iv := newIterableValue(tt.data)
+			if got := iv.IsEmptyData(); got != tt.want {
+				t.Errorf("IsEmptyData(%v) = %v, want %v", tt.data, got, tt.want)
+			}
+		}
+	})
+}
+
+// TestIterableValueForeachNested tests ForeachNested iteration
+func TestIterableValueForeachNested(t *testing.T) {
+	t.Run("iterate array", func(t *testing.T) {
+		data := map[string]any{
+			"items": []any{1, 2, 3},
+		}
+		iv := newIterableValue(data)
+
+		var count int
+		iv.ForeachNested("items", func(key any, item *IterableValue) {
+			count++
+		})
+		if count != 3 {
+			t.Fatalf("expected 3 iterations, got %d", count)
+		}
+	})
+
+	t.Run("iterate root", func(t *testing.T) {
+		data := map[string]any{"x": 1}
+		iv := newIterableValue(data)
+
+		count := 0
+		iv.ForeachNested("", func(key any, item *IterableValue) {
+			count++
+		})
+		if count != 1 {
+			t.Fatalf("expected 1 iteration, got %d", count)
+		}
+	})
+
+	t.Run("invalid path", func(t *testing.T) {
+		data := map[string]any{"a": 1}
+		iv := newIterableValue(data)
+
+		count := 0
+		iv.ForeachNested("missing.path", func(key any, item *IterableValue) {
+			count++
+		})
+		if count != 0 {
+			t.Fatalf("expected 0 iterations for invalid path, got %d", count)
+		}
+	})
+}
+
+// TestIterableValueWithDefaultComplexPath tests *WithDefault methods with complex paths
+func TestIterableValueWithDefaultComplexPath(t *testing.T) {
+	data := map[string]any{
+		"user": map[string]any{
+			"name":   "Alice",
+			"age":    float64(30),
+			"active": true,
+			"score":  float64(95.5),
+		},
+	}
+	iv := newIterableValue(data)
+
+	t.Run("GetStringWithDefault complex", func(t *testing.T) {
+		if got := iv.GetStringWithDefault("user.name", "N/A"); got != "Alice" {
+			t.Errorf("got %q, want Alice", got)
+		}
+		if got := iv.GetStringWithDefault("user.missing", "N/A"); got != "N/A" {
+			t.Errorf("got %q, want N/A", got)
+		}
+	})
+
+	t.Run("GetIntWithDefault complex", func(t *testing.T) {
+		if got := iv.GetIntWithDefault("user.age", 0); got != 30 {
+			t.Errorf("got %d, want 30", got)
+		}
+		if got := iv.GetIntWithDefault("user.missing", -1); got != -1 {
+			t.Errorf("got %d, want -1", got)
+		}
+	})
+
+	t.Run("GetFloat64WithDefault complex", func(t *testing.T) {
+		if got := iv.GetFloat64WithDefault("user.score", 0); got != 95.5 {
+			t.Errorf("got %f, want 95.5", got)
+		}
+		if got := iv.GetFloat64WithDefault("user.missing", -1.0); got != -1.0 {
+			t.Errorf("got %f, want -1", got)
+		}
+	})
+
+	t.Run("GetBoolWithDefault complex", func(t *testing.T) {
+		if got := iv.GetBoolWithDefault("user.active", false); got != true {
+			t.Errorf("got %v, want true", got)
+		}
+		if got := iv.GetBoolWithDefault("user.missing", true); got != true {
+			t.Errorf("got %v, want true (default)", got)
+		}
+	})
+
+	t.Run("GetWithDefault complex nil data", func(t *testing.T) {
+		iv := newIterableValue("string data")
+		if got := iv.GetWithDefault("any.key", "fallback"); got != "fallback" {
+			t.Errorf("got %v, want fallback", got)
+		}
+	})
+}

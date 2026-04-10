@@ -1842,7 +1842,7 @@ func TestProcessorConcurrencyComprehensive(t *testing.T) {
 			proc, _ := New(DefaultConfig())
 			defer proc.Close()
 
-			testData := `{"users": [` + generateUserJSON(100) + `]}`
+			testData := `{"users": [` + genUserFragments(100) + `]}`
 
 			concurrency := 20
 			iterations := 100
@@ -2022,7 +2022,7 @@ func TestProcessorConcurrencyComprehensive(t *testing.T) {
 
 	t.Run("ConcurrentIteratoroperations", func(t *testing.T) {
 		t.Run("ConcurrentForeach", func(t *testing.T) {
-			testData := `{"items": [` + generateArrayItems(50) + `]}`
+			testData := `{"items": [` + genItemFragments(50) + `]}`
 
 			concurrency := 10
 			iterations := 20
@@ -2053,7 +2053,7 @@ func TestProcessorConcurrencyComprehensive(t *testing.T) {
 		})
 
 		t.Run("ConcurrentForeachNested", func(t *testing.T) {
-			testData := `{"data": {"users": [` + generateUserJSON(20) + `]}}`
+			testData := `{"data": {"users": [` + genUserFragments(20) + `]}}`
 
 			concurrency := 5
 			iterations := 10
