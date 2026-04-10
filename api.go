@@ -1156,10 +1156,20 @@ func getProcessorWithConfig(cfg Config) (*Processor, error) {
 			// Existing entry is stale; try to replace it atomically
 			if configProcessorCache.CompareAndSwap(cacheKey, existing, p) {
 				// Successfully replaced stale entry
-				// Close the old stale processor asynchronously
+				// Close the old stale processor asynchronously with timeout
 				if staleProc, ok := existing.(*Processor); ok {
 					go func(stale *Processor) {
-						_ = stale.Close() // best-effort cleanup
+						done := make(chan struct{})
+						go func() {
+							defer close(done)
+							_ = stale.Close() // best-effort cleanup
+						}()
+						select {
+						case <-done:
+							// Close completed
+						case <-time.After(closeOperationTimeout):
+							// Timeout — inner goroutine will complete on its own eventually
+						}
 					}(staleProc)
 				}
 				// Check cache size and evict if necessary

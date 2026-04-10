@@ -392,16 +392,17 @@ func NewCompiledPathCache(max int) *CompiledPathCache {
 // when done to return it to the pool. Eviction of a cached entry does not affect
 // previously returned copies.
 func (c *CompiledPathCache) Get(path string) (*CompiledPath, error) {
-	c.mu.Lock()
+	// PERFORMANCE: Use RLock for initial read-only cache lookup
+	c.mu.RLock()
 
 	// Check cache first
 	if cp, ok := c.paths[path]; ok {
 		result := cloneCompiledPathLocked(cp)
-		c.mu.Unlock()
+		c.mu.RUnlock()
 		return result, nil
 	}
 
-	c.mu.Unlock()
+	c.mu.RUnlock()
 
 	// Compile the path outside the lock (parsing is expensive)
 	cp, err := CompilePath(path)

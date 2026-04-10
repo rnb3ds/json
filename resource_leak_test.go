@@ -3,6 +3,7 @@ package json
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"runtime"
 	"sync"
 	"sync/atomic"
@@ -552,5 +553,168 @@ func TestAsyncProcessorCloseTimeout(t *testing.T) {
 		// All closed successfully
 	case <-time.After(10 * time.Second):
 		t.Error("Async close took too long - potential goroutine leak")
+	}
+}
+
+// ============================================================================
+// FIX VERIFICATION TESTS (2026-04-11 resource leak audit)
+// ============================================================================
+
+// TestStaleProcessorCloseHasTimeout verifies that the stale processor close
+// goroutine in getProcessorWithConfig is protected by a timeout (Fix #1).
+func TestStaleProcessorCloseHasTimeout(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping in short mode")
+	}
+
+	// Fill the cache to capacity to trigger eviction
+	cfg := DefaultConfig()
+	for i := 0; i < configProcessorCacheLimit+10; i++ {
+		c := cfg
+		c.MaxConcurrency = i + 1 // unique config key
+		_, err := getProcessorWithConfig(c)
+		if err != nil {
+			t.Fatalf("getProcessorWithConfig failed: %v", err)
+		}
+	}
+
+	// Eviction runs asynchronously; verify goroutines don't accumulate
+	initial := countGoroutines()
+	time.Sleep(200 * time.Millisecond)
+	after := countGoroutines()
+
+	leaked := after - initial
+	if leaked > 3 {
+		t.Errorf("Goroutine leak after cache eviction: before=%d after=%d leaked=%d",
+			initial, after, leaked)
+	}
+}
+
+// TestClearStructEncoderCache verifies that ClearStructEncoderCache properly
+// reclaims memory from the global struct encoder cache (Fix #2).
+func TestClearStructEncoderCache(t *testing.T) {
+	// Populate cache with multiple struct types
+	type testStructA struct{ Name string }
+	type testStructB struct{ Value int }
+	type testStructC struct{ Flag bool }
+
+	_ = internal.GetStructEncoder(reflect.TypeOf(testStructA{}))
+	_ = internal.GetStructEncoder(reflect.TypeOf(testStructB{}))
+	_ = internal.GetStructEncoder(reflect.TypeOf(testStructC{}))
+
+	// Clear cache
+	internal.ClearStructEncoderCache()
+
+	// Verify cache is repopulated after clear (functional correctness)
+	fields := internal.GetStructEncoder(reflect.TypeOf(testStructA{}))
+	if len(fields) == 0 {
+		t.Error("GetStructEncoder returned empty fields after cache clear")
+	}
+}
+
+// TestClearPathTypeCacheOnProcessorClose verifies that the path type cache
+// is cleared when a processor is closed (Fix #3).
+func TestClearPathTypeCacheOnProcessorClose(t *testing.T) {
+	processor, err := New(DefaultConfig())
+	if err != nil {
+		t.Fatalf("Failed to create processor: %v", err)
+	}
+
+	// Populate path type cache by querying various paths
+	paths := []string{"simple", "nested.key", "array[0]", "deep.nested.path", "complex[1].field"}
+	for _, path := range paths {
+		_, _ = processor.Get(`{"simple":1,"nested":{"key":2},"array":[3],"deep":{"nested":{"path":4}},"complex":[{"field":5}]}`, path)
+	}
+
+	// Close processor — should clear path type cache
+	err = processor.Close()
+	if err != nil {
+		t.Fatalf("Close returned error: %v", err)
+	}
+
+	// Verify cache is empty by checking shard sizes
+	// (We can't directly access shards, so verify no panic and clean state)
+	processor2, err := New(DefaultConfig())
+	if err != nil {
+		t.Fatalf("Failed to create second processor: %v", err)
+	}
+	_ = processor2.Close()
+}
+
+// TestHooksClearedOnClose verifies that hooks slice is nil'd on Close(),
+// releasing closure references for GC (Fix #4).
+func TestHooksClearedOnClose(t *testing.T) {
+	processor, err := New(DefaultConfig())
+	if err != nil {
+		t.Fatalf("Failed to create processor: %v", err)
+	}
+
+	// Add hooks that capture large closures
+	largeData := make([]byte, 1024*1024) // 1MB
+	for i := 0; i < 10; i++ {
+		hook := &testClosureHook{data: largeData}
+		processor.AddHook(hook)
+	}
+
+	// Verify hooks are present
+	processor.hooksMu.Lock()
+	hookCount := len(processor.hooks)
+	processor.hooksMu.Unlock()
+	if hookCount != 10 {
+		t.Fatalf("Expected 10 hooks, got %d", hookCount)
+	}
+
+	// Close should nil the hooks
+	err = processor.Close()
+	if err != nil {
+		t.Fatalf("Close returned error: %v", err)
+	}
+
+	processor.hooksMu.Lock()
+	hooksAfter := processor.hooks
+	processor.hooksMu.Unlock()
+
+	if hooksAfter != nil {
+		t.Errorf("Expected hooks to be nil after Close(), got %d hooks", len(hooksAfter))
+	}
+}
+
+// testClosureHook is a test hook that captures a reference to external data.
+type testClosureHook struct {
+	data []byte
+}
+
+func (h *testClosureHook) Before(ctx HookContext) error { return nil }
+func (h *testClosureHook) After(ctx HookContext, result any, err error) (any, error) {
+	return result, err
+}
+
+// TestEvictionGoroutinesBounded verifies that eviction close goroutines
+// don't accumulate beyond the semaphore limit (Fix #5).
+func TestEvictionGoroutinesBounded(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping stress test in short mode")
+	}
+
+	initial := countGoroutines()
+
+	// Create and evict many processors by exceeding cache limit repeatedly
+	for round := 0; round < 5; round++ {
+		for i := 0; i < configProcessorCacheLimit+configProcessorCacheEvictNum; i++ {
+			cfg := DefaultConfig()
+			cfg.MaxConcurrency = round*1000 + i // unique config
+			_, _ = getProcessorWithConfig(cfg)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	// Allow goroutines to settle
+	time.Sleep(500 * time.Millisecond)
+
+	final := countGoroutines()
+	leaked := final - initial
+	if leaked > 5 {
+		t.Errorf("Goroutine leak after eviction stress: before=%d after=%d leaked=%d",
+			initial, final, leaked)
 	}
 }

@@ -48,7 +48,7 @@ type FastEncoder struct {
 var encoderPool = sync.Pool{
 	New: func() any {
 		return &FastEncoder{
-			buf: make([]byte, 0, 256),
+			buf: make([]byte, 0, 512),
 		}
 	},
 }
@@ -807,7 +807,9 @@ func (e *FastEncoder) EncodeMap(m map[string]any) error {
 	needed := len(m) * 32
 	if cap(e.buf)-len(e.buf) < needed {
 		// Grow by the needed amount
-		e.buf = append(e.buf[:cap(e.buf)], make([]byte, needed)...)[:len(e.buf)]
+		newBuf := make([]byte, len(e.buf), len(e.buf)+needed)
+		copy(newBuf, e.buf)
+		e.buf = newBuf
 	}
 
 	e.buf = append(e.buf, '{')
@@ -833,6 +835,14 @@ func (e *FastEncoder) EncodeMap(m map[string]any) error {
 
 // EncodeMapStringString encodes a map[string]string
 func (e *FastEncoder) EncodeMapStringString(m map[string]string) error {
+	// PERFORMANCE: Pre-grow buffer to reduce reallocations
+	needed := len(m) * 32
+	if cap(e.buf)-len(e.buf) < needed {
+		newBuf := make([]byte, len(e.buf), len(e.buf)+needed)
+		copy(newBuf, e.buf)
+		e.buf = newBuf
+	}
+
 	e.buf = append(e.buf, '{')
 	first := true
 
@@ -853,6 +863,14 @@ func (e *FastEncoder) EncodeMapStringString(m map[string]string) error {
 
 // EncodeMapStringInt encodes a map[string]int
 func (e *FastEncoder) EncodeMapStringInt(m map[string]int) error {
+	// PERFORMANCE: Pre-grow buffer to reduce reallocations
+	needed := len(m) * 24
+	if cap(e.buf)-len(e.buf) < needed {
+		newBuf := make([]byte, len(e.buf), len(e.buf)+needed)
+		copy(newBuf, e.buf)
+		e.buf = newBuf
+	}
+
 	e.buf = append(e.buf, '{')
 	first := true
 
@@ -880,7 +898,9 @@ func (e *FastEncoder) EncodeArray(arr []any) error {
 		// Estimate: each element needs ~16 bytes on average
 		needed := n * 16
 		if cap(e.buf)-len(e.buf) < needed {
-			e.buf = append(e.buf[:cap(e.buf)], make([]byte, needed)...)[:len(e.buf)]
+			newBuf := make([]byte, len(e.buf), len(e.buf)+needed)
+		copy(newBuf, e.buf)
+		e.buf = newBuf
 		}
 	}
 
@@ -932,7 +952,9 @@ func (e *FastEncoder) EncodeIntSlice(arr []int) {
 	if n := len(arr); n > 8 {
 		needed := n * 12 // average estimate
 		if cap(e.buf)-len(e.buf) < needed {
-			e.buf = append(e.buf[:cap(e.buf)], make([]byte, needed)...)[:len(e.buf)]
+			newBuf := make([]byte, len(e.buf), len(e.buf)+needed)
+		copy(newBuf, e.buf)
+		e.buf = newBuf
 		}
 	}
 
@@ -955,7 +977,9 @@ func (e *FastEncoder) EncodeFloatSlice(arr []float64) {
 	if n := len(arr); n > 8 {
 		needed := n * 16 // average estimate
 		if cap(e.buf)-len(e.buf) < needed {
-			e.buf = append(e.buf[:cap(e.buf)], make([]byte, needed)...)[:len(e.buf)]
+			newBuf := make([]byte, len(e.buf), len(e.buf)+needed)
+		copy(newBuf, e.buf)
+		e.buf = newBuf
 		}
 	}
 
@@ -1014,15 +1038,33 @@ func (e *FastEncoder) EncodeTime(t time.Time) {
 }
 
 // EncodeBase64 encodes a []byte as base64 string
+// EncodeBase64 encodes a []byte as base64 string
+// PERFORMANCE: Encodes directly into buffer to avoid intermediate string allocation
 func (e *FastEncoder) EncodeBase64(b []byte) {
+	encLen := base64.StdEncoding.EncodedLen(len(b))
+	// Ensure capacity: 1 (quote) + encLen + 1 (quote)
+	if cap(e.buf)-len(e.buf) < encLen+2 {
+		newBuf := make([]byte, len(e.buf), len(e.buf)+encLen+2)
+		copy(newBuf, e.buf)
+		e.buf = newBuf
+	}
 	e.buf = append(e.buf, '"')
-	encoded := base64.StdEncoding.EncodeToString(b)
-	e.buf = append(e.buf, encoded...)
+	start := len(e.buf)
+	e.buf = e.buf[:start+encLen]
+	base64.StdEncoding.Encode(e.buf[start:], b)
 	e.buf = append(e.buf, '"')
 }
 
 // EncodeMapStringInt64 encodes a map[string]int64
 func (e *FastEncoder) EncodeMapStringInt64(m map[string]int64) error {
+	// PERFORMANCE: Pre-grow buffer to reduce reallocations
+	needed := len(m) * 24
+	if cap(e.buf)-len(e.buf) < needed {
+		newBuf := make([]byte, len(e.buf), len(e.buf)+needed)
+		copy(newBuf, e.buf)
+		e.buf = newBuf
+	}
+
 	e.buf = append(e.buf, '{')
 	first := true
 
@@ -1043,6 +1085,14 @@ func (e *FastEncoder) EncodeMapStringInt64(m map[string]int64) error {
 
 // EncodeMapStringFloat64 encodes a map[string]float64
 func (e *FastEncoder) EncodeMapStringFloat64(m map[string]float64) error {
+	// PERFORMANCE: Pre-grow buffer to reduce reallocations
+	needed := len(m) * 28
+	if cap(e.buf)-len(e.buf) < needed {
+		newBuf := make([]byte, len(e.buf), len(e.buf)+needed)
+		copy(newBuf, e.buf)
+		e.buf = newBuf
+	}
+
 	e.buf = append(e.buf, '{')
 	first := true
 
@@ -1371,6 +1421,16 @@ func GetStructEncoder(t reflect.Type) []StructFieldInfo {
 	// Cache it
 	actual, _ := structEncoderCache.LoadOrStore(t, fields)
 	return actual.([]StructFieldInfo)
+}
+
+// ClearStructEncoderCache removes all entries from the struct encoder cache.
+// Call this to reclaim memory when the set of encoded struct types changes
+// (e.g., after unloading plugins or in long-running services with dynamic types).
+func ClearStructEncoderCache() {
+	structEncoderCache.Range(func(key, _ any) bool {
+		structEncoderCache.Delete(key)
+		return true
+	})
 }
 
 // getEncodeFn returns a type-specific encoding function for the given type

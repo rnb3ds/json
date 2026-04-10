@@ -98,10 +98,7 @@ func PutEncoderBufferSecure(buf *bytes.Buffer) {
 		if c >= minPoolBufferSize && c <= maxPoolBufferSize {
 			// SECURITY: Zero out the buffer content before returning to pool
 			// This prevents potential data leakage through uninitialized memory
-			b := buf.Bytes()
-			for i := range b {
-				b[i] = 0
-			}
+			clear(buf.Bytes())
 			buf.Reset()
 			encoderBufferPool.Put(buf)
 		}

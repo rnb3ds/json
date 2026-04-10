@@ -9,6 +9,7 @@ import (
 	"io"
 	"reflect"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -63,8 +64,17 @@ func init() {
 }
 
 // clearPathTypeCache clears the global path type cache.
-// This should be called during processor shutdown or periodically in long-running services
-// to prevent memory accumulation from cached path types.
+// Called during processor shutdown to prevent memory accumulation from cached path types.
+func clearPathTypeCache() {
+	for i := range pathTypeCacheShards {
+		shard := &pathTypeCacheShards[i]
+		shard.mu.Lock()
+		shard.entries = make(map[string]pathType, 64)
+		shard.size = 0
+		shard.mu.Unlock()
+	}
+}
+
 // getPathTypeShard returns the shard for a path using FNV-1a hash
 func getPathTypeShard(path string) *pathTypeCacheShard {
 	h := internal.HashStringFNV1a(path)
@@ -992,7 +1002,13 @@ func foreachWithPathIterableValue(data any, currentPath string, fn func(key any,
 	switch v := data.(type) {
 	case []any:
 		for i, item := range v {
-			path := fmt.Sprintf("%s[%d]", currentPath, i)
+			// PERFORMANCE: Build path using strconv.AppendInt instead of fmt.Sprintf
+			var buf []byte
+			buf = append(buf, currentPath...)
+			buf = append(buf, '[')
+			buf = strconv.AppendInt(buf, int64(i), 10)
+			buf = append(buf, ']')
+			path := string(buf)
 			iv := iterableValuePool.Get().(*IterableValue)
 			iv.data = item
 			ctrl := fn(i, iv, path)

@@ -225,6 +225,15 @@ func (p *Processor) Close() error {
 			atomic.StoreInt64(&p.resources.lastPoolReset, 0)
 		}
 
+		// Release hook references to allow GC of captured closures
+		p.hooksMu.Lock()
+		p.hooks = nil
+		p.hooksMu.Unlock()
+
+		// Clear global caches that accumulate across processor instances
+		clearPathTypeCache()
+		internal.ClearStructEncoderCache()
+
 		// If timed out, mark as closeTimedOut instead of fully closed.
 		// This prevents use-after-close: in-flight operations may still
 		// reference processor resources. The processor stays in a safe
@@ -1063,17 +1072,16 @@ func (p *Processor) SafeGet(jsonStr, path string, cfg ...Config) AccessResult {
 
 // Get retrieves a value from JSON using a path expression with performance
 func (p *Processor) Get(jsonStr, path string, cfg ...Config) (result any, err error) {
+	// PERFORMANCE: Fast path — check nil/closed before any field access
+	if err := p.checkClosed(); err != nil {
+		return nil, err
+	}
+
 	// Check rate limiting for security (fast return when disabled, which is default)
 	if p.metrics.operationWindow > 0 {
 		if err := p.checkRateLimit(); err != nil {
 			return nil, err
 		}
-	}
-
-	// PERFORMANCE: Fast path — check if processor is closed before any allocation
-	if err := p.checkClosed(); err != nil {
-		p.incrementErrorCount()
-		return nil, err
 	}
 
 	// Increment operation counter for statistics
@@ -1836,6 +1844,9 @@ func (p *Processor) SetMultipleCreate(jsonStr string, updates map[string]any, cf
 
 // GetStats returns processor performance statistics
 func (p *Processor) GetStats() Stats {
+	if p == nil {
+		return Stats{}
+	}
 	cacheStats := p.cache.GetStats()
 
 	return Stats{
@@ -1856,6 +1867,18 @@ func (p *Processor) GetStats() Stats {
 
 // GetHealthStatus returns the current health status
 func (p *Processor) GetHealthStatus() HealthStatus {
+	if p == nil {
+		return HealthStatus{
+			Timestamp: time.Now(),
+			Healthy:   false,
+			Checks: map[string]CheckResult{
+				"processor": {
+					Healthy: false,
+					Message: "processor is nil",
+				},
+			},
+		}
+	}
 	if p.metrics == nil {
 		return HealthStatus{
 			Timestamp: time.Now(),

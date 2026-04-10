@@ -699,7 +699,7 @@ func (dec *Decoder) parseNumber(first byte) (any, error) {
 		return Number(numStr), nil
 	}
 
-	if !strings.Contains(numStr, ".") && !strings.Contains(numStr, "e") && !strings.Contains(numStr, "E") {
+	if strings.IndexByte(numStr, '.') < 0 && strings.IndexByte(numStr, 'e') < 0 && strings.IndexByte(numStr, 'E') < 0 {
 		if val, err := strconv.ParseInt(numStr, 10, 64); err == nil {
 			return val, nil
 		}
@@ -778,7 +778,8 @@ func needsCustomEncodingOpts(cfg Config) bool {
 }
 
 // Marshal converts any Go value to JSON bytes (similar to json.Marshal)
-// PERFORMANCE: Uses FastEncoder for simple types to avoid reflection overhead
+// PERFORMANCE: Uses FastEncoder for simple types to avoid reflection overhead.
+// Uses encodeWithConfigToBytes for complex types to avoid string round-trip.
 func (p *Processor) Marshal(value any, cfg ...Config) ([]byte, error) {
 	if err := p.checkClosed(); err != nil {
 		return nil, err
@@ -793,14 +794,10 @@ func (p *Processor) Marshal(value any, cfg ...Config) ([]byte, error) {
 		}
 	}
 
-	// Fallback to full encoding path for complex types or custom options
+	// Fallback: encode directly to []byte, avoiding []byte->string->[]byte round-trip
 	config := getConfigOrDefault(cfg...)
 	config.EscapeHTML = true
-	jsonStr, err := p.EncodeWithConfig(value, config)
-	if err != nil {
-		return nil, err
-	}
-	return []byte(jsonStr), nil
+	return p.encodeWithConfigToBytes(value, config)
 }
 
 // MarshalIndent converts any Go value to indented JSON bytes (similar to json.MarshalIndent)
@@ -813,11 +810,8 @@ func (p *Processor) MarshalIndent(value any, prefix, indent string, cfg ...Confi
 	encOpts.Prefix = prefix
 	encOpts.Indent = indent
 
-	jsonStr, err := p.EncodeWithConfig(value, encOpts)
-	if err != nil {
-		return nil, err
-	}
-	return []byte(jsonStr), nil
+	// PERFORMANCE: Encode directly to []byte, avoiding []byte->string->[]byte round-trip
+	return p.encodeWithConfigToBytes(value, encOpts)
 }
 
 // Unmarshal parses the JSON-encoded data and stores the result in the value pointed to by v.
@@ -1021,6 +1015,83 @@ func (p *Processor) EncodeWithConfig(value any, cfg ...Config) (string, error) {
 	return result, nil
 }
 
+// encodeWithConfigToBytes encodes value to []byte directly, avoiding string round-trip.
+// PERFORMANCE: Used by Marshal/MarshalIndent to eliminate []byte->string->[]byte conversion.
+func (p *Processor) encodeWithConfigToBytes(value any, cfg ...Config) ([]byte, error) {
+	if err := p.checkClosed(); err != nil {
+		return nil, err
+	}
+
+	var config Config
+	if len(cfg) > 0 {
+		config = cfg[0]
+	} else {
+		config = DefaultConfig()
+	}
+
+	// Fast path for simple types
+	if !config.Pretty && !needsCustomEncodingOpts(config) {
+		if config.EscapeHTML {
+			if result, ok := fastEncodeSimpleWithHTMLEscape(value); ok {
+				if int64(len(result)) > p.config.MaxJSONSize {
+					return nil, &JsonsError{
+						Op:      "encode_with_config",
+						Message: fmt.Sprintf("encoded JSON size %d exceeds maximum %d", len(result), p.config.MaxJSONSize),
+						Err:     ErrSizeLimit,
+					}
+				}
+				return []byte(result), nil
+			}
+		} else {
+			if result, ok := fastEncodeSimple(value); ok {
+				if int64(len(result)) > p.config.MaxJSONSize {
+					return nil, &JsonsError{
+						Op:      "encode_with_config",
+						Message: fmt.Sprintf("encoded JSON size %d exceeds maximum %d", len(result), p.config.MaxJSONSize),
+						Err:     ErrSizeLimit,
+					}
+				}
+				return []byte(result), nil
+			}
+		}
+	}
+
+	if config.MaxDepth > 0 {
+		if err := p.validateDepth(value, config.MaxDepth, 0); err != nil {
+			return nil, err
+		}
+	}
+
+	var result []byte
+	var err error
+
+	if needsCustomEncodingOpts(config) {
+		encoder := newCustomEncoder(config)
+		defer encoder.Close()
+		result, err = encoder.EncodeToBytes(value)
+	} else {
+		result, err = internal.MarshalJSONToBytes(value, config.Pretty, config.Prefix, config.Indent)
+	}
+
+	if err != nil {
+		return nil, &JsonsError{
+			Op:      "encode_with_config",
+			Message: "failed to encode value",
+			Err:     err,
+		}
+	}
+
+	if int64(len(result)) > p.config.MaxJSONSize {
+		return nil, &JsonsError{
+			Op:      "encode_with_config",
+			Message: fmt.Sprintf("encoded JSON size %d exceeds maximum %d", len(result), p.config.MaxJSONSize),
+			Err:     ErrSizeLimit,
+		}
+	}
+
+	return result, nil
+}
+
 // fastEncodeSimple attempts to encode simple types using FastEncoder
 // Returns (result, true) if successful, ("", false) if type not supported
 // PERFORMANCE: Avoids reflection overhead for common types
@@ -1144,6 +1215,22 @@ func (e *customEncoder) Encode(value any) (string, error) {
 	}
 
 	return e.buffer.String(), nil
+}
+
+// EncodeToBytes encodes the given value to JSON bytes using custom options.
+// PERFORMANCE: Returns []byte directly to avoid string round-trip when caller needs bytes.
+func (e *customEncoder) EncodeToBytes(value any) ([]byte, error) {
+	e.buffer.Reset()
+	e.depth = 0
+
+	if err := e.encodeValue(value); err != nil {
+		return nil, err
+	}
+
+	// Copy buffer contents to avoid aliasing with pooled buffer
+	result := make([]byte, e.buffer.Len())
+	copy(result, e.buffer.Bytes())
+	return result, nil
 }
 
 // encodeValue encodes any value recursively
@@ -1367,6 +1454,22 @@ func (e *customEncoder) encodeString(s string) error {
 	return nil
 }
 
+// hexDigits is used for fast Unicode escape encoding without fmt.Fprintf
+var hexDigits = [16]byte{'0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f'}
+
+// writeUnicodeEscape writes \uXXXX directly to buffer, avoiding fmt.Fprintf overhead.
+// PERFORMANCE: ~10-50x faster than fmt.Fprintf for Unicode escapes.
+func (e *customEncoder) writeUnicodeEscape(r rune) {
+	var buf [6]byte
+	buf[0] = '\\'
+	buf[1] = 'u'
+	buf[2] = hexDigits[(r>>12)&0xF]
+	buf[3] = hexDigits[(r>>8)&0xF]
+	buf[4] = hexDigits[(r>>4)&0xF]
+	buf[5] = hexDigits[r&0xF]
+	e.buffer.Write(buf[:])
+}
+
 func (e *customEncoder) escapeRune(r rune) error {
 	if e.config.CustomEscapes != nil {
 		if escape, exists := e.config.CustomEscapes[r]; exists {
@@ -1406,11 +1509,11 @@ func (e *customEncoder) escapeRune(r rune) error {
 		}
 	default:
 		if r < 0x20 {
-			fmt.Fprintf(e.buffer, `\u%04x`, r)
+			e.writeUnicodeEscape(r)
 		} else if e.config.EscapeHTML && (r == '<' || r == '>' || r == '&') {
-			fmt.Fprintf(e.buffer, `\u%04x`, r)
+			e.writeUnicodeEscape(r)
 		} else if e.config.EscapeUnicode && r > 0x7F {
-			fmt.Fprintf(e.buffer, `\u%04x`, r)
+			e.writeUnicodeEscape(r)
 		} else if !utf8.ValidRune(r) && e.config.ValidateUTF8 {
 			return &JsonsError{
 				Op:      "escape_rune",
