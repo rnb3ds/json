@@ -66,7 +66,11 @@ func demonstrateConfigurations(testData string) {
 
 	// 1. Default configuration (quick start)
 	fmt.Println("   Default Configuration:")
-	defaultProc, _ := json.New(json.DefaultConfig())
+	defaultProc, err := json.New(json.DefaultConfig())
+	if err != nil {
+		fmt.Printf("   New error: %v\n", err)
+		return
+	}
 	defer defaultProc.Close()
 
 	result, _ := defaultProc.Get(testData, "users[0].name")
@@ -85,7 +89,7 @@ func demonstrateConfigurations(testData string) {
 	perfConfig.ParallelThreshold = 3
 	perfConfig.EnableMetrics = true
 	perfConfig.EnableValidation = false // Skip validation for speed
-	perfProc, _ := json.New(perfConfig)
+	perfProc, _ := json.New(perfConfig) // OK: DefaultConfig-derived, always valid
 	defer perfProc.Close()
 
 	start := time.Now()
@@ -98,7 +102,7 @@ func demonstrateConfigurations(testData string) {
 	// 3. Security configuration
 	fmt.Println("\n   Security Configuration:")
 	secConfig := json.SecurityConfig()
-	secProc, _ := json.New(secConfig)
+	secProc, _ := json.New(secConfig) // OK: SecurityConfig-derived, always valid
 	defer secProc.Close()
 
 	result2, _ := secProc.Get(testData, "users[0].email")
@@ -109,7 +113,7 @@ func demonstrateConfigurations(testData string) {
 	largeConfig := json.SecurityConfig()
 	largeConfig.MaxJSONSize = 100 * 1024 * 1024 // 100MB
 	largeConfig.MaxNestingDepthSecurity = 100
-	largeProc, _ := json.New(largeConfig)
+	largeProc, _ := json.New(largeConfig) // OK: SecurityConfig-derived, always valid
 	defer largeProc.Close()
 
 	result3, _ := largeProc.Get(testData, "config.version")
@@ -120,7 +124,7 @@ func demonstrateConcurrency(testData string) {
 	fmt.Println("\n2️. Thread-Safe Concurrent Operations")
 	fmt.Println("──────────────────────────────────────")
 
-	processor, _ := json.New(json.DefaultConfig())
+	processor, _ := json.New(json.DefaultConfig()) // OK: DefaultConfig always valid
 	defer processor.Close()
 
 	var wg sync.WaitGroup
@@ -174,15 +178,16 @@ func demonstrateConcurrency(testData string) {
 }
 
 func demonstratePerformance(testData string) {
-	fmt.Println("\n3️. Performance Optimization")
-	fmt.Println("─────────────────────────────")
+	fmt.Println("\n3. Performance Optimization")
+	fmt.Println("   ---------------------------")
 
+	// Note: benchmark loops discard errors to avoid skewing measurements.
 	// Test with cache enabled
 	cacheConfig := json.DefaultConfig()
 	cacheConfig.EnableCache = true
 	cacheConfig.MaxCacheSize = 1000
 	cacheConfig.CacheTTL = 10 * time.Minute
-	cachedProc, _ := json.New(cacheConfig)
+	cachedProc, _ := json.New(cacheConfig) // OK: DefaultConfig-derived
 	defer cachedProc.Close()
 
 	// Warm up cache
@@ -206,7 +211,7 @@ func demonstratePerformance(testData string) {
 	// Test without cache for comparison
 	noCacheConfig := json.DefaultConfig()
 	noCacheConfig.EnableCache = false
-	noCacheProc, _ := json.New(noCacheConfig)
+	noCacheProc, _ := json.New(noCacheConfig) // OK: DefaultConfig-derived
 	defer noCacheProc.Close()
 
 	start = time.Now()
@@ -224,7 +229,7 @@ func demonstrateResourceManagement(testData string) {
 	fmt.Println("────────────────────────")
 
 	// Proper resource lifecycle management
-	processor, _ := json.New(json.DefaultConfig())
+	processor, _ := json.New(json.DefaultConfig()) // OK: DefaultConfig always valid
 
 	// Use defer to ensure cleanup
 	defer func() {
@@ -268,7 +273,7 @@ func demonstrateMonitoring(testData string) {
 	config.CacheTTL = 10 * time.Minute
 	config.EnableMetrics = true
 	config.EnableHealthCheck = true
-	processor, _ := json.New(config)
+	processor, _ := json.New(config) // OK: DefaultConfig-derived
 	defer processor.Close()
 
 	// Perform various operations

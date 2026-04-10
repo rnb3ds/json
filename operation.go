@@ -76,6 +76,33 @@ func normalizeNegativeIndex(index, length int) (int, error) {
 	return index, nil
 }
 
+// normalizeNegativeIndexAllowExtend converts a negative array index to a positive one.
+// Unlike normalizeNegativeIndex, it allows index >= length (for array extension scenarios).
+func normalizeNegativeIndexAllowExtend(index, length int) (int, error) {
+	if index < 0 {
+		index = length + index
+	}
+	if index < 0 {
+		return 0, fmt.Errorf("array index %d out of bounds after negative conversion", index)
+	}
+	return index, nil
+}
+
+// normalizeNegativeSliceBounds converts negative start/end indices for slice operations.
+// end may equal length (exclusive upper bound). Returns normalized start, end, or an error.
+func normalizeNegativeSliceBounds(start, end, length int) (int, int, error) {
+	if start < 0 {
+		start = length + start
+	}
+	if end < 0 {
+		end = length + end
+	}
+	if start < 0 || start >= length || end < 0 || end > length || start >= end {
+		return 0, 0, fmt.Errorf("slice range [%d:%d] out of bounds for array length %d", start, end, length)
+	}
+	return start, end, nil
+}
+
 func (p *Processor) handleArrayAccess(data any, segment internal.PathSegment) propertyAccessResult {
 	var arrayData any = data
 	if segment.Key != "" {
@@ -87,14 +114,11 @@ func (p *Processor) handleArrayAccess(data any, segment internal.PathSegment) pr
 	}
 
 	if arr, ok := arrayData.([]any); ok {
-		index := segment.Index
-		if index < 0 {
-			index = len(arr) + index
+		index, err := normalizeNegativeIndex(segment.Index, len(arr))
+		if err != nil {
+			return propertyAccessResult{value: nil, exists: false}
 		}
-		if index >= 0 && index < len(arr) {
-			return propertyAccessResult{value: arr[index], exists: true}
-		}
-		return propertyAccessResult{value: nil, exists: false}
+		return propertyAccessResult{value: arr[index], exists: true}
 	}
 
 	return propertyAccessResult{value: nil, exists: false}
@@ -183,19 +207,19 @@ func (p *Processor) isArrayIndex(segment string) bool {
 func (p *Processor) navigateToArrayIndexWithNegative(current any, index int, createPaths bool) (any, error) {
 	switch v := current.(type) {
 	case []any:
-		// Handle negative indices
-		if index < 0 {
-			index = len(v) + index
+		idx, err := normalizeNegativeIndexAllowExtend(index, len(v))
+		if err != nil {
+			return nil, err
 		}
 
-		if index < 0 || index >= len(v) {
-			if createPaths && index == len(v) {
+		if idx >= len(v) {
+			if createPaths && idx == len(v) {
 				// Extend array by one element
 				return nil, nil // Placeholder for new element
 			}
-			return nil, fmt.Errorf("array index %d out of bounds (length %d)", index, len(v))
+			return nil, fmt.Errorf("array index %d out of bounds (length %d)", idx, len(v))
 		}
-		return v[index], nil
+		return v[idx], nil
 	default:
 		return nil, fmt.Errorf("cannot access array index %d on type %T", index, current)
 	}
@@ -343,29 +367,14 @@ func (p *Processor) deleteValueJSONPointer(data any, path string) error {
 }
 
 func (p *Processor) deletePropertyValue(current any, property string) error {
-	switch v := current.(type) {
-	case map[string]any:
-		if _, exists := v[property]; exists {
-			delete(v, property)
-			return nil
-		}
-		return fmt.Errorf("property not found: %s", property)
-
-	case map[any]any:
-		if _, exists := v[property]; exists {
-			delete(v, property)
-			return nil
-		}
-		return fmt.Errorf("property not found: %s", property)
-
+	switch current.(type) {
 	case []any:
 		if _, err := strconv.Atoi(property); err == nil {
 			return p.deleteArrayElement(current, property)
 		}
 		return fmt.Errorf("invalid array index: %s", property)
-
 	default:
-		return fmt.Errorf("cannot delete property '%s' from type %T", property, current)
+		return p.deletePropertyFromContainer(current, property)
 	}
 }
 
@@ -454,13 +463,9 @@ func (p *Processor) navigateArrayIndexForDeletion(current any, indexStr string) 
 		return nil, fmt.Errorf("invalid array index: %s", indexStr)
 	}
 
-	// Handle negative indices
-	if index < 0 {
-		index = len(arr) + index
-	}
-
-	if index < 0 || index >= len(arr) {
-		return nil, fmt.Errorf("array index %d out of bounds", index)
+	index, err = normalizeNegativeIndex(index, len(arr))
+	if err != nil {
+		return nil, err
 	}
 
 	return arr[index], nil
@@ -514,13 +519,9 @@ func (p *Processor) deleteArrayElementByIndex(current any, index int) error {
 		return fmt.Errorf("cannot delete array element from type %T", current)
 	}
 
-	// Handle negative indices
-	if index < 0 {
-		index = len(arr) + index
-	}
-
-	if index < 0 || index >= len(arr) {
-		return fmt.Errorf("array index %d out of bounds", index)
+	index, err := normalizeNegativeIndex(index, len(arr))
+	if err != nil {
+		return err
 	}
 
 	// Mark element for deletion (set to special marker)
@@ -540,17 +541,10 @@ func (p *Processor) deleteArraySlice(current any, segment internal.PathSegment) 
 		return err
 	}
 
-	// Handle negative indices
-	if start < 0 {
-		start = len(arr) + start
-	}
-	if end < 0 {
-		end = len(arr) + end
-	}
-
-	// Bounds checking
-	if start < 0 || start >= len(arr) || end < 0 || end > len(arr) || start >= end {
-		return fmt.Errorf("slice range [%d:%d] out of bounds for array length %d", start, end, len(arr))
+	// Normalize negative indices and validate bounds
+	start, end, err = normalizeNegativeSliceBounds(start, end, len(arr))
+	if err != nil {
+		return err
 	}
 
 	// Mark elements for deletion
@@ -636,15 +630,9 @@ func (p *Processor) deleteComplexArray(data any, segment internal.PathSegment, s
 		return fmt.Errorf("cannot access array on type %T", data)
 	}
 
-	index := segment.Index
-
-	// Handle negative indices
-	if index < 0 {
-		index = len(arr) + index
-	}
-
-	if index < 0 || index >= len(arr) {
-		return fmt.Errorf("array index %d out of bounds", index)
+	index, err := normalizeNegativeIndex(segment.Index, len(arr))
+	if err != nil {
+		return err
 	}
 
 	if segmentIndex == len(segments)-1 {
@@ -674,17 +662,15 @@ func (p *Processor) deleteComplexSlice(data any, segment internal.PathSegment, s
 		return err
 	}
 
-	// Handle negative indices
-	if start < 0 {
-		start = len(arr) + start
-	}
-	if end < 0 {
-		end = len(arr) + end
+	// Normalize negative indices and validate bounds
+	start, end, err = normalizeNegativeSliceBounds(start, end, len(arr))
+	if err != nil {
+		return err
 	}
 
 	// Apply deletion to each element in the slice
 	var firstErr error
-	for i := start; i < end && i < len(arr); i += step {
+	for i := start; i < end; i += step {
 		if err := p.deleteValueComplexSegments(arr[i], segments, segmentIndex+1); err != nil {
 			if firstErr == nil {
 				firstErr = err
@@ -1491,22 +1477,18 @@ func (p *Processor) setValueForArrayIndexWithAutoExtension(current any, segment 
 
 	switch v := current.(type) {
 	case []any:
-		// Handle negative indices
-		if index < 0 {
-			index = len(v) + index
+		idx, err := normalizeNegativeIndexAllowExtend(index, len(v))
+		if err != nil {
+			return err
 		}
 
-		if index < 0 {
-			return fmt.Errorf("array index %d out of bounds after negative conversion", index)
-		}
-
-		if index >= len(v) {
+		if idx >= len(v) {
 			// Need to extend the array - find the parent and replace the array
-			return p.extendArrayAndSetValue(rootData, segments, index, value)
+			return p.extendArrayAndSetValue(rootData, segments, idx, value)
 		}
 
 		// Set value within bounds
-		v[index] = value
+		v[idx] = value
 		return nil
 
 	default:
@@ -1752,31 +1734,27 @@ func (p *Processor) extendArrayAndSetValue(rootData any, segments []internal.Pat
 func (p *Processor) setValueForArrayIndex(current any, index int, value any, createPaths bool) error {
 	switch v := current.(type) {
 	case []any:
-		// Handle negative indices
-		if index < 0 {
-			index = len(v) + index
+		idx, err := normalizeNegativeIndexAllowExtend(index, len(v))
+		if err != nil {
+			return err
 		}
 
-		if index < 0 {
-			return fmt.Errorf("array index %d out of bounds after negative conversion", index)
-		}
-
-		if index >= len(v) {
+		if idx >= len(v) {
 			if createPaths {
 				// Return arrayExtensionSignal to signal parent needs to handle extension
 				return &arrayExtensionSignal{
-					requiredLength: index + 1,
+					requiredLength: idx + 1,
 					currentLength:  len(v),
-					start:          index,
-					end:            index + 1,
+					start:          idx,
+					end:            idx + 1,
 					step:           1,
 					value:          value,
 				}
 			}
-			return fmt.Errorf("array index %d out of bounds (length %d)", index, len(v))
+			return fmt.Errorf("array index %d out of bounds (length %d)", idx, len(v))
 		}
 
-		v[index] = value
+		v[idx] = value
 		return nil
 	default:
 		return fmt.Errorf("cannot set array index %d on type %T", index, current)
@@ -2192,7 +2170,7 @@ func (p *Processor) setJSONPointerFinalValue(current any, segment string, value 
 					Op:      "array_extension",
 					Path:    segment,
 					Message: fmt.Sprintf("cannot extend array in place for index %d", index),
-					Err:     ErrOperationFailed,
+					Err:     errOperationFailed,
 				}
 			}
 		}
@@ -2217,7 +2195,7 @@ func (p *Processor) replaceArrayInJSONPointerParent(_ any, oldArray, newArray []
 	return nil, &JsonsError{
 		Op:      "array_extension",
 		Message: fmt.Sprintf("cannot extend array in place: need cap %d, have %d", len(newArray), cap(oldArray)),
-		Err:     ErrOperationFailed,
+		Err:     errOperationFailed,
 	}
 }
 

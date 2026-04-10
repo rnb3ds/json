@@ -167,7 +167,7 @@ func ShutdownGlobalProcessor() {
 // Uses the unified Config struct with JSONL* fields.
 func shouldSkipJSONLLineFromConfig(line []byte, cfg *Config) bool {
 	// Skip empty lines if configured
-	if cfg.JSONLSkipEmpty && len(line) == 0 {
+	if cfg.JSONLSkipEmpty && len(bytes.TrimSpace(line)) == 0 {
 		return true
 	}
 
@@ -447,11 +447,10 @@ func (w *JSONLWriter) Stats() JSONLStats {
 //	data, err := json.ParseJSONL(jsonlBytes, cfg)
 func ParseJSONL(data []byte, cfg ...Config) ([]any, error) {
 	config := getConfigOrDefault(cfg...)
-	p, err := New(config)
+	p, err := getProcessorWithConfig(config)
 	if err != nil {
 		return nil, err
 	}
-	defer p.Close()
 
 	var results []any
 	err = p.StreamJSONL(bytes.NewReader(data), func(lineNum int, item *IterableValue) error {
@@ -493,12 +492,11 @@ func ToJSONL(data []any, cfg ...Config) ([]byte, error) {
 		buf.Grow(estimatedSize - buf.Cap())
 	}
 
-	// Use processor for encoding with config
-	p, err := New(config)
+	// Use cached processor for encoding with config
+	p, err := getProcessorWithConfig(config)
 	if err != nil {
 		return nil, err
 	}
-	defer p.Close()
 
 	for _, item := range data {
 		encoded, err := p.EncodeWithConfig(item, config)

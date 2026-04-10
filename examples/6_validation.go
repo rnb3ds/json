@@ -79,7 +79,11 @@ func demonstratePathValidation() {
 	fmt.Println("\n2. Path Validation (via Processor)")
 	fmt.Println("------------------------------------")
 
-	processor, _ := json.New(json.DefaultConfig())
+	processor, err := json.New(json.DefaultConfig())
+	if err != nil {
+		fmt.Printf("   New error: %v\n", err)
+		return
+	}
 	defer processor.Close()
 
 	testPaths := []struct {
@@ -205,7 +209,7 @@ func demonstrateSecurityValidation() {
 	fmt.Println("------------------------")
 
 	// Create a security processor
-	processor, _ := json.New(json.SecurityConfig())
+	processor, _ := json.New(json.SecurityConfig()) // OK: preset config always valid
 	defer processor.Close()
 
 	testCases := []struct {
@@ -237,7 +241,7 @@ func demonstrateProcessorValidation() {
 	config.EnableValidation = true
 	config.MaxJSONSize = 1024 * 1024 // 1MB
 
-	processor, _ := json.New(config)
+	processor, _ := json.New(config) // OK: DefaultConfig-derived, always valid
 	defer processor.Close()
 
 	testJSON := `{

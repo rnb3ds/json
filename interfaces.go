@@ -116,21 +116,6 @@ type Validator interface {
 	Validate(jsonStr string) error
 }
 
-// PathValidator validates path syntax before navigation.
-// Implement to add custom path validation rules.
-type PathValidator interface {
-	ValidatePath(path string) error
-}
-
-// SecurityValidator checks for dangerous patterns in content.
-// Extends Validator with content-specific security checks.
-type SecurityValidator interface {
-	Validator
-	// ValidateContent checks raw content for security issues.
-	// This is called on the raw input before JSON parsing.
-	ValidateContent(content string) error
-}
-
 // validationChain runs multiple validators in sequence.
 // Stops at the first error encountered.
 type validationChain []Validator
@@ -190,24 +175,6 @@ type DangerousPattern struct {
 
 	// Level determines how the pattern is handled.
 	Level PatternLevel
-}
-
-// PatternRegistry manages dangerous patterns with thread-safe operations.
-type PatternRegistry interface {
-	// Add registers a new dangerous pattern.
-	Add(pattern DangerousPattern)
-
-	// Remove unregisters a pattern by its pattern string.
-	Remove(pattern string)
-
-	// List returns all registered patterns.
-	List() []DangerousPattern
-
-	// ListByLevel returns patterns filtered by severity level.
-	ListByLevel(level PatternLevel) []DangerousPattern
-
-	// Clear removes all registered patterns.
-	Clear()
 }
 
 // =============================================================================

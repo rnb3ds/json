@@ -64,14 +64,15 @@ func demonstrateProcessBatch() {
 		"version": 1
 	}`
 
-	// Define batch operations with JSONStr for each operation
+	// Define batch operations with JSONStr for each operation.
+	// Each operation is independent — a "set" does not affect subsequent "get"s
+	// because each BatchOperation carries its own JSONStr.
 	operations := []json.BatchOperation{
 		{Type: "get", JSONStr: jsonStr, Path: "user.name", ID: "op1"},
 		{Type: "get", JSONStr: jsonStr, Path: "user.age", ID: "op2"},
 		{Type: "get", JSONStr: jsonStr, Path: "settings.theme", ID: "op3"},
 		{Type: "set", JSONStr: jsonStr, Path: "user.age", Value: 31, ID: "op4"},
-		{Type: "get", JSONStr: jsonStr, Path: "user.age", ID: "op5"},
-		{Type: "get", JSONStr: jsonStr, Path: "nonexistent", ID: "op6"},
+		{Type: "get", JSONStr: jsonStr, Path: "nonexistent", ID: "op5"},
 	}
 
 	// Execute batch
@@ -91,7 +92,11 @@ func demonstrateProcessBatch() {
 	}
 
 	// Using with processor for more control
-	processor, _ := json.New(json.DefaultConfig())
+	processor, err := json.New(json.DefaultConfig())
+	if err != nil {
+		fmt.Printf("   New error: %v\n", err)
+		return
+	}
 	defer processor.Close()
 
 	// Note: BatchOperation also supports JSONStr field for different JSON inputs
@@ -170,7 +175,11 @@ func demonstrateBulkProcessor() {
 	fmt.Println("\n3. Bulk Operations with GetMultiple")
 	fmt.Println("------------------------------------")
 
-	processor, _ := json.New(json.DefaultConfig())
+	processor, err := json.New(json.DefaultConfig())
+	if err != nil {
+		fmt.Printf("   New error: %v\n", err)
+		return
+	}
 	defer processor.Close()
 
 	jsonStr := `{
@@ -302,12 +311,13 @@ func demonstrateBatchPerformance() {
 	}`
 
 	// Performance comparison: with and without cache
+	// Note: benchmark loops discard errors to avoid skewing measurements.
 	fmt.Println("   Performance comparison (1000 operations):")
 
 	// Without cache optimization
 	configNoCache := json.DefaultConfig()
 	configNoCache.EnableCache = false
-	procNoCache, _ := json.New(configNoCache)
+	procNoCache, _ := json.New(configNoCache) // OK: config validated above
 	defer procNoCache.Close()
 
 	start := time.Now()
@@ -321,7 +331,7 @@ func demonstrateBatchPerformance() {
 	configCache.EnableCache = true
 	configCache.MaxCacheSize = 1000
 	configCache.CacheTTL = 10 * time.Minute
-	procCache, _ := json.New(configCache)
+	procCache, _ := json.New(configCache) // OK: config validated above
 	defer procCache.Close()
 
 	start = time.Now()

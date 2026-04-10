@@ -104,7 +104,7 @@ func TestSecurityValidation(t *testing.T) {
 					var jsonErr *JsonsError
 					if errors.As(err, &jsonErr) {
 						helper.AssertTrue(
-							jsonErr.Err == ErrSizeLimit || jsonErr.Err == ErrOperationFailed,
+							jsonErr.Err == ErrSizeLimit || jsonErr.Err == errOperationFailed,
 							"Expected size limit error, got: %v", jsonErr.Err)
 					}
 				}

@@ -4,6 +4,26 @@ All notable changes to the cybergodev/json library will be documented in this fi
 
 ---
 
+## v1.X.0 - Deprecated Code Removal (2026-04-10)
+
+>Removal of previously deprecated functions
+
+### Breaking Changes
+- `IndentBuffer()` (package-level) → Use `Indent()`
+- `HTMLEscapeBuffer()` (package-level) → Use `HTMLEscape()`
+- `Processor.IndentBuffer()` → Use `Processor.Indent()`
+- `Processor.HTMLEscapeBuffer()` → Use `Processor.HTMLEscape()`
+- `MergeJSONMany()` → Use `MergeMany()`
+- `MergeJSONManyWithConfig()` → Use `MergeMany()`
+
+### Removed
+- `api.go`: `IndentBuffer()`, `HTMLEscapeBuffer()` (deprecated aliases)
+- `path.go`: `Processor.IndentBuffer()`, `Processor.HTMLEscapeBuffer()` (deprecated aliases)
+- `helpers.go`: `MergeJSONMany()`, `MergeJSONManyWithConfig()` (deprecated aliases)
+- `docs/API_REFERENCE.md`: MergeJSONMany deprecated section removed
+
+---
+
 ## v1.3.0 - Performance & API Unification (2026-03-30)
 
 >Internal core restructuring  

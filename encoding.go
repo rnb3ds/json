@@ -150,7 +150,7 @@ func (enc *Encoder) Encode(v any) error {
 	// after SetGlobalProcessor or ShutdownGlobalProcessor.
 	processor := getDefaultProcessor()
 	if processor == nil {
-		return ErrInternalError
+		return errInternalError
 	}
 
 	// PERFORMANCE: Fast path for simple types with no custom encoding
@@ -266,7 +266,7 @@ func (dec *Decoder) Decode(v any) error {
 	// Get the current processor on each Decode call to avoid stale references.
 	processor := getDefaultProcessor()
 	if processor == nil {
-		return ErrInternalError
+		return errInternalError
 	}
 
 	if v == nil {
@@ -720,7 +720,11 @@ func (dec *Decoder) parseNumber(first byte) (any, error) {
 // marshalJSON marshals a value to JSON string with optional pretty printing
 // This helper function consolidates duplicate marshaling logic
 func marshalJSON(value any, pretty bool, prefix, indent string) (string, error) {
-	return internal.MarshalJSON(value, pretty, prefix, indent)
+	resultBytes, err := internal.MarshalJSONToBytes(value, pretty, prefix, indent)
+	if err != nil {
+		return "", err
+	}
+	return string(resultBytes), nil
 }
 
 // validateDepth checks if the data structure exceeds maximum depth
@@ -729,7 +733,7 @@ func (p *Processor) validateDepth(value any, maxDepth, currentDepth int) error {
 		return &JsonsError{
 			Op:      "validate_depth",
 			Message: fmt.Sprintf("data structure depth %d exceeds maximum %d", currentDepth, maxDepth),
-			Err:     ErrOperationFailed,
+			Err:     errOperationFailed,
 		}
 	}
 
@@ -1000,8 +1004,8 @@ func (p *Processor) EncodeWithConfig(value any, cfg ...Config) (string, error) {
 	if err != nil {
 		return "", &JsonsError{
 			Op:      "encode_with_config",
-			Message: fmt.Sprintf("failed to encode value: %v", err),
-			Err:     ErrOperationFailed,
+			Message: "failed to encode value",
+			Err:     err,
 		}
 	}
 
@@ -1059,7 +1063,8 @@ func fastEncodeSimpleWithHTMLEscape(value any) (string, bool) {
 
 // fastEncodeSimpleToBytes encodes directly to []byte, avoiding the
 // []byte -> string -> []byte round-trip when Marshal needs bytes.
-// PERFORMANCE: Saves one allocation and copy compared to fastEncodeSimpleWithHTMLEscape.
+// PERFORMANCE v2: Uses append(nil, data...) which is optimized by the compiler
+// into a single allocation (runtime.memmove) without the explicit make+copy.
 func fastEncodeSimpleToBytes(value any) ([]byte, bool) {
 	encoder := internal.GetEncoder()
 	defer internal.PutEncoder(encoder)
@@ -1076,10 +1081,9 @@ func fastEncodeSimpleToBytes(value any) ([]byte, bool) {
 		return escaped, true
 	}
 
-	// Copy to new slice since encoder buffer is pooled
-	result := make([]byte, len(data))
-	copy(result, data)
-	return result, true
+	// Use append to clone — compiler optimizes append(nil, data...) to a
+	// single alloc+copy without the separate make call overhead.
+	return append([]byte(nil), data...), true
 }
 
 // Encode converts any Go value to JSON string
@@ -1411,7 +1415,7 @@ func (e *customEncoder) escapeRune(r rune) error {
 			return &JsonsError{
 				Op:      "escape_rune",
 				Message: fmt.Sprintf("invalid UTF-8 rune: %U", r),
-				Err:     ErrOperationFailed,
+				Err:     errOperationFailed,
 			}
 		} else {
 			e.buffer.WriteRune(r)
@@ -1697,7 +1701,7 @@ func (p *Processor) ValidateSchema(jsonStr string, schema *Schema, cfg ...Config
 		return nil, &JsonsError{
 			Op:      "validate_schema",
 			Message: "schema cannot be nil",
-			Err:     ErrOperationFailed,
+			Err:     errOperationFailed,
 		}
 	}
 

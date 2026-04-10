@@ -11,20 +11,20 @@ import (
 
 // MarshalJSON marshals a value to JSON string with optional pretty printing
 func MarshalJSON(value any, pretty bool, prefix, indent string) (string, error) {
-	var resultBytes []byte
-	var err error
-
-	if pretty {
-		resultBytes, err = json.MarshalIndent(value, prefix, indent)
-	} else {
-		resultBytes, err = json.Marshal(value)
-	}
-
+	resultBytes, err := MarshalJSONToBytes(value, pretty, prefix, indent)
 	if err != nil {
 		return "", err
 	}
-
 	return string(resultBytes), nil
+}
+
+// MarshalJSONToBytes marshals a value to JSON bytes with optional pretty printing.
+// PERFORMANCE: Returns []byte directly to avoid string conversion when caller needs bytes.
+func MarshalJSONToBytes(value any, pretty bool, prefix, indent string) ([]byte, error) {
+	if pretty {
+		return json.MarshalIndent(value, prefix, indent)
+	}
+	return json.Marshal(value)
 }
 
 // IsSpace reports whether the character is a JSON whitespace character

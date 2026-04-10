@@ -193,7 +193,7 @@ func TestProcessor_StreamJSONLParallel_WithError(t *testing.T) {
 
 	err = processor.StreamJSONLParallel(strings.NewReader(input), 2, func(lineNum int, item *IterableValue) error {
 		if lineNum == 2 {
-			return ErrOperationFailed
+			return errOperationFailed
 		}
 		return nil
 	})
@@ -727,7 +727,7 @@ func TestStreamLinesInto_CallbackError(t *testing.T) {
 
 	_, err := StreamLinesInto[Data](strings.NewReader(input), func(lineNum int, data Data) error {
 		if data.Value == 2 {
-			return ErrOperationFailed
+			return errOperationFailed
 		}
 		return nil
 	})

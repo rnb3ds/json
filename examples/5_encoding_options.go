@@ -78,17 +78,25 @@ func main() {
 	fmt.Println("\n✅ Encoding options complete!")
 }
 
-func demonstratePrettyVsCompact(user interface{}) {
+func demonstratePrettyVsCompact(user any) {
 	fmt.Println("1️. Pretty vs Compact Formatting")
 	fmt.Println("─────────────────────────────────")
 
-	// Pretty formatting - using new unified Config API
-	prettyJSON, _ := json.EncodeWithConfig(user, json.PrettyConfig())
+	// Pretty formatting - using unified Config API
+	prettyJSON, err := json.EncodeWithConfig(user, json.PrettyConfig())
+	if err != nil {
+		fmt.Printf("   EncodeWithConfig error: %v\n", err)
+		return
+	}
 	fmt.Println("   Pretty JSON:")
 	fmt.Println(prettyJSON)
 
 	// Compact formatting (default)
-	compactJSON, _ := json.Encode(user)
+	compactJSON, err := json.Encode(user)
+	if err != nil {
+		fmt.Printf("   Encode error: %v\n", err)
+		return
+	}
 	fmt.Println("\n   Compact JSON:")
 	fmt.Println(compactJSON)
 }
@@ -120,7 +128,11 @@ func demonstrateHTMLEscaping() {
 	readableConfig := json.PrettyConfig()
 	readableConfig.EscapeHTML = false
 	readableConfig.DisableEscaping = true
-	unescapedJSON, _ := json.Encode(data, readableConfig)
+	unescapedJSON, err := json.Encode(data, readableConfig)
+	if err != nil {
+		fmt.Printf("   Encode error: %v\n", err)
+		return
+	}
 	fmt.Println("\n   Without HTML escaping (custom, readable):")
 	fmt.Println(unescapedJSON)
 }
@@ -348,13 +360,21 @@ func demonstrateEncodeMethods() {
 	product := Product{ID: 1, Name: "Laptop", Price: 999.99}
 
 	// Encode (compact by default)
-	compact, _ := json.Encode(product)
+	compact, err := json.Encode(product)
+	if err != nil {
+		fmt.Printf("   Encode error: %v\n", err)
+		return
+	}
 	fmt.Printf("   Encode (compact): %s\n", compact)
 
 	// EncodeWithConfig (pretty)
 	opts := json.DefaultConfig()
 	opts.Pretty = true
-	pretty, _ := json.EncodeWithConfig(product, opts)
+	pretty, err := json.EncodeWithConfig(product, opts)
+	if err != nil {
+		fmt.Printf("   EncodeWithConfig error: %v\n", err)
+		return
+	}
 	fmt.Println("\n   EncodeWithConfig (pretty):")
 	fmt.Println(pretty)
 
@@ -362,7 +382,11 @@ func demonstrateEncodeMethods() {
 	customCfg := json.DefaultConfig()
 	customCfg.Pretty = true
 	customCfg.Indent = "    "
-	custom, _ := json.Encode(product, customCfg)
+	custom, err := json.Encode(product, customCfg)
+	if err != nil {
+		fmt.Printf("   Encode error: %v\n", err)
+		return
+	}
 	fmt.Println("\n   Encode with custom config (4-space indent):")
 	fmt.Println(custom)
 }

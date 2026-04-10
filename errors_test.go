@@ -18,23 +18,17 @@ func TestIsRetryable(t *testing.T) {
 		{"ErrInvalidJSON is not retryable", ErrInvalidJSON, false},
 		{"ErrPathNotFound is not retryable", ErrPathNotFound, false},
 		{"ErrTypeMismatch is not retryable", ErrTypeMismatch, false},
-		{"ErrOperationFailed is not retryable", ErrOperationFailed, false},
+		{"errOperationFailed is not retryable", errOperationFailed, false},
 		{"ErrInvalidPath is not retryable", ErrInvalidPath, false},
 		{"ErrProcessorClosed is not retryable", ErrProcessorClosed, false},
-		{"ErrInternalError is not retryable", ErrInternalError, false},
+		{"errInternalError is not retryable", errInternalError, false},
 		{"ErrSizeLimit is not retryable", ErrSizeLimit, false},
 		{"ErrDepthLimit is not retryable", ErrDepthLimit, false},
 		{"ErrSecurityViolation is not retryable", ErrSecurityViolation, false},
 		{"ErrUnsupportedPath is not retryable", ErrUnsupportedPath, false},
-		{"ErrCacheFull is not retryable", ErrCacheFull, false},
-		{"ErrCacheDisabled is not retryable", ErrCacheDisabled, false},
+				{"errCacheDisabled is not retryable", errCacheDisabled, false},
 		{"ErrResourceExhausted is not retryable", ErrResourceExhausted, false},
-		{
-			"cache_operation JsonsError is retryable",
-			&JsonsError{Op: "cache_operation", Message: "cache miss", Err: ErrCacheFull},
-			true,
-		},
-		{
+				{
 			"concurrent_operation JsonsError is retryable",
 			&JsonsError{Op: "concurrent_operation", Message: "too many ops", Err: ErrConcurrencyLimit},
 			true,
@@ -46,7 +40,7 @@ func TestIsRetryable(t *testing.T) {
 		},
 		{
 			"wrapped ErrOperationTimeout is retryable",
-			wrapError(ErrOperationTimeout, "test", "timeout"),
+			newOperationError("test", "timeout", ErrOperationTimeout),
 			true,
 		},
 		{
@@ -79,15 +73,14 @@ func TestIsUserError(t *testing.T) {
 		{"ErrTypeMismatch is user error", ErrTypeMismatch, true},
 		{"ErrInvalidPath is user error", ErrInvalidPath, true},
 		{"ErrUnsupportedPath is user error", ErrUnsupportedPath, true},
-		{"ErrOperationFailed is not user error", ErrOperationFailed, false},
+		{"errOperationFailed is not user error", errOperationFailed, false},
 		{"ErrProcessorClosed is not user error", ErrProcessorClosed, false},
-		{"ErrInternalError is not user error", ErrInternalError, false},
+		{"errInternalError is not user error", errInternalError, false},
 		{"ErrSizeLimit is not user error", ErrSizeLimit, false},
 		{"ErrDepthLimit is not user error", ErrDepthLimit, false},
 		{"ErrConcurrencyLimit is not user error", ErrConcurrencyLimit, false},
 		{"ErrSecurityViolation is not user error", ErrSecurityViolation, false},
-		{"ErrCacheFull is not user error", ErrCacheFull, false},
-		{"ErrCacheDisabled is not user error", ErrCacheDisabled, false},
+				{"errCacheDisabled is not user error", errCacheDisabled, false},
 		{"ErrOperationTimeout is not user error", ErrOperationTimeout, false},
 		{"ErrResourceExhausted is not user error", ErrResourceExhausted, false},
 		{
@@ -97,7 +90,7 @@ func TestIsUserError(t *testing.T) {
 		},
 		{
 			"wrapped non-user error is not user error",
-			&JsonsError{Op: "get", Message: "failed", Err: ErrInternalError},
+			&JsonsError{Op: "get", Message: "failed", Err: errInternalError},
 			false,
 		},
 		{
@@ -176,8 +169,8 @@ func TestGetErrorSuggestion(t *testing.T) {
 			"Check JSON syntax - ensure proper quotes, brackets, and commas",
 		},
 		{
-			"ErrOperationFailed returns generic suggestion",
-			ErrOperationFailed,
+			"errOperationFailed returns generic suggestion",
+			errOperationFailed,
 			"Check the error message for specific details",
 		},
 		{
@@ -192,181 +185,6 @@ func TestGetErrorSuggestion(t *testing.T) {
 			got := getErrorSuggestion(tt.input)
 			if got != tt.want {
 				t.Errorf("getErrorSuggestion() = %q, want %q", got, tt.want)
-			}
-		})
-	}
-}
-
-// TestWrapError verifies error wrapping with context.
-func TestWrapError(t *testing.T) {
-	baseErr := errors.New("base error")
-	innerErr := &JsonsError{Op: "inner", Message: "inner msg", Err: ErrPathNotFound}
-
-	tests := []struct {
-		name       string
-		err        error
-		op         string
-		message    string
-		wantNil    bool
-		wantOp     string
-		wantMsg    string
-		wantUnwrap error
-	}{
-		{
-			name:    "nil error returns nil",
-			err:     nil,
-			op:      "test",
-			message: "should be nil",
-			wantNil: true,
-		},
-		{
-			name:       "wrap sentinel error",
-			err:        ErrInvalidJSON,
-			op:         "parse",
-			message:    "failed to parse input",
-			wantNil:    false,
-			wantOp:     "parse",
-			wantMsg:    "failed to parse input",
-			wantUnwrap: ErrInvalidJSON,
-		},
-		{
-			name:       "wrap arbitrary error",
-			err:        baseErr,
-			op:         "process",
-			message:    "processing failed",
-			wantNil:    false,
-			wantOp:     "process",
-			wantMsg:    "processing failed",
-			wantUnwrap: baseErr,
-		},
-		{
-			name:       "wrap JsonsError creates chain",
-			err:        innerErr,
-			op:         "outer",
-			message:    "outer msg",
-			wantNil:    false,
-			wantOp:     "outer",
-			wantMsg:    "outer msg",
-			wantUnwrap: ErrPathNotFound,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := wrapError(tt.err, tt.op, tt.message)
-			if tt.wantNil {
-				if got != nil {
-					t.Errorf("wrapError() = %v, want nil", got)
-				}
-				return
-			}
-			if got == nil {
-				t.Fatalf("wrapError() returned nil, want non-nil")
-			}
-			je, ok := got.(*JsonsError)
-			if !ok {
-				t.Fatalf("wrapError() returned %T, want *JsonsError", got)
-			}
-			if je.Op != tt.wantOp {
-				t.Errorf("Op = %q, want %q", je.Op, tt.wantOp)
-			}
-			if je.Message != tt.wantMsg {
-				t.Errorf("Message = %q, want %q", je.Message, tt.wantMsg)
-			}
-			if tt.wantUnwrap != nil && !errors.Is(got, tt.wantUnwrap) {
-				t.Errorf("Unwrap chain does not contain expected error; got Err = %v", je.Err)
-			}
-		})
-	}
-}
-
-// TestWrapPathError verifies error wrapping with path context.
-func TestWrapPathError(t *testing.T) {
-	tests := []struct {
-		name       string
-		err        error
-		op         string
-		path       string
-		message    string
-		wantNil    bool
-		wantOp     string
-		wantPath   string
-		wantMsg    string
-		wantUnwrap error
-	}{
-		{
-			name:    "nil error returns nil",
-			err:     nil,
-			op:      "get",
-			path:    "data.field",
-			message: "should be nil",
-			wantNil: true,
-		},
-		{
-			name:       "wrap with path",
-			err:        ErrPathNotFound,
-			op:         "get",
-			path:       "users[0].name",
-			message:    "field missing",
-			wantNil:    false,
-			wantOp:     "get",
-			wantPath:   "users[0].name",
-			wantMsg:    "field missing",
-			wantUnwrap: ErrPathNotFound,
-		},
-		{
-			name:       "wrap with empty path",
-			err:        ErrInvalidJSON,
-			op:         "validate",
-			path:       "",
-			message:    "bad input",
-			wantNil:    false,
-			wantOp:     "validate",
-			wantPath:   "",
-			wantMsg:    "bad input",
-			wantUnwrap: ErrInvalidJSON,
-		},
-		{
-			name:       "wrap chained error",
-			err:        wrapError(ErrTypeMismatch, "convert", "cannot convert"),
-			op:         "set",
-			path:       "config.debug",
-			message:    "type error during set",
-			wantNil:    false,
-			wantOp:     "set",
-			wantPath:   "config.debug",
-			wantMsg:    "type error during set",
-			wantUnwrap: ErrTypeMismatch,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := wrapPathError(tt.err, tt.op, tt.path, tt.message)
-			if tt.wantNil {
-				if got != nil {
-					t.Errorf("wrapPathError() = %v, want nil", got)
-				}
-				return
-			}
-			if got == nil {
-				t.Fatalf("wrapPathError() returned nil, want non-nil")
-			}
-			je, ok := got.(*JsonsError)
-			if !ok {
-				t.Fatalf("wrapPathError() returned %T, want *JsonsError", got)
-			}
-			if je.Op != tt.wantOp {
-				t.Errorf("Op = %q, want %q", je.Op, tt.wantOp)
-			}
-			if je.Path != tt.wantPath {
-				t.Errorf("Path = %q, want %q", je.Path, tt.wantPath)
-			}
-			if je.Message != tt.wantMsg {
-				t.Errorf("Message = %q, want %q", je.Message, tt.wantMsg)
-			}
-			if tt.wantUnwrap != nil && !errors.Is(got, tt.wantUnwrap) {
-				t.Errorf("Unwrap chain does not contain expected error; got Err = %v", je.Err)
 			}
 		})
 	}
@@ -476,16 +294,15 @@ func TestIsSecurityRelated(t *testing.T) {
 		{"ErrInvalidJSON is not security related", ErrInvalidJSON, false},
 		{"ErrPathNotFound is not security related", ErrPathNotFound, false},
 		{"ErrTypeMismatch is not security related", ErrTypeMismatch, false},
-		{"ErrOperationFailed is not security related", ErrOperationFailed, false},
+		{"errOperationFailed is not security related", errOperationFailed, false},
 		{"ErrInvalidPath is not security related", ErrInvalidPath, false},
 		{"ErrProcessorClosed is not security related", ErrProcessorClosed, false},
-		{"ErrInternalError is not security related", ErrInternalError, false},
+		{"errInternalError is not security related", errInternalError, false},
 		{"ErrSizeLimit is not security related", ErrSizeLimit, false},
 		{"ErrDepthLimit is not security related", ErrDepthLimit, false},
 		{"ErrConcurrencyLimit is not security related", ErrConcurrencyLimit, false},
 		{"ErrUnsupportedPath is not security related", ErrUnsupportedPath, false},
-		{"ErrCacheFull is not security related", ErrCacheFull, false},
-		{"ErrCacheDisabled is not security related", ErrCacheDisabled, false},
+				{"errCacheDisabled is not security related", errCacheDisabled, false},
 		{"ErrOperationTimeout is not security related", ErrOperationTimeout, false},
 		{"ErrResourceExhausted is not security related", ErrResourceExhausted, false},
 		{

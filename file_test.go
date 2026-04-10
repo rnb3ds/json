@@ -561,7 +561,7 @@ func TestForeachFileChunked(t *testing.T) {
 		err = processor.ForeachFileChunked(filePath, 2, func(chunk []*IterableValue) error {
 			batches++
 			if batches == 2 {
-				return ErrOperationFailed // use any non-break error to stop
+				return errOperationFailed // use any non-break error to stop
 			}
 			return nil
 		})

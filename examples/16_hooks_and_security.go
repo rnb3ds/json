@@ -62,7 +62,7 @@ func demonstrateHookInterface() {
 	fmt.Println("1. Hook Interface (custom Hook implementation)")
 	fmt.Println("-------------------------------------------------")
 
-	processor, _ := json.New(json.DefaultConfig())
+	processor, _ := json.New(json.DefaultConfig()) // OK: preset config always valid
 	defer processor.Close()
 
 	// Add a custom hook that implements the Hook interface
@@ -165,7 +165,7 @@ func demonstrateConvenienceHooks() {
 	fmt.Println("\n3. Convenience Hook Constructors")
 	fmt.Println("----------------------------------")
 
-	processor, _ := json.New(json.DefaultConfig())
+	processor, _ := json.New(json.DefaultConfig()) // OK: preset config always valid
 	defer processor.Close()
 
 	// LoggingHook - logs operation start/completion
@@ -240,7 +240,7 @@ func demonstrateSecurityPatterns() {
 
 	// Demonstrate SecurityConfig for secure processing
 	fmt.Println("\n   Using SecurityConfig processor:")
-	secProcessor, _ := json.New(json.SecurityConfig())
+	secProcessor, _ := json.New(json.SecurityConfig()) // OK: preset config always valid
 	defer secProcessor.Close()
 
 	safeJSON := `{"user": "Alice", "action": "login"}`

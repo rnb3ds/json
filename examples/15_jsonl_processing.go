@@ -234,7 +234,11 @@ func demonstrateNDJSONProcessor() {
 
 	// CollectJSONL - collect all items
 	fmt.Println("\n   CollectJSONL (collect all items):")
-	processor, _ := json.New(json.DefaultConfig())
+	processor, err := json.New(json.DefaultConfig())
+	if err != nil {
+		fmt.Printf("   New error: %v\n", err)
+		return
+	}
 	defer processor.Close()
 
 	reader2 := strings.NewReader(jsonlData)

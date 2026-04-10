@@ -417,11 +417,11 @@ func (c *Config) ValidateWithWarnings() []ConfigWarning {
 
 // Config accessor methods.
 
-// Required by CacheConfig interface (internal/cache.go) - do not remove.
-// These MUST remain exported for cross-package interface satisfaction.
-func (c *Config) IsCacheEnabled() bool       { return c.EnableCache }
-func (c *Config) GetMaxCacheSize() int       { return c.MaxCacheSize }
-func (c *Config) GetCacheTTL() time.Duration { return c.CacheTTL }
+// Internal accessor methods for cache configuration.
+// Users should access Config fields directly (e.g., cfg.EnableCache, cfg.MaxCacheSize, cfg.CacheTTL).
+func (c *Config) isCacheEnabled() bool       { return c.EnableCache }
+func (c *Config) getMaxCacheSize() int       { return c.MaxCacheSize }
+func (c *Config) getCacheTTL() time.Duration { return c.CacheTTL }
 
 // Internal accessor methods.
 // Users should access Config fields directly (e.g., cfg.MaxJSONSize).

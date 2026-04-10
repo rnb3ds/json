@@ -159,7 +159,7 @@ type Config struct {
 	JSONLMaxMemory int64 `json:"jsonl_max_memory"`
 
 	// ===== Merge Options =====
-	// MergeMode controls how JSON documents are merged by MergeJSON and MergeJSONMany.
+	// MergeMode controls how JSON documents are merged by MergeJSON and MergeMany.
 	// Default: MergeUnion (combine all keys/elements)
 	MergeMode MergeMode `json:"merge_mode"`
 
@@ -313,24 +313,6 @@ type BatchResult struct {
 // can marshal themselves into valid JSON.
 type marshaler interface {
 	MarshalJSON() ([]byte, error)
-}
-
-// unmarshaler is the interface implemented by types
-// that can unmarshal a JSON description of themselves.
-type unmarshaler interface {
-	UnmarshalJSON([]byte) error
-}
-
-// textMarshaler is the interface implemented by an object that can
-// marshal itself into a textual form.
-type textMarshaler interface {
-	MarshalText() (text []byte, err error)
-}
-
-// textUnmarshaler is the interface implemented by an object that can
-// unmarshal a textual representation of itself.
-type textUnmarshaler interface {
-	UnmarshalText(text []byte) error
 }
 
 // InvalidUnmarshalError describes an invalid argument passed to Unmarshal.
@@ -517,20 +499,6 @@ type resourceMonitor struct {
 	totalOperations   int64
 }
 
-// resourceStats represents resource usage statistics
-type resourceStats struct {
-	AllocatedBytes    int64         `json:"allocated_bytes"`
-	FreedBytes        int64         `json:"freed_bytes"`
-	PeakMemoryUsage   int64         `json:"peak_memory_usage"`
-	PoolHits          int64         `json:"pool_hits"`
-	PoolMisses        int64         `json:"pool_misses"`
-	PoolEvictions     int64         `json:"pool_evictions"`
-	MaxGoroutines     int64         `json:"max_goroutines"`
-	CurrentGoroutines int64         `json:"current_goroutines"`
-	AvgResponseTime   time.Duration `json:"avg_response_time"`
-	TotalOperations   int64         `json:"total_operations"`
-}
-
 // newResourceMonitor creates a new resource monitor
 func newResourceMonitor() *resourceMonitor {
 	return &resourceMonitor{
@@ -664,22 +632,6 @@ func (rm *resourceMonitor) checkForLeaks() []string {
 	return issues
 }
 
-// getStats returns current resource statistics
-func (rm *resourceMonitor) getStats() resourceStats {
-	return resourceStats{
-		AllocatedBytes:    atomic.LoadInt64(&rm.allocatedBytes),
-		FreedBytes:        atomic.LoadInt64(&rm.freedBytes),
-		PeakMemoryUsage:   atomic.LoadInt64(&rm.peakMemoryUsage),
-		PoolHits:          atomic.LoadInt64(&rm.poolHits),
-		PoolMisses:        atomic.LoadInt64(&rm.poolMisses),
-		PoolEvictions:     atomic.LoadInt64(&rm.poolEvictions),
-		MaxGoroutines:     atomic.LoadInt64(&rm.maxGoroutines),
-		CurrentGoroutines: atomic.LoadInt64(&rm.currentGoroutines),
-		AvgResponseTime:   time.Duration(atomic.LoadInt64(&rm.avgResponseTime)),
-		TotalOperations:   atomic.LoadInt64(&rm.totalOperations),
-	}
-}
-
 // Reset resets all resource statistics
 func (rm *resourceMonitor) reset() {
 	atomic.StoreInt64(&rm.allocatedBytes, 0)
@@ -693,32 +645,6 @@ func (rm *resourceMonitor) reset() {
 	atomic.StoreInt64(&rm.avgResponseTime, 0)
 	atomic.StoreInt64(&rm.totalOperations, 0)
 	atomic.StoreInt64(&rm.lastLeakCheck, time.Now().Unix())
-}
-
-// GetDeallocationRatio returns the ratio of freed bytes to allocated bytes as a percentage.
-// Values > 100% indicate the same memory was reused multiple times via pooling.
-func (rm *resourceMonitor) getDeallocationRatio() float64 {
-	allocated := atomic.LoadInt64(&rm.allocatedBytes)
-	freed := atomic.LoadInt64(&rm.freedBytes)
-
-	if allocated == 0 {
-		return 100.0
-	}
-
-	return float64(freed) / float64(allocated) * 100.0
-}
-
-// GetPoolHitRatio returns the pool cache hit ratio as a percentage.
-func (rm *resourceMonitor) getPoolHitRatio() float64 {
-	hits := atomic.LoadInt64(&rm.poolHits)
-	misses := atomic.LoadInt64(&rm.poolMisses)
-	total := hits + misses
-
-	if total == 0 {
-		return 100.0
-	}
-
-	return float64(hits) / float64(total) * 100.0
 }
 
 // Schema represents a JSON schema for validation.
@@ -1167,6 +1093,21 @@ func (s *Schema) HasMinItems() bool {
 func (s *Schema) HasMaxItems() bool {
 	return s.hasMaxItems
 }
+
+// ============================================================================
+// COMPILED PATH
+// Pre-parsed JSON path for fast repeated operations.
+// ============================================================================
+
+// CompiledPath represents a pre-parsed JSON path for fast repeated operations.
+// Use Processor.CompilePath() to create instances.
+//
+// Example:
+//
+//	cp, err := processor.CompilePath("users[0].name")
+//	defer cp.Release()
+//	value, err := processor.GetCompiled(jsonStr, cp)
+type CompiledPath = internal.CompiledPath
 
 // ============================================================================
 // MERGE CONFIGURATION

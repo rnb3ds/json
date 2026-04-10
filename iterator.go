@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"reflect"
@@ -64,16 +65,6 @@ func init() {
 // clearPathTypeCache clears the global path type cache.
 // This should be called during processor shutdown or periodically in long-running services
 // to prevent memory accumulation from cached path types.
-func clearPathTypeCache() {
-	for i := range pathTypeCacheShards {
-		shard := &pathTypeCacheShards[i]
-		shard.mu.Lock()
-		shard.entries = make(map[string]pathType, 64)
-		shard.size = 0
-		shard.mu.Unlock()
-	}
-}
-
 // getPathTypeShard returns the shard for a path using FNV-1a hash
 func getPathTypeShard(path string) *pathTypeCacheShard {
 	h := internal.HashStringFNV1a(path)
@@ -262,6 +253,14 @@ var iterableValuePool = sync.Pool{
 	New: func() any {
 		return &IterableValue{}
 	},
+}
+
+// releaseIterableValues returns a slice of IterableValue objects to the pool.
+func releaseIterableValues(items []*IterableValue) {
+	for _, iv := range items {
+		iv.data = nil
+		iterableValuePool.Put(iv)
+	}
 }
 
 // HasNext checks if there are more elements to iterate.
@@ -914,7 +913,7 @@ func (iv *IterableValue) ForeachNested(path string, fn func(key any, item *Itera
 func ForeachWithPathAndControl(jsonStr, path string, fn func(key any, value any) IteratorControl, cfg ...Config) error {
 	processor := getDefaultProcessor()
 	if processor == nil {
-		return ErrInternalError
+		return errInternalError
 	}
 	if processor.IsClosed() {
 		return ErrProcessorClosed
@@ -972,7 +971,7 @@ func foreachWithIterableValue(data any, fn func(key any, item *IterableValue)) {
 func ForeachWithPath(jsonStr, path string, fn func(key any, item *IterableValue), cfg ...Config) error {
 	processor := getDefaultProcessor()
 	if processor == nil {
-		return ErrInternalError
+		return errInternalError
 	}
 	if processor.IsClosed() {
 		return ErrProcessorClosed
@@ -1027,7 +1026,7 @@ func foreachWithPathIterableValue(data any, currentPath string, fn func(key any,
 func ForeachReturn(jsonStr string, fn func(key any, item *IterableValue), cfg ...Config) (string, error) {
 	processor := getDefaultProcessor()
 	if processor == nil {
-		return "", ErrInternalError
+		return "", errInternalError
 	}
 	if processor.IsClosed() {
 		return "", ErrProcessorClosed
@@ -1083,16 +1082,28 @@ func ForeachNested(jsonStr string, fn func(key any, item *IterableValue), cfg ..
 	foreachNestedOnValue(data, fn)
 }
 
-// foreachNestedOnValue recursively iterates over nested values
-// PERFORMANCE: Uses pooled IterableValue to reduce allocations
+// foreachNestedMaxDepth limits recursion depth for nested iteration to prevent stack overflow.
+const foreachNestedMaxDepth = 200
+
+// foreachNestedOnValue recursively iterates over nested values.
+// PERFORMANCE: Uses pooled IterableValue to reduce allocations.
+// SECURITY: Depth-limited to prevent stack overflow from deeply nested structures.
 func foreachNestedOnValue(data any, fn func(key any, item *IterableValue)) {
+	foreachNestedOnValueDepth(data, fn, 0)
+}
+
+// foreachNestedOnValueDepth is the depth-tracked implementation of foreachNestedOnValue.
+func foreachNestedOnValueDepth(data any, fn func(key any, item *IterableValue), depth int) {
+	if depth > foreachNestedMaxDepth {
+		return
+	}
 	switch v := data.(type) {
 	case []any:
 		for i, item := range v {
 			iv := iterableValuePool.Get().(*IterableValue)
 			iv.data = item
 			fn(i, iv)
-			foreachNestedOnValue(item, fn)
+			foreachNestedOnValueDepth(item, fn, depth+1)
 			iv.data = nil
 			iterableValuePool.Put(iv)
 		}
@@ -1101,7 +1112,7 @@ func foreachNestedOnValue(data any, fn func(key any, item *IterableValue)) {
 			iv := iterableValuePool.Get().(*IterableValue)
 			iv.data = val
 			fn(key, iv)
-			foreachNestedOnValue(val, fn)
+			foreachNestedOnValueDepth(val, fn, depth+1)
 			iv.data = nil
 			iterableValuePool.Put(iv)
 		}
@@ -1120,7 +1131,7 @@ func foreachWithIterableValueError(data any, fn func(key any, item *IterableValu
 			iv.data = nil
 			iterableValuePool.Put(iv)
 			if err != nil {
-				if err == errBreak {
+				if errors.Is(err, errBreak) {
 					return nil // Break is not an error
 				}
 				return err
@@ -1134,7 +1145,7 @@ func foreachWithIterableValueError(data any, fn func(key any, item *IterableValu
 			iv.data = nil
 			iterableValuePool.Put(iv)
 			if err != nil {
-				if err == errBreak {
+				if errors.Is(err, errBreak) {
 					return nil // Break is not an error
 				}
 				return err
@@ -1144,9 +1155,18 @@ func foreachWithIterableValueError(data any, fn func(key any, item *IterableValu
 	return nil
 }
 
-// foreachNestedOnValueError recursively iterates with error-returning callback
-// PERFORMANCE: Uses pooled IterableValue to reduce allocations
+// foreachNestedOnValueError recursively iterates with error-returning callback.
+// PERFORMANCE: Uses pooled IterableValue to reduce allocations.
+// SECURITY: Depth-limited to prevent stack overflow from deeply nested structures.
 func foreachNestedOnValueError(data any, fn func(key any, item *IterableValue) error) error {
+	return foreachNestedOnValueErrorDepth(data, fn, 0)
+}
+
+// foreachNestedOnValueErrorDepth is the depth-tracked implementation of foreachNestedOnValueError.
+func foreachNestedOnValueErrorDepth(data any, fn func(key any, item *IterableValue) error, depth int) error {
+	if depth > foreachNestedMaxDepth {
+		return fmt.Errorf("foreach nested depth limit exceeded: maximum depth is %d", foreachNestedMaxDepth)
+	}
 	switch v := data.(type) {
 	case []any:
 		for i, item := range v {
@@ -1156,12 +1176,12 @@ func foreachNestedOnValueError(data any, fn func(key any, item *IterableValue) e
 			if err != nil {
 				iv.data = nil
 				iterableValuePool.Put(iv)
-				if err == errBreak {
+				if errors.Is(err, errBreak) {
 					return nil
 				}
 				return err
 			}
-			err = foreachNestedOnValueError(item, fn)
+			err = foreachNestedOnValueErrorDepth(item, fn, depth+1)
 			iv.data = nil
 			iterableValuePool.Put(iv)
 			if err != nil {
@@ -1176,12 +1196,12 @@ func foreachNestedOnValueError(data any, fn func(key any, item *IterableValue) e
 			if err != nil {
 				iv.data = nil
 				iterableValuePool.Put(iv)
-				if err == errBreak {
+				if errors.Is(err, errBreak) {
 					return nil
 				}
 				return err
 			}
-			err = foreachNestedOnValueError(val, fn)
+			err = foreachNestedOnValueErrorDepth(val, fn, depth+1)
 			iv.data = nil
 			iterableValuePool.Put(iv)
 			if err != nil {

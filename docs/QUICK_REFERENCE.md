@@ -46,7 +46,7 @@ price := json.GetFloat(data, "product.price", 0.0)
 arr := json.GetArray(data, "items", nil)
 
 // Get object
-obj, err := json.GetObject(data, "user.profile")
+obj := json.GetObject(data, "user.profile")
 ```
 
 ### Retrieval with Default Values
@@ -64,14 +64,14 @@ settings := json.GetTyped[map[string]any](data, "settings", map[string]any{})
 ### Type-Safe Retrieval (Generics)
 
 ```go
-// Get string
-name, err := json.GetTyped[string](data, "user.name")
+// Get string (with optional default)
+name := json.GetTyped[string](data, "user.name")
 
 // Get integer slice
-numbers, err := json.GetTyped[[]int](data, "scores")
+numbers := json.GetTyped[[]int](data, "scores")
 
-// Get custom type
-users, err := json.GetTyped[[]User](data, "users")
+// Get custom type (with default)
+users := json.GetTyped[[]User](data, "users", []User{})
 ```
 
 ### Batch Retrieval
@@ -187,10 +187,13 @@ json.ForeachNested(data, func(key any, item *json.IterableValue) {
 
 ```go
 // For early termination, use file-based iteration with IterableValue.Break()
-processor, _ := json.New()
+processor, err := json.New()
+if err != nil {
+    log.Fatal(err)
+}
 defer processor.Close()
 
-err := processor.ForeachFile("data.json", func(key any, item *json.IterableValue) error {
+err = processor.ForeachFile("data.json", func(key any, item *json.IterableValue) error {
     if item.GetInt("id") == targetId {
         return item.Break() // Stop iteration
     }
@@ -278,7 +281,10 @@ json.Get(data, "users{flat:skills}")
 data, err := json.LoadFromFile("config.json")
 
 // Load from Reader (requires processor)
-processor := json.New()
+processor, err := json.New()
+if err != nil {
+    log.Fatal(err)
+}
 defer processor.Close()
 
 file, _ := os.Open("data.json")
@@ -298,7 +304,10 @@ err := json.SaveToFile("output.json", data, cfg)
 err := json.SaveToFile("output.json", data, json.DefaultConfig())
 
 // Save to Writer (requires processor)
-processor := json.New()
+processor, err := json.New()
+if err != nil {
+    log.Fatal(err)
+}
 defer processor.Close()
 
 var buffer bytes.Buffer
@@ -315,13 +324,16 @@ err = processor.SaveToWriter(&buffer, data, cfg)
 
 ```go
 // Use default configuration
-processor := json.New()
+processor, err := json.New()
+if err != nil {
+    log.Fatal(err)
+}
 defer processor.Close()
 
 // Use predefined configurations
-processor := json.New(json.DefaultConfig())    // Same as json.New()
-processor := json.New(json.SecurityConfig())   // For untrusted input
-processor := json.New(json.PrettyConfig())     // For pretty output
+processor, err = json.New(json.DefaultConfig())    // Same as json.New()
+processor, err = json.New(json.SecurityConfig())   // For untrusted input
+processor, err = json.New(json.PrettyConfig())     // For pretty output
 ```
 
 ### Custom Configuration
@@ -336,12 +348,16 @@ config.MaxJSONSize = 100 * 1024 * 1024   // 100MB
 config.MaxPathDepth = 50
 config.CreatePaths = true  // For Set operations
 config.CleanupNulls = true // For Delete operations
-processor := json.New(config)
+processor, err := json.New(config)
+if err != nil {
+    log.Fatal(err)
+}
 defer processor.Close()
 
 // Security configuration for untrusted input
 secureCfg := json.SecurityConfig()  // Pre-configured for security
-result, err := json.Parse(untrustedInput, secureCfg)
+var result map[string]any
+err = json.Parse(untrustedInput, &result, secureCfg)
 
 // For operation-specific settings (without creating processor)
 cfg := json.DefaultConfig()
@@ -404,11 +420,16 @@ schema := &json.Schema{
     Required: []string{"name", "age"},
 }
 
-processor := json.New(json.DefaultConfig())
-errors, err := processor.ValidateSchema(data, schema)
+processor, err := json.New(json.DefaultConfig())
+if err != nil {
+    log.Fatal(err)
+}
+defer processor.Close()
+
+validationErrors, err := processor.ValidateSchema(data, schema)
 
 // Check validation errors
-for _, verr := range errors {
+for _, verr := range validationErrors {
     fmt.Printf("Error at %s: %s\n", verr.Path, verr.Message)
 }
 ```
@@ -513,12 +534,18 @@ if err != nil {
 
 ### Type Conversion Utilities
 
+> **Note:** These type conversion functions are unexported (internal). Use `GetTyped[T]`, `GetString`, `GetInt`, etc. for type-safe access.
+
 ```go
-// Safe type conversion
-intVal, ok := json.ConvertToInt(value)
-floatVal, ok := json.ConvertToFloat64(value)
-boolVal, ok := json.ConvertToBool(value)
-strVal := json.ConvertToString(value)
+// Use typed Get functions instead:
+str := json.GetString(data, "user.name", "default")
+num := json.GetInt(data, "user.age", 0)
+flag := json.GetBool(data, "user.active", false)
+price := json.GetFloat(data, "product.price", 0.0)
+
+// Or use SafeGet with AccessResult methods:
+result := json.SafeGet(data, "user.age")
+age, err := result.AsInt()
 ```
 
 ---
@@ -531,13 +558,6 @@ jsonlData := `{"name":"Alice","age":25}
 {"name":"Bob","age":30}
 {"name":"Carol","age":28}`
 results, err := json.ParseJSONL([]byte(jsonlData))
-
-// Stream processing for large files
-processor := json.NewJSONLProcessor(reader)
-err := processor.StreamLines(func(lineNum int, data any) bool {
-    fmt.Printf("Line %d: %v\n", lineNum, data)
-    return true  // continue
-})
 
 // Type-safe streaming
 type User struct {

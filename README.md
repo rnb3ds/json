@@ -5,7 +5,6 @@
 [![MIT License](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
 [![Thread Safe](https://img.shields.io/badge/Thread_Safe-Yes-brightgreen.svg)](https://pkg.go.dev/github.com/cybergodev/json)
 [![Security](https://img.shields.io/badge/Security-Hardened-red.svg)](docs/SECURITY.md)
-[![Zero Deps](https://img.shields.io/badge/deps-zero-brightgreen.svg)](go.mod)
 
 > A high-performance, feature-rich Go JSON processing library with 100% `encoding/json` compatibility.
 > Powerful path syntax, type safety, streaming processing, production-grade performance.
@@ -14,19 +13,39 @@
 
 ---
 
+## Table of Contents
+
+- [Why cybergodev/json](#why-cybergodevjson)
+- [Features](#features)
+- [Installation](#installation)
+- [Quick Start](#quick-start)
+- [Path Syntax Reference](#path-syntax-reference)
+- [Core API](#core-api)
+- [Configuration](#configuration)
+- [Advanced Features](#advanced-features)
+- [Common Use Cases](#common-use-cases)
+- [Performance Monitoring](#performance-monitoring)
+- [Migrating from encoding/json](#migrating-from-encodingjson)
+- [Security Configuration](#security-configuration)
+- [Example Code](#example-code)
+- [Documentation](#documentation)
+- [License](#license)
+
+---
+
 ## Why cybergodev/json
 
 | Feature | encoding/json | cybergodev/json |
 |--------|---------------|-----------------|
 | Path-based access | Manual unmarshal | `json.Get(data, "users[0].name")` |
-| Negative index | ❌ | `items[-1]` gets last element |
-| Flatten nested arrays | ❌ | `users{flat:tags}` |
-| Type-safe defaults | ❌ | `GetString(data, "path", "default")` |
-| Streaming large files | ❌ | Built-in streaming processors |
-| Schema validation | ❌ | JSON Schema validation |
-| Memory pooling | ❌ | `sync.Pool` for hot paths |
-| Caching | ❌ | Smart path cache with TTL |
-| 100% Compatibility | ✅ Native | Drop-in replacement |
+| Negative index | - | `items[-1]` gets last element |
+| Flatten nested arrays | - | `users{flat:tags}` |
+| Type-safe defaults | - | `GetString(data, "path", "default")` |
+| Streaming large files | - | Built-in streaming processors |
+| Schema validation | - | JSON Schema validation |
+| Memory pooling | - | `sync.Pool` for hot paths |
+| Caching | - | Smart path cache with TTL |
+| 100% Compatibility | Native | Drop-in replacement |
 
 ---
 
@@ -64,15 +83,15 @@ import (
 func main() {
     data := `{"user": {"name": "Alice", "age": 28, "tags": ["premium", "verified"]}}`
 
-    // Simple field access
-    name, _ := json.GetString(data, "user.name")
+    // Simple field access (returns value directly, no error)
+    name := json.GetString(data, "user.name")
     fmt.Println(name) // "Alice"
 
     // Type-safe retrieval with generics
     age := json.GetTyped[int](data, "user.age", 0)
     fmt.Println(age) // 28
 
-    // With default value (no error on missing path)
+    // With default value (no panic on missing path)
     email := json.GetTyped[string](data, "user.email", "unknown@example.com")
     fmt.Println(email) // "unknown@example.com"
 
@@ -82,7 +101,7 @@ func main() {
 
     // Modify data
     updated, _ := json.Set(data, "user.age", 29)
-    newAge := json.GetInt(updated, "user.age", 0)
+    newAge := json.GetInt(updated, "user.age")
     fmt.Println(newAge) // 29
 
     // 100% encoding/json compatible
@@ -97,14 +116,14 @@ func main() {
 
 | Syntax | Description | Example |
 |--------|-------------|---------|
-| `.property` | Access property | `user.name` → "Alice" |
-| `[n]` | Array index | `items[0]` → first element |
-| `[-n]` | Negative index (from end) | `items[-1]` → last element |
-| `[start:end]` | Array slice | `items[1:3]` → elements 1-2 |
-| `[start:end:step]` | Slice with step | `items[::2]` → every other element |
-| `[+]` | Append to array | `items[+]` → append position |
-| `{field}` | Extract field from all elements | `users{name}` → ["Alice", "Bob"] |
-| `{flat:field}` | Flatten nested arrays | `users{flat:tags}` → merge all tags |
+| `.property` | Access property | `user.name` -> "Alice" |
+| `[n]` | Array index | `items[0]` -> first element |
+| `[-n]` | Negative index (from end) | `items[-1]` -> last element |
+| `[start:end]` | Array slice | `items[1:3]` -> elements 1-2 |
+| `[start:end:step]` | Slice with step | `items[::2]` -> every other element |
+| `[+]` | Append to array | `items[+]` -> append position |
+| `{field}` | Extract field from all elements | `users{name}` -> ["Alice", "Bob"] |
+| `{flat:field}` | Flatten nested arrays | `users{flat:tags}` -> merge all tags |
 
 ---
 
@@ -113,17 +132,18 @@ func main() {
 ### Data Retrieval
 
 ```go
-// Basic getters - return (value, error)
+// Basic getters - return value directly, accept optional default
+// When path is missing or type mismatches: returns zero value, or default if provided
 json.Get(data, "user.name")            // (any, error)
-json.GetString(data, "user.name")      // (string, error)
-json.GetInt(data, "user.age")          // (int, error)
-json.GetFloat(data, "user.score")      // (float64, error)
-json.GetBool(data, "user.active")      // (bool, error)
-json.GetArray(data, "user.tags")       // ([]any, error)
-json.GetObject(data, "user.profile")   // (map[string]any, error)
+json.GetString(data, "user.name")      // string
+json.GetInt(data, "user.age")          // int
+json.GetFloat(data, "user.score")      // float64
+json.GetBool(data, "user.active")      // bool
+json.GetArray(data, "user.tags")       // []any
+json.GetObject(data, "user.profile")   // map[string]any
 
 // Type-safe generic retrieval
-json.GetTyped[string](data, "user.name", "")
+json.GetTyped[string](data, "user.name", "default")
 json.GetTyped[[]int](data, "numbers", nil)
 json.GetTyped[User](data, "user", User{})  // custom struct
 
@@ -133,6 +153,13 @@ json.GetInt(data, "user.age", 0)
 json.GetBool(data, "user.active", false)
 json.GetFloat(data, "user.score", 0.0)
 json.GetTyped[[]any](data, "user.tags", []any{})
+
+// Safe access with result type
+result := json.SafeGet(data, "user.age")
+if result.Ok() {
+    age, _ := result.AsInt()
+    fmt.Println(age)
+}
 
 // Batch retrieval
 results, err := json.GetMultiple(data, []string{"user.name", "user.age"})
@@ -162,7 +189,7 @@ result, _ := json.SetMultiple(data, map[string]any{
 result, err := json.Delete(data, "user.temp")
 ```
 
-### Encoding & Formatting
+### Encoding and Formatting
 
 ```go
 // Standard encoding (100% compatible)
@@ -191,29 +218,44 @@ result, _ := json.Encode(data, json.PrettyConfig())
 ### File Operations
 
 ```go
-// Load and save
+// Load and save (package-level functions)
 jsonStr, _ := json.LoadFromFile("data.json")
 json.SaveToFile("output.json", data, json.PrettyConfig())
 
 // Struct/Map serialization
 json.MarshalToFile("user.json", user)
 json.UnmarshalFromFile("user.json", &user)
+
+// Write to any io.Writer
+json.SaveToWriter(writer, data, cfg)
+
+// Processor-based file operations with full config support
+processor, _ := json.New(json.DefaultConfig())
+defer processor.Close()
+jsonStr, _ = processor.LoadFromFile("data.json")
+_ = processor.SaveToFile("output.json", data, json.PrettyConfig())
 ```
 
-### Type Conversion Utilities
+### JSON Utilities
 
 ```go
-// Safe type conversion
-intVal, ok   := json.ConvertToInt(value)
-floatVal, ok := json.ConvertToFloat64(value)
-boolVal, ok  := json.ConvertToBool(value)
-strVal       := json.ConvertToString(value)
+// Compare and merge
+equal, _  := json.CompareJSON(json1, json2)
 
-// JSON utilities
-equal, _    := json.CompareJSON(json1, json2)
-merged, _   := json.MergeJSON(json1, json2)                          // union (default)
-merged, _   := json.MergeJSON(json1, json2, json.MergeIntersection)  // intersection
-deepCopy, _ := json.DeepCopy(data)
+// Union merge (default) - combines all keys
+merged, _ := json.MergeJSON(json1, json2)
+
+// Intersection merge - only common keys
+cfg := json.DefaultConfig()
+cfg.MergeMode = json.MergeIntersection
+merged, _ = json.MergeJSON(json1, json2, cfg)
+
+// Difference merge - keys in json1 but not json2
+cfg.MergeMode = json.MergeDifference
+merged, _ = json.MergeJSON(json1, json2, cfg)
+
+// Merge multiple JSON objects
+merged, _ = json.MergeMany([]string{json1, json2, json3})
 ```
 
 ---
@@ -304,6 +346,19 @@ schema := &json.Schema{
 errors, err := json.ValidateSchema(jsonStr, schema)
 ```
 
+### PreParse Optimization
+
+```go
+processor, _ := json.New(json.DefaultConfig())
+defer processor.Close()
+
+// Pre-parse once, query many times
+parsed, _ := processor.PreParse(jsonStr)
+name, _    := processor.GetFromParsed(parsed, "user.name")
+age, _     := processor.GetFromParsed(parsed, "user.age")
+updated, _ := processor.SetFromParsed(parsed, "user.age", 30)
+```
+
 ### Encode Utilities
 
 ```go
@@ -315,6 +370,69 @@ batchJSON, _ := json.EncodeBatch(pairs, cfg)
 
 // EncodeFields - encode only specific fields (filter sensitive data)
 fieldsJSON, _ := json.EncodeFields(user, []string{"id", "name", "email"}, cfg)
+```
+
+### JSONL Processing
+
+```go
+// Convert between JSON array and JSONL
+jsonlData, _    := json.ToJSONL(records)          // []any -> JSONL bytes
+jsonlString, _  := json.ToJSONLString(records)    // []any -> JSONL string
+records, _      := json.ParseJSONL(jsonlData)     // JSONL bytes -> []any
+
+// Stream JSONL from reader
+processor, _ := json.New(json.DefaultConfig())
+defer processor.Close()
+err := processor.StreamJSONL(reader, func(lineNum int, item *json.IterableValue) error {
+    fmt.Printf("Line %d: %s\n", lineNum, item.GetString("id"))
+    return nil
+})
+
+// NDJSON file processor
+ndjson := json.NewNDJSONProcessor(json.DefaultConfig())
+results, _ := ndjson.ProcessFile("data.ndjson")
+```
+
+### Streaming Iterators
+
+```go
+// Stream large JSON arrays without loading into memory
+reader := strings.NewReader(largeJSONArray)
+iter := json.NewStreamIterator(reader)
+
+// Batch processing with in-memory data
+batchIter := json.NewBatchIterator(items, json.DefaultConfig())
+
+// Parallel processing
+processor, _ := json.New(json.DefaultConfig())
+defer processor.Close()
+err := processor.StreamJSONLParallel(reader, 4, func(idx int, item *json.IterableValue) error {
+    // Process item in parallel with 4 workers
+    return nil
+})
+```
+
+### Hooks
+
+```go
+processor, _ := json.New(json.DefaultConfig())
+defer processor.Close()
+
+// Add logging hook
+processor.AddHook(json.LoggingHook(slog.Default()))
+
+// Add timing hook
+processor.AddHook(json.TimingHook(func(op string, duration time.Duration) {
+    fmt.Printf("%s took %v\n", op, duration)
+}))
+
+// Add validation hook
+processor.AddHook(json.ValidationHook(func(ctx *json.HookContext) error {
+    if len(ctx.Path) > 100 {
+        return fmt.Errorf("path too long: %s", ctx.Path)
+    }
+    return nil
+}))
 ```
 
 ---
@@ -333,8 +451,8 @@ apiResponse := `{
 }`
 
 // Quick extraction
-status, _ := json.GetString(apiResponse, "status")
-total, _ := json.GetInt(apiResponse, "data.pagination.total")
+status := json.GetString(apiResponse, "status")
+total  := json.GetInt(apiResponse, "data.pagination.total")
 
 // Extract all user names
 names, _ := json.Get(apiResponse, "data.users{name}")
@@ -354,9 +472,9 @@ config := `{
 }`
 
 // Type-safe with defaults
-dbHost := json.GetString(config, "database.host", "localhost")
-dbPort := json.GetInt(config, "database.port", 5432)
-cacheEnabled := json.GetBool(config, "cache.enabled", false)
+dbHost        := json.GetString(config, "database.host", "localhost")
+dbPort        := json.GetInt(config, "database.port", 5432)
+cacheEnabled  := json.GetBool(config, "cache.enabled", false)
 
 // Dynamic update
 updated, _ := json.SetMultiple(config, map[string]any{
@@ -424,9 +542,12 @@ processor, _ := json.New(secureConfig)
 defer processor.Close()
 ```
 
+See [Security Guide](docs/SECURITY.md) for detailed security best practices.
+
 ---
 
 ## Example Code
+
 | File | Description |
 |------|-------------|
 | [1_basic_usage.go](examples/1_basic_usage.go) | Core operations |
@@ -441,10 +562,14 @@ defer processor.Close()
 | [10_file_operations.go](examples/10_file_operations.go) | File I/O |
 | [11_with_defaults.go](examples/11_with_defaults.go) | Default value handling |
 | [12_advanced_delete.go](examples/12_advanced_delete.go) | Delete operations |
-| [14_batch_operations.go](examples/14_batch_operations.go) | Batch processing |
+| [13_batch_operations.go](examples/13_batch_operations.go) | Batch processing and caching |
+| [14_streaming_iterators.go](examples/14_streaming_iterators.go) | Streaming iterators |
+| [15_jsonl_processing.go](examples/15_jsonl_processing.go) | JSONL format processing |
+| [16_hooks_and_security.go](examples/16_hooks_and_security.go) | Hooks and security patterns |
+| [17_advanced_patterns.go](examples/17_advanced_patterns.go) | PreParse, CompiledPath, advanced patterns |
 
 ```bash
-# Run individual examples
+# Run individual examples (build tag required)
 go run -tags=example examples/1_basic_usage.go
 go run -tags=example examples/2_advanced_features.go
 ```
@@ -467,4 +592,4 @@ MIT License - See [LICENSE](LICENSE) file for details.
 
 ---
 
-If this project helps you, please give it a star! ⭐
+If this project helps you, please give it a star!

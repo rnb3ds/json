@@ -3,6 +3,7 @@ package json
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/url"
@@ -311,8 +312,8 @@ func (p *Processor) SaveToWriter(writer io.Writer, data any, cfg ...Config) erro
 	if err != nil {
 		return &JsonsError{
 			Op:      "save_to_writer",
-			Message: fmt.Sprintf("failed to write to writer: %v", err),
-			Err:     ErrOperationFailed,
+			Message: "failed to write to writer",
+			Err:     err,
 		}
 	}
 
@@ -422,7 +423,7 @@ func (p *Processor) UnmarshalFromFile(path string, v any, cfg ...Config) error {
 		return &JsonsError{
 			Op:      "unmarshal_from_file",
 			Message: "unmarshal target cannot be nil",
-			Err:     ErrOperationFailed,
+			Err:     errOperationFailed,
 		}
 	}
 
@@ -501,7 +502,7 @@ func (p *Processor) validateFilePath(filePath string) error {
 // validatePathBasic performs basic path validation
 func validatePathBasic(filePath string) error {
 	if filePath == "" {
-		return newOperationError("validate_file_path", "file path cannot be empty", ErrOperationFailed)
+		return newOperationError("validate_file_path", "file path cannot be empty", errOperationFailed)
 	}
 
 	// SECURITY: Check for null bytes before any processing
@@ -538,7 +539,7 @@ func normalizeAndAbsPath(filePath string) (string, error) {
 	if len(cleanPath) > maxPathLength {
 		return "", newOperationError("validate_file_path",
 			fmt.Sprintf("path too long: %d > %d", len(cleanPath), maxPathLength),
-			ErrOperationFailed)
+			errOperationFailed)
 	}
 
 	// Convert to absolute path for further validation
@@ -1069,16 +1070,19 @@ func (p *Processor) ForeachFileChunked(filePath string, chunkSize int, fn func(c
 
 	chunk := make([]*IterableValue, 0, chunkSize)
 	for _, item := range arr {
-		iv := newIterableValue(item)
+		iv := iterableValuePool.Get().(*IterableValue)
+			iv.data = item
 		chunk = append(chunk, iv)
 
 		if len(chunk) >= chunkSize {
 			if err := fn(chunk); err != nil {
-				if err == errBreak {
+				releaseIterableValues(chunk)
+				if errors.Is(err, errBreak) {
 					return nil
 				}
 				return err
 			}
+			releaseIterableValues(chunk)
 			chunk = chunk[:0] // reset slice
 		}
 	}
@@ -1086,11 +1090,13 @@ func (p *Processor) ForeachFileChunked(filePath string, chunkSize int, fn func(c
 	// Process remaining items
 	if len(chunk) > 0 {
 		if err := fn(chunk); err != nil {
-			if err == errBreak {
+			releaseIterableValues(chunk)
+			if errors.Is(err, errBreak) {
 				return nil
 			}
 			return err
 		}
+		releaseIterableValues(chunk)
 	}
 
 	return nil

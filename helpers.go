@@ -18,6 +18,12 @@ import (
 // zero-allocation type switches for performance-critical paths.
 // ============================================================================
 
+// Platform-adaptive int range constants for correct convertToInt behavior
+const (
+	minInt = -1 << (strconv.IntSize - 1)
+	maxInt = 1<<(strconv.IntSize-1) - 1
+)
+
 // int64Result holds the result of integer conversion to avoid multiple returns
 type int64Result struct {
 	value int64
@@ -90,7 +96,7 @@ func convertToFloatCore(value any) (float64, bool) {
 func convertToInt(value any) (int, bool) {
 	// Fast path: use core integer conversion
 	if result := convertToInt64Core(value); result.ok {
-		if result.value >= -2147483648 && result.value <= 2147483647 {
+		if result.value >= int64(minInt) && result.value <= int64(maxInt) {
 			return int(result.value), true
 		}
 		return 0, false
@@ -99,11 +105,11 @@ func convertToInt(value any) (int, bool) {
 	// Handle non-integer types
 	switch v := value.(type) {
 	case float32:
-		if v == float32(int(v)) && v >= -2147483648 && v <= 2147483647 {
+		if v == float32(int(v)) && v >= float32(minInt) && v <= float32(maxInt) {
 			return int(v), true
 		}
 	case float64:
-		if v == float64(int(v)) && v >= -2147483648 && v <= 2147483647 {
+		if v == float64(int(v)) && v >= float64(minInt) && v <= float64(maxInt) {
 			return int(v), true
 		}
 	case string:
@@ -116,7 +122,7 @@ func convertToInt(value any) (int, bool) {
 		}
 		return 0, true
 	case json.Number:
-		if i, err := v.Int64(); err == nil && i >= -2147483648 && i <= 2147483647 {
+		if i, err := v.Int64(); err == nil && i >= int64(minInt) && i <= int64(maxInt) {
 			return int(i), true
 		}
 	}
@@ -483,16 +489,8 @@ func convertToMap(value any, targetType reflect.Type) (any, bool) {
 	return result.Interface(), true
 }
 
-// SafeconvertToInt64 safely converts any value to int64 with error handling.
-// Unlike convertToInt64, this function returns an error instead of a boolean,
-// making it suitable for use in error-returning code paths.
-//
-// Example:
-//
-//	i, err := json.SafeconvertToInt64("42")
-//	if err != nil {
-//	    // Handle conversion error
-//	}
+// safeConvertToInt64 converts value to int64, returning an error on failure.
+// Used internally where error returns are preferred over (value, bool) tuples.
 func safeConvertToInt64(value any) (int64, error) {
 	if result, ok := convertToInt64(value); ok {
 		return result, nil
@@ -500,16 +498,8 @@ func safeConvertToInt64(value any) (int64, error) {
 	return 0, fmt.Errorf("cannot convert %T to int64", value)
 }
 
-// SafeconvertToUint64 safely converts any value to uint64 with error handling.
-// Unlike convertToUint64, this function returns an error instead of a boolean,
-// making it suitable for use in error-returning code paths.
-//
-// Example:
-//
-//	u, err := json.SafeconvertToUint64("42")
-//	if err != nil {
-//	    // Handle conversion error
-//	}
+// safeConvertToUint64 converts value to uint64, returning an error on failure.
+// Used internally where error returns are preferred over (value, bool) tuples.
 func safeConvertToUint64(value any) (uint64, error) {
 	if result, ok := convertToUint64(value); ok {
 		return result, nil
@@ -517,15 +507,8 @@ func safeConvertToUint64(value any) (uint64, error) {
 	return 0, fmt.Errorf("cannot convert %T to uint64", value)
 }
 
-// FormatNumber formats a numeric value as a string.
+// formatNumber formats a numeric value as a string.
 // Supports int, int64, uint64, float64, json.Number, and falls back to fmt.Sprintf.
-// For floating-point numbers, uses the shortest representation that preserves precision.
-//
-// Example:
-//
-//	json.FormatNumber(42)        // "42"
-//	json.FormatNumber(3.14)      // "3.14"
-//	json.FormatNumber(json.Number("1e10"))  // "1e10"
 func formatNumber(value any) string {
 	switch v := value.(type) {
 	case int:
@@ -543,21 +526,8 @@ func formatNumber(value any) string {
 	}
 }
 
-// ConvertToString converts any value to its string representation.
-// Prefer this function over fmt.Sprintf when you need consistent string conversion.
-//
-// Conversion rules:
-//   - string: returned as-is
-//   - []byte: converted to string
-//   - json.Number: returns the underlying string
-//   - fmt.Stringer: calls String() method
-//   - other: uses fmt.Sprintf("%v", v)
-//
-// Example:
-//
-//	json.ConvertToString("hello")           // "hello"
-//	json.ConvertToString([]byte("data"))    // "data"
-//	json.ConvertToString(42)                // "42"
+// convertToString converts any value to its string representation.
+// Handles string, []byte, json.Number, fmt.Stringer, and falls back to fmt.Sprintf.
 func convertToString(value any) string {
 	switch v := value.(type) {
 	case string:
@@ -573,30 +543,16 @@ func convertToString(value any) string {
 	}
 }
 
-// IsValidJSON quickly checks if a string is valid JSON.
-// This is a convenience function that does not require a Processor.
+// isValidJSON quickly checks if a string is valid JSON without a Processor.
 // For detailed error information, use Processor.Valid() instead.
-//
-// Example:
-//
-//	if json.IsValidJSON(`{"name":"Alice"}`) {
-//	    // Valid JSON, safe to parse
-//	}
 func isValidJSON(jsonStr string) bool {
 	decoder := newNumberPreservingDecoder(false)
 	_, err := decoder.DecodeToAny(jsonStr)
 	return err == nil
 }
 
-// IsValidPath checks if a path expression is valid.
-// Returns true for valid paths like "user.name", "items[0]", "data.*".
-// For detailed error information, use ValidatePath instead.
-//
-// Example:
-//
-//	if json.IsValidPath("user.profiles[0].name") {
-//	    // Valid path, safe to use
-//	}
+// isValidPath checks if a path expression is valid.
+// For detailed error information, use validatePath instead.
 func isValidPath(path string) bool {
 	if path == "" {
 		return false
@@ -645,7 +601,7 @@ func validatePath(path string) error {
 			Op:      "validate_path",
 			Path:    path,
 			Message: "processor not available",
-			Err:     ErrInternalError,
+			Err:     errInternalError,
 		}
 	}
 	return processor.validatePath(path)
@@ -782,6 +738,86 @@ func deepCopySliceWithDepth(s []any, depth int) ([]any, error) {
 	return result, nil
 }
 
+// deepCopySubtree performs an optimized deep copy of only the returned subtree.
+// This is significantly faster than deepCopy for large documents where Get
+// returns a small portion, because it only copies the actual result value
+// instead of the entire cached document.
+// PERFORMANCE v2: Three-tier copy strategy:
+//   - Tier 1: Primitives (immutable) → zero allocation, return as-is
+//   - Tier 2: Shallow containers (all values are primitives) → single allocation
+//   - Tier 3: Deep nested containers → recursive copy
+func deepCopySubtree(data any) (any, error) {
+	if data == nil {
+		return nil, nil
+	}
+	// Tier 1: Primitives are immutable — no copy needed
+	switch data.(type) {
+	case bool, int, int8, int16, int32, int64,
+		uint, uint8, uint16, uint32, uint64,
+		float32, float64, string, json.Number:
+		return data, nil
+	}
+
+	// Tier 2: Try shallow copy for maps/slices containing only primitives
+	switch v := data.(type) {
+	case map[string]any:
+		return shallowCopyMap(v)
+	case []any:
+		return shallowCopySlice(v)
+	}
+
+	// Tier 3: Fallback to recursive deep copy for complex nested types
+	return deepCopy(data)
+}
+
+// isPrimitiveFast checks if a value is a primitive JSON type (no nested copy needed).
+// Inlined by the compiler — no function call overhead in the hot path.
+func isPrimitiveFast(v any) bool {
+	switch v.(type) {
+	case nil, bool, int, int8, int16, int32, int64,
+		uint, uint8, uint16, uint32, uint64,
+		float32, float64, string, json.Number:
+		return true
+	}
+	return false
+}
+
+// shallowCopyMap copies a map, deep-copying only non-primitive values in-place.
+// Primitives (immutable) are shared; nested containers are recursively copied.
+func shallowCopyMap(m map[string]any) (any, error) {
+	result := make(map[string]any, len(m))
+	for k, v := range m {
+		if isPrimitiveFast(v) {
+			result[k] = v
+			continue
+		}
+		copied, err := deepCopyValueWithDepth(v, 0)
+		if err != nil {
+			return nil, fmt.Errorf("error copying key '%s': %w", k, err)
+		}
+		result[k] = copied
+	}
+	return result, nil
+}
+
+// shallowCopySlice copies a slice, deep-copying only non-primitive elements in-place.
+// Primitives (immutable) are shared; nested containers are recursively copied.
+func shallowCopySlice(s []any) (any, error) {
+	result := make([]any, len(s))
+	for i, v := range s {
+		if isPrimitiveFast(v) {
+			result[i] = v
+			continue
+		}
+		copied, err := deepCopyValueWithDepth(v, 0)
+		if err != nil {
+			return nil, fmt.Errorf("error copying index %d: %w", i, err)
+		}
+		result[i] = copied
+	}
+	return result, nil
+}
+
 // CompareJSON compares two JSON strings for equality by parsing and normalizing them.
 // This function handles numeric precision differences and key ordering.
 //
@@ -803,8 +839,14 @@ func CompareJSON(json1, json2 string) (bool, error) {
 	}
 
 	// Normalize Number to float64 so that 1 and 1.0 compare equal
-	data1 = convertLibraryNumbers(data1)
-	data2 = convertLibraryNumbers(data2)
+	data1, err = convertLibraryNumbers(data1)
+	if err != nil {
+		return false, fmt.Errorf("number conversion failed in first argument: %w", err)
+	}
+	data2, err = convertLibraryNumbers(data2)
+	if err != nil {
+		return false, fmt.Errorf("number conversion failed in second argument: %w", err)
+	}
 
 	bytes1, err := json.Marshal(data1)
 	if err != nil {
@@ -870,46 +912,57 @@ func MergeJSON(json1, json2 string, cfg ...Config) (string, error) {
 	merged := internal.DeepMergeWithMode(obj1, obj2, internal.MergeMode(mode))
 
 	// Convert library Number types to float64 for proper encoding
-	converted := convertLibraryNumbers(merged)
+	converted, convErr := convertLibraryNumbers(merged)
+	if convErr != nil {
+		return "", fmt.Errorf("number conversion failed: %w", convErr)
+	}
 
 	// Use library's Encode function to properly handle the result
 	return Encode(converted, config)
 }
 
-// convertLibraryNumbers recursively converts the library's Number type to float64
-// This is needed because the library's NumberPreservingDecoder returns Number (not json.Number)
-func convertLibraryNumbers(data any) any {
+// convertLibraryNumbers recursively converts the library's Number type to float64.
+// This is needed because the library's NumberPreservingDecoder returns Number (not json.Number).
+func convertLibraryNumbers(data any) (any, error) {
 	return convertLibraryNumbersWithDepth(data, 0)
 }
 
 // convertLibraryNumbersWithDepth performs recursive Number conversion with depth tracking.
 // SECURITY: Depth limit prevents stack overflow from deeply nested structures.
-func convertLibraryNumbersWithDepth(data any, depth int) any {
+func convertLibraryNumbersWithDepth(data any, depth int) (any, error) {
 	if depth > deepCopyMaxDepth {
-		return data // Safety: stop recursion for excessively deep structures
+		return nil, fmt.Errorf("number conversion depth limit exceeded: maximum depth is %d", deepCopyMaxDepth)
 	}
 
 	switch v := data.(type) {
 	case Number:
 		f, err := v.Float64()
 		if err != nil {
-			return v // Keep original if conversion fails
+			return v, nil // Keep original if conversion fails
 		}
-		return f
+		return f, nil
 	case map[string]any:
 		result := make(map[string]any, len(v))
 		for key, value := range v {
-			result[key] = convertLibraryNumbersWithDepth(value, depth+1)
+			converted, err := convertLibraryNumbersWithDepth(value, depth+1)
+			if err != nil {
+				return nil, err
+			}
+			result[key] = converted
 		}
-		return result
+		return result, nil
 	case []any:
 		result := make([]any, len(v))
 		for i, item := range v {
-			result[i] = convertLibraryNumbersWithDepth(item, depth+1)
+			converted, err := convertLibraryNumbersWithDepth(item, depth+1)
+			if err != nil {
+				return nil, err
+			}
+			result[i] = converted
 		}
-		return result
+		return result, nil
 	default:
-		return data
+		return data, nil
 	}
 }
 
@@ -944,31 +997,6 @@ func MergeMany(jsons []string, cfg ...Config) (string, error) {
 	return result, nil
 }
 
-// MergeJSONMany merges multiple JSON objects with specified merge mode.
-// Returns error if less than 2 JSON strings are provided.
-//
-// Deprecated: Use MergeMany for unified Config pattern.
-//
-// Example:
-//
-//	result, err := json.MergeMany([]string{config1, config2, config3})
-func MergeJSONMany(jsons ...string) (string, error) {
-	return MergeMany(jsons)
-}
-
-// MergeJSONManyWithConfig merges multiple JSON objects with specified config.
-// Returns error if less than 2 JSON strings are provided.
-//
-// Deprecated: Use MergeMany for unified Config pattern.
-//
-// Example:
-//
-//	cfg := json.DefaultConfig()
-//	cfg.MergeMode = json.MergeIntersection
-//	result, err := json.MergeMany([]string{config1, config2, config3}, cfg)
-func MergeJSONManyWithConfig(cfg Config, jsons ...string) (string, error) {
-	return MergeMany(jsons, cfg)
-}
 
 // convertToTypedCore is the shared core logic for converting a value to type T.
 func convertToTypedCore[T any](value any, path string) (T, error) {
@@ -1018,15 +1046,9 @@ func internKey(key string) string {
 // VALUE UTILITIES
 // ============================================================================
 
-// IsEmptyOrZero checks if a value is empty or its zero value.
-// Supports all standard numeric types, bool, string, slices, maps, and json.Number.
+// isEmptyOrZero checks if a value is empty or its zero value.
+// Supports all standard numeric types, bool, string, slices, maps, Number, and json.Number.
 // For slices and maps, returns true if nil or empty (len == 0).
-//
-// Example:
-//
-//	if json.IsEmptyOrZero(value) {
-//	    // Handle empty or zero value
-//	}
 func isEmptyOrZero(v any) bool {
 	if v == nil {
 		return true
@@ -1061,6 +1083,9 @@ func isEmptyOrZero(v any) bool {
 	case bool:
 		return !val
 	case Number:
+		n, err := val.Int64()
+		return err == nil && n == 0
+	case json.Number:
 		n, err := val.Int64()
 		return err == nil && n == 0
 	case []any:

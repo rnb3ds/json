@@ -11,12 +11,12 @@ import (
 	"time"
 )
 
-// CacheConfig provides the configuration needed by CacheManager
-// This minimal interface avoids circular dependencies with the main json package
-type CacheConfig interface {
-	IsCacheEnabled() bool
-	GetMaxCacheSize() int
-	GetCacheTTL() time.Duration
+// cacheConfigValues holds the cache configuration values extracted from Config.
+// This replaces the previous CacheConfig interface to avoid forcing
+// exported accessor methods on the public Config type.
+type cacheConfigValues struct {
+	enableCache  bool
+	cacheTTL     time.Duration
 }
 
 // Cache memory limits - configurable based on system resources
@@ -63,7 +63,7 @@ func calculateMaxCacheMemory(maxCacheSize int) int64 {
 // CacheManager handles all caching operations with performance and memory management
 type CacheManager struct {
 	shards      []*cacheShard
-	config      CacheConfig
+	cacheConfig cacheConfigValues
 	hitCount    int64
 	missCount   int64
 	memoryUsage int64
@@ -78,6 +78,7 @@ type CacheManager struct {
 	ctx        context.Context
 	cancelFunc context.CancelFunc
 	wg         sync.WaitGroup
+	closed     atomic.Bool // prevents wg.Add after Close
 }
 
 // cacheShard represents a single cache shard with LRU eviction
@@ -116,8 +117,11 @@ func (e *lruEntry) reset() {
 	e.freq = 0
 }
 
-// NewCacheManager creates a new cache manager with sharding
-func NewCacheManager(config CacheConfig) *CacheManager {
+// NewCacheManager creates a new cache manager with sharding.
+// enableCache controls whether caching is active.
+// maxCacheSize sets the maximum number of cache entries.
+// cacheTTL sets the time-to-live for cache entries.
+func NewCacheManager(enableCache bool, maxCacheSize int, cacheTTL time.Duration) *CacheManager {
 	// Create entry pool for reuse
 	entryPool := &sync.Pool{
 		New: func() any {
@@ -128,26 +132,26 @@ func NewCacheManager(config CacheConfig) *CacheManager {
 	// Create context for lifecycle management
 	ctx, cancel := context.WithCancel(context.Background())
 
-	if config == nil || !config.IsCacheEnabled() {
+	if !enableCache {
 		// Return disabled cache manager
 		return &CacheManager{
-			shards:        []*cacheShard{newCacheShard(1)},
-			config:        nil,
-			shardCount:    1,
-			shardMask:     0,
-			entryPool:     entryPool,
-			ctx:           ctx,
-			cancelFunc:    cancel,
-			maxMemory:     DefaultMaxCacheMemory,
+			shards:     []*cacheShard{newCacheShard(1)},
+			cacheConfig: cacheConfigValues{enableCache: false, cacheTTL: cacheTTL},
+			shardCount: 1,
+			shardMask:  0,
+			entryPool:  entryPool,
+			ctx:        ctx,
+			cancelFunc: cancel,
+			maxMemory:  DefaultMaxCacheMemory,
 			highWatermark: int64(DefaultMaxCacheMemory * CacheHighWatermarkPercent / 100),
 		}
 	}
 
-	shardCount := calculateOptimalShardCount(config.GetMaxCacheSize())
+	shardCount := calculateOptimalShardCount(maxCacheSize)
 	// Ensure shard count is power of 2 for efficient masking
 	shardCount = nextPowerOf2(shardCount)
 	shards := make([]*cacheShard, shardCount)
-	shardSize := config.GetMaxCacheSize() / shardCount
+	shardSize := maxCacheSize / shardCount
 	shardSize = max(shardSize, 1)
 
 	for i := range shards {
@@ -155,24 +159,26 @@ func NewCacheManager(config CacheConfig) *CacheManager {
 	}
 
 	// Calculate memory limits based on configuration
-	maxMem := calculateMaxCacheMemory(config.GetMaxCacheSize())
+	maxMem := calculateMaxCacheMemory(maxCacheSize)
 	highWater := int64(maxMem * int64(CacheHighWatermarkPercent) / 100)
 
 	return &CacheManager{
-		shards:        shards,
-		config:        config,
-		shardCount:    shardCount,
-		shardMask:     uint64(shardCount - 1),
-		entryPool:     entryPool,
-		ctx:           ctx,
-		cancelFunc:    cancel,
-		maxMemory:     maxMem,
+		shards:     shards,
+		cacheConfig: cacheConfigValues{enableCache: true, cacheTTL: cacheTTL},
+		shardCount: shardCount,
+		shardMask:  uint64(shardCount - 1),
+		entryPool:  entryPool,
+		ctx:        ctx,
+		cancelFunc: cancel,
+		maxMemory:  maxMem,
 		highWatermark: highWater,
 	}
 }
 
 // Close gracefully shuts down the cache manager, waiting for cleanup goroutines to complete
 func (cm *CacheManager) Close() {
+	// Set closed flag first to prevent new wg.Add(1) calls
+	cm.closed.Store(true)
 	if cm.cancelFunc != nil {
 		cm.cancelFunc()
 	}
@@ -231,7 +237,7 @@ func nextPowerOf2(n int) int {
 // - LRU position update is deferred to reduce write lock frequency
 // FIX: Properly handles TOCTOU race condition by re-validating entry after lock upgrade
 func (cm *CacheManager) Get(key string) (any, bool) {
-	if cm.config == nil || !cm.config.IsCacheEnabled() {
+	if !cm.cacheConfig.enableCache {
 		atomic.AddInt64(&cm.missCount, 1)
 		return nil, false
 	}
@@ -239,8 +245,8 @@ func (cm *CacheManager) Get(key string) (any, bool) {
 	shard := cm.getShard(key)
 	now := time.Now().UnixNano()
 	ttlNanos := int64(0)
-	if cm.config.GetCacheTTL() > 0 {
-		ttlNanos = int64(cm.config.GetCacheTTL().Nanoseconds())
+	if cm.cacheConfig.cacheTTL > 0 {
+		ttlNanos = int64(cm.cacheConfig.cacheTTL.Nanoseconds())
 	}
 
 	// Fast path: read lock only
@@ -339,7 +345,7 @@ func (cm *CacheManager) Get(key string) (any, bool) {
 
 // Set stores a value in the cache
 func (cm *CacheManager) Set(key string, value any) {
-	if cm.config == nil || !cm.config.IsCacheEnabled() {
+	if !cm.cacheConfig.enableCache {
 		return
 	}
 
@@ -406,7 +412,7 @@ func (cm *CacheManager) Set(key string, value any) {
 
 	// Periodic cleanup - trigger if enough time has passed
 	// Only spawn cleanup goroutine if TTL is enabled and cleanup interval has passed
-	if cm.config != nil && cm.config.GetCacheTTL() > 0 {
+	if cm.cacheConfig.cacheTTL > 0 {
 		lastCleanup := atomic.LoadInt64(&shard.lastCleanup)
 		cleanupInterval := 30 * time.Second.Nanoseconds()
 		if now-lastCleanup > cleanupInterval {
@@ -415,6 +421,13 @@ func (cm *CacheManager) Set(key string, value any) {
 				sem := getCleanupSem()
 				select {
 				case sem <- struct{}{}:
+					// Check closed flag before wg.Add to prevent WaitGroup reuse panic.
+					// Close() sets closed=true before wg.Wait(), so if we see
+					// closed=true here, Close() will not wait for us.
+					if cm.closed.Load() {
+						<-sem
+						return
+					}
 					cm.wg.Add(1)
 					go func(s *cacheShard) {
 						defer cm.wg.Done()
@@ -438,7 +451,7 @@ func (cm *CacheManager) Set(key string, value any) {
 
 // Delete removes a value from the cache
 func (cm *CacheManager) Delete(key string) {
-	if cm.config == nil || !cm.config.IsCacheEnabled() {
+	if !cm.cacheConfig.enableCache {
 		return
 	}
 
@@ -488,7 +501,7 @@ func (cm *CacheManager) Clear() {
 
 // CleanExpiredCache removes expired entries from all shards (with goroutine limit)
 func (cm *CacheManager) CleanExpiredCache() {
-	if cm.config == nil || cm.config.GetCacheTTL() <= 0 {
+	if cm.cacheConfig.cacheTTL <= 0 {
 		return
 	}
 
@@ -506,6 +519,11 @@ func (cm *CacheManager) CleanExpiredCache() {
 		case <-cm.ctx.Done():
 			return // Stop spawning new goroutines if context is cancelled
 		case sem <- struct{}{}:
+			// Check closed flag before wg.Add to prevent WaitGroup reuse panic
+			if cm.closed.Load() {
+				<-sem
+				return
+			}
 			cm.wg.Add(1)
 			go func() {
 				defer cm.wg.Done()
@@ -636,12 +654,12 @@ const cleanupBatchSize = 50
 // OPTIMIZED: Uses batched cleanup with lock release intervals to allow concurrent reads
 // FIX: Previously held write lock during entire traversal, blocking concurrent reads
 func (cm *CacheManager) cleanupShard(shard *cacheShard) {
-	if cm.config == nil || cm.config.GetCacheTTL() <= 0 {
+	if cm.cacheConfig.cacheTTL <= 0 {
 		return
 	}
 
 	now := time.Now().UnixNano()
-	ttlNanos := int64(cm.config.GetCacheTTL().Nanoseconds())
+	ttlNanos := int64(cm.cacheConfig.cacheTTL.Nanoseconds())
 
 	processed := 0
 

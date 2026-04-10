@@ -41,7 +41,10 @@ The library performs comprehensive validation on all JSON inputs:
 
 ```go
 // Automatic validation with default configuration
-processor := json.New()
+processor, err := json.New()
+if err != nil {
+    log.Fatal(err)
+}
 defer processor.Close()
 
 // Validation includes:
@@ -116,7 +119,10 @@ For high-security environments, use the `SecurityConfig`:
 
 ```go
 config := json.SecurityConfig()
-processor := json.New(config)
+processor, err := json.New(config)
+if err != nil {
+    log.Fatal(err)
+}
 defer processor.Close()
 
 // SecurityConfig settings:
@@ -167,25 +173,32 @@ config := &json.Config{
     CacheTTL:     5 * time.Minute,
 }
 
-processor := json.New(config)
+processor, err := json.New(config)
+if err != nil {
+    log.Fatal(err)
+}
 defer processor.Close()
 ```
 
 ### Viewing Security Limits
 
-Check current security configuration:
+Access security-related configuration fields directly:
 
 ```go
-limits := config.getSecurityLimits()
-fmt.Printf("Security Limits: %+v\n", limits)
+// Access security limits directly from Config
+fmt.Printf("Max Nesting Depth: %d\n", config.MaxNestingDepthSecurity)
+fmt.Printf("Max JSON Size: %d\n", config.MaxJSONSize)
+fmt.Printf("Max Path Depth: %d\n", config.MaxPathDepth)
+fmt.Printf("Max Object Keys: %d\n", config.MaxObjectKeys)
+fmt.Printf("Max Array Elements: %d\n", config.MaxArrayElements)
+fmt.Printf("Full Security Scan: %v\n", config.FullSecurityScan)
 // Output (DefaultConfig values):
-// {
-//   "max_nesting_depth": 200,
-//   "max_security_validation_size": 10485760,
-//   "max_object_keys": 100000,
-//   "max_array_elements": 100000,
-//   "max_json_size": 104857600,
-//   "max_path_depth": 50
+// Max Nesting Depth: 200
+// Max JSON Size: 104857600
+// Max Path Depth: 50
+// Max Object Keys: 100000
+// Max Array Elements: 100000
+// Full Security Scan: false
 // }
 // Note: SecurityConfig() uses more restrictive values than DefaultConfig().
 ```
@@ -199,7 +212,10 @@ fmt.Printf("Security Limits: %+v\n", limits)
 All JSON inputs are automatically validated when `EnableValidation` is true:
 
 ```go
-processor := json.New()
+processor, err := json.New()
+if err != nil {
+    log.Fatal(err)
+}
 defer processor.Close()
 
 // This will be validated automatically
@@ -286,15 +302,16 @@ For large JSON (>4KB), the library uses an optimized security scanning approach:
 
 ```go
 // Default mode (FullSecurityScan: false) - Optimized for performance:
-// - 32KB rolling window scan with guaranteed 100% coverage
+// - 16KB beginning section + 8KB end section scan
+// - 15-30 distributed middle samples with 512-byte overlap
 // - Critical patterns (__proto__, constructor, prototype) always fully scanned
 // - Suspicious character density triggers automatic full scan
 // - Pattern fragment detection for targeted scanning
-// - SHA-256 based cache key generation for validation results
 
 // Full scan mode (FullSecurityScan: true) - Maximum security:
 // - All JSON is fully scanned regardless of size
 // - Recommended for untrusted input and sensitive data
+// - Adds ~10-30% overhead for JSON >100KB
 config := json.SecurityConfig()  // Has FullSecurityScan: true by default
 ```
 
@@ -326,7 +343,10 @@ Prevent excessive path traversal:
 config := &json.Config{
     MaxPathDepth: 20, // Maximum 20 levels deep
 }
-processor := json.New(config)
+processor, err := json.New(config)
+if err != nil {
+    log.Fatal(err)
+}
 defer processor.Close()
 
 // This will fail if path depth exceeds limit
@@ -344,12 +364,15 @@ result, err := processor.Get(jsonString, "a.b.c.d.e.f.g.h.i.j.k.l.m.n.o.p.q.r.s.
 File operations include comprehensive path validation:
 
 ```go
-processor := json.New()
+processor, err := json.New()
+if err != nil {
+    log.Fatal(err)
+}
 defer processor.Close()
 
 // Safe file operations
 data, err := processor.LoadFromFile("./data/config.json")  // ✓ Safe
-err = processor.SaveToFile("./output/result.json", data, true) // ✓ Safe
+err = processor.SaveToFile("./output/result.json", data) // ✓ Safe
 
 // Unsafe operations (will be rejected)
 _, err = processor.LoadFromFile("../../../etc/passwd")     // ✗ Path traversal
@@ -381,7 +404,10 @@ File operations respect size limits:
 config := &json.Config{
     MaxJSONSize: 10 * 1024 * 1024, // 10MB limit
 }
-processor := json.New(config)
+processor, err := json.New(config)
+if err != nil {
+    log.Fatal(err)
+}
 defer processor.Close()
 
 // Files larger than MaxJSONSize will be rejected
@@ -404,7 +430,7 @@ data := map[string]interface{}{
     "data":   result,
 }
 
-err := processor.SaveToFile("output.json", data, true)
+err := processor.SaveToFile("output.json", data)
 if err != nil {
     log.Printf("Write failed: %v", err)
 }
@@ -434,17 +460,16 @@ The cache automatically excludes sensitive data by detecting patterns:
 // - Crypto: private_key, encryption_key, certificate
 
 // These patterns prevent sensitive data from being cached
-processor := json.New()
+processor, err := json.New()
+if err != nil {
+    log.Fatal(err)
+}
 defer processor.Close()
 
 // Cache will skip values containing sensitive patterns
 result, err := processor.Get(jsonString, "user.credentials")
 // The result won't be cached if it contains sensitive patterns
 ```
-
-### Secure Cache Keys
-
-Cache keys use secure hashing:
 
 ### Secure Cache Keys
 
@@ -485,7 +510,10 @@ config := &json.Config{
     MaxCacheSize: 1000,           // Maximum 1000 entries
     CacheTTL:     5 * time.Minute, // 5 minute expiration
 }
-processor := json.New(config)
+processor, err := json.New(config)
+if err != nil {
+    log.Fatal(err)
+}
 defer processor.Close()
 
 // Cache will automatically evict old entries when full
@@ -501,7 +529,10 @@ defer processor.Close()
 Error messages are sanitized to prevent information disclosure:
 
 ```go
-processor := json.New()
+processor, err := json.New()
+if err != nil {
+    log.Fatal(err)
+}
 defer processor.Close()
 
 _, err := processor.Get(jsonString, "user.password")
@@ -586,10 +617,13 @@ Always validate JSON from external sources:
 result, _ := processor.Get(untrustedJSON, "data")
 
 // Good: With validation
-processor := json.New(json.Config{
+processor, err := json.New(json.Config{
     EnableValidation: true,
     StrictMode:       true,
 })
+if err != nil {
+    log.Fatal(err)
+}
 defer processor.Close()
 
 result, err := processor.Get(untrustedJSON, "data")
@@ -639,7 +673,10 @@ Protect against resource exhaustion with concurrency limits:
 config := &json.Config{
     MaxConcurrency: 100, // Maximum concurrent operations
 }
-processor := json.New(config)
+processor, err := json.New(config)
+if err != nil {
+    log.Fatal(err)
+}
 defer processor.Close()
 
 // Operations will respect concurrency limits automatically
@@ -711,11 +748,14 @@ Always close processors to free resources:
 
 ```go
 // Use defer to ensure cleanup
-processor := json.New()
+processor, err := json.New()
+if err != nil {
+    log.Fatal(err)
+}
 defer processor.Close()
 
 // Or use explicit cleanup
-processor := json.New()
+processor, err := json.New()
 // ... use processor ...
 processor.Close()
 
@@ -732,7 +772,10 @@ Use proper synchronization for concurrent operations:
 
 ```go
 // The processor is thread-safe by default
-processor := json.New()
+processor, err := json.New()
+if err != nil {
+    log.Fatal(err)
+}
 defer processor.Close()
 
 // Safe concurrent access
@@ -759,7 +802,10 @@ Use multiple layers of security:
 // Layer 1: Network/Transport security (TLS, authentication)
 // Layer 2: Input validation
 config := json.SecurityConfig()
-processor := json.New(config)
+processor, err := json.New(config)
+if err != nil {
+    log.Fatal(err)
+}
 defer processor.Close()
 
 // Layer 3: Schema validation
@@ -850,7 +896,10 @@ func ProcessUserJSON(userInput string) error {
     config := json.SecurityConfig()
     config.MaxJSONSize = 1 * 1024 * 1024 // 1MB limit for user input
 
-    processor := json.New(config)
+    processor, err := json.New(config)
+    if err != nil {
+        return fmt.Errorf("failed to create processor: %w", err)
+    }
     defer processor.Close()
 
     // Define strict schema
@@ -913,7 +962,10 @@ func ProcessAPIRequests() {
         MaxConcurrency:           100,
     }
 
-    processor := json.New(config)
+    processor, err := json.New(config)
+    if err != nil {
+        return fmt.Errorf("failed to create processor: %w", err)
+    }
     defer processor.Close()
 
     // Process requests with monitoring
@@ -940,7 +992,10 @@ func ProcessSensitiveData(jsonData string) error {
     config := json.SecurityConfig()
     config.EnableCache = false // Don't cache sensitive data
 
-    processor := json.New(config)
+    processor, err := json.New(config)
+    if err != nil {
+        return fmt.Errorf("failed to create processor: %w", err)
+    }
     defer processor.Close()
 
     // Process without caching
@@ -967,12 +1022,15 @@ func ProcessSensitiveData(jsonData string) error {
 
 ```go
 func LoadSecureConfig(configPath string) (*Config, error) {
-    // Validate file path
-    if !isValidConfigPath(configPath) {
-        return nil, fmt.Errorf("invalid config path")
+    // Validate file path (implement your own validation logic)
+    if strings.Contains(configPath, "..") || filepath.IsAbs(configPath) {
+        return nil, fmt.Errorf("invalid config path: potential path traversal")
     }
 
-    processor := json.New(json.SecurityConfig())
+    processor, err := json.New(json.SecurityConfig())
+    if err != nil {
+        return nil, fmt.Errorf("failed to create processor: %w", err)
+    }
     defer processor.Close()
 
     // Read and validate config file

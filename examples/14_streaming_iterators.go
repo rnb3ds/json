@@ -4,7 +4,9 @@ package main
 
 import (
 	"fmt"
+	"sort"
 	"strings"
+	"sync"
 
 	"github.com/cybergodev/json"
 )
@@ -199,7 +201,7 @@ func demonstrateParallelIterator() {
 		if m, ok := item.(map[string]any); ok {
 			return map[string]any{
 				"id":      m["id"],
-				"doubled": m["value"].(int) * 2,
+				"doubled": m["value"].(int) * 2, // safe: native Go int, not JSON-decoded
 			}, nil
 		}
 		return nil, nil
@@ -231,15 +233,25 @@ func demonstrateParallelIterator() {
 	fmt.Printf("   Active items: %d (out of %d)\n", len(filtered), len(data))
 
 	// ForEachBatch - process in batches concurrently
+	// Note: batches execute in parallel, so output order is non-deterministic
 	fmt.Println("\n   ForEachBatch (concurrent batches of 5):")
 	iter4 := json.NewParallelIterator(data, cfg)
 	defer iter4.Close()
 
+	var batchMu sync.Mutex
+	var batchResults []string
 	err = iter4.ForEachBatch(5, func(batchIdx int, batch []any) error {
-		fmt.Printf("   Batch %d: %d items\n", batchIdx+1, len(batch))
+		batchMu.Lock()
+		batchResults = append(batchResults, fmt.Sprintf("Batch %d: %d items", batchIdx+1, len(batch)))
+		batchMu.Unlock()
 		return nil
 	})
 	if err != nil {
 		fmt.Printf("   ForEachBatch error: %v\n", err)
+	}
+	// Sort output for deterministic display
+	sort.Strings(batchResults)
+	for _, s := range batchResults {
+		fmt.Printf("   %s\n", s)
 	}
 }

@@ -79,7 +79,7 @@ func demonstrateSafeGet() {
 	fmt.Printf("   (empty path): exists=%t\n", result.Exists)
 
 	// Processor-level SafeGet
-	processor, _ := json.New(json.DefaultConfig())
+	processor, _ := json.New(json.DefaultConfig()) // OK: preset config always valid
 	defer processor.Close()
 
 	result = processor.SafeGet(testJSON, "user.age")
@@ -102,7 +102,7 @@ func demonstratePreParse() {
 		}
 	}`
 
-	processor, _ := json.New(json.DefaultConfig())
+	processor, _ := json.New(json.DefaultConfig()) // OK: preset config always valid
 	defer processor.Close()
 
 	// PreParse parses JSON once, then query multiple paths without re-parsing
@@ -150,7 +150,7 @@ func demonstrateCompiledPaths() {
 	fmt.Println("\n3. Compiled Paths (skip path parsing)")
 	fmt.Println("---------------------------------------")
 
-	processor, _ := json.New(json.DefaultConfig())
+	processor, _ := json.New(json.DefaultConfig()) // OK: preset config always valid
 	defer processor.Close()
 
 	testJSON := `{"level1": {"level2": {"level3": {"value": "deep"}}}}`
@@ -178,7 +178,7 @@ func demonstrateCreateAndClean() {
 	fmt.Println("\n4. SetCreate and DeleteClean")
 	fmt.Println("------------------------------")
 
-	processor, _ := json.New(json.DefaultConfig())
+	processor, _ := json.New(json.DefaultConfig()) // OK: preset config always valid
 	defer processor.Close()
 
 	testJSON := `{"user": {"name": "Alice"}}`
@@ -233,7 +233,7 @@ func demonstratePerformanceComparison() {
 	path := "users[0].name"
 	iterations := 1000
 
-	processor, _ := json.New(json.DefaultConfig())
+	processor, _ := json.New(json.DefaultConfig()) // OK: preset config always valid
 	defer processor.Close()
 
 	// Regular Get

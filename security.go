@@ -485,7 +485,8 @@ func (sv *securityValidator) getValidationCacheKey(jsonStr string) string {
 	// Use FULL 32 bytes (64 hex chars) of SHA-256 to prevent birthday attacks
 	// A 128-bit truncation would only require 2^64 operations for collision
 	// Full 256-bit requires 2^128 operations which is computationally infeasible
-	hash := sha256.Sum256([]byte(jsonStr))
+	// PERFORMANCE: Use internal.StringToBytes to avoid heap allocation for string->[]byte conversion
+	hash := sha256.Sum256(internal.StringToBytes(jsonStr))
 
 	// Build key manually: "len:hash" format
 	// Need up to ~80 bytes: "9999999999:" (11) + 64 hex chars = 75 bytes max
@@ -982,7 +983,11 @@ func (sv *securityValidator) isDangerousContextIgnoreCase(s string, idx, pattern
 func (sv *securityValidator) validatePathSecurity(path string) error {
 	// Normalize the path using Unicode NFC to detect homograph attacks
 	// This ensures that visually similar characters are normalized
-	normalizedPath := norm.NFC.String(path)
+	// PERFORMANCE: Skip NFC normalization for pure ASCII paths (common case)
+	normalizedPath := path
+	if !isAllASCII(path) {
+		normalizedPath = norm.NFC.String(path)
+	}
 
 	if strings.IndexByte(normalizedPath, 0) != -1 {
 		return newPathError(path, "null byte injection detected", ErrSecurityViolation)
@@ -998,13 +1003,15 @@ func (sv *securityValidator) validatePathSecurity(path string) error {
 		return newPathError(path, "path traversal detected", ErrSecurityViolation)
 	}
 
-	// Check URL encoding bypass (including double encoding) - case-insensitive without allocation
-	if containsAnyIgnoreCase(normalizedPath, "%2e", "%2f", "%5c", "%00", "%252e", "%252f") {
+	// Check URL encoding bypass (including double encoding) - case-insensitive
+	// PERFORMANCE: Use strings.Contains with case folding for short percent-encoded patterns
+	// instead of the generic containsAnyIgnoreCase loop
+	if containsPercentEncodingBypass(normalizedPath) {
 		return newPathError(path, "path traversal via URL encoding detected", ErrSecurityViolation)
 	}
 
-	// Check UTF-8 overlong encoding - case-insensitive without allocation
-	if containsAnyIgnoreCase(normalizedPath, "%c0%af", "%c1%9c") {
+	// Check UTF-8 overlong encoding - case-insensitive
+	if containsOverlongEncoding(normalizedPath) {
 		return newPathError(path, "path traversal via UTF-8 overlong encoding detected", ErrSecurityViolation)
 	}
 
@@ -1014,6 +1021,111 @@ func (sv *securityValidator) validatePathSecurity(path string) error {
 	}
 
 	return nil
+}
+
+// isAllASCII checks if a string contains only ASCII characters (< 0x80)
+// PERFORMANCE: Used to skip expensive Unicode normalization for common ASCII-only paths
+func isAllASCII(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] >= 0x80 {
+			return false
+		}
+	}
+	return true
+}
+
+// containsPercentEncodingBypass checks for URL-encoded path traversal patterns
+// PERFORMANCE: Uses direct string search with case folding instead of generic
+// containsAnyIgnoreCase loop, avoiding function call overhead per pattern.
+func containsPercentEncodingBypass(s string) bool {
+	// Percent-encoded patterns: %2e, %2f, %5c, %00, %252e, %252f
+	// Check for '%' presence first as a fast rejection
+	idx := strings.IndexByte(s, '%')
+	if idx == -1 {
+		return false
+	}
+	// Now check each pattern using case-insensitive comparison
+	// Use the single-pass approach: scan for '%' and check following bytes
+	remaining := s[idx:]
+	for {
+		i := strings.IndexByte(remaining, '%')
+		if i == -1 {
+			return false
+		}
+		after := remaining[i+1:]
+		// Check each pattern against the bytes following '%'
+		if len(after) >= 2 {
+			twoBytes := after[:2]
+			// %2e (%2E) — dot
+			if twoBytes[0] == '2' && (twoBytes[1] == 'e' || twoBytes[1] == 'E') {
+				return true
+			}
+			// %2f (%2F) — slash
+			if twoBytes[0] == '2' && (twoBytes[1] == 'f' || twoBytes[1] == 'F') {
+				return true
+			}
+			// %5c (%5C) — backslash
+			if twoBytes[0] == '5' && (twoBytes[1] == 'c' || twoBytes[1] == 'C') {
+				return true
+			}
+			// %00 — null byte
+			if twoBytes[0] == '0' && twoBytes[1] == '0' {
+				return true
+			}
+			// %25 — double encoding start (%252e, %252f)
+			if twoBytes[0] == '2' && twoBytes[1] == '5' && len(after) >= 4 {
+				fourBytes := after[:4]
+				// %252e or %252E
+				if (fourBytes[2] == '2') && (fourBytes[3] == 'e' || fourBytes[3] == 'E') {
+					return true
+				}
+				// %252f or %252F
+				if (fourBytes[2] == '2') && (fourBytes[3] == 'f' || fourBytes[3] == 'F') {
+					return true
+				}
+			}
+		}
+		remaining = after
+	}
+}
+
+// containsOverlongEncoding checks for UTF-8 overlong encoding patterns
+// PERFORMANCE: Single-pass scan for %c0/%c1 patterns
+func containsOverlongEncoding(s string) bool {
+	idx := strings.IndexByte(s, '%')
+	if idx == -1 {
+		return false
+	}
+	remaining := s[idx:]
+	for {
+		i := strings.IndexByte(remaining, '%')
+		if i == -1 {
+			return false
+		}
+		after := remaining[i+1:]
+		if len(after) >= 5 {
+			// %c0%af or %C0%AF
+			a, b := after[0], after[1]
+			if (a == 'c' || a == 'C') && (b == '0') {
+				if after[2] == '%' && len(after) >= 5 {
+					c, d := after[3], after[4]
+					if (c == 'a' || c == 'A') && (d == 'f' || d == 'F') {
+						return true
+					}
+				}
+			}
+			// %c1%9c or %C1%9C
+			if (a == 'c' || a == 'C') && (b == '1') {
+				if after[2] == '%' && len(after) >= 5 {
+					c, d := after[3], after[4]
+					if (c == '9') && (d == 'c' || d == 'C') {
+						return true
+					}
+				}
+			}
+		}
+		remaining = after
+	}
 }
 
 // containsZeroWidthChars checks for zero-width and other invisible Unicode characters
@@ -1050,16 +1162,6 @@ func containsZeroWidthChars(s string) bool {
 			'\u2068', // First strong isolate
 			'\u2069', // Pop directional isolate
 			'\uFFFD': // Replacement character
-			return true
-		}
-	}
-	return false
-}
-
-// containsAnyIgnoreCase checks if s contains any of the patterns case-insensitively
-func containsAnyIgnoreCase(s string, patterns ...string) bool {
-	for _, pattern := range patterns {
-		if fastIndexIgnoreCase(s, pattern) != -1 {
 			return true
 		}
 	}

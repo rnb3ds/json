@@ -96,7 +96,7 @@ func New(cfg ...Config) (*Processor, error) {
 
 	p := &Processor{
 		config:          config,
-		cache:           internal.NewCacheManager(&config),
+		cache:           internal.NewCacheManager(config.EnableCache, config.MaxCacheSize, config.CacheTTL),
 		resourceMonitor: newResourceMonitor(),
 		securityValidator: newSecurityValidator(
 			config.MaxJSONSize,
@@ -345,7 +345,7 @@ func (p *Processor) WarmupCache(jsonStr string, paths []string, cfg ...Config) (
 		return nil, &JsonsError{
 			Op:      "warmup_cache",
 			Message: "cache is disabled, cannot warmup cache",
-			Err:     ErrCacheDisabled,
+			Err:     errCacheDisabled,
 		}
 	}
 
@@ -856,8 +856,8 @@ func (p *Processor) Delete(jsonStr, path string, cfg ...Config) (string, error) 
 		return jsonStr, &JsonsError{
 			Op:      "delete",
 			Path:    path,
-			Message: fmt.Sprintf("failed to marshal result: %v", err),
-			Err:     ErrOperationFailed,
+			Message: "failed to marshal result",
+			Err:     err,
 		}
 	}
 
@@ -1062,33 +1062,21 @@ func (p *Processor) SafeGet(jsonStr, path string, cfg ...Config) AccessResult {
 }
 
 // Get retrieves a value from JSON using a path expression with performance
-func (p *Processor) Get(jsonStr, path string, cfg ...Config) (any, error) {
-	// Check rate limiting for security
-	if err := p.checkRateLimit(); err != nil {
-		return nil, err
-	}
-
-	// Only track time if metrics are enabled
-	var startTime time.Time
-	var recordMetrics func(success bool)
-	if p.metrics != nil && p.metrics.enabled && p.metrics.collector != nil {
-		startTime = time.Now()
-		p.metrics.collector.StartConcurrentOperation()
-		recordMetrics = func(success bool) {
-			p.metrics.collector.EndConcurrentOperation()
-			p.metrics.collector.RecordOperation(time.Since(startTime), success, 0)
+func (p *Processor) Get(jsonStr, path string, cfg ...Config) (result any, err error) {
+	// Check rate limiting for security (fast return when disabled, which is default)
+	if p.metrics.operationWindow > 0 {
+		if err := p.checkRateLimit(); err != nil {
+			return nil, err
 		}
-	} else {
-		recordMetrics = func(success bool) {}
 	}
 
+	// PERFORMANCE: Fast path — check if processor is closed before any allocation
 	if err := p.checkClosed(); err != nil {
 		p.incrementErrorCount()
-		recordMetrics(false)
 		return nil, err
 	}
 
-	// Increment operation counter for statistics (after closed check)
+	// Increment operation counter for statistics
 	p.incrementOperationCount()
 
 	options, err := p.prepareOptions(cfg...)
@@ -1097,6 +1085,28 @@ func (p *Processor) Get(jsonStr, path string, cfg ...Config) (any, error) {
 		return nil, err
 	}
 	defer releaseConfig(options)
+
+	// PERFORMANCE: Metrics tracking — only allocate closures when metrics are enabled
+	var metricsCollector *internal.MetricsCollector
+	var startTime time.Time
+	if p.metrics != nil && p.metrics.enabled {
+		metricsCollector = p.metrics.collector
+		if metricsCollector != nil {
+			startTime = time.Now()
+			metricsCollector.StartConcurrentOperation()
+		}
+	}
+
+	// Cleanup metrics via defer using named return values
+	// Uses success flag based on whether err was set
+	defer func() {
+		if metricsCollector != nil {
+			metricsCollector.EndConcurrentOperation()
+			if !startTime.IsZero() {
+				metricsCollector.RecordOperation(time.Since(startTime), err == nil, 0)
+			}
+		}
+	}()
 
 	// Get context from options or use background
 	ctx := context.Background()
@@ -1113,56 +1123,49 @@ func (p *Processor) Get(jsonStr, path string, cfg ...Config) (any, error) {
 	default:
 	}
 
-	// Continue with the rest of the method...
+	// Defer slow operation logging (no-op when logger is at default level)
 	defer func() {
-		if startTime.IsZero() {
-			return
+		if !startTime.IsZero() {
+			p.logOperation(ctx, "get", path, time.Since(startTime))
 		}
-		duration := time.Since(startTime)
-		p.logOperation(ctx, "get", path, duration)
 	}()
-
-	// PERFORMANCE: Compute hash ONCE for entire operation, reuse for all cache keys
-	jsonHash := hashStringToUint64(jsonStr)
 
 	// Validate input BEFORE cache lookup to prevent cache pollution
 	// OPTIMIZED: Allow skipping validation for trusted input
 	if !options.SkipValidation {
 		if err := p.validateInput(jsonStr); err != nil {
 			p.incrementErrorCount()
-			recordMetrics(false)
 			return nil, err
 		}
 
 		if err := p.validatePath(path); err != nil {
 			p.incrementErrorCount()
-			recordMetrics(false)
 			return nil, err
 		}
 	}
+
+	// PERFORMANCE: Compute hash ONCE for entire operation, reuse for all cache keys
+	// Hash is computed after validation to avoid wasted work on invalid input
+	jsonHash := hashStringToUint64(jsonStr)
 
 	// Check cache after validation
 	cacheKey := p.createCacheKeyWithHash("get", jsonHash, path, options)
 	if cached, ok := p.getCachedResult(cacheKey); ok {
 		// Record cache hit operation
-		if p.metrics != nil && p.metrics.collector != nil {
-			p.metrics.collector.RecordCacheHit()
+		if metricsCollector != nil {
+			metricsCollector.RecordCacheHit()
 		}
-		recordMetrics(true)
-		// Return a copy of mutable types to prevent cache corruption.
-		// Primitives (string, int, float64, bool, nil) are immutable and safe to return directly.
-		switch cached.(type) {
-		case map[string]any, []any, map[any]any:
-			if copied, err := deepCopy(cached); err == nil {
-				return copied, nil
-			}
+		// PERFORMANCE: Use deepCopySubtree to copy only the returned value,
+		// not the entire cached document. Primitives skip copy entirely.
+		if copied, copyErr := deepCopySubtree(cached); copyErr == nil {
+			return copied, nil
 		}
 		return cached, nil
 	}
 
 	// Record cache miss
-	if p.metrics != nil && p.metrics.collector != nil {
-		p.metrics.collector.RecordCacheMiss()
+	if metricsCollector != nil {
+		metricsCollector.RecordCacheMiss()
 	}
 
 	// Try to get parsed data from cache first - reuse pre-computed hash
@@ -1176,7 +1179,6 @@ func (p *Processor) Get(jsonStr, path string, cfg ...Config) (any, error) {
 		parseErr := p.Parse(jsonStr, &data, cfg...)
 		if parseErr != nil {
 			p.incrementErrorCount()
-			recordMetrics(false)
 			return nil, parseErr
 		}
 
@@ -1189,10 +1191,9 @@ func (p *Processor) Get(jsonStr, path string, cfg ...Config) (any, error) {
 	}
 
 	// Use unified recursive processor for all paths (cached instance)
-	result, err := p.recursiveProcessor.ProcessRecursively(data, path, opGet, nil)
+	result, err = p.recursiveProcessor.ProcessRecursively(data, path, opGet, nil)
 	if err != nil {
 		p.incrementErrorCount()
-		recordMetrics(false)
 		return nil, &JsonsError{
 			Op:      "get",
 			Path:    path,
@@ -1204,8 +1205,6 @@ func (p *Processor) Get(jsonStr, path string, cfg ...Config) (any, error) {
 	// Cache result if enabled
 	p.setCachedResult(cacheKey, result, options)
 
-	// Record successful operation
-	recordMetrics(true)
 
 	return result, nil
 }
@@ -1273,7 +1272,7 @@ func (p *Processor) GetFromParsed(parsed *ParsedJSON, path string, cfg ...Config
 		return nil, &JsonsError{
 			Op:      "get_from_parsed",
 			Message: "parsed JSON is nil",
-			Err:     ErrOperationFailed,
+			Err:     errOperationFailed,
 		}
 	}
 
@@ -1320,7 +1319,7 @@ func (p *Processor) SetFromParsed(parsed *ParsedJSON, path string, value any, cf
 		return nil, &JsonsError{
 			Op:      "set_from_parsed",
 			Message: "parsed JSON is nil",
-			Err:     ErrOperationFailed,
+			Err:     errOperationFailed,
 		}
 	}
 
@@ -1465,7 +1464,7 @@ func (p *Processor) checkRateLimit() error {
 			return &JsonsError{
 				Op:      "rate_limit",
 				Message: "operation rate limit exceeded",
-				Err:     ErrOperationFailed,
+				Err:     errOperationFailed,
 			}
 		}
 	}
@@ -1583,24 +1582,28 @@ func (p *Processor) getProcessorID() string {
 	return fmt.Sprintf("proc_%p", p)
 }
 
-// getPathSegments gets a path segments slice from the unified resource manager
+// getPathSegments gets a path segments slice from the pool
 func (p *Processor) getPathSegments() []internal.PathSegment {
-	return getGlobalResourceManager().GetPathSegments()
+	seg := internal.GetPathSegmentSlice(8)
+	return *seg
 }
 
-// putPathSegments returns a path segments slice to the unified resource manager
+// putPathSegments returns a path segments slice to the pool
 func (p *Processor) putPathSegments(segments []internal.PathSegment) {
-	getGlobalResourceManager().PutPathSegments(segments)
+	if segments == nil {
+		return
+	}
+	internal.PutPathSegmentSlice(&segments)
 }
 
-// getStringBuilder gets a string builder from the unified resource manager
+// getStringBuilder gets a string builder from the pool
 func (p *Processor) getStringBuilder() *strings.Builder {
-	return getGlobalResourceManager().GetStringBuilder()
+	return internal.GetStringBuilder()
 }
 
-// putStringBuilder returns a string builder to the unified resource manager
+// putStringBuilder returns a string builder to the pool
 func (p *Processor) putStringBuilder(sb *strings.Builder) {
-	getGlobalResourceManager().PutStringBuilder(sb)
+	internal.PutStringBuilder(sb)
 }
 
 // Set sets a value in JSON at the specified path
@@ -1678,8 +1681,8 @@ func (p *Processor) Set(jsonStr, path string, value any, cfg ...Config) (string,
 		return jsonStr, &JsonsError{
 			Op:      "set",
 			Path:    path,
-			Message: fmt.Sprintf("failed to marshal modified data: %v", err),
-			Err:     ErrOperationFailed,
+			Message: "failed to marshal modified data",
+			Err:     err,
 		}
 	}
 
@@ -1797,8 +1800,8 @@ func (p *Processor) SetMultiple(jsonStr string, updates map[string]any, cfg ...C
 		// Return original data if marshaling fails
 		return jsonStr, &JsonsError{
 			Op:      "set_multiple",
-			Message: fmt.Sprintf("failed to marshal modified data: %v", err),
-			Err:     ErrOperationFailed,
+			Message: "failed to marshal modified data",
+			Err:     err,
 		}
 	}
 
@@ -1890,11 +1893,6 @@ func escapeJSONPointer(s string) string {
 	return internal.EscapeJSONPointer(s)
 }
 
-// UnescapeJSONPointer unescapes JSON Pointer special characters
-func unescapeJSONPointer(s string) string {
-	return internal.UnescapeJSONPointer(s)
-}
-
 // validateInput validates JSON input string with optimized security checks
 func (p *Processor) validateInput(jsonString string) error {
 	return p.securityValidator.ValidateJSONInput(jsonString)
@@ -1912,8 +1910,9 @@ func (p *Processor) validatePath(path string) error {
 // ============================================================================
 
 // CompilePath compiles a JSON path string into a CompiledPath for fast repeated operations
-// The returned CompiledPath can be reused for multiple Get/Set/Delete operations
-func (p *Processor) CompilePath(path string) (*internal.CompiledPath, error) {
+// The returned CompiledPath can be reused for multiple Get/Set/Delete operations.
+// Call Release() on the returned CompiledPath when done to return it to the pool.
+func (p *Processor) CompilePath(path string) (*CompiledPath, error) {
 	if err := p.checkClosed(); err != nil {
 		return nil, err
 	}
@@ -1922,9 +1921,9 @@ func (p *Processor) CompilePath(path string) (*internal.CompiledPath, error) {
 	return internal.GetGlobalCompiledPathCache().Get(path)
 }
 
-// GetCompiled retrieves a value from JSON using a pre-compiled path
-// PERFORMANCE: Skips path parsing for faster repeated operations
-func (p *Processor) GetCompiled(jsonStr string, cp *internal.CompiledPath) (any, error) {
+// GetCompiled retrieves a value from JSON using a pre-compiled path.
+// PERFORMANCE: Skips path parsing for faster repeated operations.
+func (p *Processor) GetCompiled(jsonStr string, cp *CompiledPath) (any, error) {
 	if err := p.checkClosed(); err != nil {
 		return nil, err
 	}
@@ -1937,19 +1936,4 @@ func (p *Processor) GetCompiled(jsonStr string, cp *internal.CompiledPath) (any,
 
 	// Navigate using compiled path
 	return cp.Get(data)
-}
-
-// GetCompiledFromParsed retrieves a value from pre-parsed JSON data using a compiled path
-// PERFORMANCE: No JSON parsing overhead - uses already parsed data
-func (p *Processor) getCompiledFromParsed(data any, cp *internal.CompiledPath) (any, error) {
-	if err := p.checkClosed(); err != nil {
-		return nil, err
-	}
-
-	return cp.Get(data)
-}
-
-// GetCompiledExists checks if a path exists in pre-parsed JSON data using a compiled path
-func (p *Processor) getCompiledExists(data any, cp *internal.CompiledPath) bool {
-	return cp.Exists(data)
 }

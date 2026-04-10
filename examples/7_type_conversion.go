@@ -165,8 +165,8 @@ func demonstrateNumberHandling() {
 	fmt.Printf("   Float value: %.5f\n", floatVal)
 
 	// Get as any for generic handling
-	uintVal, _ := json.Get(numberJSON, "integer")
-	fmt.Printf("   As any: %v (type: %T)\n", uintVal, uintVal)
+	anyVal, _ := json.Get(numberJSON, "integer")
+	fmt.Printf("   As any: %v (type: %T)\n", anyVal, anyVal)
 
 	// Number to string conversion using standard json.Number
 	fmt.Println("\n   Number to string conversion:")

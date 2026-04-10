@@ -8,6 +8,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/cybergodev/json/internal"
 )
 
 // ============================================================================
@@ -365,31 +367,6 @@ func TestSemaphoreDrainOnClose(t *testing.T) {
 // ============================================================================
 
 // TestNoMemoryGrowthInLoops verifies that repeated operations don't cause
-// unbounded memory growth
-func TestNoMemoryGrowthInLoops(t *testing.T) {
-	var m1, m2 runtime.MemStats
-	runtime.GC()
-	runtime.ReadMemStats(&m1)
-
-	cfg := DefaultConfig()
-	processor, _ := New(cfg)
-
-	// Perform many operations
-	for i := 0; i < 1000; i++ {
-		_, _ = processor.Get(`{"key": "value", "nested": {"a": 1}}`, ".nested.a")
-	}
-
-	processor.Close()
-
-	runtime.GC()
-	runtime.ReadMemStats(&m2)
-
-	// Allow some growth but not unbounded
-	heapGrowth := int64(m2.HeapAlloc) - int64(m1.HeapAlloc)
-	if heapGrowth > 10*1024*1024 { // 10MB threshold
-		t.Logf("Warning: heap grew by %d bytes after operations", heapGrowth)
-	}
-}
 
 // ============================================================================
 // CONTEXT TIMEOUT TESTS
@@ -484,27 +461,25 @@ func TestConcurrentProcessorOperations(t *testing.T) {
 // RESOURCE MANAGER COUNTER TESTS
 // ============================================================================
 
-// TestResourceManagerMapCounter verifies that PutMap correctly decrements
-// the allocated maps counter even when m is nil
+// TestResourceManagerMapCounter verifies that map pool operations work correctly
 func TestResourceManagerMapCounter(t *testing.T) {
-	// Get fresh resource manager
-	urm := newUnifiedResourceManager()
-
-	// Get multiple maps
+	// Get and return maps from pool - should not panic
 	for i := 0; i < 10; i++ {
-		_ = urm.GetMap()
+		m := internal.GetStreamingMap(8)
+		internal.PutStreamingMap(m)
 	}
 
-	// Put nil map - should still decrement counter
-	urm.PutMap(nil)
+	// Put nil map - should not panic
+	internal.PutStreamingMap(nil)
 
-	// Put oversized map - should still decrement counter
+	// Put large map - should not panic
 	largeMap := make(map[string]any, 100)
 	for i := 0; i < 100; i++ {
 		largeMap[fmt.Sprintf("key%d", i)] = i
 	}
-	urm.GetMap()
-	urm.PutMap(largeMap)
+	m := internal.GetStreamingMap(8)
+	_ = m
+	internal.PutStreamingMap(largeMap)
 }
 
 // ============================================================================

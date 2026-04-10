@@ -5,7 +5,6 @@
 [![MIT License](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
 [![Thread Safe](https://img.shields.io/badge/Thread_Safe-Yes-brightgreen.svg)](https://pkg.go.dev/github.com/cybergodev/json)
 [![Security](https://img.shields.io/badge/Security-Hardened-red.svg)](docs/SECURITY.md)
-[![Zero Deps](https://img.shields.io/badge/deps-zero-brightgreen.svg)](go.mod)
 
 > 一个高性能、功能丰富的 Go JSON 处理库，100% 兼容 `encoding/json`。
 > 强大的路径语法、类型安全、流式处理、生产级性能。
@@ -14,19 +13,39 @@
 
 ---
 
+## 目录
+
+- [为什么选择 cybergodev/json](#为什么选择-cybergodevjson)
+- [特性](#特性)
+- [安装](#安装)
+- [快速开始](#快速开始)
+- [路径语法参考](#路径语法参考)
+- [核心 API](#核心-api)
+- [配置](#配置)
+- [高级功能](#高级功能)
+- [常见用例](#常见用例)
+- [性能监控](#性能监控)
+- [从 encoding/json 迁移](#从-encodingjson-迁移)
+- [安全配置](#安全配置)
+- [示例代码](#示例代码)
+- [文档](#文档)
+- [许可证](#许可证)
+
+---
+
 ## 为什么选择 cybergodev/json
 
 | 功能 | encoding/json | cybergodev/json |
 |------|---------------|-----------------|
 | 路径访问 | 手动解析 | `json.Get(data, "users[0].name")` |
-| 负索引 | ❌ | `items[-1]` 获取最后一个元素 |
-| 扁平化嵌套数组 | ❌ | `users{flat:tags}` |
-| 类型安全默认值 | ❌ | `GetString(data, "path", "default")` |
-| 大文件流式处理 | ❌ | 内置流式处理器 |
-| Schema 验证 | ❌ | JSON Schema 验证 |
-| 内存池 | ❌ | 热路径使用 `sync.Pool` |
-| 缓存 | ❌ | 智能 TTL 路径缓存 |
-| 100% 兼容性 | ✅ 原生 | 直接替换 |
+| 负索引 | - | `items[-1]` 获取最后一个元素 |
+| 扁平化嵌套数组 | - | `users{flat:tags}` |
+| 类型安全默认值 | - | `GetString(data, "path", "default")` |
+| 大文件流式处理 | - | 内置流式处理器 |
+| Schema 验证 | - | JSON Schema 验证 |
+| 内存池 | - | 热路径使用 `sync.Pool` |
+| 缓存 | - | 智能 TTL 路径缓存 |
+| 100% 兼容性 | 原生 | 直接替换 |
 
 ---
 
@@ -62,21 +81,19 @@ import (
 )
 
 func main() {
-    data := `{
-        "user": {
-            "name": "Alice",
-            "age": 28,
-            "tags": ["premium", "verified"]
-        }
-    }`
+    data := `{"user": {"name": "Alice", "age": 28, "tags": ["premium", "verified"]}}`
 
-    // 简单字段访问
-    name, _ := json.GetString(data, "user.name")
+    // 简单字段访问（直接返回值，无 error）
+    name := json.GetString(data, "user.name")
     fmt.Println(name) // "Alice"
 
     // 类型安全获取
-    age, _ := json.GetInt(data, "user.age")
+    age := json.GetTyped[int](data, "user.age", 0)
     fmt.Println(age) // 28
+
+    // 带默认值（路径不存在时不会 panic）
+    email := json.GetTyped[string](data, "user.email", "unknown@example.com")
+    fmt.Println(email) // "unknown@example.com"
 
     // 负索引（最后一个元素）
     lastTag, _ := json.Get(data, "user.tags[-1]")
@@ -84,7 +101,7 @@ func main() {
 
     // 修改数据
     updated, _ := json.Set(data, "user.age", 29)
-    newAge, _ := json.GetInt(updated, "user.age")
+    newAge := json.GetInt(updated, "user.age")
     fmt.Println(newAge) // 29
 
     // 100% encoding/json 兼容
@@ -99,14 +116,14 @@ func main() {
 
 | 语法 | 描述 | 示例 |
 |------|------|------|
-| `.property` | 访问属性 | `user.name` → "Alice" |
-| `[n]` | 数组索引 | `items[0]` → 第一个元素 |
-| `[-n]` | 负索引（从末尾） | `items[-1]` → 最后一个元素 |
-| `[start:end]` | 数组切片 | `items[1:3]` → 第1-2个元素 |
-| `[start:end:step]` | 带步长的切片 | `items[::2]` → 每隔一个元素 |
-| `[+]` | 追加到数组 | `items[+]` → 追加位置 |
-| `{field}` | 提取所有元素的字段 | `users{name}` → ["Alice", "Bob"] |
-| `{flat:field}` | 扁平化嵌套数组 | `users{flat:tags}` → 合并所有标签 |
+| `.property` | 访问属性 | `user.name` -> "Alice" |
+| `[n]` | 数组索引 | `items[0]` -> 第一个元素 |
+| `[-n]` | 负索引（从末尾） | `items[-1]` -> 最后一个元素 |
+| `[start:end]` | 数组切片 | `items[1:3]` -> 第1-2个元素 |
+| `[start:end:step]` | 带步长的切片 | `items[::2]` -> 每隔一个元素 |
+| `[+]` | 追加到数组 | `items[+]` -> 追加位置 |
+| `{field}` | 提取所有元素的字段 | `users{name}` -> ["Alice", "Bob"] |
+| `{flat:field}` | 扁平化嵌套数组 | `users{flat:tags}` -> 合并所有标签 |
 
 ---
 
@@ -115,26 +132,34 @@ func main() {
 ### 数据获取
 
 ```go
-// 基础获取器 — 返回 (value, error)
+// 基础获取器 — 直接返回值，支持可选默认值
+// 路径不存在或类型不匹配时：返回零值，或使用提供的默认值
 json.Get(data, "user.name")            // (any, error)
-json.GetString(data, "user.name")      // (string, error)
-json.GetInt(data, "user.age")          // (int, error)
-json.GetFloat(data, "user.score")      // (float64, error)
-json.GetBool(data, "user.active")      // (bool, error)
-json.GetArray(data, "user.tags")       // ([]any, error)
-json.GetObject(data, "user.profile")   // (map[string]any, error)
+json.GetString(data, "user.name")      // string
+json.GetInt(data, "user.age")          // int
+json.GetFloat(data, "user.score")      // float64
+json.GetBool(data, "user.active")      // bool
+json.GetArray(data, "user.tags")       // []any
+json.GetObject(data, "user.profile")   // map[string]any
 
 // 类型安全的泛型获取
-json.GetTyped[string](data, "user.name")
-json.GetTyped[[]int](data, "numbers")
-json.GetTyped[User](data, "user")      // 自定义结构体
+json.GetTyped[string](data, "user.name", "default")
+json.GetTyped[[]int](data, "numbers", nil)
+json.GetTyped[User](data, "user", User{})      // 自定义结构体
 
-// 带默认值（路径不存在时不报错）
+// 带默认值
 json.GetString(data, "user.name", "Anonymous")
 json.GetInt(data, "user.age", 0)
 json.GetBool(data, "user.active", false)
 json.GetFloat(data, "user.score", 0.0)
 json.GetTyped[[]any](data, "user.tags", []any{})
+
+// 安全访问，返回结果类型
+result := json.SafeGet(data, "user.age")
+if result.Ok() {
+    age, _ := result.AsInt()
+    fmt.Println(age)
+}
 
 // 批量获取
 results, err := json.GetMultiple(data, []string{"user.name", "user.age"})
@@ -193,29 +218,44 @@ result, _ := json.Encode(data, json.PrettyConfig())
 ### 文件操作
 
 ```go
-// 加载和保存
+// 加载和保存（包级别函数）
 jsonStr, _ := json.LoadFromFile("data.json")
 json.SaveToFile("output.json", data, json.PrettyConfig())
 
 // 结构体/Map 序列化
 json.MarshalToFile("user.json", user)
 json.UnmarshalFromFile("user.json", &user)
+
+// 写入任意 io.Writer
+json.SaveToWriter(writer, data, cfg)
+
+// 基于 Processor 的文件操作，支持完整配置
+processor, _ := json.New(json.DefaultConfig())
+defer processor.Close()
+jsonStr, _ = processor.LoadFromFile("data.json")
+_ = processor.SaveToFile("output.json", data, json.PrettyConfig())
 ```
 
-### 类型转换工具
+### JSON 工具
 
 ```go
-// 安全类型转换
-intVal, ok   := json.ConvertToInt(value)
-floatVal, ok := json.ConvertToFloat64(value)
-boolVal, ok  := json.ConvertToBool(value)
-strVal       := json.ConvertToString(value)
+// 比较和合并
+equal, _  := json.CompareJSON(json1, json2)
 
-// JSON 工具
-equal, _    := json.CompareJSON(json1, json2)
-merged, _   := json.MergeJSON(json1, json2)                          // 并集（默认）
-merged, _   := json.MergeJSON(json1, json2, json.MergeIntersection)  // 交集
-deepCopy, _ := json.DeepCopy(data)
+// 并集合并（默认）— 合并所有键
+merged, _ := json.MergeJSON(json1, json2)
+
+// 交集合并 — 仅保留共有键
+cfg := json.DefaultConfig()
+cfg.MergeMode = json.MergeIntersection
+merged, _ = json.MergeJSON(json1, json2, cfg)
+
+// 差集合并 — 仅保留 json1 中有而 json2 中没有的键
+cfg.MergeMode = json.MergeDifference
+merged, _ = json.MergeJSON(json1, json2, cfg)
+
+// 合并多个 JSON 对象
+merged, _ = json.MergeMany([]string{json1, json2, json3})
 ```
 
 ---
@@ -306,6 +346,19 @@ schema := &json.Schema{
 errors, err := json.ValidateSchema(jsonStr, schema)
 ```
 
+### PreParse 优化
+
+```go
+processor, _ := json.New(json.DefaultConfig())
+defer processor.Close()
+
+// 一次解析，多次查询
+parsed, _ := processor.PreParse(jsonStr)
+name, _    := processor.GetFromParsed(parsed, "user.name")
+age, _     := processor.GetFromParsed(parsed, "user.age")
+updated, _ := processor.SetFromParsed(parsed, "user.age", 30)
+```
+
 ### 编码工具
 
 ```go
@@ -317,6 +370,69 @@ batchJSON, _ := json.EncodeBatch(pairs, cfg)
 
 // EncodeFields - 只编码指定字段（过滤敏感数据）
 fieldsJSON, _ := json.EncodeFields(user, []string{"id", "name", "email"}, cfg)
+```
+
+### JSONL 处理
+
+```go
+// JSON 数组与 JSONL 格式互转
+jsonlData, _    := json.ToJSONL(records)          // []any -> JSONL 字节
+jsonlString, _  := json.ToJSONLString(records)    // []any -> JSONL 字符串
+records, _      := json.ParseJSONL(jsonlData)     // JSONL 字节 -> []any
+
+// 从 Reader 流式处理 JSONL
+processor, _ := json.New(json.DefaultConfig())
+defer processor.Close()
+err := processor.StreamJSONL(reader, func(lineNum int, item *json.IterableValue) error {
+    fmt.Printf("第 %d 行: %s\n", lineNum, item.GetString("id"))
+    return nil
+})
+
+// NDJSON 文件处理器
+ndjson := json.NewNDJSONProcessor(json.DefaultConfig())
+results, _ := ndjson.ProcessFile("data.ndjson")
+```
+
+### 流式迭代器
+
+```go
+// 流式处理大型 JSON 数组（无需全部加载到内存）
+reader := strings.NewReader(largeJSONArray)
+iter := json.NewStreamIterator(reader)
+
+// 批量处理（使用内存中的数据）
+batchIter := json.NewBatchIterator(items, json.DefaultConfig())
+
+// 并行处理
+processor, _ := json.New(json.DefaultConfig())
+defer processor.Close()
+err := processor.StreamJSONLParallel(reader, 4, func(idx int, item *json.IterableValue) error {
+    // 使用 4 个 worker 并行处理
+    return nil
+})
+```
+
+### 钩子 (Hooks)
+
+```go
+processor, _ := json.New(json.DefaultConfig())
+defer processor.Close()
+
+// 添加日志钩子
+processor.AddHook(json.LoggingHook(slog.Default()))
+
+// 添加计时钩子
+processor.AddHook(json.TimingHook(func(op string, duration time.Duration) {
+    fmt.Printf("%s 耗时 %v\n", op, duration)
+}))
+
+// 添加验证钩子
+processor.AddHook(json.ValidationHook(func(ctx *json.HookContext) error {
+    if len(ctx.Path) > 100 {
+        return fmt.Errorf("路径过长: %s", ctx.Path)
+    }
+    return nil
+}))
 ```
 
 ---
@@ -335,8 +451,8 @@ apiResponse := `{
 }`
 
 // 快速提取
-status, _ := json.GetString(apiResponse, "status")
-total, _ := json.GetInt(apiResponse, "data.pagination.total")
+status := json.GetString(apiResponse, "status")
+total  := json.GetInt(apiResponse, "data.pagination.total")
 
 // 提取所有用户名
 names, _ := json.Get(apiResponse, "data.users{name}")
@@ -356,8 +472,8 @@ config := `{
 }`
 
 // 类型安全带默认值
-dbHost := json.GetString(config, "database.host", "localhost")
-dbPort := json.GetInt(config, "database.port", 5432)
+dbHost       := json.GetString(config, "database.host", "localhost")
+dbPort       := json.GetInt(config, "database.port", 5432)
 cacheEnabled := json.GetBool(config, "cache.enabled", false)
 
 // 动态更新
@@ -426,6 +542,8 @@ processor, _ := json.New(secureConfig)
 defer processor.Close()
 ```
 
+详见 [安全指南](docs/SECURITY.md)。
+
 ---
 
 ## 示例代码
@@ -444,10 +562,14 @@ defer processor.Close()
 | [10_file_operations.go](examples/10_file_operations.go) | 文件 I/O |
 | [11_with_defaults.go](examples/11_with_defaults.go) | 默认值处理 |
 | [12_advanced_delete.go](examples/12_advanced_delete.go) | 删除操作 |
-| [14_batch_operations.go](examples/14_batch_operations.go) | 批量处理 |
+| [13_batch_operations.go](examples/13_batch_operations.go) | 批量处理与缓存 |
+| [14_streaming_iterators.go](examples/14_streaming_iterators.go) | 流式迭代器 |
+| [15_jsonl_processing.go](examples/15_jsonl_processing.go) | JSONL 格式处理 |
+| [16_hooks_and_security.go](examples/16_hooks_and_security.go) | 钩子与安全模式 |
+| [17_advanced_patterns.go](examples/17_advanced_patterns.go) | PreParse、CompiledPath、高级模式 |
 
 ```bash
-# 运行单个示例
+# 运行单个示例（需要 build tag）
 go run -tags=example examples/1_basic_usage.go
 go run -tags=example examples/2_advanced_features.go
 ```
@@ -470,4 +592,4 @@ MIT License - 详见 [LICENSE](LICENSE) 文件。
 
 ---
 
-如果这个项目对你有帮助，请给一个 star！ ⭐
+如果这个项目对你有帮助，请给一个 star!

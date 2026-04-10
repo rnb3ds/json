@@ -136,60 +136,90 @@ value, err := json.Get(data, "users[0].name")
 ### GetString
 
 ```go
-func GetString(jsonStr, path string, defaultValue string, cfg ...Config) string
+func GetString(jsonStr, path string, defaultValue ...string) string
 ```
 
-Retrieves a string value from JSON at the specified path. Returns `defaultValue` if path not found or conversion fails. Accepts optional `Config` for validation, security, and caching.
+Retrieves a string value from JSON at the specified path. Returns the zero value if path not found or conversion fails, or the provided `defaultValue` if given.
+
+**Example:**
+```go
+name := json.GetString(data, "user.name", "unknown")
+```
 
 ---
 
 ### GetInt
 
 ```go
-func GetInt(jsonStr, path string, defaultValue int, cfg ...Config) int
+func GetInt(jsonStr, path string, defaultValue ...int) int
 ```
 
-Retrieves an integer value from JSON at the specified path. Returns `defaultValue` if path not found or conversion fails. Accepts optional `Config` for validation, security, and caching.
+Retrieves an integer value from JSON at the specified path. Returns the zero value if path not found or conversion fails, or the provided `defaultValue` if given.
+
+**Example:**
+```go
+age := json.GetInt(data, "user.age", 0)
+```
 
 ---
 
 ### GetFloat
 
 ```go
-func GetFloat(jsonStr, path string, defaultValue float64, cfg ...Config) float64
+func GetFloat(jsonStr, path string, defaultValue ...float64) float64
 ```
 
-Retrieves a float64 value from JSON at the specified path. Returns `defaultValue` if path not found or conversion fails. Accepts optional `Config` for validation, security, and caching.
+Retrieves a float64 value from JSON at the specified path. Returns the zero value if path not found or conversion fails, or the provided `defaultValue` if given.
+
+**Example:**
+```go
+price := json.GetFloat(data, "product.price", 0.0)
+```
 
 ---
 
 ### GetBool
 
 ```go
-func GetBool(jsonStr, path string, defaultValue bool, cfg ...Config) bool
+func GetBool(jsonStr, path string, defaultValue ...bool) bool
 ```
 
-Retrieves a boolean value from JSON at the specified path. Returns `defaultValue` if path not found or conversion fails. Accepts optional `Config` for validation, security, and caching.
+Retrieves a boolean value from JSON at the specified path. Returns the zero value if path not found or conversion fails, or the provided `defaultValue` if given.
+
+**Example:**
+```go
+active := json.GetBool(data, "user.active", false)
+```
 
 ---
 
 ### GetArray
 
 ```go
-func GetArray(jsonStr, path string, defaultValue []any, cfg ...Config) []any
+func GetArray(jsonStr, path string, defaultValue ...[]any) []any
 ```
 
-Retrieves an array value from JSON at the specified path. Returns `defaultValue` if path not found or conversion fails. Accepts optional `Config` for validation, security, and caching.
+Retrieves an array value from JSON at the specified path. Returns `nil` if path not found or conversion fails, or the provided `defaultValue` if given.
+
+**Example:**
+```go
+items := json.GetArray(data, "items", []any{})
+```
 
 ---
 
 ### GetObject
 
 ```go
-func GetObject(jsonStr, path string, defaultValue map[string]any, cfg ...Config) map[string]any
+func GetObject(jsonStr, path string, defaultValue ...map[string]any) map[string]any
 ```
 
-Retrieves an object value from JSON at the specified path. Returns `defaultValue` if path not found or conversion fails. Accepts optional `Config` for validation, security, and caching.
+Retrieves an object value from JSON at the specified path. Returns `nil` if path not found or conversion fails, or the provided `defaultValue` if given.
+
+**Example:**
+```go
+profile := json.GetObject(data, "user.profile")
+```
 
 ---
 
@@ -214,10 +244,10 @@ if result.Ok() {
 ### GetTyped[T]
 
 ```go
-func GetTyped[T any](jsonStr, path string, defaultValue T, cfg ...Config) T
+func GetTyped[T any](jsonStr, path string, defaultValue ...T) T
 ```
 
-Retrieves a typed value from JSON at the specified path using generics. Returns `defaultValue` if path not found or conversion fails. Accepts optional `Config` for validation, security, and caching.
+Retrieves a typed value from JSON at the specified path using generics. Returns the zero value if path not found or conversion fails, or the provided `defaultValue` if given.
 
 **Example:**
 ```go
@@ -379,7 +409,7 @@ result, err := json.Encode(data)
 ### EncodeWithConfig
 
 ```go
-func EncodeWithConfig(value any, cfg Config) (string, error)
+func EncodeWithConfig(value any, cfg ...Config) (string, error)
 ```
 
 Converts any Go value to JSON string with custom configuration.
@@ -437,18 +467,28 @@ Appends HTML-escaped JSON to dst. 100% compatible with encoding/json.HTMLEscape.
 ### Parse
 
 ```go
-func Parse(jsonStr string, cfg ...Config) (any, error)
+func Parse(jsonStr string, target any, cfg ...Config) error
 ```
 
-Parses a JSON string into a Go value.
+Parses a JSON string into a Go value. Similar to `Unmarshal` but accepts a JSON string instead of bytes. The `target` must be a non-nil pointer.
+
+**Parameters:**
+- `jsonStr` - JSON string to parse
+- `target` - Pointer to target value (must be non-nil)
+- `cfg` - Optional configuration
+
+**Returns:**
+- `error` - Parsing error if any
 
 **Example:**
 ```go
-data, err := json.Parse(jsonStr)
+var result map[string]any
+err := json.Parse(jsonStr, &result)
 
 // With security configuration
 cfg := json.SecurityConfig()
-data, err := json.Parse(untrustedInput, cfg)
+var data map[string]any
+err := json.Parse(untrustedInput, &data, cfg)
 ```
 
 ---
@@ -511,7 +551,7 @@ Reads JSON from a file and unmarshals it into v.
 ### Foreach
 
 ```go
-func Foreach(jsonStr string, fn func(key any, item *IterableValue))
+func Foreach(jsonStr string, fn func(key any, item *IterableValue), cfg ...Config)
 ```
 
 Iterates over JSON arrays or objects (read-only).
@@ -529,7 +569,7 @@ json.Foreach(data, func(key any, item *json.IterableValue) {
 ### ForeachWithPath
 
 ```go
-func ForeachWithPath(jsonStr, path string, fn func(key any, item *IterableValue)) error
+func ForeachWithPath(jsonStr, path string, fn func(key any, item *IterableValue), cfg ...Config) error
 ```
 
 Iterates over a specific path in JSON.
@@ -539,7 +579,7 @@ Iterates over a specific path in JSON.
 ### ForeachNested
 
 ```go
-func ForeachNested(jsonStr string, fn func(key any, item *IterableValue))
+func ForeachNested(jsonStr string, fn func(key any, item *IterableValue), cfg ...Config)
 ```
 
 Recursively iterates through all nested levels.
@@ -549,7 +589,7 @@ Recursively iterates through all nested levels.
 ### ForeachWithPathAndControl
 
 ```go
-func ForeachWithPathAndControl(jsonStr, path string, fn func(key any, value any) IteratorControl) error
+func ForeachWithPathAndControl(jsonStr, path string, fn func(key any, value any) IteratorControl, cfg ...Config) error
 ```
 
 Iterates with early termination support using internal `IteratorControl` type.
@@ -571,7 +611,7 @@ json.ForeachWithPath(data, "users", func(key any, item *json.IterableValue) {
 ### ForeachReturn
 
 ```go
-func ForeachReturn(jsonStr string, fn func(key any, item *IterableValue)) (string, error)
+func ForeachReturn(jsonStr string, fn func(key any, item *IterableValue), cfg ...Config) (string, error)
 ```
 
 Iterates and returns the original JSON string (read-only).
@@ -581,16 +621,6 @@ Iterates and returns the original JSON string (read-only).
 ---
 
 ## JSONL Support
-
-### NewJSONLProcessor
-
-```go
-func NewJSONLProcessor(reader io.Reader) *JSONLProcessor
-```
-
-Creates a processor for JSON Lines (NDJSON) data.
-
----
 
 ### ParseJSONL
 
@@ -649,7 +679,7 @@ Creates a new JSONL writer with optional Config for encoding options.
 ### StreamLinesInto[T]
 
 ```go
-func StreamLinesInto[T any](reader io.Reader, fn func(lineNum int, data T) error) ([]T, error)
+func StreamLinesInto[T any](reader io.Reader, fn func(lineNum int, data T) error, cfg ...Config) ([]T, error)
 ```
 
 Type-safe streaming of JSONL lines.
@@ -683,63 +713,26 @@ errors, err := json.ValidateSchema(data, schema)
 
 ### IsValidJSON
 
-```go
-func IsValidJSON(jsonStr string) bool
-```
-
-Quickly checks if a string is valid JSON.
+> **Note:** This function is unexported (`isValidJSON`). Use `json.Valid([]byte(jsonStr))` for public access.
 
 ---
 
 ### IsValidPath
 
-```go
-func IsValidPath(path string) bool
-```
-
-Checks if a path expression is valid.
+> **Note:** This function is unexported (`isValidPath`). Use path operations which validate paths internally.
 
 ---
 
 ## Type Conversion
 
-### ConvertToInt
+> **Note:** The following type conversion functions are unexported (internal). Use `GetTyped[T]`, `GetString`, `GetInt`, etc. for type-safe access, or use `AccessResult` methods (`AsInt()`, `AsFloat64()`, `AsBool()`, `AsString()`) from `SafeGet`.
 
-```go
-func ConvertToInt(value any) (int, bool)
-```
-
-Safely converts any value to int.
-
----
-
-### ConvertToFloat64
-
-```go
-func ConvertToFloat64(value any) (float64, bool)
-```
-
-Safely converts any value to float64.
-
----
-
-### ConvertToBool
-
-```go
-func ConvertToBool(value any) (bool, bool)
-```
-
-Safely converts any value to bool.
-
----
-
-### ConvertToString
-
-```go
-func ConvertToString(value any) string
-```
-
-Converts any value to string.
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `convertToInt` | `(value any) (int, bool)` | Safely converts any value to int |
+| `convertToFloat64` | `(value any) (float64, bool)` | Safely converts any value to float64 |
+| `convertToBool` | `(value any) (bool, bool)` | Safely converts any value to bool |
+| `convertToString` | `(value any) string` | Converts any value to string |
 
 ---
 
@@ -747,11 +740,7 @@ Converts any value to string.
 
 ### DeepCopy
 
-```go
-func DeepCopy(data any) (any, error)
-```
-
-Creates a deep copy of JSON-compatible data.
+> **Note:** This function is unexported (`deepCopy`). Deep copy is performed internally when needed by operations like `Set` and `MergeJSON`.
 
 ---
 
@@ -816,17 +805,6 @@ cfg.MergeMode = json.MergeIntersection
 result, err := json.MergeMany([]string{config1, config2, config3}, cfg)
 ```
 
-### MergeJSONMany (Deprecated)
-
-```go
-// Deprecated: Use MergeMany
-func MergeJSONMany(jsons ...string) (string, error)
-// Deprecated: Use MergeMany
-func MergeJSONManyWithConfig(cfg Config, jsons ...string) (string, error)
-```
-
-These functions are kept for backward compatibility. Use `MergeMany` for new code.
-
 ---
 
 ## Configuration
@@ -847,9 +825,18 @@ Returns the default configuration with balanced settings.
 | MaxNestingDepthSecurity | 200 |
 | MaxObjectKeys | 100,000 |
 | MaxArrayElements | 100,000 |
+| MaxConcurrency | 50 |
+| MaxBatchSize | 2,000 |
+| ParallelThreshold | 10 |
 | EnableValidation | true |
 | EnableCache | true |
+| CacheResults | true |
 | CacheTTL | 5 minutes |
+| EscapeHTML | true |
+| ValidateUTF8 | true |
+| MaxDepth | 100 |
+| FloatPrecision | -1 (auto) |
+| FullSecurityScan | false |
 
 ---
 
@@ -889,7 +876,6 @@ Returns a configuration for pretty-printed JSON output.
 ```go
 func (c *Config) Clone() *Config
 func (c *Config) Validate() error
-func (c *Config) getSecurityLimits() map[string]any
 ```
 
 ---
@@ -899,18 +885,24 @@ func (c *Config) getSecurityLimits() map[string]any
 ### New
 
 ```go
-func New(config ...*Config) *Processor
+func New(cfg ...Config) (*Processor, error)
 ```
 
 Creates a new Processor with optional configuration.
 
 **Example:**
 ```go
-processor := json.New()
+processor, err := json.New()
+if err != nil {
+    log.Fatal(err)
+}
 defer processor.Close()
 
 // Or with configuration
-processor := json.New(json.DefaultConfig())
+processor, err := json.New(json.DefaultConfig())
+if err != nil {
+    log.Fatal(err)
+}
 defer processor.Close()
 ```
 
@@ -920,21 +912,21 @@ defer processor.Close()
 
 ```go
 // Core operations
-func (p *Processor) Get(jsonStr, path string, opts ...Config) (any, error)
-func (p *Processor) Set(jsonStr, path string, value any, opts ...Config) (string, error)
-func (p *Processor) Delete(jsonStr, path string, opts ...Config) (string, error)
+func (p *Processor) Get(jsonStr, path string, cfg ...Config) (any, error)
+func (p *Processor) Set(jsonStr, path string, value any, cfg ...Config) (string, error)
+func (p *Processor) Delete(jsonStr, path string, cfg ...Config) (string, error)
 
 // Encoding/Decoding
 func (p *Processor) Marshal(v any) ([]byte, error)
-func (p *Processor) Unmarshal(data []byte, v any, opts ...Config) error
-func (p *Processor) EncodeWithConfig(value any, cfg Config) (string, error)
+func (p *Processor) Unmarshal(data []byte, v any, cfg ...Config) error
+func (p *Processor) EncodeWithConfig(value any, cfg ...Config) (string, error)
 
 // File operations
-func (p *Processor) LoadFromFile(filePath string, opts ...Config) (string, error)
+func (p *Processor) LoadFromFile(filePath string, cfg ...Config) (string, error)
 func (p *Processor) SaveToFile(filePath string, data any, cfg ...Config) error
 
 // Schema validation
-func (p *Processor) ValidateSchema(jsonStr string, schema *Schema, opts ...Config) ([]ValidationError, error)
+func (p *Processor) ValidateSchema(jsonStr string, schema *Schema, cfg ...Config) ([]ValidationError, error)
 
 // Cache operations
 func (p *Processor) ClearCache()
@@ -980,14 +972,16 @@ type JsonsError struct {
 ### Error Variables
 
 ```go
-var ErrInvalidJSON       = errors.New("invalid JSON")
+var ErrInvalidJSON       = errors.New("invalid JSON format")
 var ErrPathNotFound      = errors.New("path not found")
 var ErrTypeMismatch      = errors.New("type mismatch")
 var ErrSizeLimit         = errors.New("size limit exceeded")
 var ErrDepthLimit        = errors.New("depth limit exceeded")
-var ErrSecurityViolation = errors.New("security violation")
-var ErrOperationFailed   = errors.New("operation failed")
-var ErrInvalidPath       = errors.New("invalid path")
+var ErrSecurityViolation = errors.New("security violation detected")
+var ErrInvalidPath       = errors.New("invalid path format")
+var ErrProcessorClosed   = errors.New("processor is closed")
+var ErrConcurrencyLimit  = errors.New("concurrency limit exceeded")
+var ErrOperationTimeout  = errors.New("operation timeout")
 ```
 
 ---
@@ -1046,7 +1040,6 @@ type Result[T any] struct {
 func (r Result[T]) Ok() bool
 func (r Result[T]) Unwrap() T
 func (r Result[T]) UnwrapOr(defaultValue T) T
-func (r Result[T]) Must() T
 ```
 
 ---
@@ -1084,13 +1077,16 @@ type ValidationError struct {
 
 The `IteratorControl` type is used internally for iteration flow control.
 
-For user-facing iteration with early termination, use `ForeachFile`, `ForeachFileChunked`, or `ForeachFileObject` with `IterableValue.Break()`:
+For user-facing iteration with early termination, use `ForeachFile`, `ForeachFileChunked`, `ForeachFileNested`, or `ForeachFileWithPath` with `IterableValue.Break()`:
 
 ```go
-processor, _ := json.New()
+processor, err := json.New()
+if err != nil {
+    log.Fatal(err)
+}
 defer processor.Close()
 
-err := processor.ForeachFile("data.json", func(key any, item *json.IterableValue) error {
+err = processor.ForeachFile("data.json", func(key any, item *json.IterableValue) error {
     if item.GetInt("id") == targetId {
         return item.Break() // stop iteration
     }

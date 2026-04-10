@@ -62,8 +62,22 @@ func (p *Processor) Parse(jsonStr string, target any, cfg ...Config) error {
 		return &JsonsError{
 			Op:      "parse",
 			Message: "target cannot be nil, use Parse for any type result",
-			Err:     ErrOperationFailed,
+			Err:     errOperationFailed,
 		}
+	}
+
+	// PERFORMANCE: Fast path for the most common case — parsing into *any
+	// without number preservation. Avoids the fmt.Sprintf allocation for error wrapping
+	// and skips the preservingUnmarshal indirection.
+	if _, ok := target.(*any); ok && !options.PreserveNumbers {
+		if err := json.Unmarshal(stringToBytes(jsonStr), target); err != nil {
+			return &JsonsError{
+				Op:      "parse",
+				Message: fmt.Sprintf("invalid JSON for target type %T: %v", target, err),
+				Err:     ErrInvalidJSON,
+			}
+		}
+		return nil
 	}
 
 	// Parse with number preservation to maintain original format
@@ -96,8 +110,8 @@ func (p *Processor) Parse(jsonStr string, target any, cfg ...Config) error {
 		if err != nil {
 			return &JsonsError{
 				Op:      "parse",
-				Message: fmt.Sprintf("failed to encode data for target type %T: %v", target, err),
-				Err:     ErrOperationFailed,
+				Message: fmt.Sprintf("failed to encode data for target type %T", target),
+				Err:     err,
 			}
 		}
 
@@ -366,8 +380,8 @@ func (p *Processor) Prettify(jsonStr string, cfg ...Config) (string, error) {
 	if err != nil {
 		return "", &JsonsError{
 			Op:      "pretty",
-			Message: fmt.Sprintf("failed to format JSON: %v", err),
-			Err:     ErrOperationFailed,
+			Message: "failed to format JSON",
+			Err:     err,
 		}
 	}
 
@@ -535,8 +549,8 @@ func (p *Processor) Compact(jsonStr string, cfg ...Config) (string, error) {
 	if err != nil {
 		return "", &JsonsError{
 			Op:      "compact",
-			Message: fmt.Sprintf("failed to compact JSON: %v", err),
-			Err:     ErrOperationFailed,
+			Message: "failed to compact JSON",
+			Err:     err,
 		}
 	}
 
@@ -577,12 +591,6 @@ func (p *Processor) Indent(dst *bytes.Buffer, src []byte, prefix, indent string,
 	return err
 }
 
-// IndentBuffer is an alias for Indent.
-//
-// Deprecated: Use Indent for consistent naming with the package-level function.
-func (p *Processor) IndentBuffer(dst *bytes.Buffer, src []byte, prefix, indent string, cfg ...Config) error {
-	return p.Indent(dst, src, prefix, indent, cfg...)
-}
 
 // HTMLEscape appends to dst the JSON-encoded src with HTML-safe escaping.
 // Performs character-level escaping of <, >, &, U+2028, and U+2029 without re-encoding.
@@ -597,12 +605,6 @@ func (p *Processor) HTMLEscape(dst *bytes.Buffer, src []byte, cfg ...Config) {
 	internal.HTMLEscapeTo(dst, string(src))
 }
 
-// HTMLEscapeBuffer is an alias for HTMLEscape.
-//
-// Deprecated: Use HTMLEscape for consistent naming with the package-level function.
-func (p *Processor) HTMLEscapeBuffer(dst *bytes.Buffer, src []byte, cfg ...Config) {
-	p.HTMLEscape(dst, src, cfg...)
-}
 
 func (p *Processor) navigateToPath(data any, path string) (any, error) {
 	if path == "" || path == "." || path == "/" {

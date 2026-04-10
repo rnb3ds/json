@@ -21,9 +21,10 @@ var (
 	// For example, trying to get a string when the value is a number.
 	ErrTypeMismatch = errors.New("type mismatch")
 
-	// ErrOperationFailed indicates that a JSON operation failed.
+	// errOperationFailed indicates that a JSON operation failed.
 	// The error message contains details about the specific failure.
-	ErrOperationFailed = errors.New("operation failed")
+	// Internal: wrapped in JsonsError with context before returning to callers.
+	errOperationFailed = errors.New("operation failed")
 
 	// ErrInvalidPath indicates that the path syntax is invalid.
 	// Paths should use format: "key.subkey" or "array[0]".
@@ -33,9 +34,10 @@ var (
 	// and cannot accept new operations. Create a new processor with New().
 	ErrProcessorClosed = errors.New("processor is closed")
 
-	// ErrInternalError indicates an unexpected internal error.
+	// errInternalError indicates an unexpected internal error.
 	// This typically indicates a bug in the library.
-	ErrInternalError = errors.New("internal error")
+	// Internal: not actionable by callers; always wrapped in JsonsError.
+	errInternalError = errors.New("internal error")
 
 	// errBreak is an internal signal to stop iteration.
 	// Use item.Break() to stop iteration from callback functions.
@@ -61,13 +63,9 @@ var (
 	// This may occur with invalid path segments or operations.
 	ErrUnsupportedPath = errors.New("unsupported path operation")
 
-	// ErrCacheFull indicates that the cache has reached its maximum size.
-	// Consider increasing MaxCacheSize or clearing the cache.
-	ErrCacheFull = errors.New("cache is full")
-
-	// ErrCacheDisabled indicates that caching is not enabled.
-	// Set EnableCache to true in Config to enable caching.
-	ErrCacheDisabled = errors.New("cache is disabled")
+	// errCacheDisabled indicates that caching is not enabled.
+	// Internal: cache configuration detail, not actionable by callers.
+	errCacheDisabled = errors.New("cache is disabled")
 
 	// ErrOperationTimeout indicates that an operation exceeded its timeout duration.
 	// Consider increasing timeout or optimizing the operation.
@@ -233,29 +231,4 @@ func getErrorSuggestion(err error) string {
 		return "Input contains potentially dangerous patterns - review and sanitize"
 	}
 	return "Check the error message for specific details"
-}
-
-// wrapError wraps an error with additional context.
-func wrapError(err error, op, message string) error {
-	if err == nil {
-		return nil
-	}
-	return &JsonsError{
-		Op:      op,
-		Message: message,
-		Err:     err,
-	}
-}
-
-// wrapPathError wraps an error with path context.
-func wrapPathError(err error, op, path, message string) error {
-	if err == nil {
-		return nil
-	}
-	return &JsonsError{
-		Op:      op,
-		Path:    path,
-		Message: message,
-		Err:     err,
-	}
 }
