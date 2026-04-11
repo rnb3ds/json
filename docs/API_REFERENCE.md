@@ -229,7 +229,7 @@ profile := json.GetObject(data, "user.profile")
 func SafeGet(jsonStr, path string, cfg ...Config) AccessResult
 ```
 
-Performs a type-safe get returning an `AccessResult` with conversion methods (`AsString`, `AsInt`, `AsFloat64`, `AsBool`). Accepts optional `Config` for validation, security, and caching.
+Performs a type-safe get returning an `AccessResult` with conversion methods (`AsString`, `AsInt`, `AsFloat64`, `AsBool`, `AsStringConverted`, `Unwrap`, `UnwrapOr`). Accepts optional `Config` for validation, security, and caching.
 
 **Example:**
 ```go
@@ -539,7 +539,7 @@ Marshals data to JSON and writes to a file.
 ### UnmarshalFromFile
 
 ```go
-func UnmarshalFromFile(path string, v any, cfg ...Config) error
+func UnmarshalFromFile(filePath string, v any, cfg ...Config) error
 ```
 
 Reads JSON from a file and unmarshals it into v.
@@ -917,7 +917,7 @@ func (p *Processor) Set(jsonStr, path string, value any, cfg ...Config) (string,
 func (p *Processor) Delete(jsonStr, path string, cfg ...Config) (string, error)
 
 // Encoding/Decoding
-func (p *Processor) Marshal(v any) ([]byte, error)
+func (p *Processor) Marshal(v any, cfg ...Config) ([]byte, error)
 func (p *Processor) Unmarshal(data []byte, v any, cfg ...Config) error
 func (p *Processor) EncodeWithConfig(value any, cfg ...Config) (string, error)
 
@@ -982,6 +982,8 @@ var ErrInvalidPath       = errors.New("invalid path format")
 var ErrProcessorClosed   = errors.New("processor is closed")
 var ErrConcurrencyLimit  = errors.New("concurrency limit exceeded")
 var ErrOperationTimeout  = errors.New("operation timeout")
+var ErrUnsupportedPath   = errors.New("unsupported path operation")
+var ErrResourceExhausted = errors.New("system resources exhausted")
 ```
 
 ---
@@ -1013,17 +1015,49 @@ type IterableValue struct {
     // Contains methods for safe data access during iteration
 }
 
+func (iv *IterableValue) GetData() any
+func (iv *IterableValue) Break() error
+
 func (iv *IterableValue) Get(path string) any
 func (iv *IterableValue) GetString(key string) string
+func (iv *IterableValue) GetStringWithDefault(key string, defaultValue string) string
 func (iv *IterableValue) GetInt(key string) int
+func (iv *IterableValue) GetIntWithDefault(key string, defaultValue int) int
 func (iv *IterableValue) GetFloat64(key string) float64
+func (iv *IterableValue) GetFloat64WithDefault(key string, defaultValue float64) float64
 func (iv *IterableValue) GetBool(key string) bool
+func (iv *IterableValue) GetBoolWithDefault(key string, defaultValue bool) bool
 func (iv *IterableValue) GetArray(key string) []any
 func (iv *IterableValue) GetObject(key string) map[string]any
 func (iv *IterableValue) GetWithDefault(key string, defaultValue any) any
 func (iv *IterableValue) Exists(key string) bool
 func (iv *IterableValue) IsNull(key string) bool
+func (iv *IterableValue) IsNullData() bool
 func (iv *IterableValue) IsEmpty(key string) bool
+func (iv *IterableValue) IsEmptyData() bool
+func (iv *IterableValue) ForeachNested(path string, fn func(key any, item *IterableValue))
+func (iv *IterableValue) Release()
+```
+
+---
+
+## AccessResult Type
+
+```go
+type AccessResult struct {
+    Value  any
+    Exists bool
+    Type   string  // Runtime type info (for debugging)
+}
+
+func (r AccessResult) Ok() bool
+func (r AccessResult) Unwrap() any
+func (r AccessResult) UnwrapOr(defaultValue any) any
+func (r AccessResult) AsString() (string, error)
+func (r AccessResult) AsStringConverted() (string, error)
+func (r AccessResult) AsInt() (int, error)
+func (r AccessResult) AsFloat64() (float64, error)
+func (r AccessResult) AsBool() (bool, error)
 ```
 
 ---
@@ -1056,6 +1090,9 @@ type Schema struct {
     MaxLength            int                `json:"maxLength,omitempty"`
     Minimum              float64            `json:"minimum,omitempty"`
     Maximum              float64            `json:"maximum,omitempty"`
+    ExclusiveMinimum     bool               `json:"exclusiveMinimum,omitempty"`
+    ExclusiveMaximum     bool               `json:"exclusiveMaximum,omitempty"`
+    MultipleOf           float64            `json:"multipleOf,omitempty"`
     Pattern              string             `json:"pattern,omitempty"`
     Format               string             `json:"format,omitempty"`
     AdditionalProperties bool               `json:"additionalProperties,omitempty"`
@@ -1063,6 +1100,11 @@ type Schema struct {
     MaxItems             int                `json:"maxItems,omitempty"`
     UniqueItems          bool               `json:"uniqueItems,omitempty"`
     Enum                 []any              `json:"enum,omitempty"`
+    Const                any                `json:"const,omitempty"`
+    Title                string             `json:"title,omitempty"`
+    Description          string             `json:"description,omitempty"`
+    Default              any                `json:"default,omitempty"`
+    Examples             []any              `json:"examples,omitempty"`
 }
 
 type ValidationError struct {
@@ -1075,9 +1117,19 @@ type ValidationError struct {
 
 ## Iterator Control
 
-The `IteratorControl` type is used internally for iteration flow control.
+The `IteratorControl` type provides iteration flow control with three constants:
 
-For user-facing iteration with early termination, use `ForeachFile`, `ForeachFileChunked`, `ForeachFileNested`, or `ForeachFileWithPath` with `IterableValue.Break()`:
+```go
+type IteratorControl int
+
+const (
+    IteratorNormal   IteratorControl = iota  // Default/normal
+    IteratorContinue                          // Continue iteration
+    IteratorBreak                             // Stop iteration
+)
+```
+
+All three constants are exported. For user-facing iteration with early termination, use `ForeachFile`, `ForeachFileChunked`, `ForeachFileNested`, or `ForeachFileWithPath` with `IterableValue.Break()`:
 
 ```go
 processor, err := json.New()
@@ -1094,7 +1146,7 @@ err = processor.ForeachFile("data.json", func(key any, item *json.IterableValue)
 })
 ```
 
-**Note:** The `IteratorControl` constants (`IteratorContinue`, `IteratorBreak`) are internal. Use the `IterableValue.Break()` method for user-facing iteration control.
+**Note:** The `IteratorControl` constants (`IteratorNormal`, `IteratorContinue`, `IteratorBreak`) are exported but primarily used internally. For most use cases, prefer the `IterableValue.Break()` method for iteration control.
 
 ---
 

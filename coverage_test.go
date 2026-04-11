@@ -1609,7 +1609,7 @@ func TestBatchOperationsAdditional(t *testing.T) {
 		jsonStr := `{"a":1,"b":2,"c":3}`
 		paths := []string{"a", "b", "c"}
 
-		result, err := processor.FastGetMultiple(jsonStr, paths)
+		result, err := processor.fastGetMultiple(jsonStr, paths)
 		if err != nil {
 			t.Errorf("FastGetMultiple failed: %v", err)
 		}
@@ -1627,7 +1627,7 @@ func TestBatchOperationsAdditional(t *testing.T) {
 			"c": 30,
 		}
 
-		result, err := processor.BatchSetOptimized(jsonStr, updates)
+		result, err := processor.batchSetOptimized(jsonStr, updates)
 		if err != nil {
 			t.Errorf("BatchSetOptimized failed: %v", err)
 		}
@@ -1641,7 +1641,7 @@ func TestBatchOperationsAdditional(t *testing.T) {
 		jsonStr := `{"a":1,"b":2,"c":3}`
 		paths := []string{"a", "c"}
 
-		result, err := processor.BatchDeleteOptimized(jsonStr, paths)
+		result, err := processor.batchDeleteOptimized(jsonStr, paths)
 		if err != nil {
 			t.Errorf("BatchDeleteOptimized failed: %v", err)
 		}

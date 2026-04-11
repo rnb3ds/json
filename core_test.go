@@ -131,7 +131,7 @@ func BenchmarkFastDelete(b *testing.B) {
 	b.ResetTimer()
 
 	for i := 0; i < b.N; i++ {
-		_, _ = processor.FastDelete(jsonStr, "name")
+		_, _ = processor.fastDelete(jsonStr, "name")
 	}
 }
 
@@ -144,7 +144,7 @@ func BenchmarkFastSet(b *testing.B) {
 	b.ResetTimer()
 
 	for i := 0; i < b.N; i++ {
-		_, _ = processor.FastSet(jsonStr, "name", "updated")
+		_, _ = processor.fastSet(jsonStr, "name", "updated")
 	}
 }
 
@@ -224,7 +224,7 @@ func BenchmarkOpBatchSet(b *testing.B) {
 	b.ResetTimer()
 
 	for i := 0; i < b.N; i++ {
-		_, _ = processor.BatchSetOptimized(jsonStr, updates)
+		_, _ = processor.batchSetOptimized(jsonStr, updates)
 	}
 }
 
@@ -237,7 +237,7 @@ func BenchmarkOpFastGetMultiple(b *testing.B) {
 	b.ResetTimer()
 
 	for i := 0; i < b.N; i++ {
-		_, _ = processor.FastGetMultiple(jsonStr, paths)
+		_, _ = processor.fastGetMultiple(jsonStr, paths)
 	}
 }
 
@@ -467,7 +467,7 @@ func TestBatchDeleteOptimized(t *testing.T) {
 	t.Run("batch delete multiple paths", func(t *testing.T) {
 		jsonStr := `{"a": 1, "b": 2, "c": 3}`
 		paths := []string{"a", "c"}
-		result, err := processor.BatchDeleteOptimized(jsonStr, paths)
+		result, err := processor.batchDeleteOptimized(jsonStr, paths)
 		if err != nil {
 			t.Fatalf("BatchDeleteOptimized error: %v", err)
 		}
@@ -490,7 +490,7 @@ func TestBatchDeleteOptimized(t *testing.T) {
 	t.Run("empty paths", func(t *testing.T) {
 		jsonStr := `{"a": 1}`
 		paths := []string{}
-		result, err := processor.BatchDeleteOptimized(jsonStr, paths)
+		result, err := processor.batchDeleteOptimized(jsonStr, paths)
 		if err != nil {
 			t.Fatalf("BatchDeleteOptimized error: %v", err)
 		}
@@ -517,7 +517,7 @@ func TestBatchSetOptimized(t *testing.T) {
 			"b": 20,
 			"c": 30,
 		}
-		result, err := processor.BatchSetOptimized(jsonStr, updates)
+		result, err := processor.batchSetOptimized(jsonStr, updates)
 		if err != nil {
 			t.Fatalf("BatchSetOptimized error: %v", err)
 		}
@@ -529,7 +529,7 @@ func TestBatchSetOptimized(t *testing.T) {
 	t.Run("empty updates", func(t *testing.T) {
 		jsonStr := `{"a": 1}`
 		updates := map[string]any{}
-		result, err := processor.BatchSetOptimized(jsonStr, updates)
+		result, err := processor.batchSetOptimized(jsonStr, updates)
 		if err != nil {
 			t.Fatalf("BatchSetOptimized error: %v", err)
 		}
@@ -2079,7 +2079,7 @@ func TestFastOperations(t *testing.T) {
 		}
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
-				result, err := processor.FastDelete(tt.json, tt.path)
+				result, err := processor.fastDelete(tt.json, tt.path)
 				if err != nil {
 					t.Fatalf("FastDelete error: %v", err)
 				}
@@ -2102,7 +2102,7 @@ func TestFastOperations(t *testing.T) {
 		}
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
-				results, err := processor.FastGetMultiple(tt.json, tt.paths)
+				results, err := processor.fastGetMultiple(tt.json, tt.paths)
 				if err != nil {
 					t.Fatalf("FastGetMultiple error: %v", err)
 				}
@@ -2125,7 +2125,7 @@ func TestFastOperations(t *testing.T) {
 		}
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
-				result, err := processor.FastSet(tt.json, tt.path, tt.value)
+				result, err := processor.fastSet(tt.json, tt.path, tt.value)
 				if err != nil {
 					t.Fatalf("FastSet error: %v", err)
 				}
@@ -4448,7 +4448,7 @@ func TestProcessor_FastOperations(t *testing.T) {
 
 	t.Run("FastSet", func(t *testing.T) {
 		jsonStr := `{"user": {"name": "John"}}`
-		result, err := processor.FastSet(jsonStr, "user.name", "Jane")
+		result, err := processor.fastSet(jsonStr, "user.name", "Jane")
 		if err != nil {
 			t.Errorf("FastSet error: %v", err)
 		}
@@ -4459,7 +4459,7 @@ func TestProcessor_FastOperations(t *testing.T) {
 
 	t.Run("FastDelete", func(t *testing.T) {
 		jsonStr := `{"user": {"name": "John", "age": 30}}`
-		result, err := processor.FastDelete(jsonStr, "user.age")
+		result, err := processor.fastDelete(jsonStr, "user.age")
 		if err != nil {
 			t.Errorf("FastDelete error: %v", err)
 		}
@@ -4474,7 +4474,7 @@ func TestProcessor_FastOperations(t *testing.T) {
 			"a": 10,
 			"c": 3,
 		}
-		result, err := processor.BatchSetOptimized(jsonStr, updates)
+		result, err := processor.batchSetOptimized(jsonStr, updates)
 		if err != nil {
 			t.Errorf("BatchSetOptimized error: %v", err)
 		}
@@ -4486,7 +4486,7 @@ func TestProcessor_FastOperations(t *testing.T) {
 	t.Run("BatchDeleteOptimized", func(t *testing.T) {
 		jsonStr := `{"a": 1, "b": 2, "c": 3}`
 		paths := []string{"a", "c"}
-		result, err := processor.BatchDeleteOptimized(jsonStr, paths)
+		result, err := processor.batchDeleteOptimized(jsonStr, paths)
 		if err != nil {
 			t.Errorf("BatchDeleteOptimized error: %v", err)
 		}
@@ -4498,7 +4498,7 @@ func TestProcessor_FastOperations(t *testing.T) {
 	t.Run("FastGetMultiple", func(t *testing.T) {
 		jsonStr := `{"a": 1, "b": 2, "c": 3}`
 		paths := []string{"a", "b"}
-		result, err := processor.FastGetMultiple(jsonStr, paths)
+		result, err := processor.fastGetMultiple(jsonStr, paths)
 		if err != nil {
 			t.Errorf("FastGetMultiple error: %v", err)
 		}

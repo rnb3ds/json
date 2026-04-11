@@ -442,15 +442,9 @@ if json.Valid([]byte(jsonStr)) {
     fmt.Println("Valid JSON")
 }
 
-// Quick validation check
-if json.IsValidJSON(jsonStr) {
-    fmt.Println("Valid JSON")
-}
-
-// Validate path expression
-if json.IsValidPath("user.profile.name") {
-    fmt.Println("Valid path")
-}
+// Note: isValidJSON and isValidPath are unexported (internal).
+// Use json.Valid([]byte(jsonStr)) for public JSON validation.
+// Path operations validate paths internally before execution.
 ```
 
 ---

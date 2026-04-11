@@ -132,6 +132,8 @@ defer processor.Close()
 // - MaxSecurityValidationSize: 10MB
 // - MaxObjectKeys: 5,000 (fewer keys)
 // - MaxArrayElements: 5,000 (fewer elements)
+// - MaxCacheSize: 256 (larger than DefaultConfig's 128)
+// - CacheTTL: 3 minutes (shorter than DefaultConfig's 5 minutes)
 // - StrictMode: true (strict validation)
 // - EnableValidation: true (forced validation)
 // - FullSecurityScan: true (disables sampling, full scan all JSON)
@@ -476,15 +478,17 @@ result, err := processor.Get(jsonString, "user.credentials")
 Cache keys use secure hashing:
 
 ```go
-// Cache keys are generated using SHA-256
+// Cache keys are generated using secure hashing:
+// - Small JSON (<4KB): Secure FNV-1a with length XOR
+// - Large JSON (>=4KB): SHA-256 (full 32 bytes / 64 hex chars)
 // This prevents:
 // 1. Cache key collision attacks
 // 2. Cache timing attacks
 // 3. Information disclosure through cache keys
 
-// Example internal implementation:
+// Example for large JSON:
 hash := sha256.Sum256([]byte(input))
-cacheKey := fmt.Sprintf("%x", hash[:16])
+cacheKey := fmt.Sprintf("%d:%x", len(input), hash[:])  // full 32 bytes
 ```
 
 ### Cache Key Validation
@@ -998,13 +1002,11 @@ func ProcessSensitiveData(jsonData string) error {
     }
     defer processor.Close()
 
-    // Process without caching
-    opts := &json.ProcessorOptions{
-        CacheResults: false,
-        StrictMode:   true,
-    }
+    // Process without caching - pass config with caching disabled
+    cfg := json.SecurityConfig()
+    cfg.CacheResults = false
 
-    result, err := processor.Get(jsonData, "sensitive.data", opts)
+    result, err := processor.Get(jsonData, "sensitive.data", cfg)
     if err != nil {
         // Don't log the actual data
         log.Printf("Failed to process sensitive data: operation failed")
@@ -1056,7 +1058,6 @@ func LoadSecureConfig(configPath string) (*Config, error) {
     }
 
     // Validate config structure
-    jsonStr, _ := processor.Encode(processor)
     errors, err := processor.ValidateSchema(jsonStr, configSchema)
     if err != nil || len(errors) > 0 {
         return nil, fmt.Errorf("invalid config structure")
@@ -1190,7 +1191,7 @@ The library implements a multi-layered security validation system:
 │         ↓                                                       │
 │  ┌─────────────────────────────────────────────────────────┐   │
 │  │              SECURITY PATTERN SCANNER                    │   │
-│  │  • 55+ Dangerous Patterns (XSS, Injection, etc.)        │   │
+│  │  • 64 Dangerous Patterns (XSS, Injection, etc.)         │   │
 │  │  • Optimized for Large JSON (>4KB)                      │   │
 │  │  • Rolling Window with Overlap (No Gaps)                │   │
 │  └─────────────────────────────────────────────────────────┘   │
@@ -1204,7 +1205,7 @@ The library implements a multi-layered security validation system:
 
 ### Dangerous Pattern Detection
 
-The library detects **55+ dangerous patterns** across multiple categories:
+The library detects **64 dangerous patterns** across multiple categories:
 
 #### Prototype Pollution Patterns
 ```go
@@ -1244,7 +1245,7 @@ The library detects **55+ dangerous patterns** across multiple categories:
 "import("             // Dynamic import
 ```
 
-#### Event Handler Patterns (26 patterns)
+#### Event Handler Patterns (31 patterns)
 ```go
 // Detected event handlers:
 "onerror", "onload", "onclick", "onmouseover", "onfocus", "onblur",
@@ -1255,16 +1256,24 @@ The library detects **55+ dangerous patterns** across multiple categories:
 "ondrop", "onscroll", "onwheel", "oncopy", "oncut", "onpaste"
 ```
 
-#### Sensitive Data Patterns (55+ patterns)
+#### Sensitive Data Patterns (63 patterns)
 ```go
 // Authentication:
 "password", "passwd", "pwd", "token", "bearer", "jwt",
 "access_token", "refresh_token", "auth_token", "secret",
-"secret_key", "client_secret", "apikey", "api_key", "api-key"
+"secret_key", "client_secret", "apikey", "api_key", "api-key",
+"x-api-key", "auth", "authorization", "authenticate",
+"credential", "credentials", "private"
 
 // PII (Personally Identifiable Information):
-"ssn", "social_security", "credit_card", "creditcard",
-"card_number", "cvv", "cvc", "passport", "passport_number"
+"ssn", "social_security", "social_security_number",
+"credit_card", "creditcard", "card_number", "cvv", "cvc",
+"passport", "passport_number",
+"driver_license", "license_number"
+
+// Financial:
+"account_number", "bank_account", "routing_number",
+"pin", "pin_number"
 
 // Cryptographic:
 "private_key", "public_key", "encryption_key", "signing_key",
@@ -1272,6 +1281,14 @@ The library detects **55+ dangerous patterns** across multiple categories:
 
 // Session:
 "session", "session_id", "session_key", "cookie", "csrf", "xsrf"
+
+// Database:
+"database_url", "db_password", "db_user", "db_pass",
+"connection_string", "connectionstring"
+
+// Cloud:
+"aws_access_key", "aws_secret", "aws_key",
+"azure_key", "gcp_key", "gcp_credentials"
 ```
 
 ### Optimized Security Scanning for Large JSON
@@ -1360,17 +1377,29 @@ Input Path
 // URL encoded:
 "%2e%2e", "%252e%252e", "%25252e%25252e"
 
+// Mixed case encoding:
+"%2E%2E", "%2E%2e", "%2e%2E", "..%2F", "..%5C"
+
 // Mixed encoding:
 "..%2f", "..%5c", "..%c0%af", "..%c1%9c"
+"%c0%ae", "%c1%1c"
 
 // Partial encoding:
 ".%2e", "%2e.", "%2e%2e%2f", "%2e%2e%5c"
 
 // Control character injection:
 "..%00", "..%0a", "..%0d", "..%09", "..%20"
+"%00", "%0a", "%0d", "%09", "%20"
+
+// Fullwidth encoding:
+"%uff0e%uff0e", "..%ef%bc%8f"
+
+// Partial double encoding:
+"%2e%2", "%25%2e", "%2f%2", "%5c%2"
 
 // Double patterns:
 "....//", "....\\\\", ".....", "......"
+"..\\/"  // Additional Windows pattern
 ```
 
 #### Unicode Lookalike Character Detection
@@ -1415,7 +1444,7 @@ The library detects all zero-width and invisible Unicode characters:
 #### Windows Protection
 ```go
 // Reserved device names blocked:
-"CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$"
+"CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$", "CLOCK$"
 "COM0"-"COM9", "LPT0"-"LPT9"
 
 // UNC paths blocked:
@@ -1489,22 +1518,19 @@ All type conversions include overflow checking:
 
 ```go
 func (r AccessResult) AsInt() (int, error) {
-    case int64:
-        // Check for overflow when converting int64 to int
-        if v > int64(1<<(strconv.IntSize-1)-1) ||
-           v < int64(-1<<(strconv.IntSize-1)) {
-            return 0, fmt.Errorf("value %d overflows int", v)
-        }
-    case uint64:
-        // Check for overflow when converting uint64 to int
-        if v > uint64(math.MaxInt64) {
-            return 0, fmt.Errorf("value %d overflows int", v)
-        }
-    case float64:
-        // Check for precision loss
-        if v != float64(int64(v)) {
-            return 0, fmt.Errorf("value %v is not an integer", v)
-        }
+    if !r.Exists {
+        return 0, ErrPathNotFound
+    }
+    // Delegates to convertToInt() which handles:
+    // - int64 overflow checks (platform-adaptive minInt/maxInt)
+    // - uint64 overflow checks (math.MaxInt64)
+    // - float64 precision loss detection
+    // - bool rejection
+    result, ok := convertToInt(r.Value)
+    if !ok {
+        return 0, fmt.Errorf("cannot convert %T to int", r.Value)
+    }
+    return result, nil
 }
 ```
 
@@ -1536,7 +1562,7 @@ perShardMutex: sync.RWMutex    // Fine-grained locking
 type Config struct {
     // Size Limits
     MaxJSONSize              int64  // Default: 100MB
-    MaxSecurityValidationSize int64  // Default: 100MB
+    MaxSecurityValidationSize int64 // Default: 10MB
 
     // Depth Limits
     MaxNestingDepthSecurity  int    // Default: 200
@@ -1552,8 +1578,8 @@ type Config struct {
     FullSecurityScan         bool   // Default: false
 
     // Concurrency
-    MaxConcurrency           int    // Default: CPU count
-    MaxBatchSize             int    // Default: 1000
+    MaxConcurrency           int    // Default: 50
+    MaxBatchSize             int    // Default: 2000
 }
 ```
 
@@ -1584,23 +1610,24 @@ The library caches validation results to avoid redundant security scans:
 
 #### Cache Key Generation
 ```go
-// Small JSON strings (<4KB): FNV-1a hash with length prefix
-// - Fast computation
-// - Low collision probability for short strings
+// Small JSON strings (<4KB): Secure FNV-1a hash with length XOR
+// - Uses HashStringFNV1aSecure (hardened variant)
+// - String length XOR'd into hash for collision resistance
 
-// Large JSON strings (>=4KB): SHA-256 (first 16 bytes)
-// - Strong collision resistance
+// Large JSON strings (>=4KB): SHA-256 (full 32 bytes / 64 hex chars)
+// - Uses full 256-bit output to prevent birthday attacks
 // - Prevents cache poisoning attacks
 
 func getValidationCacheKey(jsonStr string) string {
     if len(jsonStr) <= 4096 {
-        // FNV-1a for small strings
-        h := fnv1aHash(jsonStr)
+        // Secure FNV-1a for small strings (with length XOR)
+        h := HashStringFNV1aSecure(jsonStr)
         return fmt.Sprintf("%d:%016x", len(jsonStr), h)
     }
-    // SHA-256 for large strings (security)
+    // SHA-256 full 32 bytes for large strings (security)
     hash := sha256.Sum256([]byte(jsonStr))
-    return fmt.Sprintf("%d:%x", len(jsonStr), hash[:16])
+    // Uses full 32 bytes (64 hex chars) to prevent birthday attacks
+    return fmt.Sprintf("%d:%x", len(jsonStr), hash[:])
 }
 ```
 
@@ -1685,9 +1712,9 @@ func hasSuspiciousCharacterDensity(jsonStr string) bool {
 #### Path Length and Depth Limits
 ```go
 const (
-    maxPathLength  = 1000   // Maximum path characters
-    maxPathDepth   = 100    // Maximum path segments
-    maxArrayIndex  = 10000  // Maximum array index value
+    maxPathLength  = 5000     // Maximum path characters
+    maxPathDepth   = 50       // Default maximum path segments (Config.MaxPathDepth)
+    maxArrayIndex  = 1000000  // Maximum array index value
 )
 ```
 
@@ -1760,7 +1787,7 @@ reservedDevices := []string{
     "CON", "PRN", "AUX", "NUL",
     "COM0", "COM1"-"COM9",
     "LPT0", "LPT1"-"LPT9",
-    "CONIN$", "CONOUT$",
+    "CONIN$", "CONOUT$", "CLOCK$",
 }
 
 // Blocked patterns:

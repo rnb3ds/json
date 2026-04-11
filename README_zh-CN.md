@@ -3,10 +3,10 @@
 [![Go Version](https://img.shields.io/badge/Go-1.25+-00ADD8.svg)](https://golang.org)
 [![GoDoc](https://pkg.go.dev/badge/github.com/cybergodev/json.svg)](https://pkg.go.dev/github.com/cybergodev/json)
 [![MIT License](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
-[![Thread Safe](https://img.shields.io/badge/Thread_Safe-Yes-brightgreen.svg)](https://pkg.go.dev/github.com/cybergodev/json)
+[![Thread Safe](https://img.shields.io/badge/Thread_Safe-Yes-brightgreen.svg)](#)
 [![Security](https://img.shields.io/badge/Security-Hardened-red.svg)](docs/SECURITY.md)
 
-> 一个高性能、功能丰富的 Go JSON 处理库，100% 兼容 `encoding/json`。
+> 一个高性能、线程安全的 Go JSON 处理库，100% 兼容 `encoding/json`。
 > 强大的路径语法、类型安全、流式处理、生产级性能。
 
 **[English Documentation](README.md)**
@@ -21,8 +21,22 @@
 - [快速开始](#快速开始)
 - [路径语法参考](#路径语法参考)
 - [核心 API](#核心-api)
+  - [数据获取](#数据获取)
+  - [数据修改](#数据修改)
+  - [编码与格式化](#编码与格式化)
+  - [文件操作](#文件操作)
+  - [JSON 工具](#json-工具)
 - [配置](#配置)
 - [高级功能](#高级功能)
+  - [数据迭代](#数据迭代)
+  - [批量操作](#批量操作)
+  - [Schema 验证](#schema-验证)
+  - [PreParse 与 CompiledPath](#preparse-与-compiledpath)
+  - [编码工具](#编码工具)
+  - [JSONL 处理](#jsonl-处理)
+  - [流式迭代器](#流式迭代器)
+  - [并行处理](#并行处理)
+  - [钩子 (Hooks)](#钩子-hooks)
 - [常见用例](#常见用例)
 - [性能监控](#性能监控)
 - [从 encoding/json 迁移](#从-encodingjson-迁移)
@@ -40,11 +54,13 @@
 | 路径访问 | 手动解析 | `json.Get(data, "users[0].name")` |
 | 负索引 | - | `items[-1]` 获取最后一个元素 |
 | 扁平化嵌套数组 | - | `users{flat:tags}` |
+| JSON Pointer (RFC 6901) | - | `/users/0/name` |
 | 类型安全默认值 | - | `GetString(data, "path", "default")` |
 | 大文件流式处理 | - | 内置流式处理器 |
-| Schema 验证 | - | JSON Schema 验证 |
+| Schema 验证 | - | JSON Schema (Draft 7 子集) 验证 |
 | 内存池 | - | 热路径使用 `sync.Pool` |
-| 缓存 | - | 智能 TTL 路径缓存 |
+| 路径缓存 | - | 智能 TTL 路径缓存 |
+| 批量操作 | - | `ProcessBatch()` 批量处理 |
 | 100% 兼容性 | 原生 | 直接替换 |
 
 ---
@@ -52,11 +68,11 @@
 ## 特性
 
 - **100% 兼容** - 直接替换 `encoding/json`，零学习成本
-- **强大路径** - 直观语法：`users[0].name`、`items[-1]`、`data{flat:tags}`
+- **强大路径** - 点号语法、数组切片、字段提取、JSON Pointer (RFC 6901)
 - **高性能** - 智能缓存、内存池、优化的热路径
-- **类型安全** - 泛型支持，使用 `GetTyped[T]` 内置默认值
-- **功能丰富** - 批量操作、流式处理、文件I/O、Schema验证、深度合并
-- **生产就绪** - 线程安全、完善的错误处理、安全加固
+- **类型安全** - 泛型支持 `GetTyped[T]`、内置默认值、`AccessResult` 类型转换
+- **功能丰富** - 批量操作、流式处理、文件I/O、Schema验证、深度合并、JSONL
+- **生产就绪** - 线程安全、完善的错误处理、安全加固、健康监控
 
 ---
 
@@ -67,6 +83,12 @@ go get github.com/cybergodev/json
 ```
 
 **要求**: Go 1.25.0 或更高版本
+
+**导入**:
+
+```go
+import "github.com/cybergodev/json"
+```
 
 ---
 
@@ -87,7 +109,7 @@ func main() {
     name := json.GetString(data, "user.name")
     fmt.Println(name) // "Alice"
 
-    // 类型安全获取
+    // 类型安全获取（泛型）
     age := json.GetTyped[int](data, "user.age", 0)
     fmt.Println(age) // 28
 
@@ -124,6 +146,7 @@ func main() {
 | `[+]` | 追加到数组 | `items[+]` -> 追加位置 |
 | `{field}` | 提取所有元素的字段 | `users{name}` -> ["Alice", "Bob"] |
 | `{flat:field}` | 扁平化嵌套数组 | `users{flat:tags}` -> 合并所有标签 |
+| `/pointer` | JSON Pointer (RFC 6901) | `/users/0/name` -> "Alice" |
 
 ---
 
@@ -154,7 +177,7 @@ json.GetBool(data, "user.active", false)
 json.GetFloat(data, "user.score", 0.0)
 json.GetTyped[[]any](data, "user.tags", []any{})
 
-// 安全访问，返回结果类型
+// 安全访问，返回结果类型（带类型转换）
 result := json.SafeGet(data, "user.age")
 if result.Ok() {
     age, _ := result.AsInt()
@@ -239,7 +262,7 @@ _ = processor.SaveToFile("output.json", data, json.PrettyConfig())
 ### JSON 工具
 
 ```go
-// 比较和合并
+// 比较两个 JSON 字符串
 equal, _  := json.CompareJSON(json1, json2)
 
 // 并集合并（默认）— 合并所有键
@@ -310,10 +333,22 @@ json.Foreach(data, func(key any, item *json.IterableValue) {
     fmt.Printf("键: %v, 名称: %s\n", key, name)
 })
 
-// 带路径
+// 带路径迭代
 json.ForeachWithPath(data, "users", func(key any, item *json.IterableValue) {
     name := item.GetString("name")
     fmt.Printf("键: %v, 名称: %s\n", key, name)
+})
+
+// 嵌套迭代
+json.ForeachNested(data, func(key any, item *json.IterableValue) {
+    item.ForeachNested(func(nestedKey any, nestedItem *json.IterableValue) {
+        fmt.Printf("嵌套: %v\n", nestedItem.Get("id"))
+    })
+})
+
+// 转换并返回修改后的 JSON
+result, err := json.ForeachReturn(data, func(key any, item *json.IterableValue) {
+    // 修改被收集并作为新 JSON 返回
 })
 ```
 
@@ -346,17 +381,23 @@ schema := &json.Schema{
 errors, err := json.ValidateSchema(jsonStr, schema)
 ```
 
-### PreParse 优化
+`Schema` 类型支持 JSON Schema Draft 7 子集字段：`Type`、`Properties`、`Required`、`Items`、`Pattern`、`AdditionalProperties`、`Enum`、`Const`、`Format`、`MinLength`、`MaxLength`、`Minimum`、`Maximum`、`ExclusiveMinimum`、`ExclusiveMaximum`、`MultipleOf`、`MinItems`、`MaxItems`、`UniqueItems`、`Title`、`Description`、`Default`。
+
+### PreParse 与 CompiledPath
 
 ```go
 processor, _ := json.New(json.DefaultConfig())
 defer processor.Close()
 
-// 一次解析，多次查询
+// 一次解析，多次查询（避免重复解析）
 parsed, _ := processor.PreParse(jsonStr)
 name, _    := processor.GetFromParsed(parsed, "user.name")
 age, _     := processor.GetFromParsed(parsed, "user.age")
 updated, _ := processor.SetFromParsed(parsed, "user.age", 30)
+
+// 编译路径，用于快速重复访问
+compiled, _ := processor.CompilePath("user.profile.settings.theme")
+value, _    := processor.GetCompiled(compiled)
 ```
 
 ### 编码工具
@@ -388,9 +429,27 @@ err := processor.StreamJSONL(reader, func(lineNum int, item *json.IterableValue)
     return nil
 })
 
+// JSONL 写入器
+writer := json.NewJSONLWriter(bufWriter)
+writer.Write(record1)
+writer.Write(record2)
+writer.WriteAll(records)
+stats := writer.Stats() // LinesWritten, BytesWritten, Errors
+
 // NDJSON 文件处理器
 ndjson := json.NewNDJSONProcessor(json.DefaultConfig())
 results, _ := ndjson.ProcessFile("data.ndjson")
+
+// JSONL 过滤、映射、归约
+filtered, _ := processor.FilterJSONL(reader, func(item *json.IterableValue) bool {
+    return item.GetBool("active")
+})
+mapped, _   := processor.MapJSONL(reader, func(item *json.IterableValue) (any, error) {
+    return map[string]any{"id": item.GetString("id")}, nil
+})
+result, _   := processor.ReduceJSONL(reader, func(acc, item *json.IterableValue) (*json.IterableValue, error) {
+    return acc, nil
+})
 ```
 
 ### 流式迭代器
@@ -399,15 +458,46 @@ results, _ := ndjson.ProcessFile("data.ndjson")
 // 流式处理大型 JSON 数组（无需全部加载到内存）
 reader := strings.NewReader(largeJSONArray)
 iter := json.NewStreamIterator(reader)
+for iter.Next() {
+    item := iter.Value()
+    // 处理 item
+}
+
+// 流式处理 JSON 对象（键值对）
+objIter := json.NewStreamObjectIterator(reader)
+for objIter.Next() {
+    key, value := objIter.Key(), objIter.Value()
+}
 
 // 批量处理（使用内存中的数据）
 batchIter := json.NewBatchIterator(items, json.DefaultConfig())
+for batchIter.HasNext() {
+    batch := batchIter.NextBatch()
+}
+```
 
-// 并行处理
+### 并行处理
+
+```go
+// ParallelIterator - 使用 worker 池并行处理
+iter := json.NewParallelIterator(data, cfg)
+defer iter.Close()
+
+// 并行 Map
+results := iter.Map(func(item any) any {
+    return transform(item)
+})
+
+// 并行 Filter
+filtered := iter.Filter(func(item any) bool {
+    return isValid(item)
+})
+
+// 并行 JSONL 流处理
 processor, _ := json.New(json.DefaultConfig())
 defer processor.Close()
-err := processor.StreamJSONLParallel(reader, 4, func(idx int, item *json.IterableValue) error {
-    // 使用 4 个 worker 并行处理
+err := processor.StreamJSONLParallel(reader, 4, func(lineNum int, item *json.IterableValue) error {
+    // 使用 4 个并行 worker 处理
     return nil
 })
 ```
@@ -418,21 +508,39 @@ err := processor.StreamJSONLParallel(reader, 4, func(idx int, item *json.Iterabl
 processor, _ := json.New(json.DefaultConfig())
 defer processor.Close()
 
-// 添加日志钩子
+// 日志钩子 — 接受带有 Info(string, ...any) 方法的任意类型
 processor.AddHook(json.LoggingHook(slog.Default()))
 
-// 添加计时钩子
-processor.AddHook(json.TimingHook(func(op string, duration time.Duration) {
-    fmt.Printf("%s 耗时 %v\n", op, duration)
-}))
+// 计时钩子 — 接受带有 Record(op string, duration time.Duration) 方法的接口
+type MetricsRecorder struct{}
+func (m *MetricsRecorder) Record(op string, d time.Duration) { /* 记录 */ }
+processor.AddHook(json.TimingHook(&MetricsRecorder{}))
 
-// 添加验证钩子
-processor.AddHook(json.ValidationHook(func(ctx *json.HookContext) error {
-    if len(ctx.Path) > 100 {
-        return fmt.Errorf("路径过长: %s", ctx.Path)
+// 验证钩子 — 接受 func(jsonStr, path string) error
+processor.AddHook(json.ValidationHook(func(jsonStr, path string) error {
+    if len(path) > 100 {
+        return fmt.Errorf("路径过长: %s", path)
     }
     return nil
 }))
+
+// 错误钩子 — 接受 func(ctx json.HookContext, err error) error
+processor.AddHook(json.ErrorHook(func(ctx json.HookContext, err error) error {
+    log.Printf("操作 %s 在路径 %s 失败: %v", ctx.Operation, ctx.Path, err)
+    return err // 返回原始或转换后的错误
+}))
+
+// 使用 HookFunc 自定义钩子
+processor.AddHook(json.HookFunc{
+    BeforeFn: func(ctx json.HookContext) error {
+        fmt.Printf("before: %s %s\n", ctx.Operation, ctx.Path)
+        return nil
+    },
+    AfterFn: func(ctx json.HookContext, result any, err error) (any, error) {
+        fmt.Printf("after: %s (err=%v)\n", ctx.Operation, err)
+        return result, err
+    },
+})
 ```
 
 ---
@@ -461,6 +569,10 @@ names, _ := json.Get(apiResponse, "data.users{name}")
 // 扁平化所有权限
 permissions, _ := json.Get(apiResponse, "data.users{flat:permissions}")
 // 结果: ["read", "write"]
+
+// JSON Pointer 访问
+name, _ := json.Get(apiResponse, "/data/users/0/name")
+// 结果: "Alice"
 ```
 
 ### 配置管理
@@ -483,6 +595,19 @@ updated, _ := json.SetMultiple(config, map[string]any{
 })
 ```
 
+### 多源数据合并
+
+```go
+// 合并来自多个来源的配置
+defaults := `{"timeout": 30, "retries": 3, "debug": false}`
+file     := `{"timeout": 60, "debug": true}`
+env      := `{"retries": 5}`
+
+// 并集合并（默认行为）
+merged, _ := json.MergeMany([]string{defaults, file, env})
+// 结果: {"timeout": 60, "retries": 5, "debug": true}
+```
+
 ---
 
 ## 性能监控
@@ -499,9 +624,16 @@ fmt.Printf("健康状态: %v\n", health.Healthy)
 // 缓存管理
 json.ClearCache()
 
-// 缓存预热
+// 缓存预热 — 预加载路径以加速后续访问
 paths := []string{"user.name", "user.age", "user.profile"}
 result, _ := json.WarmupCache(jsonStr, paths)
+
+// Processor 级别监控
+processor, _ := json.New(json.DefaultConfig())
+defer processor.Close()
+stats := processor.GetStats()
+health := processor.GetHealthStatus()
+processor.ClearCache()
 ```
 
 ---
@@ -521,8 +653,13 @@ import "github.com/cybergodev/json"
 所有标准函数完全兼容：
 - `json.Marshal()` / `json.Unmarshal()`
 - `json.MarshalIndent()`
+- `json.NewEncoder()` / `json.NewDecoder()`
 - `json.Valid()`
 - `json.Compact()` / `json.Indent()` / `json.HTMLEscape()`
+
+兼容类型：`Encoder`、`Decoder`、`Number`、`Token`、`Delim`、`SyntaxError`、`UnmarshalTypeError`、`InvalidUnmarshalError`、`UnsupportedTypeError`、`UnsupportedValueError`、`MarshalerError`。
+
+详见 [兼容性指南](docs/COMPATIBILITY.md)。
 
 ---
 
@@ -589,7 +726,3 @@ go run -tags=example examples/2_advanced_features.go
 ## 许可证
 
 MIT License - 详见 [LICENSE](LICENSE) 文件。
-
----
-
-如果这个项目对你有帮助，请给一个 star!

@@ -3,10 +3,10 @@
 [![Go Version](https://img.shields.io/badge/Go-1.25+-00ADD8.svg)](https://golang.org)
 [![GoDoc](https://pkg.go.dev/badge/github.com/cybergodev/json.svg)](https://pkg.go.dev/github.com/cybergodev/json)
 [![MIT License](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
-[![Thread Safe](https://img.shields.io/badge/Thread_Safe-Yes-brightgreen.svg)](https://pkg.go.dev/github.com/cybergodev/json)
+[![Thread Safe](https://img.shields.io/badge/Thread_Safe-Yes-brightgreen.svg)](#)
 [![Security](https://img.shields.io/badge/Security-Hardened-red.svg)](docs/SECURITY.md)
 
-> A high-performance, feature-rich Go JSON processing library with 100% `encoding/json` compatibility.
+> A high-performance, thread-safe Go JSON processing library with 100% `encoding/json` compatibility.
 > Powerful path syntax, type safety, streaming processing, production-grade performance.
 
 **[中文文档](README_zh-CN.md)**
@@ -21,8 +21,22 @@
 - [Quick Start](#quick-start)
 - [Path Syntax Reference](#path-syntax-reference)
 - [Core API](#core-api)
+  - [Data Retrieval](#data-retrieval)
+  - [Data Modification](#data-modification)
+  - [Encoding and Formatting](#encoding-and-formatting)
+  - [File Operations](#file-operations)
+  - [JSON Utilities](#json-utilities)
 - [Configuration](#configuration)
 - [Advanced Features](#advanced-features)
+  - [Iteration](#iteration)
+  - [Batch Operations](#batch-operations)
+  - [Schema Validation](#schema-validation)
+  - [PreParse and CompiledPath](#preparse-and-compiledpath)
+  - [Encode Utilities](#encode-utilities)
+  - [JSONL Processing](#jsonl-processing)
+  - [Streaming Iterators](#streaming-iterators)
+  - [Parallel Processing](#parallel-processing)
+  - [Hooks](#hooks)
 - [Common Use Cases](#common-use-cases)
 - [Performance Monitoring](#performance-monitoring)
 - [Migrating from encoding/json](#migrating-from-encodingjson)
@@ -40,11 +54,13 @@
 | Path-based access | Manual unmarshal | `json.Get(data, "users[0].name")` |
 | Negative index | - | `items[-1]` gets last element |
 | Flatten nested arrays | - | `users{flat:tags}` |
+| JSON Pointer (RFC 6901) | - | `/users/0/name` |
 | Type-safe defaults | - | `GetString(data, "path", "default")` |
 | Streaming large files | - | Built-in streaming processors |
-| Schema validation | - | JSON Schema validation |
+| Schema validation | - | JSON Schema (Draft 7 subset) |
 | Memory pooling | - | `sync.Pool` for hot paths |
-| Caching | - | Smart path cache with TTL |
+| Path caching | - | Smart cache with TTL |
+| Batch operations | - | `ProcessBatch()` for bulk work |
 | 100% Compatibility | Native | Drop-in replacement |
 
 ---
@@ -52,11 +68,11 @@
 ## Features
 
 - **100% Compatible** - Drop-in replacement for `encoding/json`, zero learning curve
-- **Powerful Paths** - Intuitive syntax: `users[0].name`, `items[-1]`, `data{flat:tags}`
+- **Powerful Paths** - Dot notation, array slicing, field extraction, JSON Pointer (RFC 6901)
 - **High Performance** - Smart caching, memory pooling, optimized hot paths
-- **Type Safe** - Generics support with `GetTyped[T]` with built-in defaults
-- **Feature Rich** - Batch operations, streaming, file I/O, schema validation, deep merge
-- **Production Ready** - Thread-safe, comprehensive error handling, security hardened
+- **Type Safe** - Generics support with `GetTyped[T]`, built-in defaults, `AccessResult` type conversion
+- **Feature Rich** - Batch operations, streaming, file I/O, schema validation, deep merge, JSONL
+- **Production Ready** - Thread-safe, comprehensive error handling, security hardened, health monitoring
 
 ---
 
@@ -67,6 +83,12 @@ go get github.com/cybergodev/json
 ```
 
 **Requirements**: Go 1.25.0 or later
+
+**Import**:
+
+```go
+import "github.com/cybergodev/json"
+```
 
 ---
 
@@ -124,6 +146,7 @@ func main() {
 | `[+]` | Append to array | `items[+]` -> append position |
 | `{field}` | Extract field from all elements | `users{name}` -> ["Alice", "Bob"] |
 | `{flat:field}` | Flatten nested arrays | `users{flat:tags}` -> merge all tags |
+| `/pointer` | JSON Pointer (RFC 6901) | `/users/0/name` -> "Alice" |
 
 ---
 
@@ -154,7 +177,7 @@ json.GetBool(data, "user.active", false)
 json.GetFloat(data, "user.score", 0.0)
 json.GetTyped[[]any](data, "user.tags", []any{})
 
-// Safe access with result type
+// Safe access with result type and type conversion
 result := json.SafeGet(data, "user.age")
 if result.Ok() {
     age, _ := result.AsInt()
@@ -239,7 +262,7 @@ _ = processor.SaveToFile("output.json", data, json.PrettyConfig())
 ### JSON Utilities
 
 ```go
-// Compare and merge
+// Compare two JSON strings
 equal, _  := json.CompareJSON(json1, json2)
 
 // Union merge (default) - combines all keys
@@ -301,7 +324,7 @@ cfg := json.PrettyConfig()    // for pretty output
 
 ## Advanced Features
 
-### Data Iteration
+### Iteration
 
 ```go
 // Basic iteration
@@ -314,6 +337,18 @@ json.Foreach(data, func(key any, item *json.IterableValue) {
 json.ForeachWithPath(data, "users", func(key any, item *json.IterableValue) {
     name := item.GetString("name")
     fmt.Printf("Key: %v, Name: %s\n", key, name)
+})
+
+// Nested iteration
+json.ForeachNested(data, func(key any, item *json.IterableValue) {
+    item.ForeachNested(func(nestedKey any, nestedItem *json.IterableValue) {
+        fmt.Printf("Nested: %v\n", nestedItem.Get("id"))
+    })
+})
+
+// Transform and return modified JSON
+result, err := json.ForeachReturn(data, func(key any, item *json.IterableValue) {
+    // modifications are collected and returned as new JSON
 })
 ```
 
@@ -346,17 +381,23 @@ schema := &json.Schema{
 errors, err := json.ValidateSchema(jsonStr, schema)
 ```
 
-### PreParse Optimization
+The `Schema` type supports JSON Schema Draft 7 subset fields: `Type`, `Properties`, `Required`, `Items`, `Pattern`, `AdditionalProperties`, `Enum`, `Const`, `Format`, `MinLength`, `MaxLength`, `Minimum`, `Maximum`, `ExclusiveMinimum`, `ExclusiveMaximum`, `MultipleOf`, `MinItems`, `MaxItems`, `UniqueItems`, `Title`, `Description`, `Default`.
+
+### PreParse and CompiledPath
 
 ```go
 processor, _ := json.New(json.DefaultConfig())
 defer processor.Close()
 
-// Pre-parse once, query many times
+// Pre-parse once, query many times (avoids re-parsing)
 parsed, _ := processor.PreParse(jsonStr)
 name, _    := processor.GetFromParsed(parsed, "user.name")
 age, _     := processor.GetFromParsed(parsed, "user.age")
 updated, _ := processor.SetFromParsed(parsed, "user.age", 30)
+
+// Compile a path for fast repeated access
+compiled, _ := processor.CompilePath("user.profile.settings.theme")
+value, _    := processor.GetCompiled(compiled)
 ```
 
 ### Encode Utilities
@@ -388,9 +429,27 @@ err := processor.StreamJSONL(reader, func(lineNum int, item *json.IterableValue)
     return nil
 })
 
+// JSONL writer
+writer := json.NewJSONLWriter(bufWriter)
+writer.Write(record1)
+writer.Write(record2)
+writer.WriteAll(records)
+stats := writer.Stats() // LinesWritten, BytesWritten, Errors
+
 // NDJSON file processor
 ndjson := json.NewNDJSONProcessor(json.DefaultConfig())
 results, _ := ndjson.ProcessFile("data.ndjson")
+
+// JSONL filter, map, reduce
+filtered, _ := processor.FilterJSONL(reader, func(item *json.IterableValue) bool {
+    return item.GetBool("active")
+})
+mapped, _   := processor.MapJSONL(reader, func(item *json.IterableValue) (any, error) {
+    return map[string]any{"id": item.GetString("id")}, nil
+})
+result, _   := processor.ReduceJSONL(reader, func(acc, item *json.IterableValue) (*json.IterableValue, error) {
+    return acc, nil
+})
 ```
 
 ### Streaming Iterators
@@ -399,15 +458,46 @@ results, _ := ndjson.ProcessFile("data.ndjson")
 // Stream large JSON arrays without loading into memory
 reader := strings.NewReader(largeJSONArray)
 iter := json.NewStreamIterator(reader)
+for iter.Next() {
+    item := iter.Value()
+    // process item
+}
+
+// Stream JSON objects (key-value pairs)
+objIter := json.NewStreamObjectIterator(reader)
+for objIter.Next() {
+    key, value := objIter.Key(), objIter.Value()
+}
 
 // Batch processing with in-memory data
 batchIter := json.NewBatchIterator(items, json.DefaultConfig())
+for batchIter.HasNext() {
+    batch := batchIter.NextBatch()
+}
+```
 
-// Parallel processing
+### Parallel Processing
+
+```go
+// ParallelIterator - parallel processing with worker pool
+iter := json.NewParallelIterator(data, cfg)
+defer iter.Close()
+
+// Map items in parallel
+results := iter.Map(func(item any) any {
+    return transform(item)
+})
+
+// Filter items in parallel
+filtered := iter.Filter(func(item any) bool {
+    return isValid(item)
+})
+
+// Parallel JSONL streaming
 processor, _ := json.New(json.DefaultConfig())
 defer processor.Close()
-err := processor.StreamJSONLParallel(reader, 4, func(idx int, item *json.IterableValue) error {
-    // Process item in parallel with 4 workers
+err := processor.StreamJSONLParallel(reader, 4, func(lineNum int, item *json.IterableValue) error {
+    // Process item with 4 parallel workers
     return nil
 })
 ```
@@ -418,21 +508,39 @@ err := processor.StreamJSONLParallel(reader, 4, func(idx int, item *json.Iterabl
 processor, _ := json.New(json.DefaultConfig())
 defer processor.Close()
 
-// Add logging hook
+// Logging hook - takes any type with Info(string, ...any) method
 processor.AddHook(json.LoggingHook(slog.Default()))
 
-// Add timing hook
-processor.AddHook(json.TimingHook(func(op string, duration time.Duration) {
-    fmt.Printf("%s took %v\n", op, duration)
-}))
+// Timing hook - takes an interface with Record(op string, duration time.Duration)
+type MetricsRecorder struct{}
+func (m *MetricsRecorder) Record(op string, d time.Duration) { /* record */ }
+processor.AddHook(json.TimingHook(&MetricsRecorder{}))
 
-// Add validation hook
-processor.AddHook(json.ValidationHook(func(ctx *json.HookContext) error {
-    if len(ctx.Path) > 100 {
-        return fmt.Errorf("path too long: %s", ctx.Path)
+// Validation hook - takes func(jsonStr, path string) error
+processor.AddHook(json.ValidationHook(func(jsonStr, path string) error {
+    if len(path) > 100 {
+        return fmt.Errorf("path too long: %s", path)
     }
     return nil
 }))
+
+// Error hook - takes func(ctx json.HookContext, err error) error
+processor.AddHook(json.ErrorHook(func(ctx json.HookContext, err error) error {
+    log.Printf("operation %s on path %s failed: %v", ctx.Operation, ctx.Path, err)
+    return err // return original or transformed error
+}))
+
+// Custom hook using HookFunc
+processor.AddHook(json.HookFunc{
+    BeforeFn: func(ctx json.HookContext) error {
+        fmt.Printf("before: %s %s\n", ctx.Operation, ctx.Path)
+        return nil
+    },
+    AfterFn: func(ctx json.HookContext, result any, err error) (any, error) {
+        fmt.Printf("after: %s (err=%v)\n", ctx.Operation, err)
+        return result, err
+    },
+})
 ```
 
 ---
@@ -461,6 +569,10 @@ names, _ := json.Get(apiResponse, "data.users{name}")
 // Flatten all permissions
 permissions, _ := json.Get(apiResponse, "data.users{flat:permissions}")
 // Result: ["read", "write"]
+
+// JSON Pointer access
+name, _ := json.Get(apiResponse, "/data/users/0/name")
+// Result: "Alice"
 ```
 
 ### Configuration Management
@@ -483,6 +595,19 @@ updated, _ := json.SetMultiple(config, map[string]any{
 })
 ```
 
+### Multi-Source Data Merge
+
+```go
+// Merge configs from multiple sources
+defaults := `{"timeout": 30, "retries": 3, "debug": false}`
+file     := `{"timeout": 60, "debug": true}`
+env      := `{"retries": 5}`
+
+// Union merge (default behavior)
+merged, _ := json.MergeMany([]string{defaults, file, env})
+// Result: {"timeout": 60, "retries": 5, "debug": true}
+```
+
 ---
 
 ## Performance Monitoring
@@ -499,9 +624,16 @@ fmt.Printf("Health Status: %v\n", health.Healthy)
 // Cache management
 json.ClearCache()
 
-// Cache warmup
+// Cache warmup - preload paths for faster access
 paths := []string{"user.name", "user.age", "user.profile"}
 result, _ := json.WarmupCache(jsonStr, paths)
+
+// Processor-level monitoring
+processor, _ := json.New(json.DefaultConfig())
+defer processor.Close()
+stats := processor.GetStats()
+health := processor.GetHealthStatus()
+processor.ClearCache()
 ```
 
 ---
@@ -521,8 +653,13 @@ import "github.com/cybergodev/json"
 All standard functions are fully compatible:
 - `json.Marshal()` / `json.Unmarshal()`
 - `json.MarshalIndent()`
+- `json.NewEncoder()` / `json.NewDecoder()`
 - `json.Valid()`
 - `json.Compact()` / `json.Indent()` / `json.HTMLEscape()`
+
+Compatible types: `Encoder`, `Decoder`, `Number`, `Token`, `Delim`, `SyntaxError`, `UnmarshalTypeError`, `InvalidUnmarshalError`, `UnsupportedTypeError`, `UnsupportedValueError`, `MarshalerError`.
+
+See [Compatibility Guide](docs/COMPATIBILITY.md) for full details.
 
 ---
 
@@ -589,7 +726,3 @@ go run -tags=example examples/2_advanced_features.go
 ## License
 
 MIT License - See [LICENSE](LICENSE) file for details.
-
----
-
-If this project helps you, please give it a star!

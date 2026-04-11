@@ -1064,36 +1064,6 @@ func NewSchemaWithConfig(cfg SchemaConfig) *Schema {
 	return s
 }
 
-// HasMinLength returns true if MinLength constraint is explicitly set
-func (s *Schema) HasMinLength() bool {
-	return s.hasMinLength
-}
-
-// HasMaxLength returns true if MaxLength constraint is explicitly set
-func (s *Schema) HasMaxLength() bool {
-	return s.hasMaxLength
-}
-
-// HasMinimum returns true if Minimum constraint is explicitly set
-func (s *Schema) HasMinimum() bool {
-	return s.hasMinimum
-}
-
-// HasMaximum returns true if Maximum constraint is explicitly set
-func (s *Schema) HasMaximum() bool {
-	return s.hasMaximum
-}
-
-// HasMinItems returns true if MinItems constraint is explicitly set
-func (s *Schema) HasMinItems() bool {
-	return s.hasMinItems
-}
-
-// HasMaxItems returns true if MaxItems constraint is explicitly set
-func (s *Schema) HasMaxItems() bool {
-	return s.hasMaxItems
-}
-
 // ============================================================================
 // COMPILED PATH
 // Pre-parsed JSON path for fast repeated operations.

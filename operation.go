@@ -2228,9 +2228,9 @@ func putResultBuffer(buf *[]byte) {
 	}
 }
 
-// FastSet is an optimized Set operation for simple paths
+// fastSet is an optimized Set operation for simple paths
 // Uses pooled resources and optimized marshaling
-func (p *Processor) FastSet(jsonStr, path string, value any) (string, error) {
+func (p *Processor) fastSet(jsonStr, path string, value any) (string, error) {
 	if err := p.checkClosed(); err != nil {
 		return jsonStr, err
 	}
@@ -2276,8 +2276,8 @@ func (p *Processor) fastSetSimple(jsonStr, key string, value any) (string, error
 	return result, nil
 }
 
-// FastDelete is an optimized Delete operation for simple paths
-func (p *Processor) FastDelete(jsonStr, path string) (string, error) {
+// fastDelete is an optimized Delete operation for simple paths
+func (p *Processor) fastDelete(jsonStr, path string) (string, error) {
 	if err := p.checkClosed(); err != nil {
 		return jsonStr, err
 	}
@@ -2323,9 +2323,9 @@ func (p *Processor) fastDeleteSimple(jsonStr, key string) (string, error) {
 	return result, nil
 }
 
-// BatchSetOptimized performs multiple Set operations efficiently
+// batchSetOptimized performs multiple Set operations efficiently
 // PERFORMANCE: Uses pooled encoder and single-parse optimization
-func (p *Processor) BatchSetOptimized(jsonStr string, updates map[string]any) (string, error) {
+func (p *Processor) batchSetOptimized(jsonStr string, updates map[string]any) (string, error) {
 	if err := p.checkClosed(); err != nil {
 		return jsonStr, err
 	}
@@ -2364,9 +2364,9 @@ func (p *Processor) BatchSetOptimized(jsonStr string, updates map[string]any) (s
 	return result, nil
 }
 
-// BatchDeleteOptimized performs multiple Delete operations efficiently
+// batchDeleteOptimized performs multiple Delete operations efficiently
 // PERFORMANCE: Uses pooled encoder and single-parse optimization
-func (p *Processor) BatchDeleteOptimized(jsonStr string, paths []string) (string, error) {
+func (p *Processor) batchDeleteOptimized(jsonStr string, paths []string) (string, error) {
 	if err := p.checkClosed(); err != nil {
 		return jsonStr, err
 	}
@@ -2413,9 +2413,9 @@ func (p *Processor) BatchDeleteOptimized(jsonStr string, paths []string) (string
 // BULK GET OPERATIONS
 // ============================================================================
 
-// FastGetMultiple performs multiple Get operations with single parse
+// fastGetMultiple performs multiple Get operations with single parse
 // PERFORMANCE v3: Direct allocation with pre-sized map — avoids pool overhead and double-copy
-func (p *Processor) FastGetMultiple(jsonStr string, paths []string) (map[string]any, error) {
+func (p *Processor) fastGetMultiple(jsonStr string, paths []string) (map[string]any, error) {
 	if err := p.checkClosed(); err != nil {
 		return nil, err
 	}

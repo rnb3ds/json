@@ -367,16 +367,25 @@ func demonstrateEncodeMethods() {
 	}
 	fmt.Printf("   Encode (compact): %s\n", compact)
 
-	// EncodeWithConfig (pretty)
+	// EncodePretty (convenience for pretty output)
+	pretty, err := json.EncodePretty(product)
+	if err != nil {
+		fmt.Printf("   EncodePretty error: %v\n", err)
+		return
+	}
+	fmt.Println("\n   EncodePretty (pretty, zero-config):")
+	fmt.Println(pretty)
+
+	// EncodeWithConfig (pretty with custom options)
 	opts := json.DefaultConfig()
 	opts.Pretty = true
-	pretty, err := json.EncodeWithConfig(product, opts)
+	prettyCfg, err := json.EncodeWithConfig(product, opts)
 	if err != nil {
 		fmt.Printf("   EncodeWithConfig error: %v\n", err)
 		return
 	}
-	fmt.Println("\n   EncodeWithConfig (pretty):")
-	fmt.Println(pretty)
+	fmt.Println("\n   EncodeWithConfig (pretty with custom options):")
+	fmt.Println(prettyCfg)
 
 	// Encode with custom configuration
 	customCfg := json.DefaultConfig()

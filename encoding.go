@@ -1947,14 +1947,14 @@ func (p *Processor) validateArray(arr []any, schema *Schema, path string, errors
 	arrLen := len(arr)
 
 	// Array length validation
-	if schema.HasMinItems() && arrLen < schema.MinItems {
+	if schema.hasMinItems && arrLen < schema.MinItems {
 		*errors = append(*errors, ValidationError{
 			Path:    path,
 			Message: fmt.Sprintf("array length %d is less than minimum %d", arrLen, schema.MinItems),
 		})
 	}
 
-	if schema.HasMaxItems() && arrLen > schema.MaxItems {
+	if schema.hasMaxItems && arrLen > schema.MaxItems {
 		*errors = append(*errors, ValidationError{
 			Path:    path,
 			Message: fmt.Sprintf("array length %d exceeds maximum %d", arrLen, schema.MaxItems),
@@ -1989,14 +1989,14 @@ func (p *Processor) validateArray(arr []any, schema *Schema, path string, errors
 func (p *Processor) validateString(str string, schema *Schema, path string, errors *[]ValidationError) {
 	// Length validation
 	strLen := utf8.RuneCountInString(str)
-	if schema.HasMinLength() && strLen < schema.MinLength {
+	if schema.hasMinLength && strLen < schema.MinLength {
 		*errors = append(*errors, ValidationError{
 			Path:    path,
 			Message: fmt.Sprintf("string length %d is less than minimum %d", strLen, schema.MinLength),
 		})
 	}
 
-	if schema.HasMaxLength() && strLen > schema.MaxLength {
+	if schema.hasMaxLength && strLen > schema.MaxLength {
 		*errors = append(*errors, ValidationError{
 			Path:    path,
 			Message: fmt.Sprintf("string length %d exceeds maximum %d", strLen, schema.MaxLength),
@@ -2049,7 +2049,7 @@ func (p *Processor) validateNumber(value any, schema *Schema, path string, error
 	}
 
 	// Range validation - only validate if constraints are explicitly set
-	if schema.HasMinimum() {
+	if schema.hasMinimum {
 		if schema.ExclusiveMinimum {
 			if num <= schema.Minimum {
 				*errors = append(*errors, ValidationError{
@@ -2067,7 +2067,7 @@ func (p *Processor) validateNumber(value any, schema *Schema, path string, error
 		}
 	}
 
-	if schema.HasMaximum() {
+	if schema.hasMaximum {
 		if schema.ExclusiveMaximum {
 			if num >= schema.Maximum {
 				*errors = append(*errors, ValidationError{

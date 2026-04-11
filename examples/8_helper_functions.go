@@ -183,6 +183,20 @@ func demonstrateMerge() {
 	diff, _ := json.MergeJSON(baseConfig, overrideConfig, diffCfg)
 	fmt.Println("\n   Difference (keys only in base):")
 	fmt.Println(diff)
+
+	// MergeMany - merge multiple JSON strings at once
+	overrides := []string{
+		`{"database": {"ssl": true}}`,
+		`{"features": ["caching", "metrics"]}`,
+		`{"monitoring": true}`,
+	}
+	mergedMany, err := json.MergeMany(overrides)
+	if err != nil {
+		fmt.Printf("   MergeMany error: %v\n", err)
+	} else {
+		fmt.Println("\n   MergeMany (3 JSONs merged):")
+		fmt.Println(mergedMany)
+	}
 }
 
 func demonstrateFormatting() {

@@ -506,7 +506,7 @@ func BenchmarkBatchSet_Small(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, _ = processor.BatchSetOptimized(jsonStr, updates)
+		_, _ = processor.batchSetOptimized(jsonStr, updates)
 	}
 }
 
@@ -534,7 +534,7 @@ func BenchmarkBatchSet_Large(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, _ = processor.BatchSetOptimized(jsonStr, updates)
+		_, _ = processor.batchSetOptimized(jsonStr, updates)
 	}
 }
 
@@ -547,7 +547,7 @@ func BenchmarkFastGetMultiple_Small(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, _ = processor.FastGetMultiple(jsonStr, paths)
+		_, _ = processor.fastGetMultiple(jsonStr, paths)
 	}
 }
 
@@ -575,7 +575,7 @@ func BenchmarkFastGetMultiple_Large(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, _ = processor.FastGetMultiple(jsonStr, paths)
+		_, _ = processor.fastGetMultiple(jsonStr, paths)
 	}
 }
 
@@ -750,7 +750,7 @@ func BenchmarkFastSet_Simple(b *testing.B) {
 	b.ResetTimer()
 
 	for i := 0; i < b.N; i++ {
-		_, _ = processor.FastSet(jsonStr, "name", "updated")
+		_, _ = processor.fastSet(jsonStr, "name", "updated")
 	}
 }
 
@@ -776,7 +776,7 @@ func BenchmarkFastDelete_Simple(b *testing.B) {
 	b.ResetTimer()
 
 	for i := 0; i < b.N; i++ {
-		_, _ = processor.FastDelete(jsonStr, "name")
+		_, _ = processor.fastDelete(jsonStr, "name")
 	}
 }
 
@@ -807,7 +807,7 @@ func BenchmarkBatchSetOptimized(b *testing.B) {
 	b.ResetTimer()
 
 	for i := 0; i < b.N; i++ {
-		_, _ = processor.BatchSetOptimized(jsonStr, updates)
+		_, _ = processor.batchSetOptimized(jsonStr, updates)
 	}
 }
 
@@ -821,7 +821,7 @@ func BenchmarkFastGetMultiple(b *testing.B) {
 	b.ResetTimer()
 
 	for i := 0; i < b.N; i++ {
-		_, _ = processor.FastGetMultiple(jsonStr, paths)
+		_, _ = processor.fastGetMultiple(jsonStr, paths)
 	}
 }
 

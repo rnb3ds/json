@@ -168,22 +168,27 @@ func demonstrateNumberHandling() {
 	anyVal, _ := json.Get(numberJSON, "integer")
 	fmt.Printf("   As any: %v (type: %T)\n", anyVal, anyVal)
 
-	// Number to string conversion using standard json.Number
-	fmt.Println("\n   Number to string conversion:")
-	numbers := map[string]any{
-		"int":      42,
-		"float":    3.14159,
-		"negative": -123,
-		"jsonNum":  json.Number("12345"),
+	// Number type for precise numeric handling
+	fmt.Println("\n   Number type (json.Number):")
+	num := json.Number("3.14159")
+	fmt.Printf("   Number.String():  %s\n", num.String())
+	if f, err := num.Float64(); err == nil {
+		fmt.Printf("   Number.Float64(): %.5f\n", f)
 	}
-	for name, val := range numbers {
-		str := fmt.Sprintf("%v", val)
-		fmt.Printf("   %10s: %v -> '%s'\n", name, val, str)
+	if i, err := num.Int64(); err != nil {
+		fmt.Printf("   Number.Int64():   (truncates, error: %v)\n", err)
+	} else {
+		fmt.Printf("   Number.Int64():   %d\n", i)
+	}
+
+	intNum := json.Number("42")
+	if i, err := intNum.Int64(); err == nil {
+		fmt.Printf("   Number('42').Int64(): %d\n", i)
 	}
 }
 
 func demonstrateDeepCopy() {
-	fmt.Println("\n5. Deep Copy via Marshal/Unmarshal")
+	fmt.Println("\n5. Deep Copy via Marshal/Unmarshal Cycle")
 	fmt.Println("-------------------------------------")
 
 	original := map[string]any{
