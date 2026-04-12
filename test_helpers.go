@@ -196,8 +196,8 @@ func newTestDataGenerator() *testDataGenerator {
 	}
 }
 
-// GenerateSimpleJSON generates simple JSON structures
-func (g *testDataGenerator) GenerateSimpleJSON() string {
+// generateSimpleJSON generates simple JSON structures
+func (g *testDataGenerator) generateSimpleJSON() string {
 	templates := []string{
 		`{"name":"John","age":30}`,
 		`{"active":true,"score":95.5}`,
@@ -208,8 +208,8 @@ func (g *testDataGenerator) GenerateSimpleJSON() string {
 	return templates[g.rand.Intn(len(templates))]
 }
 
-// GenerateComplexJSON generates complex nested JSON structures
-func (g *testDataGenerator) GenerateComplexJSON() string {
+// generateComplexJSON generates complex nested JSON structures
+func (g *testDataGenerator) generateComplexJSON() string {
 	return `{
 		"users": [
 			{
@@ -279,8 +279,8 @@ func (g *testDataGenerator) GenerateComplexJSON() string {
 	}`
 }
 
-// GenerateArrayJSON generates JSON with various array structures
-func (g *testDataGenerator) GenerateArrayJSON() string {
+// generateArrayJSON generates JSON with various array structures
+func (g *testDataGenerator) generateArrayJSON() string {
 	return `{
 		"numbers": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
 		"strings": ["apple", "banana", "cherry", "date", "elderberry"],
@@ -300,8 +300,8 @@ func (g *testDataGenerator) GenerateArrayJSON() string {
 	}`
 }
 
-// GenerateInvalidJSON generates invalid JSON for error testing
-func (g *testDataGenerator) GenerateInvalidJSON() []string {
+// generateInvalidJSON generates invalid JSON for error testing
+func (g *testDataGenerator) generateInvalidJSON() []string {
 	return []string{
 		`{invalid json}`,
 		`{"unclosed": "string}`,
@@ -331,8 +331,8 @@ func newConcurrencyTester(t *testing.T, concurrency, iterations int) *concurrenc
 	}
 }
 
-// Run runs concurrent test operations
-func (ct *concurrencyTester) Run(operation func(workerID, iteration int) error) {
+// run runs concurrent test operations
+func (ct *concurrencyTester) run(operation func(workerID, iteration int) error) {
 	ct.t.Helper()
 
 	done := make(chan error, ct.concurrency)

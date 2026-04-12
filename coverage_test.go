@@ -917,7 +917,7 @@ func TestValidEdgeCases(t *testing.T) {
 	})
 
 	t.Run("ValidStringEdgeCases", func(t *testing.T) {
-		if ValidString("") {
+		if validString("") {
 			t.Error("ValidString('') should return false")
 		}
 	})
@@ -1473,7 +1473,7 @@ func TestProcessorBufferMethods(t *testing.T) {
 	t.Run("CompactBuffer", func(t *testing.T) {
 		var dst bytes.Buffer
 		src := []byte(`{"key": "value"}`)
-		err := processor.CompactBuffer(&dst, src)
+		err := processor.compactBuffer(&dst, src)
 		if err != nil {
 			t.Errorf("CompactBuffer failed: %v", err)
 		}
@@ -3000,7 +3000,7 @@ func TestGetBoolDefault(t *testing.T) {
 	}
 }
 
-// TestValidString tests the ValidString function
+// TestValidString tests the validString function
 func TestValidString(t *testing.T) {
 	tests := []struct {
 		jsonStr  string
@@ -3019,9 +3019,9 @@ func TestValidString(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.jsonStr, func(t *testing.T) {
-			result := ValidString(tt.jsonStr)
+			result := validString(tt.jsonStr)
 			if result != tt.expected {
-				t.Errorf("ValidString(%q) = %v, want %v", tt.jsonStr, result, tt.expected)
+				t.Errorf("validString(%q) = %v, want %v", tt.jsonStr, result, tt.expected)
 			}
 		})
 	}

@@ -432,9 +432,9 @@ func (p *Processor) encodeValue(value any, pretty bool) (string, error) {
 	return p.EncodeWithConfig(value, cfg)
 }
 
-// Print prints any Go value as JSON to stdout in compact format.
-// Note: Writes errors to stderr. Use PrintE for error handling.
-func (p *Processor) Print(data any) {
+// print writes any Go value as JSON to stdout in compact format.
+// Note: Writes errors to stderr. Use printE for error handling.
+func (p *Processor) print(data any) {
 	result, err := p.printData(data, false)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "json.Print error: %v\n", err)
@@ -443,9 +443,9 @@ func (p *Processor) Print(data any) {
 	fmt.Println(result)
 }
 
-// PrintE prints any Go value as JSON to stdout in compact format.
+// printE prints any Go value as JSON to stdout in compact format.
 // Returns an error instead of writing to stderr, allowing callers to handle errors.
-func (p *Processor) PrintE(data any) error {
+func (p *Processor) printE(data any) error {
 	result, err := p.printData(data, false)
 	if err != nil {
 		return fmt.Errorf("json.Print error: %w", err)
@@ -454,19 +454,9 @@ func (p *Processor) PrintE(data any) error {
 	return nil
 }
 
-// PrintPretty prints any Go value as formatted JSON to stdout.
-// Note: Writes errors to stderr. Use PrintPrettyE for error handling.
-//
-// Example:
-//
-//	p, _ := json.New()
-//	defer p.Close()
-//	p.PrintPretty(map[string]any{"name": "Alice"})
-//	// Output:
-//	// {
-//	//   "name": "Alice"
-//	// }
-func (p *Processor) PrintPretty(data any) {
+// printPretty prints any Go value as formatted JSON to stdout.
+// Note: Writes errors to stderr. Use printPrettyE for error handling.
+func (p *Processor) printPretty(data any) {
 	result, err := p.printData(data, true)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "json.PrintPretty error: %v\n", err)
@@ -475,9 +465,9 @@ func (p *Processor) PrintPretty(data any) {
 	fmt.Println(result)
 }
 
-// PrintPrettyE prints any Go value as formatted JSON to stdout.
+// printPrettyE prints any Go value as formatted JSON to stdout.
 // Returns an error instead of writing to stderr, allowing callers to handle errors.
-func (p *Processor) PrintPrettyE(data any) error {
+func (p *Processor) printPrettyE(data any) error {
 	result, err := p.printData(data, true)
 	if err != nil {
 		return fmt.Errorf("json.PrintPretty error: %w", err)
@@ -562,6 +552,12 @@ func (p *Processor) Compact(jsonStr string, cfg ...Config) (string, error) {
 
 // CompactBuffer appends to dst the JSON-encoded src with insignificant space characters elided.
 // Compatible with encoding/json.Compact with optional Config support.
+// This is the buffer-based counterpart to Compact, matching the encoding/json.Compact signature.
+//
+// Example:
+//
+//	var buf bytes.Buffer
+//	err := processor.CompactBuffer(&buf, []byte(`{"name": "Alice"}`))
 func (p *Processor) CompactBuffer(dst *bytes.Buffer, src []byte, cfg ...Config) error {
 	compacted, err := p.Compact(string(src), cfg...)
 	if err != nil {
@@ -569,6 +565,11 @@ func (p *Processor) CompactBuffer(dst *bytes.Buffer, src []byte, cfg ...Config) 
 	}
 	_, err = dst.WriteString(compacted)
 	return err
+}
+
+// compactBuffer is an unexported alias kept for backward compatibility with internal callers.
+func (p *Processor) compactBuffer(dst *bytes.Buffer, src []byte, cfg ...Config) error {
+	return p.CompactBuffer(dst, src, cfg...)
 }
 
 // Indent appends to dst an indented form of the JSON-encoded src.

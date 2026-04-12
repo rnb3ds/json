@@ -115,7 +115,7 @@ func DefaultConfig() Config {
 		// Processing Options
 		EnableValidation: true,
 		StrictMode:       false,
-		CreatePaths:      false,
+		CreatePaths:      true,
 		CleanupNulls:     false,
 		CompactArrays:    false,
 		ContinueOnError:  false,

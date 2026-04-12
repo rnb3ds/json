@@ -1367,7 +1367,7 @@ func BenchmarkValidatePathComplex(b *testing.B) {
 
 func TestPatternRegistryAPI(t *testing.T) {
 	t.Run("RegisterAndList", func(t *testing.T) {
-		defer ClearDangerousPatterns()
+		defer clearDangerousPatterns()
 
 		RegisterDangerousPattern(DangerousPattern{
 			Pattern: "custom_test_pattern",
@@ -1390,7 +1390,7 @@ func TestPatternRegistryAPI(t *testing.T) {
 	})
 
 	t.Run("Unregister", func(t *testing.T) {
-		defer ClearDangerousPatterns()
+		defer clearDangerousPatterns()
 
 		RegisterDangerousPattern(DangerousPattern{
 			Pattern: "temp_pattern",
@@ -1412,14 +1412,14 @@ func TestPatternRegistryAPI(t *testing.T) {
 			Name:    "Clearable",
 			Level:   PatternLevelInfo,
 		})
-		ClearDangerousPatterns()
+		clearDangerousPatterns()
 		if len(ListDangerousPatterns()) != 0 {
 			t.Error("patterns should be empty after clear")
 		}
 	})
 
 	t.Run("GetDefaultPatterns", func(t *testing.T) {
-		defaults := GetDefaultPatterns()
+		defaults := getDefaultPatterns()
 		if len(defaults) == 0 {
 			t.Error("expected non-empty default patterns")
 		}
@@ -1434,7 +1434,7 @@ func TestPatternRegistryAPI(t *testing.T) {
 	})
 
 	t.Run("GetCriticalPatterns", func(t *testing.T) {
-		critical := GetCriticalPatterns()
+		critical := getCriticalPatterns()
 		if len(critical) == 0 {
 			t.Error("expected non-empty critical patterns")
 		}
@@ -1446,7 +1446,7 @@ func TestPatternRegistryAPI(t *testing.T) {
 	})
 
 	t.Run("MaxPatternLenDynamic", func(t *testing.T) {
-		defer ClearDangerousPatterns()
+		defer clearDangerousPatterns()
 
 		baseLen := maxDangerousPatternLen()
 		longPattern := "this_is_a_very_long_custom_pattern_for_testing"

@@ -45,7 +45,7 @@ func main() {
 }
 
 func demonstrateFormatValidation() {
-	fmt.Println("1. JSON Format Validation (json.ValidString)")
+	fmt.Println("1. JSON Format Validation (json.Valid)")
 	fmt.Println("----------------------------------------------")
 
 	testCases := []struct {
@@ -66,7 +66,7 @@ func demonstrateFormatValidation() {
 
 	fmt.Println("   Format validation results:")
 	for _, tc := range testCases {
-		valid := json.ValidString(tc.data)
+		valid := json.Valid([]byte(tc.data))
 		status := "valid"
 		if !valid {
 			status = "invalid"
@@ -223,7 +223,7 @@ func demonstrateSecurityValidation() {
 
 	fmt.Println("   Security validation with SecurityConfig:")
 	for _, tc := range testCases {
-		valid := json.ValidString(tc.data)
+		valid := json.Valid([]byte(tc.data))
 		status := "OK"
 		if !valid {
 			status = "X"

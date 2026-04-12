@@ -5,7 +5,7 @@
 //   - 100% encoding/json compatibility - drop-in replacement
 //   - High-performance path operations with smart caching
 //   - Thread-safe concurrent operations
-//   - Type-safe generic operations with Go 1.18+ generics
+//   - Type-safe generic operations with Go generics
 //   - Memory-efficient resource pooling
 //   - Production-ready error handling and validation
 //
@@ -145,6 +145,11 @@ func ShutdownGlobalProcessor() {
 	if old := defaultProcessor.Swap(nil); old != nil {
 		old.Close()
 	}
+
+	// Clear global caches that accumulate across processor instances.
+	// Safe to clear here because this is called only at application shutdown.
+	clearPathTypeCache()
+	internal.ClearStructEncoderCache()
 }
 
 // Package-level API functions are organized in the following files:
@@ -264,9 +269,7 @@ func StreamLinesInto[T any](reader io.Reader, fn func(lineNum int, data T) error
 // Used by JSONLWriter to track lines and bytes written.
 type JSONLStats struct {
 	LinesProcessed int64
-	BytesRead      int64
 	BytesWritten   int64
-	CurrentLine    int
 }
 
 // JSONLWriter writes JSON Lines (NDJSON) format to an io.Writer.
@@ -282,11 +285,11 @@ type JSONLStats struct {
 //	writer.Write(map[string]any{"name": "Alice", "id": 1})
 //	writer.Write(map[string]any{"name": "Bob", "id": 2})
 type JSONLWriter struct {
-	writer    io.Writer
+	writer     io.Writer
 	escapeHTML bool
-	lineNum   int
-	err       error
-	bytesOut  int64
+	lineNum    int
+	err        error
+	bytesOut   int64
 }
 
 // NewJSONLWriter creates a new JSONL writer that writes to the provided io.Writer.

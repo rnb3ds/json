@@ -152,7 +152,7 @@ func isDefaultConfig(cfg Config) bool {
 	// These are ordered by likelihood of being modified
 	if cfg.Pretty ||
 		cfg.StrictMode ||
-		cfg.CreatePaths ||
+		!cfg.CreatePaths ||
 		!cfg.EnableCache ||
 		!cfg.EnableValidation ||
 		cfg.Context != nil {
@@ -654,6 +654,30 @@ func SetMultiple(jsonStr string, updates map[string]any, cfg ...Config) (string,
 	}, jsonStr)
 }
 
+// SetCreate sets a value in JSON at the specified path, creating intermediate paths as needed.
+// This is equivalent to calling Set with CreatePaths enabled.
+//
+// Example:
+//
+//	result, err := json.SetCreate(data, "users[0].profile.name", "Alice")
+func SetCreate(jsonStr, path string, value any, cfg ...Config) (string, error) {
+	return withProcessorStringResult(func(p *Processor) (string, error) {
+		return p.SetCreate(jsonStr, path, value, cfg...)
+	}, jsonStr)
+}
+
+// SetMultipleCreate sets multiple values, creating intermediate paths as needed.
+// This is equivalent to calling SetMultiple with CreatePaths enabled.
+//
+// Example:
+//
+//	result, err := json.SetMultipleCreate(data, map[string]any{"user.name": "Alice", "user.age": 30})
+func SetMultipleCreate(jsonStr string, updates map[string]any, cfg ...Config) (string, error) {
+	return withProcessorStringResult(func(p *Processor) (string, error) {
+		return p.SetMultipleCreate(jsonStr, updates, cfg...)
+	}, jsonStr)
+}
+
 // Delete deletes a value from JSON at the specified path.
 //
 // Errors:
@@ -666,21 +690,33 @@ func Delete(jsonStr, path string, cfg ...Config) (string, error) {
 	}, jsonStr)
 }
 
+// DeleteClean deletes a value from JSON and cleans up null values and empty arrays.
+// This is equivalent to calling Delete with CleanupNulls and CompactArrays enabled.
+//
+// Example:
+//
+//	result, err := json.DeleteClean(data, "users[0].profile")
+func DeleteClean(jsonStr, path string, cfg ...Config) (string, error) {
+	return withProcessorStringResult(func(p *Processor) (string, error) {
+		return p.DeleteClean(jsonStr, path, cfg...)
+	}, jsonStr)
+}
+
 // Marshal returns the JSON encoding of v.
 // This function is 100% compatible with encoding/json.Marshal.
 // For configuration options, use EncodeWithConfig or Processor.Marshal with cfg parameter.
-func Marshal(v any) ([]byte, error) {
+func Marshal(value any) ([]byte, error) {
 	return withProcessorBytesResult(func(p *Processor) ([]byte, error) {
-		return p.Marshal(v)
+		return p.Marshal(value)
 	})
 }
 
 // Unmarshal parses the JSON-encoded data and stores the result in v.
 // This function is 100% compatible with encoding/json.Unmarshal.
 // For configuration options, use Processor.Unmarshal with cfg parameter.
-func Unmarshal(data []byte, v any) error {
+func Unmarshal(data []byte, value any) error {
 	return withProcessorError(func(p *Processor) error {
-		return p.Unmarshal(data, v)
+		return p.Unmarshal(data, value)
 	})
 }
 
@@ -709,12 +745,7 @@ func MarshalIndent(v any, prefix, indent string) ([]byte, error) {
 //	err = json.Compact(&buf, []byte(jsonStr), cfg)
 func Compact(dst *bytes.Buffer, src []byte, cfg ...Config) error {
 	return withProcessorError(func(p *Processor) error {
-		compacted, err := p.Compact(string(src), cfg...)
-		if err != nil {
-			return err
-		}
-		dst.WriteString(compacted)
-		return nil
+		return p.CompactBuffer(dst, src, cfg...)
 	})
 }
 
@@ -749,14 +780,13 @@ func HTMLEscape(dst *bytes.Buffer, src []byte, cfg ...Config) {
 	p.HTMLEscape(dst, src, cfg...)
 }
 
-// CompactBuffer compacts JSON data and writes the result to dst.
+// compactBuffer compacts JSON data and writes the result to dst.
 // Delegates to Processor.CompactBuffer for consistent behavior.
-func CompactBuffer(dst *bytes.Buffer, src []byte, cfg ...Config) error {
+func compactBuffer(dst *bytes.Buffer, src []byte, cfg ...Config) error {
 	return withProcessorError(func(p *Processor) error {
 		return p.CompactBuffer(dst, src, cfg...)
 	})
 }
-
 
 // Encode converts any Go value to JSON string.
 // For configuration options, use EncodeWithConfig.
@@ -825,45 +855,45 @@ func Prettify(jsonStr string, cfg ...Config) (string, error) {
 	})
 }
 
-// Print prints any Go value as JSON to stdout in compact format.
-// Note: Writes errors to stderr. Use PrintE for error handling.
-func Print(data any) {
+// print writes any Go value as JSON to stdout in compact format.
+// Note: Writes errors to stderr. Use printE for error handling.
+func print(data any) {
 	result, err := printData(data, false)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "json.Print error: %v\n", err)
+		fmt.Fprintf(os.Stderr, "json.print error: %v\n", err)
 		return
 	}
 	fmt.Println(result)
 }
 
-// PrintPretty prints any Go value as formatted JSON to stdout.
-// Note: Writes errors to stderr. Use PrintPrettyE for error handling.
-func PrintPretty(data any) {
+// printPretty prints any Go value as formatted JSON to stdout.
+// Note: Writes errors to stderr. Use printPrettyE for error handling.
+func printPretty(data any) {
 	result, err := printData(data, true)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "json.PrintPretty error: %v\n", err)
+		fmt.Fprintf(os.Stderr, "json.printPretty error: %v\n", err)
 		return
 	}
 	fmt.Println(result)
 }
 
-// PrintE prints any Go value as JSON to stdout in compact format.
+// printE prints any Go value as JSON to stdout in compact format.
 // Returns an error instead of writing to stderr, allowing callers to handle errors.
-func PrintE(data any) error {
+func printE(data any) error {
 	result, err := printData(data, false)
 	if err != nil {
-		return fmt.Errorf("json.Print error: %w", err)
+		return fmt.Errorf("json.print error: %w", err)
 	}
 	fmt.Println(result)
 	return nil
 }
 
-// PrintPrettyE prints any Go value as formatted JSON to stdout.
+// printPrettyE prints any Go value as formatted JSON to stdout.
 // Returns an error instead of writing to stderr, allowing callers to handle errors.
-func PrintPrettyE(data any) error {
+func printPrettyE(data any) error {
 	result, err := printData(data, true)
 	if err != nil {
-		return fmt.Errorf("json.PrintPretty error: %w", err)
+		return fmt.Errorf("json.printPretty error: %w", err)
 	}
 	fmt.Println(result)
 	return nil
@@ -879,24 +909,19 @@ func printData(data any, pretty bool) (string, error) {
 
 // Valid reports whether data is valid JSON.
 // This function is 100% compatible with encoding/json.Valid.
+// Delegates to Processor.ValidBytes for consistent []byte → bool behavior.
 func Valid(data []byte) bool {
-	return validInternal(string(data))
-}
-
-// ValidString reports whether the JSON string is valid.
-// This is a convenience wrapper for Valid that accepts a string directly.
-func ValidString(jsonStr string) bool {
-	return validInternal(jsonStr)
-}
-
-// validInternal is the shared implementation for Valid and ValidString.
-func validInternal(jsonStr string) bool {
 	p := getDefaultProcessor()
 	if p == nil {
 		return false
 	}
-	valid, err := p.Valid(jsonStr)
-	return err == nil && valid
+	return p.ValidBytes(data)
+}
+
+// validString reports whether the JSON string is valid.
+// This is a convenience wrapper for Valid that accepts a string directly.
+func validString(jsonStr string) bool {
+	return Valid([]byte(jsonStr))
 }
 
 // ValidWithConfig reports whether the JSON string is valid with configuration.
@@ -925,6 +950,20 @@ func ValidateSchema(jsonStr string, schema *Schema, cfg ...Config) ([]Validation
 func LoadFromFile(filePath string, cfg ...Config) (string, error) {
 	return withProcessor(func(p *Processor) (string, error) {
 		return p.LoadFromFile(filePath, cfg...)
+	})
+}
+
+// LoadFromReader loads JSON data from an io.Reader with size limiting.
+// The reader is limited to MaxJSONSize to prevent excessive memory usage.
+//
+// Example:
+//
+//	file, _ := os.Open("data.json")
+//	defer file.Close()
+//	jsonStr, err := json.LoadFromReader(file)
+func LoadFromReader(reader io.Reader, cfg ...Config) (string, error) {
+	return withProcessor(func(p *Processor) (string, error) {
+		return p.LoadFromReader(reader, cfg...)
 	})
 }
 

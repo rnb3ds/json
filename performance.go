@@ -43,16 +43,10 @@ func warmupPathCacheWith(processor *Processor, commonPaths []string) {
 			continue
 		}
 
-		// Parse the path string to string segments
-		stringSegments, err := processor.parsePath(path)
+		// Parse path directly into PathSegments (avoids double-parsing)
+		segments, err := internal.ParsePath(path)
 		if err != nil {
 			continue // Skip invalid paths
-		}
-
-		// Convert string segments to PathSegments
-		var segments []internal.PathSegment
-		for _, part := range stringSegments {
-			segments = internal.ParsePathSegment(part, segments)
 		}
 
 		internal.GlobalPathIntern.Set(path, segments)

@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"strings"
 	"sync"
 	"sync/atomic"
 )
@@ -51,8 +50,8 @@ func (p *Processor) StreamJSONL(reader io.Reader, fn func(lineNum int, item *Ite
 	for scanner.Scan() {
 		line := scanner.Bytes()
 
-		// Skip empty lines
-		if len(strings.TrimSpace(string(line))) == 0 {
+		// Skip lines based on config (empty lines, comments)
+		if shouldSkipJSONLLineFromConfig(line, &p.config) {
 			continue
 		}
 
@@ -144,8 +143,8 @@ func (p *Processor) StreamJSONLParallel(reader io.Reader, workers int, fn func(l
 	for scanner.Scan() {
 		line := scanner.Bytes()
 
-		// Skip empty lines
-		if len(strings.TrimSpace(string(line))) == 0 {
+		// Skip lines based on config (empty lines, comments)
+		if shouldSkipJSONLLineFromConfig(line, &p.config) {
 			continue
 		}
 
@@ -212,8 +211,8 @@ func (p *Processor) StreamJSONLChunked(reader io.Reader, chunkSize int, fn func(
 	for scanner.Scan() {
 		line := scanner.Bytes()
 
-		// Skip empty lines
-		if len(strings.TrimSpace(string(line))) == 0 {
+		// Skip lines based on config (empty lines, comments)
+		if shouldSkipJSONLLineFromConfig(line, &p.config) {
 			continue
 		}
 
@@ -459,4 +458,153 @@ func (p *Processor) FirstJSONL(reader io.Reader, predicate func(item *IterableVa
 	}
 
 	return result, found, nil
+}
+
+// ============================================================================
+// Package-level JSONL wrappers (dual-layer design)
+// Delegate to the default processor for convenience
+// ============================================================================
+
+// StreamJSONL streams JSONL data from a reader with IterableValue callback support.
+//
+// Example:
+//
+//	err := json.StreamJSONL(reader, func(lineNum int, item *json.IterableValue) error {
+//		name := item.GetString("name")
+//		fmt.Printf("Line %d: name=%s\n", lineNum, name)
+//		return nil // continue processing
+//	})
+func StreamJSONL(reader io.Reader, fn func(lineNum int, item *IterableValue) error) error {
+	return withProcessorError(func(p *Processor) error {
+		return p.StreamJSONL(reader, fn)
+	})
+}
+
+// StreamJSONLParallel processes JSONL data in parallel with multiple workers.
+//
+// Example:
+//
+//	err := json.StreamJSONLParallel(reader, 4, func(lineNum int, item *json.IterableValue) error {
+//		// Process each item in parallel
+//		return nil
+//	})
+func StreamJSONLParallel(reader io.Reader, workers int, fn func(lineNum int, item *IterableValue) error) error {
+	return withProcessorError(func(p *Processor) error {
+		return p.StreamJSONLParallel(reader, workers, fn)
+	})
+}
+
+// StreamJSONLChunked processes JSONL data in chunks for memory-efficient processing.
+//
+// Example:
+//
+//	err := json.StreamJSONLChunked(reader, 1000, func(chunk []*json.IterableValue) error {
+//		// Process chunk of 1000 items
+//		return nil
+//	})
+func StreamJSONLChunked(reader io.Reader, chunkSize int, fn func(chunk []*IterableValue) error) error {
+	return withProcessorError(func(p *Processor) error {
+		return p.StreamJSONLChunked(reader, chunkSize, fn)
+	})
+}
+
+// ForeachJSONL iterates over JSONL data with IterableValue callback.
+//
+// Example:
+//
+//	err := json.ForeachJSONL(reader, func(lineNum int, item *json.IterableValue) error {
+//		fmt.Printf("Line: %d, Value: %v\n", lineNum, item.GetData())
+//		return nil
+//	})
+func ForeachJSONL(reader io.Reader, fn func(lineNum int, item *IterableValue) error) error {
+	return withProcessorError(func(p *Processor) error {
+		return p.ForeachJSONL(reader, fn)
+	})
+}
+
+// MapJSONL maps JSONL data into a new format using a mapping function.
+//
+// Example:
+//
+//	result, err := json.MapJSONL(reader, func(lineNum int, item *json.IterableValue) (any, error) {
+//		return map[string]any{
+//			"name": item.GetString("name"),
+//			"age":  item.GetInt("age"),
+//		}, nil
+//	})
+func MapJSONL(reader io.Reader, fn func(lineNum int, item *IterableValue) (any, error)) ([]any, error) {
+	return withProcessor(func(p *Processor) ([]any, error) {
+		return p.MapJSONL(reader, fn)
+	})
+}
+
+// ReduceJSONL reduces JSONL data to a single aggregated result using a reducer function.
+//
+// Example:
+//
+//	totalAge, err := json.ReduceJSONL(reader, 0, func(acc any, item *json.IterableValue) any {
+//		return acc.(int64) + int64(item.GetInt("age"))
+//	})
+func ReduceJSONL(reader io.Reader, initial any, fn func(acc any, item *IterableValue) any) (any, error) {
+	p, err := getProcessorOrFail()
+	if err != nil {
+		return initial, err
+	}
+	return p.ReduceJSONL(reader, initial, fn)
+}
+
+// FilterJSONL filters JSONL data based on a predicate function.
+//
+// Example:
+//
+//	adults, err := json.FilterJSONL(reader, func(item *json.IterableValue) bool {
+//		return item.GetInt("age") >= 18
+//	})
+func FilterJSONL(reader io.Reader, predicate func(item *IterableValue) bool) ([]*IterableValue, error) {
+	return withProcessor(func(p *Processor) ([]*IterableValue, error) {
+		return p.FilterJSONL(reader, predicate)
+	})
+}
+
+// StreamJSONLFile streams JSONL data from a file with IterableValue callback.
+//
+// Example:
+//
+//	err := json.StreamJSONLFile("data.jsonl", func(lineNum int, item *json.IterableValue) error {
+//		fmt.Printf("Line %d: %v\n", lineNum, item.GetData())
+//		return nil
+//	})
+func StreamJSONLFile(filename string, fn func(lineNum int, item *IterableValue) error) error {
+	return withProcessorError(func(p *Processor) error {
+		return p.StreamJSONLFile(filename, fn)
+	})
+}
+
+// CollectJSONL collects all JSONL items into a slice.
+//
+// Example:
+//
+//	items, err := json.CollectJSONL(reader)
+//	for _, item := range items {
+//		fmt.Println(item.GetString("name"))
+//	}
+func CollectJSONL(reader io.Reader) ([]*IterableValue, error) {
+	return withProcessor(func(p *Processor) ([]*IterableValue, error) {
+		return p.CollectJSONL(reader)
+	})
+}
+
+// FirstJSONL returns the first JSONL item that matches a predicate.
+//
+// Example:
+//
+//	user, found, err := json.FirstJSONL(reader, func(item *json.IterableValue) bool {
+//		return item.GetString("name") == "Alice"
+//	})
+func FirstJSONL(reader io.Reader, predicate func(item *IterableValue) bool) (*IterableValue, bool, error) {
+	p, err := getProcessorOrFail()
+	if err != nil {
+		return nil, false, err
+	}
+	return p.FirstJSONL(reader, predicate)
 }

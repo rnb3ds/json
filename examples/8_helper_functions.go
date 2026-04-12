@@ -18,7 +18,7 @@ import (
 // - CompareJSON for JSON comparison
 // - MergeJSON for combining JSON objects
 // - Prettify and FormatCompact for formatting
-// - Print and PrintPretty for quick output
+// - Encode and EncodePretty for JSON output
 //
 // For JSON validation, see: 6_validation.go
 // For DeepCopy, see: 7_type_conversion.go
@@ -38,7 +38,7 @@ func main() {
 	// 3. FORMATTING
 	demonstrateFormatting()
 
-	// 4. QUICK PRINT
+	// 4. ENCODE FUNCTIONS
 	demonstratePrint()
 
 	fmt.Println("\nHelper functions examples complete!")
@@ -235,8 +235,8 @@ func demonstrateFormatting() {
 }
 
 func demonstratePrint() {
-	fmt.Println("\n4. Quick Print Functions")
-	fmt.Println("------------------------")
+	fmt.Println("\n4. Encode Functions")
+	fmt.Println("-------------------")
 
 	data := map[string]any{
 		"user":    "Alice",
@@ -246,14 +246,18 @@ func demonstratePrint() {
 		"balance": 1250.75,
 	}
 
-	fmt.Println("   Print (compact, single line):")
-	json.Print(data)
+	fmt.Println("   Encode (compact, single line):")
+	result, _ := json.Encode(data)
+	fmt.Println(result)
 
-	fmt.Println("\n   PrintPretty (formatted for readability):")
-	json.PrintPretty(data)
+	fmt.Println("\n   EncodePretty (formatted for readability):")
+	pretty, _ := json.EncodePretty(data)
+	fmt.Println(pretty)
 
-	fmt.Println("\n   PrintE and PrintPrettyE return errors for programmatic use:")
-	if err := json.PrintE(data); err != nil {
-		fmt.Printf("   PrintE error: %v\n", err)
+	fmt.Println("\n   Encode with error handling:")
+	if encoded, err := json.Encode(data); err != nil {
+		fmt.Printf("   Encode error: %v\n", err)
+	} else {
+		fmt.Println(encoded)
 	}
 }

@@ -39,24 +39,10 @@ func (p *Processor) LoadFromFile(filePath string, cfg ...Config) (string, error)
 	return string(data), nil
 }
 
-// LoadFromFileAsData loads JSON data from a file and returns the parsed data structure.
+// loadFromFileAsData loads JSON data from a file and returns the parsed data structure.
 // This is a convenience method that combines LoadFromFile and Parse.
 // The file path is validated for security before reading.
-//
-// Errors:
-//   - ErrProcessorClosed: processor has been closed
-//   - ErrInvalidJSON: file content is not valid JSON
-//   - ErrSecurityViolation: path contains traversal or unsafe patterns
-//   - ErrSizeLimit: file exceeds MaxJSONSize
-//
-// Example:
-//
-//	data, err := processor.LoadFromFileAsData("config.json")
-//	if err != nil {
-//	    // Handle error
-//	}
-//	config := data.(map[string]any)
-func (p *Processor) LoadFromFileAsData(filePath string, cfg ...Config) (any, error) {
+func (p *Processor) loadFromFileAsData(filePath string, cfg ...Config) (any, error) {
 	data, err := p.readValidatedFile(filePath)
 	if err != nil {
 		return nil, err
@@ -107,20 +93,14 @@ func (p *Processor) LoadFromReader(reader io.Reader, cfg ...Config) (string, err
 	return string(data), nil
 }
 
-// LoadFromReaderAsData loads JSON data from an io.Reader and returns the parsed data structure.
+// loadFromReaderAsData loads JSON data from an io.Reader and returns the parsed data structure.
 // This is a convenience method that combines LoadFromReader and Parse.
-//
-// Errors:
-//   - ErrProcessorClosed: processor has been closed
-//   - ErrInvalidJSON: data is not valid JSON
-//   - ErrSizeLimit: data exceeds MaxJSONSize
-//
 // Example:
 //
 //	resp, _ := http.Get(url)
 //	defer resp.Body.Close()
 //	data, err := processor.LoadFromReaderAsData(resp.Body)
-func (p *Processor) LoadFromReaderAsData(reader io.Reader, cfg ...Config) (any, error) {
+func (p *Processor) loadFromReaderAsData(reader io.Reader, cfg ...Config) (any, error) {
 	data, err := p.readValidatedReader(reader)
 	if err != nil {
 		return nil, err
@@ -151,11 +131,11 @@ func (p *Processor) readValidatedReader(reader io.Reader) ([]byte, error) {
 			Err:     err,
 		}
 	}
-	// If we read exactly MaxJSONSize+1 bytes, the input was truncated
-	if int64(len(data)) > p.config.MaxJSONSize {
+	// If we read beyond maxSize bytes, the input was truncated
+	if int64(len(data)) > maxSize {
 		return nil, &JsonsError{
 			Op:      "load_from_reader",
-			Message: fmt.Sprintf("JSON size exceeds maximum %d bytes", p.config.MaxJSONSize),
+			Message: fmt.Sprintf("JSON size exceeds maximum %d bytes", maxSize),
 			Err:     ErrSizeLimit,
 		}
 	}
@@ -900,6 +880,7 @@ func validateWindowsPath(absPath string) error {
 // NDJSONProcessor processes newline-delimited JSON files
 type NDJSONProcessor struct {
 	bufferSize int
+	config     Config
 }
 
 // NewNDJSONProcessor creates a new NDJSON processor.
@@ -927,7 +908,7 @@ func NewNDJSONProcessor(cfg ...Config) *NDJSONProcessor {
 	if bufferSize <= 0 {
 		bufferSize = 64 * 1024 // Default buffer size
 	}
-	return &NDJSONProcessor{bufferSize: bufferSize}
+	return &NDJSONProcessor{bufferSize: bufferSize, config: config}
 }
 
 // ProcessFile processes an NDJSON file line by line
@@ -966,7 +947,10 @@ func (np *NDJSONProcessor) ProcessReader(reader io.Reader, fn func(lineNum int, 
 
 		var obj map[string]any
 		if err := json.Unmarshal(line, &obj); err != nil {
-			continue
+			if np.config.JSONLContinueOnErr {
+				continue
+			}
+			return fmt.Errorf("line %d: parse error: %w", lineNum, err)
 		}
 
 		if err := fn(lineNum, obj); err != nil {
@@ -1071,7 +1055,7 @@ func (p *Processor) ForeachFileChunked(filePath string, chunkSize int, fn func(c
 	chunk := make([]*IterableValue, 0, chunkSize)
 	for _, item := range arr {
 		iv := iterableValuePool.Get().(*IterableValue)
-			iv.data = item
+		iv.data = item
 		chunk = append(chunk, iv)
 
 		if len(chunk) >= chunkSize {
@@ -1121,4 +1105,72 @@ func (p *Processor) ForeachFileNested(filePath string, fn func(key any, item *It
 	}
 
 	return p.ForeachNestedWithError(jsonStr, fn)
+}
+
+// ============================================================================
+// Package-level file iteration wrappers (dual-layer design)
+// ============================================================================
+
+// ForeachFile iterates over JSON arrays or objects directly from a file.
+// The callback returns an error to signal iteration control:
+//   - nil: continue iteration
+//   - item.Break(): stop iteration without error
+//   - other error: stop iteration and return the error
+//
+// Example:
+//
+//	err := json.ForeachFile("data.json", func(key any, item *json.IterableValue) error {
+//	    fmt.Println(item.GetString("name"))
+//	    return nil // continue
+//	})
+func ForeachFile(filePath string, fn func(key any, item *IterableValue) error) error {
+	return withProcessorError(func(p *Processor) error {
+		return p.ForeachFile(filePath, fn)
+	})
+}
+
+// ForeachFileWithPath iterates over JSON arrays or objects at a specific path from a file.
+//
+// Example:
+//
+//	err := json.ForeachFileWithPath("data.json", ".users", func(key any, item *json.IterableValue) error {
+//	    fmt.Println(item.GetString("name"))
+//	    return nil
+//	})
+func ForeachFileWithPath(filePath, path string, fn func(key any, item *IterableValue) error) error {
+	return withProcessorError(func(p *Processor) error {
+		return p.ForeachFileWithPath(filePath, path, fn)
+	})
+}
+
+// ForeachFileChunked iterates over JSON arrays from a file in chunks (batches).
+// This is useful for batch processing large datasets.
+//
+// Example:
+//
+//	err := json.ForeachFileChunked("data.json", 100, func(chunk []*json.IterableValue) error {
+//	    // Process batch of 100 items
+//	    for _, item := range chunk {
+//	        fmt.Println(item.GetString("name"))
+//	    }
+//	    return nil
+//	})
+func ForeachFileChunked(filePath string, chunkSize int, fn func(chunk []*IterableValue) error) error {
+	return withProcessorError(func(p *Processor) error {
+		return p.ForeachFileChunked(filePath, chunkSize, fn)
+	})
+}
+
+// ForeachFileNested recursively iterates over all nested JSON structures from a file.
+//
+// Example:
+//
+//	err := json.ForeachFileNested("data.json", func(key any, item *json.IterableValue) error {
+//	    fmt.Printf("Key: %v, Type: %T\n", key, item.Value)
+//	    return nil
+//	})
+func ForeachFileNested(filePath string, fn func(key any, item *IterableValue) error) error {
+	return withProcessorError(func(p *Processor) error {
+		return p.ForeachFileNested(filePath, fn)
+	})
 }

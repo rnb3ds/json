@@ -1653,10 +1653,10 @@ func TestProcessorConcurrencyComprehensive(t *testing.T) {
 
 	t.Run("Concurrentoperations", func(t *testing.T) {
 		t.Run("ConcurrentReads", func(t *testing.T) {
-			jsonStr := generator.GenerateComplexJSON()
+			jsonStr := generator.generateComplexJSON()
 			concurrencyTester := newConcurrencyTester(t, 20, 100)
 
-			concurrencyTester.Run(func(workerID, iteration int) error {
+			concurrencyTester.run(func(workerID, iteration int) error {
 				paths := []string{
 					"users[0].name",
 					"settings.appName",
@@ -1674,7 +1674,7 @@ func TestProcessorConcurrencyComprehensive(t *testing.T) {
 			var resultsMutex sync.Mutex
 
 			concurrencyTester := newConcurrencyTester(t, 10, 50)
-			concurrencyTester.Run(func(workerID, iteration int) error {
+			concurrencyTester.run(func(workerID, iteration int) error {
 				counterKey := fmt.Sprintf("counters.%c", 'a'+workerID%2)
 				result, err := Set(originalJSON, counterKey, workerID*1000+iteration)
 				if err != nil {
@@ -1694,7 +1694,7 @@ func TestProcessorConcurrencyComprehensive(t *testing.T) {
 			var operations int64
 
 			concurrencyTester := newConcurrencyTester(t, 15, 100)
-			concurrencyTester.Run(func(workerID, iteration int) error {
+			concurrencyTester.run(func(workerID, iteration int) error {
 				atomic.AddInt64(&operations, 1)
 				switch iteration % 3 {
 				case 0:
@@ -1717,10 +1717,10 @@ func TestProcessorConcurrencyComprehensive(t *testing.T) {
 			processor, _ := New()
 			defer processor.Close()
 
-			jsonStr := generator.GenerateComplexJSON()
+			jsonStr := generator.generateComplexJSON()
 			concurrencyTester := newConcurrencyTester(t, 25, 200)
 
-			concurrencyTester.Run(func(workerID, iteration int) error {
+			concurrencyTester.run(func(workerID, iteration int) error {
 				switch iteration % 2 {
 				case 0:
 					_, err := processor.Get(jsonStr, "users[0].name")
@@ -2097,13 +2097,13 @@ func TestProcessorConcurrencyComprehensive(t *testing.T) {
 			proc, _ := New(DefaultConfig())
 			defer proc.Close()
 
-			testData := newTestDataGenerator().GenerateComplexJSON()
+			testData := newTestDataGenerator().generateComplexJSON()
 
 			concurrency := 50
 			operations := 1000
 
 			ct := newConcurrencyTester(t, concurrency, operations)
-			ct.Run(func(workerID, iteration int) error {
+			ct.run(func(workerID, iteration int) error {
 				switch iteration % 4 {
 				case 0:
 					_, err := proc.Get(testData, "users[0].name")

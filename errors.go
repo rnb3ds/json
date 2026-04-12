@@ -121,9 +121,8 @@ func (e *JsonsError) Is(target error) bool {
 		return false
 	}
 
-	// Check if target is the same type
-	var targetErr *JsonsError
-	if errors.As(target, &targetErr) {
+	// Check if target is the same type using direct type assertion
+	if targetErr, ok := target.(*JsonsError); ok {
 		return e.Op == targetErr.Op && e.Path == targetErr.Path && e.Err == targetErr.Err
 	}
 

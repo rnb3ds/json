@@ -1998,3 +1998,56 @@ func (iv *IterableValue) Release() {
 	iv.data = nil
 	iterableValuePool.Put(iv)
 }
+
+// ============================================================================
+// Package-level Foreach* wrappers for Processor methods (dual-layer design)
+// ============================================================================
+
+// ForeachWithError iterates over JSON arrays or objects with error-returning callback.
+// The callback returns an error to signal iteration control:
+//   - nil: continue iteration
+//   - item.Break(): stop iteration without error
+//   - other error: stop iteration and return the error
+//
+// Example:
+//
+//	err := json.ForeachWithError(jsonStr, ".", func(key any, item *json.IterableValue) error {
+//	    if item.GetInt("id") == targetId {
+//	        return item.Break() // stop iteration
+//	    }
+//	    return nil // continue
+//	})
+func ForeachWithError(jsonStr, path string, fn func(key any, item *IterableValue) error) error {
+	return withProcessorError(func(p *Processor) error {
+		return p.ForeachWithError(jsonStr, path, fn)
+	})
+}
+
+// ForeachNestedWithError recursively iterates over all nested JSON structures with error-returning callback.
+//
+// Example:
+//
+//	err := json.ForeachNestedWithError(jsonStr, func(key any, item *json.IterableValue) error {
+//	    fmt.Printf("Key: %v\n", key)
+//	    return nil
+//	})
+func ForeachNestedWithError(jsonStr string, fn func(key any, item *IterableValue) error) error {
+	return withProcessorError(func(p *Processor) error {
+		return p.ForeachNestedWithError(jsonStr, fn)
+	})
+}
+
+// ForeachWithPathAndIterator iterates over JSON at a path with path information in the callback.
+// The callback receives the current path and returns IteratorControl to control iteration flow.
+//
+// Example:
+//
+//	err := json.ForeachWithPathAndIterator(jsonStr, ".users", func(key any, item *json.IterableValue, currentPath string) json.IteratorControl {
+//	    fmt.Printf("Path: %s, Key: %v\n", currentPath, key)
+//	    return json.IteratorNormal // continue
+//	})
+func ForeachWithPathAndIterator(jsonStr, path string, fn func(key any, item *IterableValue, currentPath string) IteratorControl) error {
+	return withProcessorError(func(p *Processor) error {
+		return p.ForeachWithPathAndIterator(jsonStr, path, fn)
+	})
+}

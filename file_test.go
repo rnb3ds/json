@@ -50,9 +50,9 @@ func TestLoadFromFile(t *testing.T) {
 			t.Fatalf("Failed to write test file: %v", err)
 		}
 
-		data, err := processor.LoadFromFileAsData(filePath)
+		data, err := processor.loadFromFileAsData(filePath)
 		if err != nil {
-			t.Errorf("LoadFromFileAsData failed: %v", err)
+			t.Errorf("loadFromFileAsData failed: %v", err)
 		}
 
 		result, ok := data.(map[string]interface{})
@@ -186,9 +186,9 @@ func TestLoadFromReader(t *testing.T) {
 		testData := `{"key":"value","number":42}`
 		reader := strings.NewReader(testData)
 
-		data, err := processor.LoadFromReaderAsData(reader)
+		data, err := processor.loadFromReaderAsData(reader)
 		if err != nil {
-			t.Errorf("LoadFromReaderAsData failed: %v", err)
+			t.Errorf("loadFromReaderAsData failed: %v", err)
 		}
 
 		_, ok := data.(map[string]interface{})
@@ -371,7 +371,9 @@ invalid json
 `
 		reader := strings.NewReader(content)
 
-		np := NewNDJSONProcessor()
+		cfg := DefaultConfig()
+		cfg.JSONLContinueOnErr = true
+		np := NewNDJSONProcessor(cfg)
 
 		lines := 0
 		err := np.ProcessReader(reader, func(lineNum int, obj map[string]interface{}) error {

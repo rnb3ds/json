@@ -184,8 +184,9 @@ func TestAppendOperation(t *testing.T) {
 			jsonStr:   `{}`,
 			path:      "items[+]",
 			value:     1,
+			cfg:       func() Config { c := DefaultConfig(); c.CreatePaths = false; return c }(),
 			wantErr:   true,
-			errSubstr: "not found",
+			errSubstr: "cannot append",
 		},
 	}
 

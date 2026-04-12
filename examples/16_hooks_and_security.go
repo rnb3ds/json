@@ -205,14 +205,19 @@ func demonstrateSecurityPatterns() {
 	fmt.Println("----------------------")
 
 	// List default patterns
-	defaults := json.GetDefaultPatterns()
+	defaults := json.ListDangerousPatterns()
 	fmt.Printf("   Default security patterns: %d\n", len(defaults))
 	for _, p := range defaults {
 		fmt.Printf("   - [%s] %s\n", p.Level, p.Name)
 	}
 
-	// List critical patterns
-	critical := json.GetCriticalPatterns()
+	// List critical patterns (filter from all patterns)
+	var critical []json.DangerousPattern
+	for _, p := range defaults {
+		if p.Level == json.PatternLevelCritical {
+			critical = append(critical, p)
+		}
+	}
 	fmt.Printf("\n   Critical patterns: %d\n", len(critical))
 	for _, p := range critical {
 		fmt.Printf("   - %s (pattern: %s)\n", p.Name, p.Pattern)

@@ -389,6 +389,15 @@ func unifiedTypeConversion[T any](value any) (T, bool) {
 
 // convertValue handles the actual conversion logic
 func convertValue(value any, target any) (any, bool) {
+	return convertValueWithDepth(value, target, 0)
+}
+
+// convertValueWithDepth handles conversion with depth tracking to prevent stack overflow.
+func convertValueWithDepth(value any, target any, depth int) (any, bool) {
+	if depth > deepCopyMaxDepth {
+		return nil, false
+	}
+
 	targetType := reflect.TypeOf(target)
 
 	switch targetType.Kind() {
@@ -427,11 +436,11 @@ func convertValue(value any, target any) (any, bool) {
 			return b, true
 		}
 	case reflect.Slice:
-		if s, ok := convertToSlice(value, targetType); ok {
+		if s, ok := convertToSliceWithDepth(value, targetType, depth); ok {
 			return s, true
 		}
 	case reflect.Map:
-		if m, ok := convertToMap(value, targetType); ok {
+		if m, ok := convertToMapWithDepth(value, targetType, depth); ok {
 			return m, true
 		}
 	}
@@ -441,6 +450,10 @@ func convertValue(value any, target any) (any, bool) {
 
 // convertToSlice converts value to slice type
 func convertToSlice(value any, targetType reflect.Type) (any, bool) {
+	return convertToSliceWithDepth(value, targetType, 0)
+}
+
+func convertToSliceWithDepth(value any, targetType reflect.Type, depth int) (any, bool) {
 	rv := reflect.ValueOf(value)
 	if rv.Kind() != reflect.Slice && rv.Kind() != reflect.Array {
 		return nil, false
@@ -451,7 +464,7 @@ func convertToSlice(value any, targetType reflect.Type) (any, bool) {
 
 	for i := 0; i < rv.Len(); i++ {
 		elem := rv.Index(i).Interface()
-		if converted, ok := convertValue(elem, reflect.Zero(elemType).Interface()); ok {
+		if converted, ok := convertValueWithDepth(elem, reflect.Zero(elemType).Interface(), depth+1); ok {
 			result.Index(i).Set(reflect.ValueOf(converted))
 		} else {
 			return nil, false
@@ -463,6 +476,10 @@ func convertToSlice(value any, targetType reflect.Type) (any, bool) {
 
 // convertToMap converts value to map type
 func convertToMap(value any, targetType reflect.Type) (any, bool) {
+	return convertToMapWithDepth(value, targetType, 0)
+}
+
+func convertToMapWithDepth(value any, targetType reflect.Type, depth int) (any, bool) {
 	rv := reflect.ValueOf(value)
 	if rv.Kind() != reflect.Map {
 		return nil, false
@@ -476,8 +493,8 @@ func convertToMap(value any, targetType reflect.Type) (any, bool) {
 		keyInterface := key.Interface()
 		valueInterface := rv.MapIndex(key).Interface()
 
-		convertedKey, keyOk := convertValue(keyInterface, reflect.Zero(keyType).Interface())
-		convertedValue, valueOk := convertValue(valueInterface, reflect.Zero(elemType).Interface())
+		convertedKey, keyOk := convertValueWithDepth(keyInterface, reflect.Zero(keyType).Interface(), depth+1)
+		convertedValue, valueOk := convertValueWithDepth(valueInterface, reflect.Zero(elemType).Interface(), depth+1)
 
 		if keyOk && valueOk {
 			result.SetMapIndex(reflect.ValueOf(convertedKey), reflect.ValueOf(convertedValue))
@@ -761,9 +778,9 @@ func deepCopySubtree(data any) (any, error) {
 	// Tier 2: Try shallow copy for maps/slices containing only primitives
 	switch v := data.(type) {
 	case map[string]any:
-		return shallowCopyMap(v)
+		return shallowCopyMap(v, 0)
 	case []any:
-		return shallowCopySlice(v)
+		return shallowCopySlice(v, 0)
 	}
 
 	// Tier 3: Fallback to recursive deep copy for complex nested types
@@ -784,14 +801,14 @@ func isPrimitiveFast(v any) bool {
 
 // shallowCopyMap copies a map, deep-copying only non-primitive values in-place.
 // Primitives (immutable) are shared; nested containers are recursively copied.
-func shallowCopyMap(m map[string]any) (any, error) {
+func shallowCopyMap(m map[string]any, depth int) (any, error) {
 	result := make(map[string]any, len(m))
 	for k, v := range m {
 		if isPrimitiveFast(v) {
 			result[k] = v
 			continue
 		}
-		copied, err := deepCopyValueWithDepth(v, 0)
+		copied, err := deepCopyValueWithDepth(v, depth+1)
 		if err != nil {
 			return nil, fmt.Errorf("error copying key '%s': %w", k, err)
 		}
@@ -802,14 +819,14 @@ func shallowCopyMap(m map[string]any) (any, error) {
 
 // shallowCopySlice copies a slice, deep-copying only non-primitive elements in-place.
 // Primitives (immutable) are shared; nested containers are recursively copied.
-func shallowCopySlice(s []any) (any, error) {
+func shallowCopySlice(s []any, depth int) (any, error) {
 	result := make([]any, len(s))
 	for i, v := range s {
 		if isPrimitiveFast(v) {
 			result[i] = v
 			continue
 		}
-		copied, err := deepCopyValueWithDepth(v, 0)
+		copied, err := deepCopyValueWithDepth(v, depth+1)
 		if err != nil {
 			return nil, fmt.Errorf("error copying index %d: %w", i, err)
 		}
@@ -997,7 +1014,6 @@ func MergeMany(jsons []string, cfg ...Config) (string, error) {
 	return result, nil
 }
 
-
 // convertToTypedCore is the shared core logic for converting a value to type T.
 func convertToTypedCore[T any](value any, path string) (T, error) {
 	var zero T
@@ -1030,7 +1046,6 @@ func convertToTypedCore[T any](value any, path string) (T, error) {
 	return finalResult, nil
 }
 
-
 // ============================================================================
 // JSON KEY INTERNING
 // Delegates to internal.KeyIntern (64-shard with hot cache) for concurrent performance.
@@ -1040,7 +1055,6 @@ func convertToTypedCore[T any](value any, path string) (T, error) {
 func internKey(key string) string {
 	return internal.GlobalKeyIntern.Intern(key)
 }
-
 
 // ============================================================================
 // VALUE UTILITIES

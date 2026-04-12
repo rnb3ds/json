@@ -181,9 +181,12 @@ func (enc *Encoder) Encode(v any) error {
 
 	// Full encoding path for complex cases with indentation or config
 	// Use processor's config as base to inherit settings like PreserveNumbers,
-	// FloatPrecision, etc. Encoder's explicit fields take priority.
+	// FloatPrecision, etc. Only override EscapeHTML when Encoder was explicitly
+	// set to false via SetEscapeHTML(false).
 	config := processor.GetConfig()
-	config.EscapeHTML = enc.escapeHTML
+	if !enc.escapeHTML {
+		config.EscapeHTML = false
+	}
 
 	if enc.indent != "" || enc.prefix != "" {
 		config.Pretty = true
@@ -817,26 +820,26 @@ func (p *Processor) MarshalIndent(value any, prefix, indent string, cfg ...Confi
 // Unmarshal parses the JSON-encoded data and stores the result in the value pointed to by v.
 // This method is fully compatible with encoding/json.Unmarshal.
 // PERFORMANCE: Fast path for simple cases to avoid string conversion overhead.
-func (p *Processor) Unmarshal(data []byte, v any, cfg ...Config) error {
+func (p *Processor) Unmarshal(data []byte, value any, cfg ...Config) error {
 	if err := p.checkClosed(); err != nil {
 		return err
 	}
 
-	if v == nil {
+	if value == nil {
 		return &InvalidUnmarshalError{Type: nil}
 	}
 
 	// PERFORMANCE: Fast path when no options are provided
 	// Use encoding/json directly to avoid string conversion overhead
 	if len(cfg) == 0 {
-		return json.Unmarshal(data, v)
+		return json.Unmarshal(data, value)
 	}
 
 	// Slow path for options: convert to string for internal processing
 	jsonStr := string(data)
 
 	// Use the existing Parse method which handles all the validation and parsing logic
-	return p.Parse(jsonStr, v, cfg...)
+	return p.Parse(jsonStr, value, cfg...)
 }
 
 // EncodeStream encodes multiple values as a JSON array stream.

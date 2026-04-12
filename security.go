@@ -76,15 +76,12 @@ var dangerousPatterns = []dangerousPattern{
 	// Protocol patterns
 	{"javascript:", "javascript protocol"},
 	{"vbscript:", "vbscript protocol"},
-	{"data:", "data protocol"},
 	// Code execution patterns
 	{"eval(", "dynamic code execution"},
-	{"function(", "function expression"},
 	{"setTimeout(", "timer manipulation"},
 	{"setInterval(", "interval manipulation"},
 	{"require(", "code injection"},
 	{"new function(", "dynamic function creation"},
-	{"import(", "dynamic import"},
 	// DOM access patterns
 	{"document.cookie", "cookie access"},
 	{"window.location", "redirect manipulation"},
@@ -93,49 +90,15 @@ var dangerousPatterns = []dangerousPattern{
 	{"fromcharcode(", "character encoding bypass"},
 	{"atob(", "base64 decoding"},
 	{"expression(", "CSS expression injection"},
-	// Event handlers (comprehensive list)
+	// Event handlers (common injection vectors)
 	{"onerror", "event handler injection"},
 	{"onload", "event handler injection"},
 	{"onclick", "event handler injection"},
 	{"onmouseover", "event handler injection"},
 	{"onfocus", "event handler injection"},
-	{"onblur", "event handler injection"},
-	{"onkeyup", "event handler injection"},
-	{"onchange", "event handler injection"},
-	{"onsubmit", "event handler injection"},
-	{"ondblclick", "event handler injection"},
-	{"onmousedown", "event handler injection"},
-	{"onmouseup", "event handler injection"},
-	{"onmousemove", "event handler injection"},
-	{"onkeydown", "event handler injection"},
-	{"onkeypress", "event handler injection"},
-	{"onreset", "event handler injection"},
-	{"onselect", "event handler injection"},
-	{"onunload", "event handler injection"},
-	{"onabort", "event handler injection"},
-	{"ondrag", "event handler injection"},
-	{"ondragend", "event handler injection"},
-	{"ondragenter", "event handler injection"},
-	{"ondragleave", "event handler injection"},
-	{"ondragover", "event handler injection"},
-	{"ondragstart", "event handler injection"},
-	{"ondrop", "event handler injection"},
-	{"onscroll", "event handler injection"},
-	{"onwheel", "event handler injection"},
-	{"oncopy", "event handler injection"},
-	{"oncut", "event handler injection"},
-	{"onpaste", "event handler injection"},
-	// JavaScript dangerous functions
-	{"alert(", "alert function"},
-	{"confirm(", "confirm function"},
-	{"prompt(", "prompt function"},
 	// Prototype pollution patterns
 	{"__defineGetter__", "getter definition"},
 	{"__defineSetter__", "setter definition"},
-	{"Object.assign", "object assignment"},
-	{"Reflect.", "reflection API"},
-	{"Proxy(", "proxy creation"},
-	{"Symbol(", "symbol creation"},
 }
 
 // criticalPatterns are always fully scanned regardless of JSON size
@@ -233,16 +196,16 @@ func ListDangerousPatterns() []DangerousPattern {
 	return globalPatternRegistry.List()
 }
 
-// ClearDangerousPatterns removes all custom patterns from the global registry.
+// clearDangerousPatterns removes all custom patterns from the global registry.
 // Use with caution - this does not affect built-in patterns.
-func ClearDangerousPatterns() {
+func clearDangerousPatterns() {
 	globalPatternRegistry.Clear()
 	atomic.StoreInt64(&cachedMaxPatternLen, 0) // Invalidate cache
 }
 
-// GetDefaultPatterns returns the built-in dangerous patterns as DangerousPattern values.
+// getDefaultPatterns returns the built-in dangerous patterns as DangerousPattern values.
 // All default patterns are considered Critical level.
-func GetDefaultPatterns() []DangerousPattern {
+func getDefaultPatterns() []DangerousPattern {
 	result := make([]DangerousPattern, len(dangerousPatterns))
 	for i, p := range dangerousPatterns {
 		result[i] = DangerousPattern{
@@ -254,8 +217,8 @@ func GetDefaultPatterns() []DangerousPattern {
 	return result
 }
 
-// GetCriticalPatterns returns patterns that are always fully scanned.
-func GetCriticalPatterns() []DangerousPattern {
+// getCriticalPatterns returns patterns that are always fully scanned.
+func getCriticalPatterns() []DangerousPattern {
 	result := make([]DangerousPattern, len(criticalPatterns))
 	for i, p := range criticalPatterns {
 		result[i] = DangerousPattern{
@@ -357,7 +320,6 @@ type validationCacheEntry struct {
 	validated  bool
 	lastAccess int64 // Unix timestamp for LRU eviction
 }
-
 
 // securityValidator provides comprehensive security validation for JSON processing.
 type securityValidator struct {

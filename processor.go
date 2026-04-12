@@ -230,9 +230,10 @@ func (p *Processor) Close() error {
 		p.hooks = nil
 		p.hooksMu.Unlock()
 
-		// Clear global caches that accumulate across processor instances
-		clearPathTypeCache()
-		internal.ClearStructEncoderCache()
+		// NOTE: Global caches (pathTypeCache, structEncoderCache) are NOT cleared
+		// here because they are shared across ALL processor instances. Clearing them
+		// in individual Close() would invalidate caches for other active processors.
+		// Use ShutdownGlobalProcessor() for complete cleanup at application shutdown.
 
 		// If timed out, mark as closeTimedOut instead of fully closed.
 		// This prevents use-after-close: in-flight operations may still
@@ -280,8 +281,12 @@ func (p *Processor) IsClosed() bool {
 //	    return result, err
 //	}
 //
-//	p := json.MustNew()
-//	p.AddHook(&LoggingHook{})
+//	processor, err := json.New()
+//	if err != nil {
+//	    return err
+//	}
+//	defer processor.Close()
+//	processor.AddHook(&LoggingHook{})
 func (p *Processor) AddHook(hook Hook) {
 	if p == nil {
 		return

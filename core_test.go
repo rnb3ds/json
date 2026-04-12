@@ -903,7 +903,7 @@ func TestBufferCompatibility(t *testing.T) {
 }
 
 
-// TestCompactBuffer tests CompactBuffer function
+// TestCompactBuffer tests compactBuffer function
 func TestCompactBuffer(t *testing.T) {
 	prettyJSON := `{
 		"name": "Alice",
@@ -911,7 +911,7 @@ func TestCompactBuffer(t *testing.T) {
 	}`
 
 	var buf bytes.Buffer
-	err := CompactBuffer(&buf, []byte(prettyJSON))
+	err := compactBuffer(&buf, []byte(prettyJSON))
 	if err != nil {
 		t.Fatalf("CompactBuffer error: %v", err)
 	}
@@ -4150,56 +4150,56 @@ func TestPreprocessPath(t *testing.T) {
 	}
 }
 
-// TestPrintE tests PrintE function
+// TestPrintE tests printE function
 func TestPrintFunctions(t *testing.T) {
 	data := map[string]any{"test": "value"}
 	badData := make(chan int)
 
-	t.Run("PrintE valid", func(t *testing.T) {
+	t.Run("printE valid", func(t *testing.T) {
 		output := captureStdout(func() {
-			if err := PrintE(data); err != nil {
-				t.Errorf("PrintE error: %v", err)
+			if err := printE(data); err != nil {
+				t.Errorf("printE error: %v", err)
 			}
 		})
 		if !strings.Contains(output, "test") || !strings.Contains(output, "value") {
-			t.Errorf("PrintE output = %s; should contain test and value", output)
+			t.Errorf("printE output = %s; should contain test and value", output)
 		}
 	})
 
-	t.Run("PrintE invalid", func(t *testing.T) {
-		if err := PrintE(badData); err == nil {
-			t.Error("PrintE should return error for unserializable data")
+	t.Run("printE invalid", func(t *testing.T) {
+		if err := printE(badData); err == nil {
+			t.Error("printE should return error for unserializable data")
 		}
 	})
 
-	t.Run("PrintError stderr", func(t *testing.T) {
-		stderr := captureStderr(func() { Print(badData) })
+	t.Run("print error stderr", func(t *testing.T) {
+		stderr := captureStderr(func() { print(badData) })
 		if stderr == "" {
-			t.Error("Print() should write error to stderr for unserializable data")
+			t.Error("print() should write error to stderr for unserializable data")
 		}
 	})
 
-	t.Run("PrintPrettyE valid", func(t *testing.T) {
+	t.Run("printPrettyE valid", func(t *testing.T) {
 		output := captureStdout(func() {
-			if err := PrintPrettyE(data); err != nil {
-				t.Errorf("PrintPrettyE error: %v", err)
+			if err := printPrettyE(data); err != nil {
+				t.Errorf("printPrettyE error: %v", err)
 			}
 		})
 		if !strings.Contains(output, "\n") {
-			t.Errorf("PrintPrettyE output should contain newlines, got: %s", output)
+			t.Errorf("printPrettyE output should contain newlines, got: %s", output)
 		}
 	})
 
-	t.Run("PrintPrettyE invalid", func(t *testing.T) {
-		if err := PrintPrettyE(badData); err == nil {
-			t.Error("PrintPrettyE should return error for unserializable data")
+	t.Run("printPrettyE invalid", func(t *testing.T) {
+		if err := printPrettyE(badData); err == nil {
+			t.Error("printPrettyE should return error for unserializable data")
 		}
 	})
 
-	t.Run("PrintPrettyError stderr", func(t *testing.T) {
-		stderr := captureStderr(func() { PrintPretty(badData) })
+	t.Run("printPretty error stderr", func(t *testing.T) {
+		stderr := captureStderr(func() { printPretty(badData) })
 		if stderr == "" {
-			t.Error("PrintPretty() should write error to stderr for unserializable data")
+			t.Error("printPretty() should write error to stderr for unserializable data")
 		}
 	})
 }
