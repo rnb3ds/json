@@ -1,7 +1,6 @@
 package json
 
 import (
-	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -545,13 +544,3 @@ func TestProcessorDeleteClean(t *testing.T) {
 // Verify JSON structure helper (used across test files)
 // ============================================================================
 
-// parseAndVerify is a test helper that parses JSON and returns the map.
-// It calls t.Fatalf on parse error.
-func parseAndVerify(t *testing.T, jsonStr string) map[string]any {
-	t.Helper()
-	var m map[string]any
-	if err := json.Unmarshal([]byte(jsonStr), &m); err != nil {
-		t.Fatalf("invalid JSON %q: %v", jsonStr, err)
-	}
-	return m
-}

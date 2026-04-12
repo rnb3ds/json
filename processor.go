@@ -35,8 +35,6 @@ type Processor struct {
 	securityValidator *securityValidator
 	// Cached recursiveProcessor for reuse across operations (performance optimization)
 	recursiveProcessor *recursiveProcessor
-	// Wait group for tracking active operations during Close()
-	activeOps sync.WaitGroup
 	// Extension points for hooks
 	hooks   []Hook
 	hooksMu sync.Mutex // protects hooks slice for concurrent AddHook
@@ -149,26 +147,6 @@ func (p *Processor) Close() error {
 		// Mark as closing to prevent new operations
 		atomic.StoreInt32(&p.state, processorStateClosing)
 
-		// Wait for all active operations to complete with timeout
-		done := make(chan struct{})
-		go func() {
-			p.activeOps.Wait()
-			close(done)
-		}()
-
-		timedOut := false
-		select {
-		case <-done:
-			// All operations completed normally
-		case <-time.After(closeOperationTimeout):
-			// Timeout waiting for operations
-			timedOut = true
-			// Log warning if logger is available (non-blocking)
-			if logger, ok := p.logger.Load().(*slog.Logger); ok && logger != nil {
-				logger.Warn("timeout waiting for active operations during close")
-			}
-		}
-
 		// Drain the concurrency semaphore to release any waiting goroutines
 		// Use context cancellation for clean goroutine termination
 		if p.metrics != nil && p.metrics.concurrencySemaphore != nil {
@@ -235,23 +213,10 @@ func (p *Processor) Close() error {
 		// in individual Close() would invalidate caches for other active processors.
 		// Use ShutdownGlobalProcessor() for complete cleanup at application shutdown.
 
-		// If timed out, mark as closeTimedOut instead of fully closed.
-		// This prevents use-after-close: in-flight operations may still
-		// reference processor resources. The processor stays in a safe
-		// intermediate state that rejects new operations (Closing-like).
-		if timedOut {
-			atomic.StoreInt32(&p.state, processorStateCloseTimedOut)
-			return
-		}
-
 		// Mark as fully closed
 		atomic.StoreInt32(&p.state, processorStateClosed)
 	})
 
-	// Return error if close timed out so caller knows resources may not be fully released
-	if atomic.LoadInt32(&p.state) == processorStateCloseTimedOut {
-		return fmt.Errorf("processor close timed out after %v: %w", closeOperationTimeout, ErrOperationTimeout)
-	}
 	return nil
 }
 
@@ -1225,7 +1190,6 @@ func (p *Processor) Get(jsonStr, path string, cfg ...Config) (result any, err er
 
 	// Cache result if enabled
 	p.setCachedResult(cacheKey, result, options)
-
 
 	return result, nil
 }

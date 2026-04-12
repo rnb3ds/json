@@ -115,46 +115,8 @@ func TestSafeGetAPI(t *testing.T) {
 // Benchmark Tests
 // ============================================================================
 
-func BenchmarkDelete(b *testing.B) {
-	jsonStr := `{"user": {"name": "Alice", "age": 30, "email": "alice@example.com"}}`
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		_, _ = Delete(jsonStr, "user.email")
-	}
-}
-
-func BenchmarkFastDelete(b *testing.B) {
-	processor, _ := New()
-	defer processor.Close()
-
-	jsonStr := `{"name": "test", "age": 30}`
-	b.ResetTimer()
-
-	for i := 0; i < b.N; i++ {
-		_, _ = processor.fastDelete(jsonStr, "name")
-	}
-}
-
-// Benchmark tests for operation functions
-func BenchmarkFastSet(b *testing.B) {
-	processor, _ := New()
-	defer processor.Close()
-
-	jsonStr := `{"name": "test", "age": 30}`
-	b.ResetTimer()
-
-	for i := 0; i < b.N; i++ {
-		_, _ = processor.fastSet(jsonStr, "name", "updated")
-	}
-}
-
-func BenchmarkGet(b *testing.B) {
-	jsonStr := `{"user": {"name": "Alice", "age": 30, "email": "alice@example.com"}}`
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		_, _ = Get(jsonStr, "user.name")
-	}
-}
+// BenchmarkDelete/BenchmarkFastDelete/BenchmarkFastSet/BenchmarkGet
+// are covered by comprehensive versions in benchmark_test.go
 
 func BenchmarkHandleArrayAccess(b *testing.B) {
 	processor, _ := New()
@@ -203,13 +165,7 @@ func BenchmarkJSONPointerEscape(b *testing.B) {
 	}
 }
 
-func BenchmarkMarshal(b *testing.B) {
-	data := map[string]any{"name": "Alice", "age": 30}
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		_, _ = Marshal(data)
-	}
-}
+// BenchmarkMarshal is covered by comprehensive versions in benchmark_test.go
 
 func BenchmarkOpBatchSet(b *testing.B) {
 	processor, _ := New()
@@ -282,13 +238,7 @@ func BenchmarkPerformArraySlice(b *testing.B) {
 	}
 }
 
-func BenchmarkSet(b *testing.B) {
-	jsonStr := `{"user": {"name": "Alice"}}`
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		_, _ = Set(jsonStr, "user.age", 30)
-	}
-}
+// BenchmarkSet is covered by comprehensive versions in benchmark_test.go
 
 // TestArrayExtensionSignal tests the Error method
 func TestArrayExtensionSignal(t *testing.T) {
@@ -3278,40 +3228,7 @@ func TestIsComplexPath(t *testing.T) {
 }
 
 
-// TestisEmptyOrZero tests the isEmptyOrZero exported function
-func TestIsEmptyOrZero(t *testing.T) {
-	tests := []struct {
-		name     string
-		input    any
-		expected bool
-	}{
-		{"nil", nil, true},
-		{"empty string", "", true},
-		{"non-empty string", "hello", false},
-		{"zero int", 0, true},
-		{"non-zero int", 42, false},
-		{"zero int64", int64(0), true},
-		{"non-zero int64", int64(42), false},
-		{"zero float64", 0.0, true},
-		{"non-zero float64", 3.14, false},
-		{"false bool", false, true},
-		{"true bool", true, false},
-		{"empty slice", []any{}, true},
-		{"non-empty slice", []any{1, 2}, false},
-		{"empty map", map[string]any{}, true},
-		{"non-empty map", map[string]any{"key": "val"}, false},
-		{"other type", struct{}{}, false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := isEmptyOrZero(tt.input)
-			if result != tt.expected {
-				t.Errorf("isEmptyOrZero(%v) = %v; want %v", tt.input, result, tt.expected)
-			}
-		})
-	}
-}
+// TestIsEmptyOrZero is covered by TestIsEmptyOrZeroExtended in test_helpers_new_test.go
 
 // TestJSONPointerEscapeUnescape tests JSON Pointer escaping
 func TestJSONPointerEscapeUnescape(t *testing.T) {

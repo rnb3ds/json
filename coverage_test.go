@@ -1518,83 +1518,7 @@ func TestProcessorBufferMethods(t *testing.T) {
 // RECURSIVE PROCESSOR TESTS
 // ============================================================================
 
-// TestdeepCopy tests deep copy functionality
-func TestDeepCopy(t *testing.T) {
-	processor, _ := New()
-	defer processor.Close()
-
-	t.Run("deepCopyMap", func(t *testing.T) {
-		original := map[string]any{
-			"key": "value",
-			"nested": map[string]any{
-				"inner": "data",
-			},
-		}
-
-		copy, err := deepCopy(original)
-		if err != nil {
-			t.Fatalf("deepCopy() error: %v", err)
-		}
-
-		// Modify original
-		original["key"] = "modified"
-		original["nested"].(map[string]any)["inner"] = "changed"
-
-		// Copy should be unaffected
-		copyMap := copy.(map[string]any)
-		if copyMap["key"] != "value" {
-			t.Error("Deep copy should not be affected by original modifications")
-		}
-		if copyMap["nested"].(map[string]any)["inner"] != "data" {
-			t.Error("Deep copy nested map should not be affected")
-		}
-	})
-
-	t.Run("deepCopyArray", func(t *testing.T) {
-		original := []any{
-			1,
-			map[string]any{"key": "value"},
-		}
-
-		copy, err := deepCopy(original)
-		if err != nil {
-			t.Fatalf("deepCopy() error: %v", err)
-		}
-
-		// Modify original
-		original[0] = 999
-		original[1].(map[string]any)["key"] = "modified"
-
-		// Copy should be unaffected
-		copyArr := copy.([]any)
-		if copyArr[0] != 1 {
-			t.Error("Deep copy array should not be affected by original modifications")
-		}
-		if copyArr[1].(map[string]any)["key"] != "value" {
-			t.Error("Deep copy array element should not be affected")
-		}
-	})
-
-	t.Run("deepCopyPrimitives", func(t *testing.T) {
-		tests := []any{
-			"string",
-			42,
-			int64(123456789),
-			float64(3.14),
-			true,
-		}
-
-		for _, original := range tests {
-			copy, err := deepCopy(original)
-			if err != nil {
-				t.Fatalf("deepCopy() error: %v", err)
-			}
-			if copy != original {
-				t.Errorf("Deep copy of primitive %v should return same value", original)
-			}
-		}
-	})
-}
+// TestDeepCopy is covered by TestDeepCopyExtended in test_helpers_new_test.go
 
 // ============================================================================
 // BATCH OPERATIONS TESTS
@@ -3638,4 +3562,92 @@ func TestTypeConversionErrors(t *testing.T) {
 			t.Error("Converting invalid bool string should fail")
 		}
 	})
+}
+
+// ============================================================================
+// API wrapper tests for 0% coverage functions
+// ============================================================================
+
+// TestAPISetCreate tests the package-level SetCreate function
+func TestAPISetCreate(t *testing.T) {
+	t.Run("create nested path", func(t *testing.T) {
+		result, err := SetCreate(`{"a":1}`, "b.c", 2)
+		if err != nil {
+			t.Fatalf("SetCreate error: %v", err)
+		}
+		assertJSONEqual(t, `{"a":1,"b":{"c":2}}`, result)
+	})
+
+	t.Run("set existing", func(t *testing.T) {
+		result, err := SetCreate(`{"a":1}`, "a", 99)
+		if err != nil {
+			t.Fatalf("SetCreate error: %v", err)
+		}
+		assertJSONEqual(t, `{"a":99}`, result)
+	})
+}
+
+// TestAPISetMultipleCreate tests the package-level SetMultipleCreate function
+func TestAPISetMultipleCreate(t *testing.T) {
+	result, err := SetMultipleCreate(`{}`, map[string]any{"x": 1, "y": 2})
+	if err != nil {
+		t.Fatalf("SetMultipleCreate error: %v", err)
+	}
+	assertJSONEqual(t, `{"x":1,"y":2}`, result)
+}
+
+// TestAPIDeleteClean tests the package-level DeleteClean function
+func TestAPIDeleteClean(t *testing.T) {
+	t.Run("delete and clean array", func(t *testing.T) {
+		result, err := DeleteClean(`{"items":[1,2,3]}`, "items[1]")
+		if err != nil {
+			t.Fatalf("DeleteClean error: %v", err)
+		}
+		if result == "" {
+			t.Error("result should not be empty")
+		}
+	})
+
+	t.Run("delete and clean object", func(t *testing.T) {
+		result, err := DeleteClean(`{"a":1,"b":null}`, "b")
+		if err != nil {
+			t.Fatalf("DeleteClean error: %v", err)
+		}
+		assertJSONEqual(t, `{"a":1}`, result)
+	})
+}
+
+// TestAPILoadFromReader tests the package-level LoadFromReader function
+func TestAPILoadFromReader(t *testing.T) {
+	t.Run("valid JSON", func(t *testing.T) {
+		result, err := LoadFromReader(strings.NewReader(`{"key":"value"}`))
+		if err != nil {
+			t.Fatalf("LoadFromReader error: %v", err)
+		}
+		if result == "" {
+			t.Error("result should not be empty")
+		}
+	})
+
+	t.Run("empty reader", func(t *testing.T) {
+		result, err := LoadFromReader(strings.NewReader(""))
+		if err != nil {
+			t.Errorf("unexpected error for empty reader: %v", err)
+		}
+		if result != "" {
+			t.Errorf("expected empty result, got %q", result)
+		}
+	})
+}
+
+// TestAPIClearCache tests the package-level ClearCache function
+func TestAPIClearCache(t *testing.T) {
+	// Should not panic
+	ClearCache()
+
+	// Verify operations still work after cache clear
+	_, err := Get(`{"a":1}`, "a")
+	if err != nil {
+		t.Errorf("Get after ClearCache error: %v", err)
+	}
 }

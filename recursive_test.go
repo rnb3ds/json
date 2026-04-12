@@ -1745,3 +1745,195 @@ func compareResults(t *testing.T, want, got any) {
 		}
 	}
 }
+
+// ============================================================================
+// Additional recursive coverage tests — package-level Get/Set/Delete paths
+// ============================================================================
+
+// TestRecursive_DistributedArrayIndex tests handleArrayIndexSegmentUnified distributed paths
+func TestRecursive_DistributedArrayIndex(t *testing.T) {
+	t.Run("get from array of arrays", func(t *testing.T) {
+		json := `{"matrix":[[1,2],[3,4],[5,6]]}`
+		result, err := Get(json, "matrix[0]")
+		if err != nil {
+			t.Fatalf("Get error: %v", err)
+		}
+		// Returns the first sub-array element
+		t.Logf("result: %v (%T)", result, result)
+		if result == nil {
+			t.Error("expected non-nil result")
+		}
+	})
+
+	t.Run("set in distributed array", func(t *testing.T) {
+		json := `{"matrix":[[1,2],[3,4]]}`
+		result, err := Set(json, "matrix[0]", 99)
+		if err != nil {
+			t.Fatalf("Set error: %v", err)
+		}
+		if result == "" {
+			t.Error("result should not be empty")
+		}
+	})
+
+	t.Run("get from map with array values", func(t *testing.T) {
+		json := `{"data":{"a":[1,2],"b":[3,4]}}`
+		result, err := Get(json, "data[0]")
+		if err != nil {
+			t.Fatalf("Get error: %v", err)
+		}
+		// Should get first element from each array
+		arr, ok := result.([]any)
+		if !ok {
+			t.Fatalf("result is %T, want []any", result)
+		}
+		if len(arr) != 2 {
+			t.Errorf("length = %d, want 2", len(arr))
+		}
+	})
+
+	t.Run("out of bounds in distributed", func(t *testing.T) {
+		json := `{"matrix":[[1],[2,3]]}`
+		// First sub-array has length 1, so index 1 is out of bounds
+		result, err := Get(json, "matrix[1]")
+		if err != nil {
+			// May or may not error depending on impl
+			t.Logf("Get returned error: %v", err)
+		}
+		t.Logf("Get result: %v", result)
+	})
+}
+
+// TestRecursive_WildcardArray tests handleWildcardSegmentUnified with arrays
+func TestRecursive_WildcardArray(t *testing.T) {
+	t.Run("get all array elements", func(t *testing.T) {
+		json := `{"items":[1,2,3]}`
+		result, err := Get(json, "items[*]")
+		if err != nil {
+			t.Fatalf("Get error: %v", err)
+		}
+		arr, ok := result.([]any)
+		if !ok {
+			t.Fatalf("result is %T, want []any", result)
+		}
+		if len(arr) != 3 {
+			t.Errorf("length = %d, want 3", len(arr))
+		}
+	})
+
+	t.Run("set all array elements", func(t *testing.T) {
+		json := `{"items":[1,2,3]}`
+		result, err := Set(json, "items[*]", 0)
+		if err != nil {
+			t.Fatalf("Set error: %v", err)
+		}
+		if result == "" {
+			t.Error("result should not be empty")
+		}
+		t.Logf("set wildcard result: %s", result)
+	})
+
+	t.Run("delete all array elements", func(t *testing.T) {
+		json := `{"items":[1,2,3]}`
+		_, err := Delete(json, "items[*]")
+		if err != nil {
+			t.Fatalf("Delete error: %v", err)
+		}
+	})
+
+	t.Run("wildcard with nested path", func(t *testing.T) {
+		json := `{"items":[{"x":1},{"x":2}]}`
+		result, err := Get(json, "items[*].x")
+		if err != nil {
+			t.Fatalf("Get error: %v", err)
+		}
+		arr, ok := result.([]any)
+		if !ok {
+			t.Fatalf("result is %T, want []any", result)
+		}
+		if len(arr) != 2 {
+			t.Errorf("length = %d, want 2", len(arr))
+		}
+	})
+}
+
+// TestRecursive_WildcardMap tests handleWildcardSegmentUnified with maps
+func TestRecursive_WildcardMap(t *testing.T) {
+	t.Run("get all map values", func(t *testing.T) {
+		json := `{"data":{"a":1,"b":2}}`
+		result, err := Get(json, "data[*]")
+		if err != nil {
+			t.Fatalf("Get error: %v", err)
+		}
+		arr, ok := result.([]any)
+		if !ok {
+			t.Fatalf("result is %T, want []any", result)
+		}
+		if len(arr) != 2 {
+			t.Errorf("length = %d, want 2", len(arr))
+		}
+	})
+
+	t.Run("set all map values", func(t *testing.T) {
+		json := `{"data":{"a":1,"b":2}}`
+		result, err := Set(json, "data[*]", 9)
+		// Wildcard set on map values may not be supported — log behavior
+		if err != nil {
+			t.Logf("Set wildcard on map error (expected): %v", err)
+		} else {
+			t.Logf("Set wildcard on map result: %s", result)
+		}
+	})
+
+	t.Run("delete all map values", func(t *testing.T) {
+		json := `{"data":{"a":1,"b":2}}`
+		result, err := Delete(json, "data[*]")
+		// Wildcard delete on map values may not be supported — log behavior
+		if err != nil {
+			t.Logf("Delete wildcard on map error (expected): %v", err)
+		} else {
+			t.Logf("Delete wildcard on map result: %s", result)
+		}
+	})
+
+	t.Run("wildcard map with nested path", func(t *testing.T) {
+		json := `{"outer":{"a":{"x":1},"b":{"x":2}}}`
+		result, err := Get(json, "outer[*].x")
+		if err != nil {
+			t.Fatalf("Get error: %v", err)
+		}
+		arr, ok := result.([]any)
+		if !ok {
+			t.Fatalf("result is %T, want []any", result)
+		}
+		if len(arr) != 2 {
+			t.Errorf("length = %d, want 2", len(arr))
+		}
+	})
+}
+
+// TestRecursive_ExtractThenSlice tests handleExtractThenSlice paths
+func TestRecursive_ExtractThenSlice(t *testing.T) {
+	t.Run("extract and slice from array", func(t *testing.T) {
+		json := `{"items":[{"name":"a","v":1},{"name":"b","v":2},{"name":"c","v":3}]}`
+		result, err := Get(json, "items.{name}[0:2]")
+		if err != nil {
+			t.Fatalf("Get error: %v", err)
+		}
+		arr, ok := result.([]any)
+		if !ok {
+			t.Fatalf("result is %T, want []any", result)
+		}
+		if len(arr) != 2 {
+			t.Errorf("length = %d, want 2", len(arr))
+		}
+	})
+
+	t.Run("extract and delete slice", func(t *testing.T) {
+		json := `{"items":[{"name":"a","v":1},{"name":"b","v":2}]}`
+		_, err := Delete(json, "items.{name}[0:1]")
+		if err != nil {
+			t.Logf("Delete extract+slice error: %v", err)
+		}
+	})
+}

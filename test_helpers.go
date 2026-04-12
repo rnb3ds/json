@@ -196,17 +196,6 @@ func newTestDataGenerator() *testDataGenerator {
 	}
 }
 
-// generateSimpleJSON generates simple JSON structures
-func (g *testDataGenerator) generateSimpleJSON() string {
-	templates := []string{
-		`{"name":"John","age":30}`,
-		`{"active":true,"score":95.5}`,
-		`{"items":[1,2,3,4,5]}`,
-		`{"user":{"name":"Alice","email":"alice@example.com"}}`,
-		`{"data":null,"empty":""}`,
-	}
-	return templates[g.rand.Intn(len(templates))]
-}
 
 // generateComplexJSON generates complex nested JSON structures
 func (g *testDataGenerator) generateComplexJSON() string {
@@ -279,41 +268,6 @@ func (g *testDataGenerator) generateComplexJSON() string {
 	}`
 }
 
-// generateArrayJSON generates JSON with various array structures
-func (g *testDataGenerator) generateArrayJSON() string {
-	return `{
-		"numbers": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
-		"strings": ["apple", "banana", "cherry", "date", "elderberry"],
-		"mixed": [1, "two", 3.0, true, null, {"nested": "object"}],
-		"nested": [
-			[1, 2, 3],
-			[4, 5, 6],
-			[7, 8, 9]
-		],
-		"objects": [
-			{"id": 1, "name": "Item 1", "active": true},
-			{"id": 2, "name": "Item 2", "active": false},
-			{"id": 3, "name": "Item 3", "active": true}
-		],
-		"empty": [],
-		"nulls": [null, null, null]
-	}`
-}
-
-// generateInvalidJSON generates invalid JSON for error testing
-func (g *testDataGenerator) generateInvalidJSON() []string {
-	return []string{
-		`{invalid json}`,
-		`{"unclosed": "string}`,
-		`{"trailing": "comma",}`,
-		`{unquoted: "key"}`,
-		`{"number": 123.45.67}`,
-		`{"array": [1, 2, 3,]}`,
-		`{"nested": {"unclosed": }`,
-		``,
-		`null extra content`,
-	}
-}
 
 // concurrencyTester helps test concurrent operations
 type concurrencyTester struct {
@@ -472,13 +426,3 @@ func genItemFragments(count int) string {
 	return strings.Join(items, ",")
 }
 
-// newTestProcessor creates a Processor for test scope and closes it on cleanup.
-func newTestProcessor(t *testing.T) *Processor {
-	t.Helper()
-	p, err := New()
-	if err != nil {
-		t.Fatalf("New(): %v", err)
-	}
-	t.Cleanup(func() { p.Close() })
-	return p
-}
