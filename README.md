@@ -13,42 +13,6 @@
 
 ---
 
-## Table of Contents
-
-- [Why cybergodev/json](#why-cybergodevjson)
-- [Features](#features)
-- [Installation](#installation)
-- [Quick Start](#quick-start)
-- [Path Syntax Reference](#path-syntax-reference)
-- [Core API](#core-api)
-  - [Data Retrieval](#data-retrieval)
-  - [Data Modification](#data-modification)
-  - [Encoding and Formatting](#encoding-and-formatting)
-  - [File Operations](#file-operations)
-  - [JSON Utilities](#json-utilities)
-- [Configuration](#configuration)
-- [Advanced Features](#advanced-features)
-  - [Iteration](#iteration)
-  - [Batch Operations](#batch-operations)
-  - [Schema Validation](#schema-validation)
-  - [PreParse and CompiledPath](#preparse-and-compiledpath)
-  - [Encode Utilities](#encode-utilities)
-  - [JSONL Processing](#jsonl-processing)
-  - [Streaming Iterators](#streaming-iterators)
-  - [Parallel Processing](#parallel-processing)
-  - [Hooks](#hooks)
-- [Common Use Cases](#common-use-cases)
-- [Performance Monitoring](#performance-monitoring)
-- [Migrating from encoding/json](#migrating-from-encodingjson)
-- [Security Configuration](#security-configuration)
-  - [Security Utilities](#security-utilities)
-  - [Error Handling](#error-handling)
-- [Example Code](#example-code)
-- [Documentation](#documentation)
-- [License](#license)
-
----
-
 ## Why cybergodev/json
 
 | Feature | encoding/json | cybergodev/json |
@@ -59,7 +23,6 @@
 | JSON Pointer (RFC 6901) | - | `/users/0/name` |
 | Type-safe defaults | - | `GetString(data, "path", "default")` |
 | Streaming large files | - | Built-in streaming processors |
-| Schema validation | - | JSON Schema (Draft 7 subset) |
 | Memory pooling | - | `sync.Pool` for hot paths |
 | Path caching | - | Smart cache with TTL |
 | Batch operations | - | `ProcessBatch()` for bulk work |
@@ -84,7 +47,7 @@
 go get github.com/cybergodev/json
 ```
 
-**Requirements**: Go 1.25.0 or later
+**Requirements**: Go 1.25 or later
 
 **Import**:
 
@@ -235,8 +198,8 @@ json.Unmarshal(bytes, &target)
 bytes, _ := json.MarshalIndent(data, "", "  ")
 
 // Quick formatting
-pretty, _    := json.Prettify(jsonStr)      // pretty print
-compact, _   := json.Compact(jsonStr)       // minify string
+pretty, _  := json.Prettify(jsonStr)      // pretty print
+compact, _ := json.Compact(jsonStr)       // minify string
 
 // Using encoding/json compatible buffer API
 var buf bytes.Buffer

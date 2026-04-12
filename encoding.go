@@ -235,6 +235,7 @@ type Decoder struct {
 	useNumber             bool
 	disallowUnknownFields bool
 	offset                int64 // total bytes read from input
+	maxNestingDepth       int   // maximum allowed nesting depth for containers
 }
 
 // NewDecoder returns a new decoder that reads from r.
@@ -253,13 +254,18 @@ type Decoder struct {
 //	cfg.DisallowUnknown = true
 //	decoder := json.NewDecoder(reader, cfg)
 func NewDecoder(r io.Reader, cfg ...Config) *Decoder {
+	maxDepth := DefaultMaxNestingDepth
 	dec := &Decoder{
-		r:   r,
-		buf: bufio.NewReader(r),
+		r:               r,
+		buf:             bufio.NewReader(r),
+		maxNestingDepth: maxDepth,
 	}
 	// Apply config if provided
 	if len(cfg) > 0 {
 		dec.disallowUnknownFields = cfg[0].DisallowUnknown
+		if cfg[0].MaxNestingDepthSecurity > 0 {
+			dec.maxNestingDepth = cfg[0].MaxNestingDepthSecurity
+		}
 	}
 	return dec
 }
@@ -440,8 +446,13 @@ func (dec *Decoder) readStringValue(buf *bytes.Buffer) ([]byte, error) {
 
 // readContainerValue reads a complete JSON object or array.
 // openChar is the opening delimiter ('{' or '[') used to validate matching close delimiters.
+// Enforces maxNestingDepth to prevent stack exhaustion from deeply nested input.
 func (dec *Decoder) readContainerValue(buf *bytes.Buffer, openChar byte) ([]byte, error) {
 	depth := 1
+	maxDepth := dec.maxNestingDepth
+	if maxDepth <= 0 {
+		maxDepth = DefaultMaxNestingDepth
+	}
 	inString := false
 	escaped := false
 
@@ -476,6 +487,9 @@ func (dec *Decoder) readContainerValue(buf *bytes.Buffer, openChar byte) ([]byte
 			inString = true
 		case '{', '[':
 			depth++
+			if depth > maxDepth {
+				return nil, fmt.Errorf("JSON nesting depth %d exceeds maximum allowed depth %d", depth, maxDepth)
+			}
 		case '}', ']':
 			if depth == 1 {
 				expectedClose := byte('}')

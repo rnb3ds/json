@@ -827,14 +827,11 @@ func (e *FastEncoder) EncodeBool(b bool) {
 // EncodeMap encodes a map[string]any
 // PERFORMANCE v2: Pre-allocates buffer capacity based on map size estimate
 func (e *FastEncoder) EncodeMap(m map[string]any) error {
-	// PERFORMANCE: Pre-grow buffer to reduce reallocations
+	// PERFORMANCE v2: Pre-grow buffer to reduce reallocations
 	// Estimate: each entry needs ~32 bytes on average (key + value + quotes + colon + comma)
 	needed := len(m) * 32
 	if cap(e.buf)-len(e.buf) < needed {
-		// Grow by the needed amount
-		newBuf := make([]byte, len(e.buf), len(e.buf)+needed)
-		copy(newBuf, e.buf)
-		e.buf = newBuf
+		e.buf = append(e.buf[:cap(e.buf)], make([]byte, needed)...)[:len(e.buf)]
 	}
 
 	e.buf = append(e.buf, '{')
@@ -863,9 +860,7 @@ func (e *FastEncoder) EncodeMapStringString(m map[string]string) error {
 	// PERFORMANCE: Pre-grow buffer to reduce reallocations
 	needed := len(m) * 32
 	if cap(e.buf)-len(e.buf) < needed {
-		newBuf := make([]byte, len(e.buf), len(e.buf)+needed)
-		copy(newBuf, e.buf)
-		e.buf = newBuf
+		e.buf = append(e.buf[:cap(e.buf)], make([]byte, needed)...)[:len(e.buf)]
 	}
 
 	e.buf = append(e.buf, '{')
@@ -891,9 +886,7 @@ func (e *FastEncoder) EncodeMapStringInt(m map[string]int) error {
 	// PERFORMANCE: Pre-grow buffer to reduce reallocations
 	needed := len(m) * 24
 	if cap(e.buf)-len(e.buf) < needed {
-		newBuf := make([]byte, len(e.buf), len(e.buf)+needed)
-		copy(newBuf, e.buf)
-		e.buf = newBuf
+		e.buf = append(e.buf[:cap(e.buf)], make([]byte, needed)...)[:len(e.buf)]
 	}
 
 	e.buf = append(e.buf, '{')
@@ -923,9 +916,7 @@ func (e *FastEncoder) EncodeArray(arr []any) error {
 		// Estimate: each element needs ~16 bytes on average
 		needed := n * 16
 		if cap(e.buf)-len(e.buf) < needed {
-			newBuf := make([]byte, len(e.buf), len(e.buf)+needed)
-		copy(newBuf, e.buf)
-		e.buf = newBuf
+			e.buf = append(e.buf[:cap(e.buf)], make([]byte, needed)...)[:len(e.buf)]
 		}
 	}
 
@@ -977,9 +968,7 @@ func (e *FastEncoder) EncodeIntSlice(arr []int) {
 	if n := len(arr); n > 8 {
 		needed := n * 12 // average estimate
 		if cap(e.buf)-len(e.buf) < needed {
-			newBuf := make([]byte, len(e.buf), len(e.buf)+needed)
-		copy(newBuf, e.buf)
-		e.buf = newBuf
+			e.buf = append(e.buf[:cap(e.buf)], make([]byte, needed)...)[:len(e.buf)]
 		}
 	}
 
@@ -1002,9 +991,7 @@ func (e *FastEncoder) EncodeFloatSlice(arr []float64) {
 	if n := len(arr); n > 8 {
 		needed := n * 16 // average estimate
 		if cap(e.buf)-len(e.buf) < needed {
-			newBuf := make([]byte, len(e.buf), len(e.buf)+needed)
-		copy(newBuf, e.buf)
-		e.buf = newBuf
+			e.buf = append(e.buf[:cap(e.buf)], make([]byte, needed)...)[:len(e.buf)]
 		}
 	}
 
@@ -1085,9 +1072,7 @@ func (e *FastEncoder) EncodeMapStringInt64(m map[string]int64) error {
 	// PERFORMANCE: Pre-grow buffer to reduce reallocations
 	needed := len(m) * 24
 	if cap(e.buf)-len(e.buf) < needed {
-		newBuf := make([]byte, len(e.buf), len(e.buf)+needed)
-		copy(newBuf, e.buf)
-		e.buf = newBuf
+		e.buf = append(e.buf[:cap(e.buf)], make([]byte, needed)...)[:len(e.buf)]
 	}
 
 	e.buf = append(e.buf, '{')
@@ -1113,9 +1098,7 @@ func (e *FastEncoder) EncodeMapStringFloat64(m map[string]float64) error {
 	// PERFORMANCE: Pre-grow buffer to reduce reallocations
 	needed := len(m) * 28
 	if cap(e.buf)-len(e.buf) < needed {
-		newBuf := make([]byte, len(e.buf), len(e.buf)+needed)
-		copy(newBuf, e.buf)
-		e.buf = newBuf
+		e.buf = append(e.buf[:cap(e.buf)], make([]byte, needed)...)[:len(e.buf)]
 	}
 
 	e.buf = append(e.buf, '{')

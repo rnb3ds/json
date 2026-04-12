@@ -54,6 +54,7 @@ func (p *Processor) loadFromFileAsData(filePath string, cfg ...Config) (any, err
 
 // readValidatedFile validates the file path and reads the file content.
 // Shared helper to eliminate duplicate validation+reading code.
+// Uses io.LimitReader to enforce size limits during read, preventing TOCTOU races.
 func (p *Processor) readValidatedFile(filePath string) ([]byte, error) {
 	if err := p.checkClosed(); err != nil {
 		return nil, err
@@ -61,12 +62,37 @@ func (p *Processor) readValidatedFile(filePath string) ([]byte, error) {
 	if err := p.validateFilePath(filePath); err != nil {
 		return nil, err
 	}
-	data, err := os.ReadFile(filePath)
+
+	maxSize := p.config.MaxJSONSize
+	if maxSize <= 0 {
+		maxSize = int64(DefaultMaxJSONSize)
+	}
+
+	f, err := os.Open(filePath)
 	if err != nil {
 		return nil, &JsonsError{
 			Op:      "load_from_file",
-			Message: fmt.Sprintf("failed to read file %s: %v", filePath, err),
+			Message: fmt.Sprintf("failed to open file: %v", err),
 			Err:     err,
+		}
+	}
+	defer func() { _ = f.Close() }() // best-effort cleanup
+
+	// Read up to maxSize+1 bytes: if we get more than maxSize, the file is too large
+	limitedReader := io.LimitReader(f, maxSize+1)
+	data, err := io.ReadAll(limitedReader)
+	if err != nil {
+		return nil, &JsonsError{
+			Op:      "load_from_file",
+			Message: fmt.Sprintf("failed to read file: %v", err),
+			Err:     err,
+		}
+	}
+	if int64(len(data)) > maxSize {
+		return nil, &JsonsError{
+			Op:      "load_from_file",
+			Message: fmt.Sprintf("file size exceeds maximum allowed size %d bytes", maxSize),
+			Err:     ErrSizeLimit,
 		}
 	}
 	return data, nil
@@ -226,7 +252,7 @@ func (p *Processor) SaveToFile(filePath string, data any, cfg ...Config) error {
 	if err := p.createDirectoryIfNotExists(filePath); err != nil {
 		return &JsonsError{
 			Op:      "save_to_file",
-			Message: fmt.Sprintf("failed to create directory for %s", filePath),
+			Message: "failed to create directory for output file",
 			Err:     fmt.Errorf("directory creation error: %w", err),
 		}
 	}
@@ -249,8 +275,8 @@ func (p *Processor) SaveToFile(filePath string, data any, cfg ...Config) error {
 	if err != nil {
 		return &JsonsError{
 			Op:      "save_to_file",
-			Message: fmt.Sprintf("failed to write file %s", filePath),
-			Err:     fmt.Errorf("write file error: %w", err),
+			Message: fmt.Sprintf("failed to write file: %v", err),
+			Err:     err,
 		}
 	}
 
@@ -331,7 +357,7 @@ func (p *Processor) MarshalToFile(path string, data any, cfg ...Config) error {
 	if err := p.createDirectoryIfNotExists(path); err != nil {
 		return &JsonsError{
 			Op:      "marshal_to_file",
-			Message: fmt.Sprintf("failed to create directory for %s", path),
+			Message: "failed to create directory for output file",
 			Err:     err,
 		}
 	}
@@ -365,8 +391,7 @@ func (p *Processor) MarshalToFile(path string, data any, cfg ...Config) error {
 	if err := os.WriteFile(path, jsonBytes, 0644); err != nil {
 		return &JsonsError{
 			Op:      "marshal_to_file",
-			Path:    path,
-			Message: fmt.Sprintf("failed to write file %s", path),
+			Message: fmt.Sprintf("failed to write file: %v", err),
 			Err:     err,
 		}
 	}
@@ -412,23 +437,36 @@ func (p *Processor) UnmarshalFromFile(path string, v any, cfg ...Config) error {
 		return err
 	}
 
-	// Read file contents with size validation
-	data, err := os.ReadFile(path)
+	maxSize := p.config.MaxJSONSize
+	if maxSize <= 0 {
+		maxSize = int64(DefaultMaxJSONSize)
+	}
+
+	// Read file contents with size limiting during read
+	f, err := os.Open(path)
 	if err != nil {
 		return &JsonsError{
 			Op:      "unmarshal_from_file",
-			Path:    path,
-			Message: fmt.Sprintf("failed to read file %s", path),
+			Message: fmt.Sprintf("failed to open file: %v", err),
+			Err:     err,
+		}
+	}
+	defer func() { _ = f.Close() }() // best-effort cleanup
+
+	limitedReader := io.LimitReader(f, maxSize+1)
+	data, err := io.ReadAll(limitedReader)
+	if err != nil {
+		return &JsonsError{
+			Op:      "unmarshal_from_file",
+			Message: fmt.Sprintf("failed to read file: %v", err),
 			Err:     err,
 		}
 	}
 
-	// Check file size against processor limits
-	if int64(len(data)) > p.config.MaxJSONSize {
+	if int64(len(data)) > maxSize {
 		return &JsonsError{
 			Op:      "unmarshal_from_file",
-			Path:    path,
-			Message: fmt.Sprintf("file size %d exceeds maximum allowed size %d", len(data), p.config.MaxJSONSize),
+			Message: fmt.Sprintf("file size exceeds maximum allowed size %d bytes", maxSize),
 			Err:     ErrSizeLimit,
 		}
 	}
@@ -437,8 +475,7 @@ func (p *Processor) UnmarshalFromFile(path string, v any, cfg ...Config) error {
 	if err := p.Unmarshal(data, v, cfg...); err != nil {
 		return &JsonsError{
 			Op:      "unmarshal_from_file",
-			Path:    path,
-			Message: fmt.Sprintf("failed to unmarshal JSON from file %s", path),
+			Message: fmt.Sprintf("failed to unmarshal JSON: %v", err),
 			Err:     err,
 		}
 	}
@@ -777,10 +814,8 @@ func validateUnixPath(absPath string) error {
 		}
 	}
 
-	// Additional security checks for Unix systems
-	if strings.Contains(absPath, "/..") || strings.Contains(absPath, "../") {
-		return newSecurityError("validate_unix_path", "path traversal detected")
-	}
+	// Note: Path traversal (..) is already handled by filepath.Clean() in
+	// normalizeAndAbsPath(), so no redundant .. check is needed here.
 
 	return nil
 }
@@ -930,11 +965,22 @@ func (np *NDJSONProcessor) ProcessFile(filename string, fn func(lineNum int, obj
 	return np.ProcessReader(file, fn)
 }
 
-// ProcessReader processes NDJSON from a reader
+// ProcessReader processes NDJSON from a reader.
+// Enforces per-line size limits and nesting depth checks to prevent DoS attacks.
 func (np *NDJSONProcessor) ProcessReader(reader io.Reader, fn func(lineNum int, obj map[string]any) error) error {
+	maxLineSize := np.config.MaxJSONSize
+	if maxLineSize <= 0 {
+		maxLineSize = int64(DefaultMaxJSONSize)
+	}
+
 	scanner := bufio.NewScanner(reader)
 	buf := make([]byte, 0, np.bufferSize)
-	scanner.Buffer(buf, 10*1024*1024)
+	scanner.Buffer(buf, int(maxLineSize)+1)
+
+	maxDepth := np.config.MaxNestingDepthSecurity
+	if maxDepth <= 0 {
+		maxDepth = DefaultMaxNestingDepth
+	}
 
 	lineNum := 0
 	for scanner.Scan() {
@@ -943,6 +989,14 @@ func (np *NDJSONProcessor) ProcessReader(reader io.Reader, fn func(lineNum int, 
 
 		if len(line) == 0 {
 			continue
+		}
+
+		// SECURITY: Check per-line nesting depth before unmarshaling
+		if err := checkNestingDepth(line, maxDepth); err != nil {
+			if np.config.JSONLContinueOnErr {
+				continue
+			}
+			return fmt.Errorf("line %d: %w", lineNum, err)
 		}
 
 		var obj map[string]any
@@ -959,6 +1013,40 @@ func (np *NDJSONProcessor) ProcessReader(reader io.Reader, fn func(lineNum int, 
 	}
 
 	return scanner.Err()
+}
+
+// checkNestingDepth validates that a JSON line's nesting depth does not exceed maxDepth.
+// This prevents stack overflow from deeply nested JSON structures.
+func checkNestingDepth(data []byte, maxDepth int) error {
+	depth := 0
+	inString := false
+	escaped := false
+	for _, b := range data {
+		if escaped {
+			escaped = false
+			continue
+		}
+		if inString {
+			if b == '\\' {
+				escaped = true
+			} else if b == '"' {
+				inString = false
+			}
+			continue
+		}
+		switch b {
+		case '"':
+			inString = true
+		case '{', '[':
+			depth++
+			if depth > maxDepth {
+				return fmt.Errorf("nesting depth %d exceeds maximum allowed depth %d", depth, maxDepth)
+			}
+		case '}', ']':
+			depth--
+		}
+	}
+	return nil
 }
 
 // ============================================================================

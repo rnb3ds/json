@@ -759,80 +759,95 @@ func deepCopySliceWithDepth(s []any, depth int) ([]any, error) {
 // This is significantly faster than deepCopy for large documents where Get
 // returns a small portion, because it only copies the actual result value
 // instead of the entire cached document.
-// PERFORMANCE v2: Three-tier copy strategy:
-//   - Tier 1: Primitives (immutable) → zero allocation, return as-is
-//   - Tier 2: Shallow containers (all values are primitives) → single allocation
-//   - Tier 3: Deep nested containers → recursive copy
+// PERFORMANCE v3: JSON-specialized fast path avoids broad type switches.
+//   - Tier 0: nil → immediate return
+//   - Tier 1: JSON primitives (bool, float64, string, json.Number) → zero allocation
+//   - Tier 2: map[string]any / []any → specialized inline copy without error wrapping
+//   - Tier 3: Fallback for non-JSON types
 func deepCopySubtree(data any) (any, error) {
-	if data == nil {
+	// Tier 1: JSON primitives — immutable, return as-is.
+	// PERFORMANCE: Only check types that appear in json.Unmarshal(*any) results.
+	// This avoids checking int8–uint64, float32, etc. which never occur in parsed JSON.
+	switch v := data.(type) {
+	case nil:
 		return nil, nil
-	}
-	// Tier 1: Primitives are immutable — no copy needed
-	switch data.(type) {
-	case bool, int, int8, int16, int32, int64,
-		uint, uint8, uint16, uint32, uint64,
-		float32, float64, string, json.Number:
-		return data, nil
+	case bool:
+		return v, nil
+	case float64:
+		return v, nil
+	case string:
+		return v, nil
+	case json.Number:
+		return v, nil
 	}
 
-	// Tier 2: Try shallow copy for maps/slices containing only primitives
+	// Tier 2: JSON containers — specialized inline copy
 	switch v := data.(type) {
 	case map[string]any:
-		return shallowCopyMap(v, 0)
+		return deepCopyJSONMap(v)
 	case []any:
-		return shallowCopySlice(v, 0)
+		return deepCopyJSONSlice(v)
 	}
 
-	// Tier 3: Fallback to recursive deep copy for complex nested types
+	// Tier 3: Fallback for non-JSON types (int slices, custom types, etc.)
 	return deepCopy(data)
 }
 
-// isPrimitiveFast checks if a value is a primitive JSON type (no nested copy needed).
-// Inlined by the compiler — no function call overhead in the hot path.
-func isPrimitiveFast(v any) bool {
-	switch v.(type) {
-	case nil, bool, int, int8, int16, int32, int64,
-		uint, uint8, uint16, uint32, uint64,
-		float32, float64, string, json.Number:
-		return true
-	}
-	return false
-}
-
-// shallowCopyMap copies a map, deep-copying only non-primitive values in-place.
-// Primitives (immutable) are shared; nested containers are recursively copied.
-func shallowCopyMap(m map[string]any, depth int) (any, error) {
+// deepCopyJSONMap copies a map[string]any that contains only JSON-compatible values.
+// PERFORMANCE: Inlined primitive check avoids the overhead of deepCopyValueWithDepth's
+// 16-case type switch. No fmt.Errorf wrapping — errors propagate directly.
+func deepCopyJSONMap(m map[string]any) (map[string]any, error) {
 	result := make(map[string]any, len(m))
 	for k, v := range m {
-		if isPrimitiveFast(v) {
-			result[k] = v
-			continue
-		}
-		copied, err := deepCopyValueWithDepth(v, depth+1)
+		copied, err := deepCopyJSONValue(v)
 		if err != nil {
-			return nil, fmt.Errorf("error copying key '%s': %w", k, err)
+			return nil, err
 		}
 		result[k] = copied
 	}
 	return result, nil
 }
 
-// shallowCopySlice copies a slice, deep-copying only non-primitive elements in-place.
-// Primitives (immutable) are shared; nested containers are recursively copied.
-func shallowCopySlice(s []any, depth int) (any, error) {
+// deepCopyJSONSlice copies a []any that contains only JSON-compatible values.
+// PERFORMANCE: Same optimization as deepCopyJSONMap — inline JSON-only type handling.
+func deepCopyJSONSlice(s []any) ([]any, error) {
 	result := make([]any, len(s))
 	for i, v := range s {
-		if isPrimitiveFast(v) {
-			result[i] = v
-			continue
-		}
-		copied, err := deepCopyValueWithDepth(v, depth+1)
+		copied, err := deepCopyJSONValue(v)
 		if err != nil {
-			return nil, fmt.Errorf("error copying index %d: %w", i, err)
+			return nil, err
 		}
 		result[i] = copied
 	}
 	return result, nil
+}
+
+// deepCopyJSONValue copies a single JSON-compatible value.
+// PERFORMANCE: Tight type switch covering only types produced by json.Unmarshal into any:
+// nil, bool, float64, string, json.Number, map[string]any, []any.
+// No error wrapping (no fmt.Errorf) — the deepest error propagates directly.
+func deepCopyJSONValue(v any) (any, error) {
+	if v == nil {
+		return nil, nil
+	}
+
+	switch val := v.(type) {
+	case bool:
+		return val, nil
+	case float64:
+		return val, nil
+	case string:
+		return val, nil
+	case json.Number:
+		return val, nil
+	case map[string]any:
+		return deepCopyJSONMap(val)
+	case []any:
+		return deepCopyJSONSlice(val)
+	}
+
+	// Non-standard JSON type — fall back to generic deep copy
+	return deepCopy(v)
 }
 
 // CompareJSON compares two JSON strings for equality by parsing and normalizing them.

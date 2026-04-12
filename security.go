@@ -205,7 +205,8 @@ func clearDangerousPatterns() {
 
 // getDefaultPatterns returns the built-in dangerous patterns as DangerousPattern values.
 // All default patterns are considered Critical level.
-func getDefaultPatterns() []DangerousPattern {
+// PERFORMANCE: Cached to avoid repeated allocation — the result is immutable.
+var getDefaultPatterns = sync.OnceValue(func() []DangerousPattern {
 	result := make([]DangerousPattern, len(dangerousPatterns))
 	for i, p := range dangerousPatterns {
 		result[i] = DangerousPattern{
@@ -215,10 +216,11 @@ func getDefaultPatterns() []DangerousPattern {
 		}
 	}
 	return result
-}
+})
 
 // getCriticalPatterns returns patterns that are always fully scanned.
-func getCriticalPatterns() []DangerousPattern {
+// PERFORMANCE: Cached to avoid repeated allocation — the result is immutable.
+var getCriticalPatterns = sync.OnceValue(func() []DangerousPattern {
 	result := make([]DangerousPattern, len(criticalPatterns))
 	for i, p := range criticalPatterns {
 		result[i] = DangerousPattern{
@@ -228,7 +230,7 @@ func getCriticalPatterns() []DangerousPattern {
 		}
 	}
 	return result
-}
+})
 
 // indicatorChars is a pre-computed lookup table for indicator characters.
 // PERFORMANCE: O(1) lookup per character during security scanning.

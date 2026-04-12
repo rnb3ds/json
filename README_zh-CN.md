@@ -13,42 +13,6 @@
 
 ---
 
-## 目录
-
-- [为什么选择 cybergodev/json](#为什么选择-cybergodevjson)
-- [特性](#特性)
-- [安装](#安装)
-- [快速开始](#快速开始)
-- [路径语法参考](#路径语法参考)
-- [核心 API](#核心-api)
-  - [数据获取](#数据获取)
-  - [数据修改](#数据修改)
-  - [编码与格式化](#编码与格式化)
-  - [文件操作](#文件操作)
-  - [JSON 工具](#json-工具)
-- [配置](#配置)
-- [高级功能](#高级功能)
-  - [数据迭代](#数据迭代)
-  - [批量操作](#批量操作)
-  - [Schema 验证](#schema-验证)
-  - [PreParse 与 CompiledPath](#preparse-与-compiledpath)
-  - [编码工具](#编码工具)
-  - [JSONL 处理](#jsonl-处理)
-  - [流式迭代器](#流式迭代器)
-  - [并行处理](#并行处理)
-  - [钩子 (Hooks)](#钩子-hooks)
-- [常见用例](#常见用例)
-- [性能监控](#性能监控)
-- [从 encoding/json 迁移](#从-encodingjson-迁移)
-- [安全配置](#安全配置)
-  - [安全工具](#安全工具)
-  - [错误处理](#错误处理)
-- [示例代码](#示例代码)
-- [文档](#文档)
-- [许可证](#许可证)
-
----
-
 ## 为什么选择 cybergodev/json
 
 | 功能 | encoding/json | cybergodev/json |
@@ -59,7 +23,6 @@
 | JSON Pointer (RFC 6901) | - | `/users/0/name` |
 | 类型安全默认值 | - | `GetString(data, "path", "default")` |
 | 大文件流式处理 | - | 内置流式处理器 |
-| Schema 验证 | - | JSON Schema (Draft 7 子集) 验证 |
 | 内存池 | - | 热路径使用 `sync.Pool` |
 | 路径缓存 | - | 智能 TTL 路径缓存 |
 | 批量操作 | - | `ProcessBatch()` 批量处理 |
@@ -84,7 +47,7 @@
 go get github.com/cybergodev/json
 ```
 
-**要求**: Go 1.25.0 或更高版本
+**要求**: Go 1.25 或更高版本
 
 **导入**:
 
@@ -235,8 +198,8 @@ json.Unmarshal(bytes, &target)
 bytes, _ := json.MarshalIndent(data, "", "  ")
 
 // 快速格式化
-pretty, _    := json.Prettify(jsonStr)      // 美化输出
-compact, _   := json.Compact(jsonStr)       // 压缩字符串
+pretty, _  := json.Prettify(jsonStr)      // 美化输出
+compact, _ := json.Compact(jsonStr)       // 压缩字符串
 
 // 使用 encoding/json 兼容的 Buffer API
 var buf bytes.Buffer

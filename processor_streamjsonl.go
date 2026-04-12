@@ -46,9 +46,11 @@ func (p *Processor) StreamJSONL(reader io.Reader, fn func(lineNum int, item *Ite
 	scanner := bufio.NewScanner(reader)
 	scanner.Buffer(make([]byte, defaultScannerBufSize), defaultMaxLineSize)
 
-	var lineNum int64
+	lineNum := 0
 
 	for scanner.Scan() {
+		lineNum++
+
 		line := scanner.Bytes()
 
 		// Skip lines based on config (empty lines, comments)
@@ -59,14 +61,12 @@ func (p *Processor) StreamJSONL(reader io.Reader, fn func(lineNum int, item *Ite
 		// Parse JSON line
 		var data any
 		if err := json.Unmarshal(line, &data); err != nil {
-			return fmt.Errorf("line %d: %w", lineNum+1, err)
+			return fmt.Errorf("line %d: %w", lineNum, err)
 		}
-
-		lineNum++
 
 		// Create IterableValue and call user callback
 		item := newIterableValue(data)
-		if err := fn(int(lineNum), item); err != nil {
+		if err := fn(lineNum, item); err != nil {
 			if errors.Is(err, errBreak) {
 				return nil // Clean stop
 			}
@@ -158,7 +158,7 @@ func (p *Processor) StreamJSONLParallelWithContext(ctx context.Context, reader i
 	}
 
 	// Feed jobs — respect context cancellation during scan
-	var lineNum int64
+	lineNum := 0
 	scanner := bufio.NewScanner(reader)
 	scanner.Buffer(make([]byte, defaultScannerBufSize), defaultMaxLineSize)
 
@@ -170,6 +170,8 @@ feedLoop:
 			break feedLoop
 		default:
 		}
+
+		lineNum++
 
 		line := scanner.Bytes()
 
@@ -183,10 +185,8 @@ feedLoop:
 		if err := json.Unmarshal(line, &data); err != nil {
 			close(jobs)
 			wg.Wait()
-			return fmt.Errorf("line %d: %w", lineNum+1, err)
+			return fmt.Errorf("line %d: %w", lineNum, err)
 		}
-
-		lineNum++
 
 		// Check if error occurred before sending
 		if atomic.LoadInt32(&errCount) > 0 {
@@ -196,7 +196,7 @@ feedLoop:
 		// RESOURCE FIX: Select on ctx.Done() when sending to jobs channel
 		// to prevent blocking if all workers are busy and context is cancelled.
 		select {
-		case jobs <- job{lineNum: int(lineNum), data: data}:
+		case jobs <- job{lineNum: lineNum, data: data}:
 		case <-ctx.Done():
 			break feedLoop
 		}
@@ -246,9 +246,11 @@ func (p *Processor) StreamJSONLChunked(reader io.Reader, chunkSize int, fn func(
 	scanner := bufio.NewScanner(reader)
 	scanner.Buffer(make([]byte, defaultScannerBufSize), defaultMaxLineSize)
 
-	var lineNum int64
+	lineNum := 0
 
 	for scanner.Scan() {
+		lineNum++
+
 		line := scanner.Bytes()
 
 		// Skip lines based on config (empty lines, comments)
@@ -259,10 +261,9 @@ func (p *Processor) StreamJSONLChunked(reader io.Reader, chunkSize int, fn func(
 		// Parse JSON line
 		var data any
 		if err := json.Unmarshal(line, &data); err != nil {
-			return fmt.Errorf("line %d: %w", lineNum+1, err)
+			return fmt.Errorf("line %d: %w", lineNum, err)
 		}
 
-		lineNum++
 		item := newIterableValue(data)
 		chunk = append(chunk, item)
 
