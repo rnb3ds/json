@@ -204,11 +204,16 @@ err = processor.ForeachFile("data.json", func(key any, item *json.IterableValue)
 ### Iteration with Path Tracking
 
 ```go
-// Manual path tracking during iteration
-// Note: ForeachWithPathAndIterator is not available; use manual tracking instead
+// Use ForeachWithPathAndIterator for automatic path tracking
+json.ForeachWithPathAndIterator(data, "users", func(key any, item *json.IterableValue, currentPath string) json.IteratorControl {
+    name := item.GetString("name")
+    fmt.Printf("User at %s: %s\n", currentPath, name)
+    return json.IteratorNormal
+})
+
+// Or use manual path tracking with ForeachWithPath
 basePath := "data.users"
 json.ForeachWithPath(data, basePath, func(key any, item *json.IterableValue) {
-    // Build current path manually
     currentPath := fmt.Sprintf("%s[%v]", basePath, key)
     name := item.GetString("name")
     fmt.Printf("User at %s: %s\n", currentPath, name)
@@ -223,7 +228,15 @@ json.ForeachWithPath(data, basePath, func(key any, item *json.IterableValue) {
 | `ForeachNested(data, callback)` | Recursive iteration | All nested levels |
 | `ForeachWithPath(data, path, callback)` | Path-specific iteration | Specific JSON subset |
 | `ForeachWithPathAndControl(data, path, callback)` | With flow control | Early termination |
+| `ForeachWithPathAndIterator(data, path, callback)` | With path tracking | Path-aware iteration |
 | `ForeachReturn(data, callback)` | Read-only, returns original JSON | Iteration with error handling |
+| `ForeachWithError(data, path, callback)` | Error-returning callback | Error-aware iteration |
+| `ForeachNestedWithError(data, callback)` | Recursive with errors | Nested error-aware iteration |
+| `ForeachFile(path, callback)` | File-based iteration | Large file processing |
+| `ForeachFileWithPath(path, jsonPath, callback)` | File + path iteration | File subset processing |
+| `ForeachFileChunked(path, chunkSize, callback)` | Chunked file iteration | Memory-efficient file processing |
+| `ForeachFileNested(path, callback)` | Nested file iteration | Nested file traversal |
+| `ForeachJSONL(reader, callback)` | JSONL stream iteration | JSONL/NDJSON processing |
 
 **Note:** ForeachReturn is read-only - it returns the original JSON string unchanged. Use `json.Set()` for modifications.
 
@@ -280,16 +293,18 @@ json.Get(data, "users{flat:skills}")
 // Load from file
 data, err := json.LoadFromFile("config.json")
 
-// Load from Reader (requires processor)
+// Load from Reader (package-level function, no processor needed)
+file, _ := os.Open("data.json")
+defer file.Close()
+data, err := json.LoadFromReader(file)
+
+// Or via Processor
 processor, err := json.New()
 if err != nil {
     log.Fatal(err)
 }
 defer processor.Close()
-
-file, _ := os.Open("data.json")
-defer file.Close()
-data, err := processor.LoadFromReader(file)
+data, err = processor.LoadFromReader(file)
 ```
 
 ### Write Files
@@ -303,16 +318,13 @@ err := json.SaveToFile("output.json", data, cfg)
 // Save to file (compact format)
 err := json.SaveToFile("output.json", data, json.DefaultConfig())
 
-// Save to Writer (requires processor)
-processor, err := json.New()
-if err != nil {
-    log.Fatal(err)
-}
-defer processor.Close()
-
+// Save to Writer (package-level function, no processor needed)
 var buffer bytes.Buffer
 cfg := json.DefaultConfig()
 cfg.Pretty = true
+err = json.SaveToWriter(&buffer, data, cfg)
+
+// Or via Processor
 err = processor.SaveToWriter(&buffer, data, cfg)
 ```
 

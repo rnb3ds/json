@@ -79,13 +79,8 @@ func demonstrateConfigurations(testData string) {
 	// 2. High-performance configuration
 	fmt.Println("\n   High-Performance Configuration:")
 	perfConfig := json.DefaultConfig()
-	perfConfig.EnableCache = true
 	perfConfig.MaxCacheSize = 10000
 	perfConfig.CacheTTL = 30 * time.Minute
-	perfConfig.MaxJSONSize = 100 * 1024 * 1024 // 100MB
-	perfConfig.MaxPathDepth = 100
-	perfConfig.MaxBatchSize = 2000
-	perfConfig.MaxConcurrency = 100
 	perfConfig.ParallelThreshold = 3
 	perfConfig.EnableMetrics = true
 	perfConfig.EnableValidation = false // Skip validation for speed

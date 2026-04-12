@@ -41,6 +41,8 @@
 - [Performance Monitoring](#performance-monitoring)
 - [Migrating from encoding/json](#migrating-from-encodingjson)
 - [Security Configuration](#security-configuration)
+  - [Security Utilities](#security-utilities)
+  - [Error Handling](#error-handling)
 - [Example Code](#example-code)
 - [Documentation](#documentation)
 - [License](#license)
@@ -210,6 +212,18 @@ result, _ := json.SetMultiple(data, map[string]any{
 
 // Delete
 result, err := json.Delete(data, "user.temp")
+
+// Delete with null cleanup
+result, err = json.DeleteClean(data, "user.temp")
+
+// Set with auto-create (creates intermediate paths)
+result, err = json.SetCreate(data, "user.profile.level", "gold")
+
+// Batch set with auto-create
+result, err = json.SetMultipleCreate(data, map[string]any{
+    "user.profile.level": "gold",
+    "user.profile.badge": "star",
+})
 ```
 
 ### Encoding and Formatting
@@ -222,11 +236,12 @@ bytes, _ := json.MarshalIndent(data, "", "  ")
 
 // Quick formatting
 pretty, _    := json.Prettify(jsonStr)      // pretty print
+compact, _   := json.Compact(jsonStr)       // minify string
+
+// Using encoding/json compatible buffer API
 var buf bytes.Buffer
-json.Compact(&buf, []byte(jsonStr))         // minify
-compact := buf.String()
-json.Print(data)        // compact to stdout
-json.PrintPretty(data)  // pretty to stdout
+json.Compact(&buf, []byte(jsonStr))
+result := buf.String()
 
 // Encoding with config
 cfg := json.DefaultConfig()
@@ -251,6 +266,17 @@ json.UnmarshalFromFile("user.json", &user)
 
 // Write to any io.Writer
 json.SaveToWriter(writer, data, cfg)
+
+// File iteration (process without loading entire file)
+err := json.ForeachFile("data.json", func(key any, item *json.IterableValue) error {
+    fmt.Println(item.GetString("name"))
+    return nil
+})
+
+err = json.ForeachFileChunked("large.json", 100, func(chunk []*json.IterableValue) error {
+    // Process 100 items at a time
+    return nil
+})
 
 // Processor-based file operations with full config support
 processor, _ := json.New(json.DefaultConfig())
@@ -339,11 +365,27 @@ json.ForeachWithPath(data, "users", func(key any, item *json.IterableValue) {
     fmt.Printf("Key: %v, Name: %s\n", key, name)
 })
 
-// Nested iteration
+// Nested iteration (specify nested field path)
 json.ForeachNested(data, func(key any, item *json.IterableValue) {
-    item.ForeachNested(func(nestedKey any, nestedItem *json.IterableValue) {
+    item.ForeachNested("items", func(nestedKey any, nestedItem *json.IterableValue) {
         fmt.Printf("Nested: %v\n", nestedItem.Get("id"))
     })
+})
+
+// Error-returning iteration
+err := json.ForeachWithPath(data, "users", func(key any, item *json.IterableValue) error {
+    if item.IsNull("id") {
+        return fmt.Errorf("missing id at key %v", key)
+    }
+    return nil
+})
+
+// Iterator control (break / continue)
+json.ForeachWithPathAndControl(data, "users", func(key any, value any) json.IteratorControl {
+    if key.(int) > 5 {
+        return json.IteratorBreak
+    }
+    return json.IteratorNormal
 })
 
 // Transform and return modified JSON
@@ -397,7 +439,7 @@ updated, _ := processor.SetFromParsed(parsed, "user.age", 30)
 
 // Compile a path for fast repeated access
 compiled, _ := processor.CompilePath("user.profile.settings.theme")
-value, _    := processor.GetCompiled(compiled)
+value, _    := processor.GetCompiled(jsonStr, compiled)
 ```
 
 ### Encode Utilities
@@ -438,17 +480,21 @@ stats := writer.Stats() // LinesWritten, BytesWritten, Errors
 
 // NDJSON file processor
 ndjson := json.NewNDJSONProcessor(json.DefaultConfig())
-results, _ := ndjson.ProcessFile("data.ndjson")
+err = ndjson.ProcessFile("data.ndjson", func(lineNum int, obj map[string]any) error {
+    fmt.Printf("Line %d: %v\n", lineNum, obj["id"])
+    return nil
+})
 
 // JSONL filter, map, reduce
 filtered, _ := processor.FilterJSONL(reader, func(item *json.IterableValue) bool {
     return item.GetBool("active")
 })
-mapped, _   := processor.MapJSONL(reader, func(item *json.IterableValue) (any, error) {
+mapped, _   := processor.MapJSONL(reader, func(lineNum int, item *json.IterableValue) (any, error) {
     return map[string]any{"id": item.GetString("id")}, nil
 })
-result, _   := processor.ReduceJSONL(reader, func(acc, item *json.IterableValue) (*json.IterableValue, error) {
-    return acc, nil
+result, _   := processor.ReduceJSONL(reader, 0, func(acc any, item *json.IterableValue) any {
+    count, _ := item.GetInt("count")
+    return acc.(int) + count
 })
 ```
 
@@ -480,23 +526,25 @@ for batchIter.HasNext() {
 
 ```go
 // ParallelIterator - parallel processing with worker pool
-iter := json.NewParallelIterator(data, cfg)
-defer iter.Close()
+items := []any{"a", "b", "c", "d"}
+iter := json.NewParallelIterator(items)
 
-// Map items in parallel
-results := iter.Map(func(item any) any {
-    return transform(item)
+// Process items in parallel
+err := iter.ForEach(func(idx int, item any) error {
+    // process each item concurrently
+    return nil
 })
 
-// Filter items in parallel
-filtered := iter.Filter(func(item any) bool {
-    return isValid(item)
+// Process in batches
+err = iter.ForEachBatch(2, func(batchIdx int, batch []any) error {
+    // process batch of items
+    return nil
 })
 
 // Parallel JSONL streaming
 processor, _ := json.New(json.DefaultConfig())
 defer processor.Close()
-err := processor.StreamJSONLParallel(reader, 4, func(lineNum int, item *json.IterableValue) error {
+err = processor.StreamJSONLParallel(reader, 4, func(lineNum int, item *json.IterableValue) error {
     // Process item with 4 parallel workers
     return nil
 })
@@ -677,6 +725,43 @@ secureConfig := json.SecurityConfig()
 
 processor, _ := json.New(secureConfig)
 defer processor.Close()
+```
+
+### Security Utilities
+
+```go
+// Register custom dangerous patterns
+json.RegisterDangerousPattern(json.DangerousPattern{
+    Pattern: "eval\\(",
+    Name:    "eval-injection",
+    Level:   json.PatternLevelCritical,
+})
+
+// List all registered patterns
+patterns := json.ListDangerousPatterns()
+
+// Safe error reporting (no internal details leaked)
+safeMsg := json.SafeError(err)
+
+// Redact sensitive paths in logs
+redacted := json.RedactedPath("user.password")
+```
+
+### Error Handling
+
+```go
+// Sentinel errors for programmatic checks
+errors.Is(err, json.ErrInvalidJSON)
+errors.Is(err, json.ErrPathNotFound)
+errors.Is(err, json.ErrTypeMismatch)
+errors.Is(err, json.ErrSizeLimit)
+errors.Is(err, json.ErrSecurityViolation)
+
+// Structured error with context
+var jsonErr *json.JsonsError
+if errors.As(err, &jsonErr) {
+    fmt.Printf("op=%s path=%s: %s\n", jsonErr.Op, jsonErr.Path, jsonErr.Message)
+}
 ```
 
 See [Security Guide](docs/SECURITY.md) for detailed security best practices.

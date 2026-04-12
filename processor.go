@@ -1144,7 +1144,8 @@ func (p *Processor) Get(jsonStr, path string, cfg ...Config) (result any, err er
 	}()
 
 	// Validate input BEFORE cache lookup to prevent cache pollution
-	// OPTIMIZED: Allow skipping validation for trusted input
+	// SECURITY: Essential checks (size + depth) are always enforced to protect the process.
+	// Full validation (UTF-8, security patterns, structure) can be skipped for trusted input.
 	if !options.SkipValidation {
 		if err := p.validateInput(jsonStr); err != nil {
 			p.incrementErrorCount()
@@ -1152,6 +1153,13 @@ func (p *Processor) Get(jsonStr, path string, cfg ...Config) (result any, err er
 		}
 
 		if err := p.validatePath(path); err != nil {
+			p.incrementErrorCount()
+			return nil, err
+		}
+	} else {
+		// SECURITY: Always enforce essential checks even for trusted input.
+		// Size and depth limits protect the process from DoS.
+		if err := p.validateInputEssential(jsonStr); err != nil {
 			p.incrementErrorCount()
 			return nil, err
 		}
@@ -1924,6 +1932,13 @@ func escapeJSONPointer(s string) string {
 // validateInput validates JSON input string with optimized security checks
 func (p *Processor) validateInput(jsonString string) error {
 	return p.securityValidator.ValidateJSONInput(jsonString)
+}
+
+// validateInputEssential performs only essential safety checks (size + depth).
+// SECURITY: These checks protect the process from DoS and must always be enforced,
+// even when SkipValidation is true for trusted input.
+func (p *Processor) validateInputEssential(jsonString string) error {
+	return p.securityValidator.ValidateJSONInputEssential(jsonString)
 }
 
 // validatePath validates a JSON path string with enhanced security and efficiency

@@ -41,7 +41,8 @@ var needsEscapeTable = [256]bool{
 
 // FastEncoder provides fast JSON encoding without reflection for common types
 type FastEncoder struct {
-	buf []byte
+	buf        []byte
+	htmlEscape bool // SECURITY: When true, escape <, >, & to \u003c, \u003e, \u0026
 }
 
 // encoderPool pools encoder objects to reduce allocations
@@ -77,29 +78,27 @@ var largeEncoderPool = sync.Pool{
 func GetEncoder() *FastEncoder {
 	e := encoderPool.Get().(*FastEncoder)
 	e.buf = e.buf[:0]
+	e.htmlEscape = false
 	return e
 }
 
 // GetEncoderWithSize retrieves an encoder with appropriate capacity hint
 // PERFORMANCE: Use tiered pools for better memory management and reduced allocations
 func GetEncoderWithSize(hint int) *FastEncoder {
+	var e *FastEncoder
 	switch {
 	case hint <= 1024:
 		return GetEncoder()
 	case hint <= 4096:
-		e := mediumEncoderPool.Get().(*FastEncoder)
-		e.buf = e.buf[:0]
-		return e
+		e = mediumEncoderPool.Get().(*FastEncoder)
 	case hint <= 65536:
-		e := largeEncoderPool.Get().(*FastEncoder)
-		e.buf = e.buf[:0]
-		return e
+		e = largeEncoderPool.Get().(*FastEncoder)
 	default:
-		// For very large hints, use large pool but buffer will be discarded
-		e := largeEncoderPool.Get().(*FastEncoder)
-		e.buf = e.buf[:0]
-		return e
+		e = largeEncoderPool.Get().(*FastEncoder)
 	}
+	e.buf = e.buf[:0]
+	e.htmlEscape = false
+	return e
 }
 
 // PutEncoder returns an encoder to the appropriate pool
@@ -234,9 +233,16 @@ func (e *FastEncoder) encodeSlow(v any) error {
 	return nil
 }
 
+// SetHTMLEscape enables or disables HTML-safe escaping for this encoder.
+// SECURITY: When enabled, <, >, & are escaped to \u003c, \u003e, \u0026.
+// This prevents XSS when JSON output is embedded in HTML contexts.
+func (e *FastEncoder) SetHTMLEscape(enabled bool) {
+	e.htmlEscape = enabled
+}
+
 // EncodeString encodes a JSON string
 // PERFORMANCE: Avoids reflection, uses inline escaping with combined UTF-8 validation
-// SECURITY: Validates UTF-8 encoding per RFC 8259
+// SECURITY: Validates UTF-8 encoding per RFC 8259. Escapes HTML chars when htmlEscape is set.
 func (e *FastEncoder) EncodeString(s string) {
 	e.buf = append(e.buf, '"')
 
@@ -371,7 +377,8 @@ func needsEscape(s string) bool {
 
 // escapeString escapes special characters for JSON
 // PERFORMANCE: Batch copies safe segments to reduce append calls
-// SECURITY: Validates UTF-8 encoding and replaces invalid sequences
+// SECURITY: Validates UTF-8 encoding and replaces invalid sequences.
+// Escapes HTML characters (<, >, &) when htmlEscape is enabled.
 func (e *FastEncoder) escapeString(s string) {
 	start := 0
 	n := len(s)
@@ -394,6 +401,24 @@ func (e *FastEncoder) escapeString(s string) {
 			}
 			// Valid multi-byte UTF-8 - skip entire rune
 			i += size
+			continue
+		}
+
+		// SECURITY: Escape HTML characters when htmlEscape is enabled
+		if e.htmlEscape && (c == '<' || c == '>' || c == '&') {
+			if start < i {
+				e.buf = append(e.buf, s[start:i]...)
+			}
+			switch c {
+			case '<':
+				e.buf = append(e.buf, `\u003c`...)
+			case '>':
+				e.buf = append(e.buf, `\u003e`...)
+			case '&':
+				e.buf = append(e.buf, `\u0026`...)
+			}
+			i++
+			start = i
 			continue
 		}
 

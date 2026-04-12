@@ -2,6 +2,7 @@ package json
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -93,6 +94,21 @@ func (p *Processor) StreamJSONL(reader io.Reader, fn func(lineNum int, item *Ite
 //		return nil
 //	})
 func (p *Processor) StreamJSONLParallel(reader io.Reader, workers int, fn func(lineNum int, item *IterableValue) error) error {
+	return p.StreamJSONLParallelWithContext(context.Background(), reader, workers, fn)
+}
+
+// StreamJSONLParallelWithContext processes JSONL data in parallel with context support
+// for cancellation. Workers and the scanner goroutine respect context cancellation.
+// RESOURCE FIX: Added context parameter to prevent goroutine leaks when reader/fn blocks.
+//
+// Example:
+//
+//	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+//	defer cancel()
+//	err := processor.StreamJSONLParallelWithContext(ctx, reader, 4, func(lineNum int, item *json.IterableValue) error {
+//	    return nil
+//	})
+func (p *Processor) StreamJSONLParallelWithContext(ctx context.Context, reader io.Reader, workers int, fn func(lineNum int, item *IterableValue) error) error {
 	if err := p.checkClosed(); err != nil {
 		return err
 	}
@@ -120,6 +136,12 @@ func (p *Processor) StreamJSONLParallel(reader io.Reader, workers int, fn func(l
 		go func() {
 			defer wg.Done()
 			for job := range jobs {
+				// RESOURCE FIX: Check context cancellation in workers
+				select {
+				case <-ctx.Done():
+					return
+				default:
+				}
 				if atomic.LoadInt32(&errCount) > 0 {
 					continue
 				}
@@ -135,12 +157,20 @@ func (p *Processor) StreamJSONLParallel(reader io.Reader, workers int, fn func(l
 		}()
 	}
 
-	// Feed jobs
+	// Feed jobs — respect context cancellation during scan
 	var lineNum int64
 	scanner := bufio.NewScanner(reader)
 	scanner.Buffer(make([]byte, defaultScannerBufSize), defaultMaxLineSize)
 
+feedLoop:
 	for scanner.Scan() {
+		// RESOURCE FIX: Check context on each iteration
+		select {
+		case <-ctx.Done():
+			break feedLoop
+		default:
+		}
+
 		line := scanner.Bytes()
 
 		// Skip lines based on config (empty lines, comments)
@@ -163,11 +193,21 @@ func (p *Processor) StreamJSONLParallel(reader io.Reader, workers int, fn func(l
 			break
 		}
 
-		jobs <- job{lineNum: int(lineNum), data: data}
+		// RESOURCE FIX: Select on ctx.Done() when sending to jobs channel
+		// to prevent blocking if all workers are busy and context is cancelled.
+		select {
+		case jobs <- job{lineNum: int(lineNum), data: data}:
+		case <-ctx.Done():
+			break feedLoop
+		}
 	}
 
 	close(jobs)
 	wg.Wait()
+
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
 
 	if err := scanner.Err(); err != nil {
 		return err
@@ -491,6 +531,14 @@ func StreamJSONL(reader io.Reader, fn func(lineNum int, item *IterableValue) err
 func StreamJSONLParallel(reader io.Reader, workers int, fn func(lineNum int, item *IterableValue) error) error {
 	return withProcessorError(func(p *Processor) error {
 		return p.StreamJSONLParallel(reader, workers, fn)
+	})
+}
+
+// StreamJSONLParallelWithContext processes JSONL data in parallel with context support
+// for cancellation. See Processor.StreamJSONLParallelWithContext for details.
+func StreamJSONLParallelWithContext(ctx context.Context, reader io.Reader, workers int, fn func(lineNum int, item *IterableValue) error) error {
+	return withProcessorError(func(p *Processor) error {
+		return p.StreamJSONLParallelWithContext(ctx, reader, workers, fn)
 	})
 }
 

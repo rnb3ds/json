@@ -196,6 +196,10 @@ type HookContext struct {
 	Operation string
 
 	// JSONStr is the input JSON string (may be empty for marshal).
+	//
+	// SECURITY WARNING: This field may contain sensitive data (passwords,
+	// tokens, API keys, PII). Do NOT log this value. Only inspect specific
+	// paths if needed. Use Operation and Path for logging purposes.
 	JSONStr string
 
 	// Path is the target path (may be empty for marshal/unmarshal).

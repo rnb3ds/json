@@ -41,6 +41,8 @@
 - [性能监控](#性能监控)
 - [从 encoding/json 迁移](#从-encodingjson-迁移)
 - [安全配置](#安全配置)
+  - [安全工具](#安全工具)
+  - [错误处理](#错误处理)
 - [示例代码](#示例代码)
 - [文档](#文档)
 - [许可证](#许可证)
@@ -210,6 +212,18 @@ result, _ := json.SetMultiple(data, map[string]any{
 
 // 删除
 result, err := json.Delete(data, "user.temp")
+
+// 删除并清理 null
+result, err = json.DeleteClean(data, "user.temp")
+
+// 自动创建路径的 Set（自动创建中间路径）
+result, err = json.SetCreate(data, "user.profile.level", "gold")
+
+// 批量自动创建路径的 Set
+result, err = json.SetMultipleCreate(data, map[string]any{
+    "user.profile.level": "gold",
+    "user.profile.badge": "star",
+})
 ```
 
 ### 编码与格式化
@@ -222,11 +236,12 @@ bytes, _ := json.MarshalIndent(data, "", "  ")
 
 // 快速格式化
 pretty, _    := json.Prettify(jsonStr)      // 美化输出
+compact, _   := json.Compact(jsonStr)       // 压缩字符串
+
+// 使用 encoding/json 兼容的 Buffer API
 var buf bytes.Buffer
-json.Compact(&buf, []byte(jsonStr))         // 压缩
-compact := buf.String()
-json.Print(data)        // 压缩格式到 stdout
-json.PrintPretty(data)  // 美化格式到 stdout
+json.Compact(&buf, []byte(jsonStr))
+result := buf.String()
 
 // 带配置编码
 cfg := json.DefaultConfig()
@@ -251,6 +266,17 @@ json.UnmarshalFromFile("user.json", &user)
 
 // 写入任意 io.Writer
 json.SaveToWriter(writer, data, cfg)
+
+// 文件迭代（无需加载整个文件）
+err := json.ForeachFile("data.json", func(key any, item *json.IterableValue) error {
+    fmt.Println(item.GetString("name"))
+    return nil
+})
+
+err = json.ForeachFileChunked("large.json", 100, func(chunk []*json.IterableValue) error {
+    // 每次处理 100 个元素
+    return nil
+})
 
 // 基于 Processor 的文件操作，支持完整配置
 processor, _ := json.New(json.DefaultConfig())
@@ -339,11 +365,27 @@ json.ForeachWithPath(data, "users", func(key any, item *json.IterableValue) {
     fmt.Printf("键: %v, 名称: %s\n", key, name)
 })
 
-// 嵌套迭代
+// 嵌套迭代（指定嵌套字段路径）
 json.ForeachNested(data, func(key any, item *json.IterableValue) {
-    item.ForeachNested(func(nestedKey any, nestedItem *json.IterableValue) {
+    item.ForeachNested("items", func(nestedKey any, nestedItem *json.IterableValue) {
         fmt.Printf("嵌套: %v\n", nestedItem.Get("id"))
     })
+})
+
+// 带错误返回的迭代
+err := json.ForeachWithPath(data, "users", func(key any, item *json.IterableValue) error {
+    if item.IsNull("id") {
+        return fmt.Errorf("键 %v 缺少 id", key)
+    }
+    return nil
+})
+
+// 迭代器控制（break / continue）
+json.ForeachWithPathAndControl(data, "users", func(key any, value any) json.IteratorControl {
+    if key.(int) > 5 {
+        return json.IteratorBreak
+    }
+    return json.IteratorNormal
 })
 
 // 转换并返回修改后的 JSON
@@ -397,7 +439,7 @@ updated, _ := processor.SetFromParsed(parsed, "user.age", 30)
 
 // 编译路径，用于快速重复访问
 compiled, _ := processor.CompilePath("user.profile.settings.theme")
-value, _    := processor.GetCompiled(compiled)
+value, _    := processor.GetCompiled(jsonStr, compiled)
 ```
 
 ### 编码工具
@@ -438,17 +480,21 @@ stats := writer.Stats() // LinesWritten, BytesWritten, Errors
 
 // NDJSON 文件处理器
 ndjson := json.NewNDJSONProcessor(json.DefaultConfig())
-results, _ := ndjson.ProcessFile("data.ndjson")
+err = ndjson.ProcessFile("data.ndjson", func(lineNum int, obj map[string]any) error {
+    fmt.Printf("第 %d 行: %v\n", lineNum, obj["id"])
+    return nil
+})
 
 // JSONL 过滤、映射、归约
 filtered, _ := processor.FilterJSONL(reader, func(item *json.IterableValue) bool {
     return item.GetBool("active")
 })
-mapped, _   := processor.MapJSONL(reader, func(item *json.IterableValue) (any, error) {
+mapped, _   := processor.MapJSONL(reader, func(lineNum int, item *json.IterableValue) (any, error) {
     return map[string]any{"id": item.GetString("id")}, nil
 })
-result, _   := processor.ReduceJSONL(reader, func(acc, item *json.IterableValue) (*json.IterableValue, error) {
-    return acc, nil
+result, _   := processor.ReduceJSONL(reader, 0, func(acc any, item *json.IterableValue) any {
+    count, _ := item.GetInt("count")
+    return acc.(int) + count
 })
 ```
 
@@ -480,23 +526,25 @@ for batchIter.HasNext() {
 
 ```go
 // ParallelIterator - 使用 worker 池并行处理
-iter := json.NewParallelIterator(data, cfg)
-defer iter.Close()
+items := []any{"a", "b", "c", "d"}
+iter := json.NewParallelIterator(items)
 
-// 并行 Map
-results := iter.Map(func(item any) any {
-    return transform(item)
+// 并行处理每个元素
+err := iter.ForEach(func(idx int, item any) error {
+    // 并发处理每个元素
+    return nil
 })
 
-// 并行 Filter
-filtered := iter.Filter(func(item any) bool {
-    return isValid(item)
+// 批量并行处理
+err = iter.ForEachBatch(2, func(batchIdx int, batch []any) error {
+    // 处理一批元素
+    return nil
 })
 
 // 并行 JSONL 流处理
 processor, _ := json.New(json.DefaultConfig())
 defer processor.Close()
-err := processor.StreamJSONLParallel(reader, 4, func(lineNum int, item *json.IterableValue) error {
+err = processor.StreamJSONLParallel(reader, 4, func(lineNum int, item *json.IterableValue) error {
     // 使用 4 个并行 worker 处理
     return nil
 })
@@ -677,6 +725,43 @@ secureConfig := json.SecurityConfig()
 
 processor, _ := json.New(secureConfig)
 defer processor.Close()
+```
+
+### 安全工具
+
+```go
+// 注册自定义危险模式
+json.RegisterDangerousPattern(json.DangerousPattern{
+    Pattern: "eval\\(",
+    Name:    "eval-injection",
+    Level:   json.PatternLevelCritical,
+})
+
+// 列出所有已注册的模式
+patterns := json.ListDangerousPatterns()
+
+// 安全错误报告（不泄露内部细节）
+safeMsg := json.SafeError(err)
+
+// 日志中脱敏敏感路径
+redacted := json.RedactedPath("user.password")
+```
+
+### 错误处理
+
+```go
+// 哨兵错误，用于程序化判断
+errors.Is(err, json.ErrInvalidJSON)
+errors.Is(err, json.ErrPathNotFound)
+errors.Is(err, json.ErrTypeMismatch)
+errors.Is(err, json.ErrSizeLimit)
+errors.Is(err, json.ErrSecurityViolation)
+
+// 带上下文的结构化错误
+var jsonErr *json.JsonsError
+if errors.As(err, &jsonErr) {
+    fmt.Printf("操作=%s 路径=%s: %s\n", jsonErr.Op, jsonErr.Path, jsonErr.Message)
+}
 ```
 
 详见 [安全指南](docs/SECURITY.md)。

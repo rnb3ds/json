@@ -304,8 +304,8 @@ For large JSON (>4KB), the library uses an optimized security scanning approach:
 
 ```go
 // Default mode (FullSecurityScan: false) - Optimized for performance:
-// - 16KB beginning section + 8KB end section scan
-// - 15-30 distributed middle samples with 512-byte overlap
+// - 4KB beginning section + 4KB end section scan
+// - 4KB middle region sample
 // - Critical patterns (__proto__, constructor, prototype) always fully scanned
 // - Suspicious character density triggers automatic full scan
 // - Pattern fragment detection for targeted scanning
@@ -1191,7 +1191,7 @@ The library implements a multi-layered security validation system:
 │         ↓                                                       │
 │  ┌─────────────────────────────────────────────────────────┐   │
 │  │              SECURITY PATTERN SCANNER                    │   │
-│  │  • 64 Dangerous Patterns (XSS, Injection, etc.)         │   │
+│  │  • 28 Dangerous Patterns (XSS, Injection, etc.)         │   │
 │  │  • Optimized for Large JSON (>4KB)                      │   │
 │  │  • Rolling Window with Overlap (No Gaps)                │   │
 │  └─────────────────────────────────────────────────────────┘   │
@@ -1205,9 +1205,9 @@ The library implements a multi-layered security validation system:
 
 ### Dangerous Pattern Detection
 
-The library detects **64 dangerous patterns** across multiple categories:
+The library detects **28 dangerous patterns** across multiple categories, plus supports custom patterns via `RegisterDangerousPattern`:
 
-#### Prototype Pollution Patterns
+#### Prototype Pollution Patterns (Critical — always fully scanned)
 ```go
 // Detected patterns:
 "__proto__"           // Prototype pollution
@@ -1215,48 +1215,55 @@ The library detects **64 dangerous patterns** across multiple categories:
 "prototype."          // Prototype manipulation
 "__defineGetter__"    // Getter definition
 "__defineSetter__"    // Setter definition
-"Object.assign"       // Object assignment
-"Reflect."            // Reflection API
-"Proxy("              // Proxy creation
-"Symbol("             // Symbol creation
 ```
 
-#### XSS (Cross-Site Scripting) Patterns
+#### HTML/XML Injection Patterns
 ```go
-// HTML Injection:
 "<script"             // Script tag injection
 "<iframe"             // Iframe injection
 "<object"             // Object injection
 "<embed"              // Embed injection
 "<svg"                // SVG injection
+```
 
-// Protocol Injection:
+#### Protocol Injection Patterns
+```go
 "javascript:"         // JavaScript protocol
 "vbscript:"           // VBScript protocol
-"data:"               // Data protocol
+```
 
-// JavaScript Execution:
+#### Code Execution Patterns
+```go
 "eval("               // Dynamic code execution
-"function("           // Function expression
 "setTimeout("         // Timer manipulation
 "setInterval("        // Interval manipulation
 "require("            // Code injection
 "new function("       // Dynamic function creation
-"import("             // Dynamic import
 ```
 
-#### Event Handler Patterns (31 patterns)
+#### DOM Access Patterns
+```go
+"document.cookie"     // Cookie access
+"window.location"     // Redirect manipulation
+"innerhtml"           // DOM manipulation
+```
+
+#### Encoding Bypass Patterns
+```go
+"fromcharcode("       // Character encoding bypass
+"atob("               // Base64 decoding
+"expression("         // CSS expression injection
+```
+
+#### Event Handler Patterns
 ```go
 // Detected event handlers:
-"onerror", "onload", "onclick", "onmouseover", "onfocus", "onblur",
-"onkeyup", "onchange", "onsubmit", "ondblclick", "onmousedown",
-"onmouseup", "onmousemove", "onkeydown", "onkeypress", "onreset",
-"onselect", "onunload", "onabort", "ondrag", "ondragend",
-"ondragenter", "ondragleave", "ondragover", "ondragstart",
-"ondrop", "onscroll", "onwheel", "oncopy", "oncut", "onpaste"
+"onerror", "onload", "onclick", "onmouseover", "onfocus"
 ```
 
-#### Sensitive Data Patterns (63 patterns)
+#### Sensitive Data Detection (for cache exclusion)
+The library also detects sensitive data patterns to prevent caching of sensitive values. These are separate from dangerous patterns and are used by the cache layer:
+
 ```go
 // Authentication:
 "password", "passwd", "pwd", "token", "bearer", "jwt",
@@ -1291,6 +1298,8 @@ The library detects **64 dangerous patterns** across multiple categories:
 "azure_key", "gcp_key", "gcp_credentials"
 ```
 
+**Note:** Sensitive data patterns prevent values from being cached but do not trigger security violations. Use `AdditionalDangerousPatterns` in Config to add custom dangerous patterns that trigger violations.
+
 ### Optimized Security Scanning for Large JSON
 
 For JSON larger than 4KB, the library uses an optimized scanning approach:
@@ -1307,12 +1316,12 @@ Overlap Size = maxPatternLength + 8 bytes
 
 #### Multi-Region Sampling
 ```
-┌────────────────────────────────────────────────────────────┐
-│  [Sample 4KB]          [Sample 4KB]         [Sample 4KB]  │
-│   Beginning    →       Middle Region  →        End        │
-│       ↓                     ↓                      ↓       │
-│  Density Check      Density Check         Density Check   │
-└────────────────────────────────────────────────────────────┘
+┌───────────────────────────────────────────────────────────┐
+│  [Sample 4KB]       [Sample 4KB]        [Sample 4KB]     │
+│   Beginning    →    Middle Region  →        End          │
+│       ↓                  ↓                    ↓           │
+│  Density Check     Density Check       Density Check     │
+└───────────────────────────────────────────────────────────┘
 ```
 
 #### Suspicious Character Density Check
@@ -1330,12 +1339,12 @@ Overlap Size = maxPatternLength + 8 bytes
 The validation cache uses secure key generation to prevent collision attacks:
 
 ```go
-// For small JSON (< 4KB): FNV-1a with length prefix
-key := fmt.Sprintf("%d:%016x", len(json), fnv1aHash(json))
+// For small JSON (< 4KB): Secure FNV-1a with length XOR
+key := fmt.Sprintf("%d:%016x", len(json), fnv1aHash(json) ^ uint64(len(json)))
 
-// For large JSON (≥ 4KB): SHA-256 truncated
+// For large JSON (>= 4KB): SHA-256 full 32 bytes
 hash := sha256.Sum256([]byte(json))
-key := fmt.Sprintf("%d:%x", len(json), hash[:16])
+key := fmt.Sprintf("%d:%x", len(json), hash[:]) // Full 32 bytes (64 hex chars)
 
 // Cache management:
 // - Maximum entries: 10,000
@@ -1618,7 +1627,8 @@ The library caches validation results to avoid redundant security scans:
 // - Uses full 256-bit output to prevent birthday attacks
 // - Prevents cache poisoning attacks
 
-func getValidationCacheKey(jsonStr string) string {
+// getValidationCacheKey is a method on securityValidator (internal)
+func (sv *securityValidator) getValidationCacheKey(jsonStr string) string {
     if len(jsonStr) <= 4096 {
         // Secure FNV-1a for small strings (with length XOR)
         h := HashStringFNV1aSecure(jsonStr)
@@ -1683,13 +1693,13 @@ For large JSON (>4KB), the library uses optimized scanning:
 ```go
 // Checks suspicious character density in 3 regions:
 // 1. Beginning (0 to 4KB)
-// 2. Middle ((len/2) - 2KB to (len/2) + 2KB)
+// 2. Middle ((len - 4KB) / 2 to (len - 4KB) / 2 + 4KB)
 // 3. End (len - 4KB to len)
 
 // Suspicious characters: < > ( ) ; = &
-// Threshold: 0.5% density triggers full scan
+// Threshold per region: 0.5% density triggers full scan
 
-func hasSuspiciousCharacterDensity(jsonStr string) bool {
+func (sv *securityValidator) hasSuspiciousCharacterDensity(jsonStr string) bool {
     // Sample from beginning, middle, and end
     // Detects attacks hidden anywhere in payload
 }

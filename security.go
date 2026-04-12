@@ -355,6 +355,27 @@ func (sv *securityValidator) Close() {
 	sv.validationCache = nil
 }
 
+// ValidateJSONInputEssential performs only essential safety checks that must
+// always be enforced, even when SkipValidation is true.
+// SECURITY: Size limits and nesting depth protect the process itself from DoS.
+func (sv *securityValidator) ValidateJSONInputEssential(jsonStr string) error {
+	// Always enforce size limit — prevents memory exhaustion
+	if int64(len(jsonStr)) > sv.maxJSONSize {
+		return newSizeLimitError("validate_json_input", int64(len(jsonStr)), sv.maxJSONSize)
+	}
+
+	if len(jsonStr) == 0 {
+		return newOperationError("validate_json_input", "JSON string cannot be empty", ErrInvalidJSON)
+	}
+
+	// Always enforce nesting depth — prevents stack overflow during parsing
+	if err := sv.validateNestingDepth(jsonStr); err != nil {
+		return err
+	}
+
+	return nil
+}
+
 // ValidateJSONInput performs comprehensive JSON input validation with enhanced security.
 // PERFORMANCE: Uses caching to avoid repeated validation of the same JSON string.
 func (sv *securityValidator) ValidateJSONInput(jsonStr string) error {
@@ -1345,12 +1366,13 @@ func (sv *securityValidator) containsSensitiveDataRecursive(data any, depth, max
 	}
 
 	// For slices, recursively check elements using head/tail/sampling strategy.
-	// SECURITY: Checks first 50, last 20, and uniform samples in between
-	// to avoid blind spots while maintaining performance bounds.
+	// SECURITY: Checks first 100, last 50, and uniform samples in between.
+	// Full scan for arrays up to 500 elements to minimize blind spots.
+	// Performance is bounded: arrays > 500 sample at most 100 + 20 + 50 = 170 elements.
 	if arr, ok := data.([]any); ok {
 		n := len(arr)
-		if n <= 70 {
-			// Small array: check all elements
+		if n <= 500 {
+			// Small/medium array: check all elements
 			for i := 0; i < n; i++ {
 				if sv.containsSensitiveDataRecursive(arr[i], depth+1, maxDepth) {
 					return true
@@ -1358,21 +1380,21 @@ func (sv *securityValidator) containsSensitiveDataRecursive(data any, depth, max
 			}
 			return false
 		}
-		// Check head (first 50)
-		for i := 0; i < 50; i++ {
+		// Large array: check head (first 100), tail (last 50), and sample middle
+		for i := 0; i < 100; i++ {
 			if sv.containsSensitiveDataRecursive(arr[i], depth+1, maxDepth) {
 				return true
 			}
 		}
-		// Check tail (last 20)
-		for i := n - 20; i < n; i++ {
+		// Check tail (last 50)
+		for i := n - 50; i < n; i++ {
 			if sv.containsSensitiveDataRecursive(arr[i], depth+1, maxDepth) {
 				return true
 			}
 		}
-		// Sample up to 10 elements uniformly from the middle
-		step := max(1, (n-70)/10)
-		for i := 50; i < n-20; i += step {
+		// Sample up to 20 elements uniformly from the middle
+		step := max(1, (n-150)/20)
+		for i := 100; i < n-50; i += step {
 			if sv.containsSensitiveDataRecursive(arr[i], depth+1, maxDepth) {
 				return true
 			}

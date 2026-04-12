@@ -24,9 +24,9 @@ import "github.com/cybergodev/json"
 | `Unmarshal(data []byte, v any) error`                                | ✅      | Identical behavior and error handling |
 | `MarshalIndent(v any, prefix, indent string) ([]byte, error)`        | ✅      | Same formatting rules                 |
 | `Valid(data []byte) bool`                                            | ✅      | Same validation logic                 |
-| `Compact(dst *bytes.Buffer, src []byte) error`                       | ✅      | Identical whitespace removal (extended with optional `Config`) |
-| `Indent(dst *bytes.Buffer, src []byte, prefix, indent string) error` | ✅      | Same indentation behavior (extended with optional `Config`)    |
-| `HTMLEscape(dst *bytes.Buffer, src []byte)`                          | ✅      | Same HTML escaping rules (extended with optional `Config`)     |
+| `Compact(dst *bytes.Buffer, src []byte, cfg ...Config) error`                       | ✅      | Identical whitespace removal (extended with optional `Config`) |
+| `Indent(dst *bytes.Buffer, src []byte, prefix, indent string, cfg ...Config) error` | ✅      | Same indentation behavior (extended with optional `Config`)    |
+| `HTMLEscape(dst *bytes.Buffer, src []byte, cfg ...Config)`                          | ✅      | Same HTML escaping rules (extended with optional `Config`)     |
 
 ## ✅ Fully Compatible Types
 
@@ -35,8 +35,8 @@ import "github.com/cybergodev/json"
 |-----------------------------------------------|--------|----------------------------|
 | `Encoder`                                     | ✅      | Complete implementation    |
 | `Decoder`                                     | ✅      | Complete implementation    |
-| `NewEncoder(w io.Writer) *Encoder`            | ✅      | Identical constructor      |
-| `NewDecoder(r io.Reader) *Decoder`            | ✅      | Identical constructor      |
+| `NewEncoder(w io.Writer) *Encoder`            | ✅      | Extended with optional `Config`       |
+| `NewDecoder(r io.Reader) *Decoder`            | ✅      | Extended with optional `Config`       |
 | `(*Encoder).Encode(v any) error`              | ✅      | Same encoding behavior     |
 | `(*Encoder).SetEscapeHTML(on bool)`           | ✅      | Same HTML escaping control |
 | `(*Encoder).SetIndent(prefix, indent string)` | ✅      | Same indentation control   |
@@ -62,7 +62,7 @@ import "github.com/cybergodev/json"
 
 | Error Type              | Status | Notes                                   |
 |-------------------------|--------|-----------------------------------------|
-| `SyntaxError`           | ✅      | Same error messages and offset tracking |
+| `SyntaxError`           | ✅      | Same structure and offset tracking (message details may vary) |
 | `UnmarshalTypeError`    | ✅      | Same type mismatch reporting            |
 | `InvalidUnmarshalError` | ✅      | Same invalid target detection           |
 | `UnsupportedTypeError`  | ✅      | Same unsupported type handling          |

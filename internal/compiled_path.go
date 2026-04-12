@@ -77,7 +77,11 @@ func CompilePath(path string) (*CompiledPath, error) {
 }
 
 // CompilePathUnsafe compiles a path without validation.
-// Use only when the path is known to be safe.
+//
+// SECURITY WARNING: This bypasses all security checks including null byte detection,
+// path traversal prevention, and zero-width character detection. Only use when the
+// path string is provably safe (e.g., a hardcoded constant or a path produced by
+// the library itself). Never use with user-supplied input.
 func CompilePathUnsafe(path string) (*CompiledPath, error) {
 	return compilePathUnchecked(path)
 }

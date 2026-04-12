@@ -130,6 +130,32 @@ func (e *JsonsError) Is(target error) bool {
 	return errors.Is(e.Err, target)
 }
 
+
+// SafeError returns a client-safe error message that omits internal details.
+// Use this when returning errors to external clients (HTTP responses, APIs).
+// The full Error() output may include path names and internal structure
+// that should not be exposed to clients (CWE-209).
+//
+// Example:
+//
+//	result, err := processor.Get(json, "users.admin.password")
+//	if err != nil {
+//	    // Do not expose: "JSON get failed at path 'users.admin.password': ..."
+//	    // Instead return: "path not found"
+//	    http.Error(w, json.SafeError(err), http.StatusBadRequest)
+//	}
+func SafeError(err error) string {
+	if err == nil {
+		return ""
+	}
+	var jsErr *JsonsError
+	if errors.As(err, &jsErr) {
+		// Return only the sentinel error message, not the path or operation
+		return jsErr.Err.Error()
+	}
+	return err.Error()
+}
+
 // newOperationError creates a JsonsError for operation failures.
 func newOperationError(operation, message string, err error) error {
 	return &JsonsError{Op: operation, Message: message, Err: err}
@@ -198,6 +224,18 @@ func isUserError(err error) bool {
 		}
 	}
 	return false
+}
+
+// RedactedPath returns a redacted version of a path for safe inclusion in error messages.
+// SECURITY: Prevents path content from leaking into logs or error responses.
+func RedactedPath(path string) string {
+	if len(path) > 32 {
+		return path[:8] + "..." + path[len(path)-8:]
+	}
+	if path != "" {
+		return "***"
+	}
+	return ""
 }
 
 // GetErrorSuggestion provides suggestions for common errors

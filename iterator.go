@@ -1820,7 +1820,14 @@ func (it *ParallelIterator) ForEachWithContext(ctx context.Context, fn func(int,
 			break
 		}
 
-		it.sem <- struct{}{} // Acquire semaphore
+		// RESOURCE FIX: Select on ctx.Done() during semaphore acquire to prevent
+		// goroutine leak when all workers are busy and context is cancelled.
+		select {
+		case it.sem <- struct{}{}: // Acquire semaphore
+		case <-ctx.Done():
+			wg.Wait()
+			return ctx.Err()
+		}
 		wg.Add(1)
 
 		go func(idx int, val any) {
@@ -1900,7 +1907,14 @@ func (it *ParallelIterator) ForEachBatchWithContext(ctx context.Context, batchSi
 			break
 		}
 
-		it.sem <- struct{}{}
+		// RESOURCE FIX: Select on ctx.Done() during semaphore acquire to prevent
+		// goroutine leak when all workers are busy and context is cancelled.
+		select {
+		case it.sem <- struct{}{}: // Acquire semaphore
+		case <-ctx.Done():
+			wg.Wait()
+			return ctx.Err()
+		}
 		wg.Add(1)
 
 		go func(idx int, b []any) {

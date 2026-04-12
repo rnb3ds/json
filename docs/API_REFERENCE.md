@@ -18,8 +18,23 @@
 - [JSONL Support](#jsonl-support)
 - [Validation Functions](#validation-functions)
 - [Type Conversion](#type-conversion)
+- [Data Utilities](#data-utilities)
+- [Batch Processing](#batch-processing)
+- [Cache Operations](#cache-operations)
+- [Security Functions](#security-functions)
+- [Utility Functions](#utility-functions)
+- [Hook Constructors](#hook-constructors)
+- [Processor Management](#processor-management)
 - [Configuration](#configuration)
+- [Processor Type](#processor-type)
 - [Error Types](#error-types)
+- [IterableValue Type](#iterablevalue-type)
+- [AccessResult Type](#accessresult-type)
+- [Result[T] Type](#resultt-type)
+- [Schema Type](#schema-type)
+- [Iterator Control](#iterator-control)
+- [Additional Types](#additional-types)
+- [Path Expression Syntax](#path-expression-syntax)
 
 ---
 
@@ -362,6 +377,40 @@ result, err := json.SetMultiple(data, updates)
 
 ---
 
+### SetCreate
+
+```go
+func SetCreate(jsonStr, path string, value any, cfg ...Config) (string, error)
+```
+
+Sets a value in JSON at the specified path, automatically creating intermediate paths. Equivalent to calling `Set` with `CreatePaths: true`.
+
+**Example:**
+```go
+result, err := json.SetCreate(data, "new.nested.path", "value")
+```
+
+---
+
+### SetMultipleCreate
+
+```go
+func SetMultipleCreate(jsonStr string, updates map[string]any, cfg ...Config) (string, error)
+```
+
+Sets multiple values in a single operation, automatically creating intermediate paths. Equivalent to calling `SetMultiple` with `CreatePaths: true`.
+
+**Example:**
+```go
+updates := map[string]any{
+    "user.profile.name": "Bob",
+    "user.profile.age":  30,
+}
+result, err := json.SetMultipleCreate(data, updates)
+```
+
+---
+
 ## Data Deletion (Delete)
 
 ### Delete
@@ -389,6 +438,21 @@ result, err := json.Delete(data, "user.temp", cfg)
 
 ---
 
+### DeleteClean
+
+```go
+func DeleteClean(jsonStr, path string, cfg ...Config) (string, error)
+```
+
+Deletes a value from JSON and removes null values. Equivalent to calling `Delete` with `CleanupNulls: true`.
+
+**Example:**
+```go
+result, err := json.DeleteClean(data, "user.temp")
+```
+
+---
+
 ## Encoding Functions
 
 ### Encode
@@ -402,6 +466,21 @@ Converts any Go value to JSON string.
 **Example:**
 ```go
 result, err := json.Encode(data)
+```
+
+---
+
+### EncodePretty
+
+```go
+func EncodePretty(value any, cfg ...Config) (string, error)
+```
+
+Converts any Go value to pretty-printed JSON string.
+
+**Example:**
+```go
+result, err := json.EncodePretty(data)
 ```
 
 ---
@@ -429,6 +508,51 @@ func Prettify(jsonStr string, cfg ...Config) (string, error)
 ```
 
 Formats JSON string with pretty indentation.
+
+---
+
+### EncodeBatch
+
+```go
+func EncodeBatch(pairs map[string]any, cfg ...Config) (string, error)
+```
+
+Encodes a map of key-value pairs as a JSON object.
+
+**Example:**
+```go
+result, err := json.EncodeBatch(map[string]any{"name": "Alice", "age": 30})
+```
+
+---
+
+### EncodeFields
+
+```go
+func EncodeFields(value any, fields []string, cfg ...Config) (string, error)
+```
+
+Encodes only the specified fields of a struct to JSON.
+
+**Example:**
+```go
+result, err := json.EncodeFields(user, []string{"Name", "Email"})
+```
+
+---
+
+### EncodeStream
+
+```go
+func EncodeStream(values any, cfg ...Config) (string, error)
+```
+
+Encodes values as a JSON stream (array).
+
+**Example:**
+```go
+result, err := json.EncodeStream([]User{user1, user2})
+```
 
 ---
 
@@ -493,6 +617,26 @@ err := json.Parse(untrustedInput, &data, cfg)
 
 ---
 
+### ParseAny
+
+```go
+func ParseAny(jsonStr string, cfg ...Config) (any, error)
+```
+
+Parses a JSON string and returns the result as `any`. Unlike `Parse`, does not require a target pointer.
+
+**Example:**
+```go
+result, err := json.ParseAny(`{"name": "Alice", "age": 30}`)
+if err != nil {
+    log.Fatal(err)
+}
+m := result.(map[string]any)
+fmt.Println(m["name"])
+```
+
+---
+
 ## File Operations
 
 ### LoadFromFile
@@ -543,6 +687,40 @@ func UnmarshalFromFile(filePath string, v any, cfg ...Config) error
 ```
 
 Reads JSON from a file and unmarshals it into v.
+
+---
+
+### LoadFromReader
+
+```go
+func LoadFromReader(reader io.Reader, cfg ...Config) (string, error)
+```
+
+Loads JSON data from an `io.Reader`.
+
+**Example:**
+```go
+file, _ := os.Open("data.json")
+defer file.Close()
+data, err := json.LoadFromReader(file)
+```
+
+---
+
+### SaveToWriter
+
+```go
+func SaveToWriter(writer io.Writer, data any, cfg ...Config) error
+```
+
+Writes JSON data to an `io.Writer`.
+
+**Example:**
+```go
+var buf bytes.Buffer
+cfg := json.PrettyConfig()
+err := json.SaveToWriter(&buf, data, cfg)
+```
 
 ---
 
@@ -617,6 +795,174 @@ func ForeachReturn(jsonStr string, fn func(key any, item *IterableValue), cfg ..
 Iterates and returns the original JSON string (read-only).
 
 **Note:** This function is read-only. Use `json.Set()` for modifications.
+
+---
+
+### ForeachWithPathAndIterator
+
+```go
+func ForeachWithPathAndIterator(jsonStr, path string, fn func(key any, item *IterableValue, currentPath string) IteratorControl) error
+```
+
+Iterates over a specific path with automatic path tracking and flow control. The callback receives the current full path as the third argument.
+
+**Example:**
+```go
+err := json.ForeachWithPathAndIterator(data, "users", func(key any, item *json.IterableValue, currentPath string) json.IteratorControl {
+    fmt.Printf("Path: %s, Name: %s\n", currentPath, item.GetString("name"))
+    return json.IteratorNormal
+})
+```
+
+---
+
+### ForeachWithError
+
+```go
+func ForeachWithError(jsonStr, path string, fn func(key any, item *IterableValue) error) error
+```
+
+Iterates over a specific path with an error-returning callback. Stops on first error returned.
+
+---
+
+### ForeachNestedWithError
+
+```go
+func ForeachNestedWithError(jsonStr string, fn func(key any, item *IterableValue) error) error
+```
+
+Recursively iterates through all nested levels with an error-returning callback. Stops on first error returned.
+
+---
+
+### ForeachFile
+
+```go
+func ForeachFile(filePath string, fn func(key any, item *IterableValue) error) error
+```
+
+Iterates over a JSON file without loading it entirely into memory. Supports early termination via `item.Break()`.
+
+**Example:**
+```go
+err := json.ForeachFile("data.json", func(key any, item *json.IterableValue) error {
+    fmt.Println(item.GetString("name"))
+    return nil
+})
+```
+
+---
+
+### ForeachFileWithPath
+
+```go
+func ForeachFileWithPath(filePath, path string, fn func(key any, item *IterableValue) error) error
+```
+
+Iterates over a specific path within a JSON file.
+
+---
+
+### ForeachFileChunked
+
+```go
+func ForeachFileChunked(filePath string, chunkSize int, fn func(chunk []*IterableValue) error) error
+```
+
+Iterates over a JSON file in chunks for memory-efficient processing of large files.
+
+---
+
+### ForeachFileNested
+
+```go
+func ForeachFileNested(filePath string, fn func(key any, item *IterableValue) error) error
+```
+
+Recursively iterates through all nested levels in a JSON file.
+
+---
+
+### ForeachJSONL
+
+```go
+func ForeachJSONL(reader io.Reader, fn func(lineNum int, item *IterableValue) error) error
+```
+
+Iterates over JSONL/NDJSON lines from a reader.
+
+---
+
+## Streaming Processing
+
+### StreamJSONL
+
+```go
+func StreamJSONL(reader io.Reader, fn func(lineNum int, item *IterableValue) error) error
+```
+
+Streams JSONL data from a reader with callback processing.
+
+---
+
+### StreamJSONLParallel
+
+```go
+func StreamJSONLParallel(reader io.Reader, workers int, fn func(lineNum int, item *IterableValue) error) error
+```
+
+Streams JSONL data with parallel worker processing.
+
+---
+
+### StreamJSONLParallelWithContext
+
+```go
+func StreamJSONLParallelWithContext(ctx context.Context, reader io.Reader, workers int, fn func(lineNum int, item *IterableValue) error) error
+```
+
+Streams JSONL data with parallel workers and context cancellation support.
+
+---
+
+### StreamJSONLChunked
+
+```go
+func StreamJSONLChunked(reader io.Reader, chunkSize int, fn func(chunk []*IterableValue) error) error
+```
+
+Streams JSONL data in chunks for batch processing.
+
+---
+
+### MapJSONL
+
+```go
+func MapJSONL(reader io.Reader, fn func(lineNum int, item *IterableValue) (any, error)) ([]any, error)
+```
+
+Maps each JSONL line to a transformed value.
+
+---
+
+### ReduceJSONL
+
+```go
+func ReduceJSONL(reader io.Reader, initial any, fn func(acc any, item *IterableValue) any) (any, error)
+```
+
+Reduces JSONL lines to a single accumulated value.
+
+---
+
+### FilterJSONL
+
+```go
+func FilterJSONL(reader io.Reader, predicate func(item *IterableValue) bool) ([]*IterableValue, error)
+```
+
+Filters JSONL lines by a predicate function.
 
 ---
 
@@ -723,6 +1069,24 @@ errors, err := json.ValidateSchema(data, schema)
 
 ---
 
+### ValidWithConfig
+
+```go
+func ValidWithConfig(jsonStr string, cfg ...Config) (bool, error)
+```
+
+Validates a JSON string with optional configuration. Unlike `Valid` which accepts `[]byte`, this accepts a string and supports Config options.
+
+**Example:**
+```go
+ok, err := json.ValidWithConfig(jsonStr, json.SecurityConfig())
+if err != nil || !ok {
+    log.Fatal("invalid JSON")
+}
+```
+
+---
+
 ## Type Conversion
 
 > **Note:** The following type conversion functions are unexported (internal). Use `GetTyped[T]`, `GetString`, `GetInt`, etc. for type-safe access, or use `AccessResult` methods (`AsInt()`, `AsFloat64()`, `AsBool()`, `AsString()`) from `SafeGet`.
@@ -807,6 +1171,193 @@ result, err := json.MergeMany([]string{config1, config2, config3}, cfg)
 
 ---
 
+## Batch Processing
+
+### ProcessBatch
+
+```go
+func ProcessBatch(operations []BatchOperation, cfg ...Config) ([]BatchResult, error)
+```
+
+Processes multiple operations in a single batch call. Each `BatchOperation` specifies a `Type` ("get", "set", "delete"), `JSONStr`, `Path`, `Value`, and `ID`.
+
+**Example:**
+```go
+ops := []json.BatchOperation{
+    {Type: "get", JSONStr: data, Path: "user.name", ID: "1"},
+    {Type: "set", JSONStr: data, Path: "user.age", Value: 30, ID: "2"},
+}
+results, err := json.ProcessBatch(ops)
+```
+
+---
+
+## Cache Operations
+
+### WarmupCache
+
+```go
+func WarmupCache(jsonStr string, paths []string, cfg ...Config) (*WarmupResult, error)
+```
+
+Pre-warms the cache for specified paths. Returns a `WarmupResult` with success/failure counts.
+
+**Example:**
+```go
+result, err := json.WarmupCache(data, []string{"user.name", "user.age"})
+fmt.Printf("Warmed %d/%d paths\n", result.Successful, result.TotalPaths)
+```
+
+---
+
+### ClearCache
+
+```go
+func ClearCache()
+```
+
+Clears the global processor cache.
+
+---
+
+### GetStats
+
+```go
+func GetStats() Stats
+```
+
+Returns processor performance statistics (package-level).
+
+---
+
+### GetHealthStatus
+
+```go
+func GetHealthStatus() HealthStatus
+```
+
+Returns processor health status (package-level).
+
+---
+
+## Security Functions
+
+### RegisterDangerousPattern
+
+```go
+func RegisterDangerousPattern(pattern DangerousPattern)
+```
+
+Registers a custom dangerous pattern for security validation.
+
+---
+
+### UnregisterDangerousPattern
+
+```go
+func UnregisterDangerousPattern(pattern string)
+```
+
+Unregisters a dangerous pattern by its pattern string.
+
+---
+
+### ListDangerousPatterns
+
+```go
+func ListDangerousPatterns() []DangerousPattern
+```
+
+Returns all registered dangerous patterns.
+
+---
+
+## Utility Functions
+
+### SafeError
+
+```go
+func SafeError(err error) string
+```
+
+Returns a sanitized error message with sensitive paths redacted.
+
+---
+
+### RedactedPath
+
+```go
+func RedactedPath(path string) string
+```
+
+Returns a redacted version of a path for safe logging.
+
+---
+
+## Hook Constructors
+
+### LoggingHook
+
+```go
+func LoggingHook(logger interface{ Info(msg string, args ...any) }) Hook
+```
+
+Creates a hook that logs operations.
+
+---
+
+### TimingHook
+
+```go
+func TimingHook(recorder interface{ RecordDuration(duration time.Duration) }) Hook
+```
+
+Creates a hook that records operation timing.
+
+---
+
+### ValidationHook
+
+```go
+func ValidationHook(validator func(jsonStr, path string) error) Hook
+```
+
+Creates a hook that validates data before operations.
+
+---
+
+### ErrorHook
+
+```go
+func ErrorHook(handler func(ctx HookContext, err error) error) Hook
+```
+
+Creates a hook that handles operation errors.
+
+---
+
+## Processor Management
+
+### SetGlobalProcessor
+
+```go
+func SetGlobalProcessor(processor *Processor)
+```
+
+Sets the global processor used by package-level functions.
+
+---
+
+### ShutdownGlobalProcessor
+
+```go
+func ShutdownGlobalProcessor()
+```
+
+Shuts down and releases the global processor.
+
+---
+
 ## Configuration
 
 ### DefaultConfig
@@ -876,6 +1427,18 @@ Returns a configuration for pretty-printed JSON output.
 ```go
 func (c *Config) Clone() *Config
 func (c *Config) Validate() error
+func (c *Config) ValidateWithWarnings() []ConfigWarning
+func (c *Config) AddHook(hook Hook)
+func (c *Config) AddValidator(validator Validator)
+func (c *Config) AddDangerousPattern(pattern DangerousPattern)
+```
+
+### Schema Helpers
+
+```go
+func DefaultSchema() *Schema
+func DefaultSchemaConfig() SchemaConfig
+func NewSchemaWithConfig(cfg SchemaConfig) *Schema
 ```
 
 ---
@@ -913,28 +1476,93 @@ defer processor.Close()
 ```go
 // Core operations
 func (p *Processor) Get(jsonStr, path string, cfg ...Config) (any, error)
+func (p *Processor) GetString(jsonStr, path string, defaultValue ...string) string
+func (p *Processor) GetInt(jsonStr, path string, defaultValue ...int) int
+func (p *Processor) GetFloat(jsonStr, path string, defaultValue ...float64) float64
+func (p *Processor) GetBool(jsonStr, path string, defaultValue ...bool) bool
+func (p *Processor) GetArray(jsonStr, path string, defaultValue ...[]any) []any
+func (p *Processor) GetObject(jsonStr, path string, defaultValue ...map[string]any) map[string]any
+func (p *Processor) GetMultiple(jsonStr string, paths []string, cfg ...Config) (map[string]any, error)
+func (p *Processor) SafeGet(jsonStr, path string, cfg ...Config) AccessResult
+func (p *Processor) GetFromParsed(parsed *ParsedJSON, path string, cfg ...Config) (any, error)
+func (p *Processor) GetCompiled(jsonStr string, cp *CompiledPath) (any, error)
+func (p *Processor) CompilePath(path string) (*CompiledPath, error)
+
 func (p *Processor) Set(jsonStr, path string, value any, cfg ...Config) (string, error)
+func (p *Processor) SetMultiple(jsonStr string, updates map[string]any, cfg ...Config) (string, error)
+func (p *Processor) SetCreate(jsonStr, path string, value any, cfg ...Config) (string, error)
+func (p *Processor) SetMultipleCreate(jsonStr string, updates map[string]any, cfg ...Config) (string, error)
+func (p *Processor) SetFromParsed(parsed *ParsedJSON, path string, value any, cfg ...Config) (*ParsedJSON, error)
+
 func (p *Processor) Delete(jsonStr, path string, cfg ...Config) (string, error)
+func (p *Processor) DeleteClean(jsonStr, path string, cfg ...Config) (string, error)
 
 // Encoding/Decoding
 func (p *Processor) Marshal(v any, cfg ...Config) ([]byte, error)
 func (p *Processor) Unmarshal(data []byte, v any, cfg ...Config) error
+func (p *Processor) MarshalIndent(v any, prefix, indent string, cfg ...Config) ([]byte, error)
 func (p *Processor) EncodeWithConfig(value any, cfg ...Config) (string, error)
+func (p *Processor) EncodePretty(value any, cfg ...Config) (string, error)
+func (p *Processor) Prettify(jsonStr string, cfg ...Config) (string, error)
+func (p *Processor) Compact(jsonStr string, cfg ...Config) (string, error)
+func (p *Processor) CompactBuffer(dst *bytes.Buffer, src []byte, cfg ...Config) error
+func (p *Processor) Indent(dst *bytes.Buffer, src []byte, prefix, indent string, cfg ...Config) error
+func (p *Processor) HTMLEscape(dst *bytes.Buffer, src []byte, cfg ...Config)
+
+// Parsing/Validation
+func (p *Processor) Parse(jsonStr string, target any, cfg ...Config) error
+func (p *Processor) ParseAny(jsonStr string, cfg ...Config) (any, error)
+func (p *Processor) Valid(jsonStr string, cfg ...Config) (bool, error)
+func (p *Processor) ValidBytes(data []byte) bool
+func (p *Processor) ValidateSchema(jsonStr string, schema *Schema, cfg ...Config) ([]ValidationError, error)
 
 // File operations
 func (p *Processor) LoadFromFile(filePath string, cfg ...Config) (string, error)
+func (p *Processor) LoadFromReader(reader io.Reader, cfg ...Config) (string, error)
 func (p *Processor) SaveToFile(filePath string, data any, cfg ...Config) error
+func (p *Processor) SaveToWriter(writer io.Writer, data any, cfg ...Config) error
+func (p *Processor) MarshalToFile(path string, data any, cfg ...Config) error
+func (p *Processor) UnmarshalFromFile(path string, v any, cfg ...Config) error
 
-// Schema validation
-func (p *Processor) ValidateSchema(jsonStr string, schema *Schema, cfg ...Config) ([]ValidationError, error)
-
-// Cache operations
+// Batch/Cache
+func (p *Processor) ProcessBatch(operations []BatchOperation, cfg ...Config) ([]BatchResult, error)
 func (p *Processor) ClearCache()
+func (p *Processor) WarmupCache(jsonStr string, paths []string, cfg ...Config) (*WarmupResult, error)
 func (p *Processor) GetStats() Stats
 func (p *Processor) GetHealthStatus() HealthStatus
 
+// Iteration
+func (p *Processor) Foreach(jsonStr string, fn func(key any, item *IterableValue))
+func (p *Processor) ForeachWithPath(jsonStr, path string, fn func(key any, item *IterableValue)) error
+func (p *Processor) ForeachWithPathAndControl(jsonStr, path string, fn func(key any, value any) IteratorControl, cfg ...Config) error
+func (p *Processor) ForeachWithPathAndIterator(jsonStr, path string, fn func(key any, item *IterableValue, currentPath string) IteratorControl) error
+func (p *Processor) ForeachReturn(jsonStr string, fn func(key any, item *IterableValue)) (string, error)
+func (p *Processor) ForeachNested(jsonStr string, fn func(key any, item *IterableValue))
+func (p *Processor) ForeachWithError(jsonStr, path string, fn func(key any, item *IterableValue) error) error
+func (p *Processor) ForeachNestedWithError(jsonStr string, fn func(key any, item *IterableValue) error) error
+
+// File Iteration
+func (p *Processor) ForeachFile(filePath string, fn func(key any, item *IterableValue) error) error
+func (p *Processor) ForeachFileWithPath(filePath, path string, fn func(key any, item *IterableValue) error) error
+func (p *Processor) ForeachFileChunked(filePath string, chunkSize int, fn func(chunk []*IterableValue) error) error
+func (p *Processor) ForeachFileNested(filePath string, fn func(key any, item *IterableValue) error) error
+
+// JSONL Streaming
+func (p *Processor) StreamJSONL(reader io.Reader, fn func(lineNum int, item *IterableValue) error) error
+func (p *Processor) StreamJSONLParallel(reader io.Reader, workers int, fn func(lineNum int, item *IterableValue) error) error
+func (p *Processor) StreamJSONLParallelWithContext(ctx context.Context, reader io.Reader, workers int, fn func(lineNum int, item *IterableValue) error) error
+func (p *Processor) StreamJSONLChunked(reader io.Reader, chunkSize int, fn func(chunk []*IterableValue) error) error
+func (p *Processor) ForeachJSONL(reader io.Reader, fn func(lineNum int, item *IterableValue) error) error
+func (p *Processor) MapJSONL(reader io.Reader, fn func(lineNum int, item *IterableValue) (any, error)) ([]any, error)
+func (p *Processor) ReduceJSONL(reader io.Reader, initial any, fn func(acc any, item *IterableValue) any) (any, error)
+func (p *Processor) FilterJSONL(reader io.Reader, predicate func(item *IterableValue) bool) ([]*IterableValue, error)
+
 // Lifecycle
 func (p *Processor) Close() error
+func (p *Processor) IsClosed() bool
+func (p *Processor) GetConfig() Config
+func (p *Processor) SetLogger(logger *slog.Logger)
+func (p *Processor) AddHook(hook Hook)
 ```
 
 ---
@@ -1147,6 +1775,224 @@ err = processor.ForeachFile("data.json", func(key any, item *json.IterableValue)
 ```
 
 **Note:** The `IteratorControl` constants (`IteratorNormal`, `IteratorContinue`, `IteratorBreak`) are exported but primarily used internally. For most use cases, prefer the `IterableValue.Break()` method for iteration control.
+
+---
+
+## Additional Types
+
+### Iterator
+
+```go
+type Iterator struct { /* unexported fields */ }
+
+func NewIterator(data any, cfg ...Config) *Iterator
+func (it *Iterator) HasNext() bool
+func (it *Iterator) Next() (any, bool)
+func (it *Iterator) Reset()
+func (it *Iterator) ResetWith(data any)
+```
+
+A general-purpose iterator for traversing arrays and objects.
+
+**Example:**
+```go
+data, _ := json.ParseAny(`{"name": "Alice", "age": 30}`)
+iter := json.NewIterator(data)
+for iter.HasNext() {
+    value, ok := iter.Next()
+    if !ok {
+        break
+    }
+    fmt.Println(value)
+}
+```
+
+---
+
+### NDJSONProcessor
+
+```go
+type NDJSONProcessor struct { /* unexported fields */ }
+
+func NewNDJSONProcessor(cfg ...Config) *NDJSONProcessor
+func (p *NDJSONProcessor) ProcessFile(filename string, fn func(lineNum int, obj map[string]any) error) error
+func (p *NDJSONProcessor) ProcessReader(reader io.Reader, fn func(lineNum int, obj map[string]any) error) error
+```
+
+A processor for NDJSON/JSONL files with line-by-line processing.
+
+---
+
+### ParsedJSON
+
+```go
+type ParsedJSON struct { /* unexported fields */ }
+
+func (p *ParsedJSON) Data() any
+```
+
+A pre-parsed JSON document for reuse across multiple operations. Use `Processor.GetFromParsed` and `Processor.SetFromParsed` for efficient repeated access.
+
+---
+
+### CompiledPath
+
+```go
+type CompiledPath = internal.CompiledPath
+```
+
+A pre-parsed path for fast repeated operations. Create with `Processor.CompilePath`.
+
+---
+
+### JSONLWriter
+
+```go
+type JSONLWriter struct { /* unexported fields */ }
+
+func NewJSONLWriter(writer io.Writer, cfg ...Config) *JSONLWriter
+func (w *JSONLWriter) Write(data any) error
+func (w *JSONLWriter) WriteAll(data []any) error
+func (w *JSONLWriter) WriteRaw(line []byte) error
+func (w *JSONLWriter) Err() error
+func (w *JSONLWriter) Stats() JSONLStats
+```
+
+A streaming JSONL writer with buffered output and optional pretty printing.
+
+---
+
+### JSONLStats
+
+```go
+type JSONLStats struct {
+    LinesWritten int
+    BytesWritten int64
+}
+```
+
+Statistics from JSONLWriter operations.
+
+---
+
+### BatchOperation
+
+```go
+type BatchOperation struct {
+    Type    string  // "get", "set", or "delete"
+    JSONStr string
+    Path    string
+    Value   any
+    ID      string
+}
+```
+
+---
+
+### BatchResult
+
+```go
+type BatchResult struct {
+    ID     string
+    Result any
+    Error  error
+}
+```
+
+---
+
+### Stats
+
+```go
+type Stats struct {
+    CacheSize        int64
+    CacheMemory      int64
+    MaxCacheSize     int
+    HitCount         int64
+    MissCount        int64
+    HitRatio         float64
+    CacheTTL         time.Duration
+    CacheEnabled     bool
+    IsClosed         bool
+    MemoryEfficiency float64
+    OperationCount   int64
+    ErrorCount       int64
+}
+```
+
+---
+
+### HealthStatus
+
+```go
+type HealthStatus struct {
+    Timestamp time.Time
+    Healthy   bool
+    Checks    map[string]CheckResult
+}
+```
+
+---
+
+### CheckResult
+
+```go
+type CheckResult struct {
+    Healthy bool
+    Message string
+}
+```
+
+---
+
+### WarmupResult
+
+```go
+type WarmupResult struct {
+    TotalPaths  int
+    Successful  int
+    Failed      int
+    SuccessRate float64
+    FailedPaths []string
+}
+```
+
+---
+
+### ConfigWarning
+
+```go
+type ConfigWarning struct {
+    Field    string
+    OldValue any
+    NewValue any
+    Reason   string
+}
+```
+
+Returned by `Config.ValidateWithWarnings()` when configuration values are auto-corrected.
+
+---
+
+### SchemaConfig
+
+```go
+type SchemaConfig struct {
+    // Pointer-typed optional fields for schema construction
+}
+```
+
+Configuration for creating schemas with optional fields. Use `DefaultSchemaConfig()` for defaults and `NewSchemaWithConfig(cfg)` to create.
+
+---
+
+### PathSegment
+
+```go
+type PathSegment = internal.PathSegment
+```
+
+A segment of a parsed JSON path. Used with custom `PathParser` implementations.
 
 ---
 

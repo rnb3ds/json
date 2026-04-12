@@ -150,6 +150,17 @@ func ShutdownGlobalProcessor() {
 	// Safe to clear here because this is called only at application shutdown.
 	clearPathTypeCache()
 	internal.ClearStructEncoderCache()
+
+	// RESOURCE FIX: Close all cached processors and clear the config processor cache.
+	// Without this, processors in the config cache retain their caches, goroutines,
+	// and other resources until process exit.
+	configProcessorCache.Range(func(key, value any) bool {
+		configProcessorCache.Delete(key)
+		if p, ok := value.(*Processor); ok {
+			_ = p.Close() // best-effort cleanup
+		}
+		return true
+	})
 }
 
 // Package-level API functions are organized in the following files:

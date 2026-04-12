@@ -3,6 +3,7 @@ package json
 import (
 	"context"
 	"fmt"
+	"io"
 	"reflect"
 	"runtime"
 	"sync"
@@ -717,4 +718,153 @@ func TestEvictionGoroutinesBounded(t *testing.T) {
 		t.Errorf("Goroutine leak after eviction stress: before=%d after=%d leaked=%d",
 			initial, final, leaked)
 	}
+}
+
+// ============================================================================
+// FIX VERIFICATION TESTS (2026-04-12 resource leak audit — round 2)
+// ============================================================================
+
+// TestSemaphoreAcquireRespectsContext verifies that ForEachWithContext does not
+// block on semaphore acquire when context is cancelled and all workers are busy.
+// This is the regression test for fix C-3.
+func TestSemaphoreAcquireRespectsContext(t *testing.T) {
+	data := make([]any, 20)
+	for i := range data {
+		data[i] = i
+	}
+
+	cfg := DefaultConfig()
+	cfg.MaxConcurrency = 2
+	iterator := NewParallelIterator(data, cfg)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+
+	start := time.Now()
+	err := iterator.ForEachWithContext(ctx, func(idx int, val any) error {
+		time.Sleep(50 * time.Millisecond) // slow work
+		return nil
+	})
+	elapsed := time.Since(start)
+
+	if ctx.Err() != nil && err == nil {
+		t.Error("expected error when context expired during semaphore acquire")
+	}
+
+	// Must NOT take much longer than the timeout — old code would block.
+	if elapsed > 2*time.Second {
+		t.Errorf("ForEachWithContext took %v — semaphore acquire may not respect context", elapsed)
+	}
+}
+
+// TestBatchSemaphoreAcquireRespectsContext is the batch variant of the above.
+func TestBatchSemaphoreAcquireRespectsContext(t *testing.T) {
+	data := make([]any, 50)
+	for i := range data {
+		data[i] = i
+	}
+
+	cfg := DefaultConfig()
+	cfg.MaxConcurrency = 2
+	iterator := NewParallelIterator(data, cfg)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+
+	start := time.Now()
+	err := iterator.ForEachBatchWithContext(ctx, 5, func(idx int, batch []any) error {
+		time.Sleep(50 * time.Millisecond)
+		return nil
+	})
+	elapsed := time.Since(start)
+
+	if elapsed > 2*time.Second {
+		t.Errorf("ForEachBatchWithContext took %v — semaphore acquire may not respect context", elapsed)
+	}
+
+	if ctx.Err() != nil && err == nil {
+		t.Error("expected error when context expired during batch processing")
+	}
+}
+
+// TestStreamJSONLParallelWithContextCancellation verifies that
+// StreamJSONLParallelWithContext properly cancels workers and scanner.
+func TestStreamJSONLParallelWithContextCancellation(t *testing.T) {
+	processor, err := New()
+	if err != nil {
+		t.Fatalf("Failed to create processor: %v", err)
+	}
+	defer processor.Close()
+
+	// Build a slow reader that feeds data gradually
+	r, w := io.Pipe()
+	go func() {
+		defer w.Close()
+		for i := 0; i < 100; i++ {
+			fmt.Fprintf(w, `{"line":%d}`+"\n", i)
+			time.Sleep(20 * time.Millisecond)
+		}
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+	defer cancel()
+
+	var processed int32
+	start := time.Now()
+	err = processor.StreamJSONLParallelWithContext(ctx, r, 2, func(lineNum int, item *IterableValue) error {
+		atomic.AddInt32(&processed, 1)
+		return nil
+	})
+	elapsed := time.Since(start)
+
+	if elapsed > 3*time.Second {
+		t.Errorf("StreamJSONLParallelWithContext took %v — context not respected", elapsed)
+	}
+
+	if err != nil && ctx.Err() != nil {
+		t.Logf("Returned context error as expected: %v", err)
+	}
+}
+
+// TestShutdownGlobalProcessorClearsConfigCache verifies that
+// ShutdownGlobalProcessor closes all cached config processors.
+func TestShutdownGlobalProcessorClearsConfigCache(t *testing.T) {
+	// Populate the config cache with several processors
+	for i := 0; i < 5; i++ {
+		cfg := DefaultConfig()
+		cfg.MaxConcurrency = 100 + i // unique config key
+		_, _ = getProcessorWithConfig(cfg)
+	}
+
+	// Count cached entries before shutdown
+	var countBefore int
+	configProcessorCache.Range(func(_, _ any) bool {
+		countBefore++
+		return true
+	})
+
+	if countBefore == 0 {
+		t.Skip("No config cache entries to test")
+	}
+
+	// Shutdown should clear the cache
+	ShutdownGlobalProcessor()
+
+	var countAfter int
+	configProcessorCache.Range(func(_, _ any) bool {
+		countAfter++
+		return true
+	})
+
+	if countAfter != 0 {
+		t.Errorf("configProcessorCache not cleared after shutdown: before=%d after=%d",
+			countBefore, countAfter)
+	}
+
+	// Restore default processor for other tests
+	p, err := New()
+	if err != nil {
+		t.Fatalf("Failed to restore processor: %v", err)
+	}
+	SetGlobalProcessor(p)
 }

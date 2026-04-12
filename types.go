@@ -181,12 +181,15 @@ type Config struct {
 	CustomValidators []Validator
 
 	// AdditionalDangerousPatterns adds security patterns beyond defaults.
-	// These are checked in addition to built-in patterns unless
-	// DisableDefaultPatterns is true.
+	// These are checked in addition to built-in patterns.
+	// SECURITY: Critical patterns (__proto__, constructor[, prototype.) are always
+	// enforced and cannot be disabled.
 	AdditionalDangerousPatterns []DangerousPattern
 
-	// DisableDefaultPatterns disables built-in security patterns.
-	// Set to true to use only AdditionalDangerousPatterns.
+	// DisableDefaultPatterns disables built-in warning-level security patterns
+	// (HTML tags, event handlers, etc.) but has no effect on critical patterns.
+	// SECURITY: Critical patterns (__proto__, constructor[, prototype.) are always
+	// enforced regardless of this setting. These patterns are too dangerous to disable.
 	DisableDefaultPatterns bool
 
 	// Hooks provide before/after interception for operations.

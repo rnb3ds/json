@@ -161,6 +161,7 @@ func demonstrateCompiledPaths() {
 		fmt.Printf("   CompilePath error: %v\n", err)
 		return
 	}
+	defer compiled.Release()
 	fmt.Println("   Compiled path: level1.level2.level3.value")
 
 	// Use compiled path for fast repeated access

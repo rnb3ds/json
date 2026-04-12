@@ -173,11 +173,13 @@ func PutByteSliceSecure(b *[]byte) {
 	}
 }
 
-// StringToBytes converts string to []byte
-// Using standard conversion for safety and compatibility
 // StringToBytes converts a string to a byte slice without allocation.
-// The returned slice must not be modified — it shares memory with the input string.
-// PERFORMANCE: Zero-allocation conversion using unsafe.
+// The returned slice shares memory with the input string.
+//
+// SECURITY WARNING: The returned []byte MUST NOT be modified. Writing to it
+// corrupts the original string, violating Go's string immutability guarantee.
+// This can cause data integrity violations and security bypasses (e.g.,
+// modifying a validated JSON string after validation passes — TOCTOU).
 func StringToBytes(s string) []byte {
 	return unsafe.Slice(unsafe.StringData(s), len(s))
 }
@@ -313,6 +315,12 @@ func IntToStringFast(n int) string {
 // PERFORMANCE: Inline encoding for primitives avoids reflection and allocations
 // Returns true if the value was encoded, false if it needs standard encoding
 func EncodeFast(v any, buf *bytes.Buffer) bool {
+	return EncodeFastWithHTMLEscape(v, buf, false)
+}
+
+// EncodeFastWithHTMLEscape encodes a primitive value with optional HTML escaping.
+// SECURITY: When htmlEscape is true, string values have <, >, & escaped to prevent XSS.
+func EncodeFastWithHTMLEscape(v any, buf *bytes.Buffer, htmlEscape bool) bool {
 	switch val := v.(type) {
 	case nil:
 		buf.WriteString("null")
@@ -362,7 +370,7 @@ func EncodeFast(v any, buf *bytes.Buffer) bool {
 		return true
 	case string:
 		buf.WriteByte('"')
-		writeEscapedStringFast(buf, val)
+		writeEscapedStringFast(buf, val, htmlEscape)
 		buf.WriteByte('"')
 		return true
 	}
@@ -371,8 +379,9 @@ func EncodeFast(v any, buf *bytes.Buffer) bool {
 
 // writeEscapedStringFast writes an escaped JSON string to the buffer
 // PERFORMANCE: Optimized escape handling without allocations
-// SECURITY: Validates UTF-8 encoding for non-ASCII characters (RFC 8259 compliance)
-func writeEscapedStringFast(buf *bytes.Buffer, s string) {
+// SECURITY: Validates UTF-8 encoding for non-ASCII characters (RFC 8259 compliance).
+// Escapes HTML characters (<, >, &) when htmlEscape is enabled.
+func writeEscapedStringFast(buf *bytes.Buffer, s string, htmlEscape bool) {
 	for i := 0; i < len(s); i++ {
 		c := s[i]
 		switch c {
@@ -406,6 +415,18 @@ func writeEscapedStringFast(buf *bytes.Buffer, s string) {
 					// Valid UTF-8, write all bytes of the rune directly
 					buf.WriteString(s[i : i+size])
 					i += size - 1 // Skip remaining bytes of this rune
+				}
+			} else if htmlEscape {
+				// SECURITY: Escape HTML characters to prevent XSS
+				switch c {
+				case '<':
+					buf.WriteString(`\u003c`)
+				case '>':
+					buf.WriteString(`\u003e`)
+				case '&':
+					buf.WriteString(`\u0026`)
+				default:
+					buf.WriteByte(c)
 				}
 			} else {
 				buf.WriteByte(c)
