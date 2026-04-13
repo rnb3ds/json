@@ -24,8 +24,8 @@
 //
 // Type-safe operations:
 //
-//	name, err := json.GetString(jsonStr, "user.name")
-//	age, err := json.GetAsInt(jsonStr, "user.age")
+//	name := json.GetString(jsonStr, "user.name", "")
+//	age := json.GetInt(jsonStr, "user.age", 0)
 //
 // Advanced processor for complex operations:
 //
@@ -48,15 +48,12 @@
 //	}
 //	defer processor.Close()
 //
-//
-//	defer processor.Close()
-//
 // # Key Features
 //
 //   - 100% encoding/json compatibility - drop-in replacement
 //   - High-performance path operations with smart caching
 //   - Thread-safe concurrent operations
-//   - Type-safe generic operations with Go 1.22+ features
+//   - Type-safe generic operations with Go generics
 //   - Memory-efficient resource pooling
 //   - Production-ready error handling and validation
 //
@@ -64,7 +61,7 @@
 //
 // The package is organized with all public API in the root package:
 //
-//   - Core types: Processor, Config, ProcessorOptions, EncodeConfig
+//   - Core types: Processor, Config
 //   - Error types: JsonsError, various error constructors
 //   - Encoding types: Number
 //
@@ -79,9 +76,8 @@
 //
 // Core types are organized in the following files:
 //
-//   - types.go: All type definitions (Config, ProcessorOptions, Stats, etc.)
+//   - types.go: All type definitions (Config, Stats, Schema, Result[T], etc.)
 //   - processor.go: Processor struct and all methods
-//   - ops.go: Internal operation implementations
 //   - path.go: Path parsing and navigation
 //   - encoding.go: JSON encoding/decoding
 //   - api.go: Package-level API functions

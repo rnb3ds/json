@@ -29,7 +29,7 @@ var (
 func getProcessorOrFail() (*Processor, error) {
 	p := getDefaultProcessor()
 	if p == nil {
-		return nil, ErrInternalError
+		return nil, errInternalError
 	}
 	return p, nil
 }
@@ -77,6 +77,49 @@ func withProcessorError(fn func(*Processor) error) error {
 	return fn(p)
 }
 
+// withTypedGetter handles the processor-or-default pattern for typed getters.
+// Eliminates boilerplate in GetString, GetInt, GetFloat, GetBool, GetArray, GetObject.
+func withTypedGetter[T any](fn func(*Processor, string, string, ...T) T, jsonStr, path string, defaultValue ...T) T {
+	p, err := getProcessorOrFail()
+	if err != nil {
+		if len(defaultValue) > 0 {
+			return defaultValue[0]
+		}
+		var zero T
+		return zero
+	}
+	return fn(p, jsonStr, path, defaultValue...)
+}
+
+// withConfigProcessor handles the config-extract-and-processor pattern for
+// config-aware API functions. Eliminates boilerplate in EncodeBatch, EncodeFields, EncodeStream.
+func withConfigProcessor[T any](cfg []Config, fn func(*Processor, Config) (T, error)) (T, error) {
+	c := DefaultConfig()
+	if len(cfg) > 0 {
+		c = cfg[0]
+	}
+	p, err := getProcessorWithConfig(c)
+	if err != nil {
+		var zero T
+		return zero, err
+	}
+	return fn(p, c)
+}
+
+// withConfigProcessorError handles config-aware functions that only return an error.
+// Eliminates boilerplate in SaveToFile, MarshalToFile, SaveToWriter.
+func withConfigProcessorError(cfg []Config, fn func(*Processor, Config) error) error {
+	c := DefaultConfig()
+	if len(cfg) > 0 {
+		c = cfg[0]
+	}
+	p, err := getProcessorWithConfig(c)
+	if err != nil {
+		return err
+	}
+	return fn(p, c)
+}
+
 // hashConfig generates a cache key for Config for processor caching.
 //
 // ROBUSTNESS: Uses field-by-field hashing to include ALL Config fields,
@@ -96,6 +139,11 @@ func hashConfig(cfg Config) uint64 {
 	return hashConfigFields(cfg)
 }
 
+// cachedDefaultConfig is a package-level cached default config to avoid
+// repeated allocation in isDefaultConfig hot path.
+// PERFORMANCE: Eliminates DefaultConfig() allocation on every call.
+var cachedDefaultConfig = DefaultConfig()
+
 // isDefaultConfig checks if the config matches the default configuration.
 // Performs complete comparison including Context field (which JSON ignores).
 // PERFORMANCE: Uses short-circuit evaluation for common mismatches first.
@@ -104,16 +152,15 @@ func isDefaultConfig(cfg Config) bool {
 	// These are ordered by likelihood of being modified
 	if cfg.Pretty ||
 		cfg.StrictMode ||
-		cfg.CreatePaths ||
+		!cfg.CreatePaths ||
 		!cfg.EnableCache ||
 		!cfg.EnableValidation ||
 		cfg.Context != nil {
 		return false
 	}
 
-	// Check all fields against default
-	defaultCfg := DefaultConfig()
-	return configFieldsEqual(cfg, defaultCfg)
+	// Check all fields against cached default
+	return configFieldsEqual(cfg, cachedDefaultConfig)
 }
 
 // configFieldAccessor defines how to access and compare/hash a Config field.
@@ -121,9 +168,9 @@ func isDefaultConfig(cfg Config) bool {
 // in both comparison and hashing operations. This single source of truth prevents
 // the functions from getting out of sync.
 type configFieldAccessor struct {
-	name     string
-	equal    func(a, b Config) bool
-	hash     func(h uint64, cfg Config) uint64
+	name  string
+	equal func(a, b Config) bool
+	hash  func(h uint64, cfg Config) uint64
 }
 
 // configFieldList defines all Config fields that should be compared/hashed.
@@ -266,6 +313,51 @@ var configFieldList = []configFieldAccessor{
 	{"EnableHealthCheck",
 		func(a, b Config) bool { return a.EnableHealthCheck == b.EnableHealthCheck },
 		func(h uint64, c Config) uint64 { return internal.HashBool(h, c.EnableHealthCheck) }},
+	// Merge Options
+	{"MergeMode",
+		func(a, b Config) bool { return a.MergeMode == b.MergeMode },
+		func(h uint64, c Config) uint64 { return internal.HashInt(h, int(c.MergeMode)) }},
+	// Large File Processing
+	{"ChunkSize",
+		func(a, b Config) bool { return a.ChunkSize == b.ChunkSize },
+		func(h uint64, c Config) uint64 { return internal.HashInt64(h, c.ChunkSize) }},
+	{"MaxMemory",
+		func(a, b Config) bool { return a.MaxMemory == b.MaxMemory },
+		func(h uint64, c Config) uint64 { return internal.HashInt64(h, c.MaxMemory) }},
+	{"BufferSize",
+		func(a, b Config) bool { return a.BufferSize == b.BufferSize },
+		func(h uint64, c Config) uint64 { return internal.HashInt(h, c.BufferSize) }},
+	{"SamplingEnabled",
+		func(a, b Config) bool { return a.SamplingEnabled == b.SamplingEnabled },
+		func(h uint64, c Config) uint64 { return internal.HashBool(h, c.SamplingEnabled) }},
+	{"SampleSize",
+		func(a, b Config) bool { return a.SampleSize == b.SampleSize },
+		func(h uint64, c Config) uint64 { return internal.HashInt(h, c.SampleSize) }},
+	// JSONL Configuration
+	{"JSONLBufferSize",
+		func(a, b Config) bool { return a.JSONLBufferSize == b.JSONLBufferSize },
+		func(h uint64, c Config) uint64 { return internal.HashInt(h, c.JSONLBufferSize) }},
+	{"JSONLMaxLineSize",
+		func(a, b Config) bool { return a.JSONLMaxLineSize == b.JSONLMaxLineSize },
+		func(h uint64, c Config) uint64 { return internal.HashInt(h, c.JSONLMaxLineSize) }},
+	{"JSONLSkipEmpty",
+		func(a, b Config) bool { return a.JSONLSkipEmpty == b.JSONLSkipEmpty },
+		func(h uint64, c Config) uint64 { return internal.HashBool(h, c.JSONLSkipEmpty) }},
+	{"JSONLSkipComments",
+		func(a, b Config) bool { return a.JSONLSkipComments == b.JSONLSkipComments },
+		func(h uint64, c Config) uint64 { return internal.HashBool(h, c.JSONLSkipComments) }},
+	{"JSONLContinueOnErr",
+		func(a, b Config) bool { return a.JSONLContinueOnErr == b.JSONLContinueOnErr },
+		func(h uint64, c Config) uint64 { return internal.HashBool(h, c.JSONLContinueOnErr) }},
+	{"JSONLWorkers",
+		func(a, b Config) bool { return a.JSONLWorkers == b.JSONLWorkers },
+		func(h uint64, c Config) uint64 { return internal.HashInt(h, c.JSONLWorkers) }},
+	{"JSONLChunkSize",
+		func(a, b Config) bool { return a.JSONLChunkSize == b.JSONLChunkSize },
+		func(h uint64, c Config) uint64 { return internal.HashInt(h, c.JSONLChunkSize) }},
+	{"JSONLMaxMemory",
+		func(a, b Config) bool { return a.JSONLMaxMemory == b.JSONLMaxMemory },
+		func(h uint64, c Config) uint64 { return internal.HashInt64(h, c.JSONLMaxMemory) }},
 	// Context - direct pointer comparison (different context instances are not equal)
 	{"Context",
 		func(a, b Config) bool { return a.Context == b.Context },
@@ -275,45 +367,102 @@ var configFieldList = []configFieldAccessor{
 			}
 			return h
 		}},
+	// Extension fields
+	{"CustomEscapes",
+		func(a, b Config) bool { return customEscapesEqual(a.CustomEscapes, b.CustomEscapes) },
+		func(h uint64, c Config) uint64 { return hashCustomEscapes(h, c.CustomEscapes) }},
+	{"CustomEncoder",
+		func(a, b Config) bool { return (a.CustomEncoder == nil) == (b.CustomEncoder == nil) },
+		func(h uint64, c Config) uint64 {
+			if c.CustomEncoder != nil {
+				return internal.HashBool(h, true)
+			}
+			return h
+		}},
+	{"CustomTypeEncoders",
+		func(a, b Config) bool {
+			if len(a.CustomTypeEncoders) != len(b.CustomTypeEncoders) {
+				return false
+			}
+			for k, v := range a.CustomTypeEncoders {
+				if bv, ok := b.CustomTypeEncoders[k]; !ok || v != bv {
+					return false
+				}
+			}
+			return true
+		},
+		func(h uint64, c Config) uint64 {
+			h = internal.HashInt(h, len(c.CustomTypeEncoders))
+			for typ, enc := range c.CustomTypeEncoders {
+				h = internal.HashString(h, typ.String())
+				h = internal.HashBool(h, enc != nil)
+			}
+			return h
+		}},
+	{"CustomValidators",
+		func(a, b Config) bool {
+			if len(a.CustomValidators) != len(b.CustomValidators) {
+				return false
+			}
+			for i, v := range a.CustomValidators {
+				if v != b.CustomValidators[i] {
+					return false
+				}
+			}
+			return true
+		},
+		func(h uint64, c Config) uint64 {
+			h = internal.HashInt(h, len(c.CustomValidators))
+			for _, v := range c.CustomValidators {
+				h = internal.HashBool(h, v != nil)
+			}
+			return h
+		}},
+	{"AdditionalDangerousPatterns",
+		func(a, b Config) bool {
+			if len(a.AdditionalDangerousPatterns) != len(b.AdditionalDangerousPatterns) {
+				return false
+			}
+			for i, p := range a.AdditionalDangerousPatterns {
+				if p != b.AdditionalDangerousPatterns[i] {
+					return false
+				}
+			}
+			return true
+		},
+		func(h uint64, c Config) uint64 {
+			h = internal.HashInt(h, len(c.AdditionalDangerousPatterns))
+			for _, p := range c.AdditionalDangerousPatterns {
+				h = internal.HashString(h, p.Pattern)
+				h = internal.HashInt(h, int(p.Level))
+			}
+			return h
+		}},
+	{"DisableDefaultPatterns",
+		func(a, b Config) bool { return a.DisableDefaultPatterns == b.DisableDefaultPatterns },
+		func(h uint64, c Config) uint64 { return internal.HashBool(h, c.DisableDefaultPatterns) }},
+	{"Hooks",
+		func(a, b Config) bool { return len(a.Hooks) == len(b.Hooks) },
+		func(h uint64, c Config) uint64 { return internal.HashInt(h, len(c.Hooks)) }},
+	{"CustomPathParser",
+		func(a, b Config) bool { return (a.CustomPathParser == nil) == (b.CustomPathParser == nil) },
+		func(h uint64, c Config) uint64 {
+			if c.CustomPathParser != nil {
+				return internal.HashBool(h, true)
+			}
+			return h
+		}},
 }
 
-// configFieldsEqual compares all fields of two Config structs using the unified field list.
-// PERFORMANCE: Uses direct field comparison instead of reflect.DeepEqual.
+// configFieldsEqual compares all fields of two Config structs.
+// MAINTENANCE: To add new Config fields, add entries to configFieldList only.
+// This function is the single consumer of configFieldList.equal for comparisons.
 func configFieldsEqual(a, b Config) bool {
 	for _, field := range configFieldList {
 		if !field.equal(a, b) {
 			return false
 		}
 	}
-
-	// CustomEscapes map comparison (handled separately due to complexity)
-	if !customEscapesEqual(a.CustomEscapes, b.CustomEscapes) {
-		return false
-	}
-
-	// Extension points - compare by nil check and length for slices
-	if (a.CustomEncoder == nil) != (b.CustomEncoder == nil) {
-		return false
-	}
-	if len(a.CustomTypeEncoders) != len(b.CustomTypeEncoders) {
-		return false
-	}
-	if len(a.CustomValidators) != len(b.CustomValidators) {
-		return false
-	}
-	if len(a.AdditionalDangerousPatterns) != len(b.AdditionalDangerousPatterns) {
-		return false
-	}
-	if a.DisableDefaultPatterns != b.DisableDefaultPatterns {
-		return false
-	}
-	if len(a.Hooks) != len(b.Hooks) {
-		return false
-	}
-	if (a.CustomPathParser == nil) != (b.CustomPathParser == nil) {
-		return false
-	}
-
 	return true
 }
 
@@ -331,16 +480,13 @@ func customEscapesEqual(a, b map[rune]string) bool {
 }
 
 // hashConfigFields hashes all Config fields using the unified field list.
+// MAINTENANCE: To add new Config fields, add entries to configFieldList only.
+// This function is the single consumer of configFieldList.hash for hashing.
 func hashConfigFields(cfg Config) uint64 {
 	h := internal.FNVOffsetBasis
-
 	for _, field := range configFieldList {
 		h = field.hash(h, cfg)
 	}
-
-	// CustomEscapes (handled separately due to complexity)
-	h = hashCustomEscapes(h, cfg.CustomEscapes)
-
 	return h
 }
 
@@ -369,6 +515,19 @@ func hashCustomEscapes(h uint64, m map[rune]string) uint64 {
 
 // Get retrieves a value from JSON at the specified path.
 // Returns the value as any and requires type assertion.
+//
+// Errors:
+//   - ErrInvalidJSON: jsonStr is not valid JSON
+//   - ErrPathNotFound: path does not exist in the JSON structure
+//   - ErrProcessorClosed: processor has been closed
+//
+// Example:
+//
+//	value, err := json.Get(`{"user":{"name":"Alice"}}`, "user.name")
+//	if err != nil {
+//	    // Handle error
+//	}
+//	name := value.(string)
 func Get(jsonStr, path string, cfg ...Config) (any, error) {
 	return withProcessor(func(p *Processor) (any, error) {
 		return p.Get(jsonStr, path, cfg...)
@@ -376,183 +535,188 @@ func Get(jsonStr, path string, cfg ...Config) (any, error) {
 }
 
 // =============================================================================
-// Typed Get Operations - Unified Naming Convention (GetAs)
+// Typed Get Operations
 // =============================================================================
 
 // GetTyped retrieves a typed value from JSON at the specified path.
-// This is the generic typed getter - use this for custom types.
+// Returns defaultValue if provided, otherwise zero value of T when: path not found, value is null, or type conversion fails.
 //
 // Example:
 //
-//	type User struct { Name string }
-//	user, err := json.GetAs[User](data, "user")
-func GetTyped[T any](jsonStr, path string, cfg ...Config) (T, error) {
-	return withProcessor(func(p *Processor) (T, error) {
-		return getTypedWithProcessor[T](p, jsonStr, path, cfg...)
-	})
+//	name := json.GetTyped[string](data, "user.name", "unknown")
+//	age := json.GetTyped[int](data, "user.age", 0)
+//	name := json.GetTyped[string](data, "user.name") // returns "" if not found
+func GetTyped[T any](jsonStr, path string, defaultValue ...T) T {
+	p, err := getProcessorOrFail()
+	if err != nil {
+		if len(defaultValue) > 0 {
+			return defaultValue[0]
+		}
+		var zero T
+		return zero
+	}
+	return getTypedWithDefault[T](p, jsonStr, path, defaultValue...)
 }
 
 // GetString retrieves a string value from JSON at the specified path.
-func GetString(jsonStr, path string, cfg ...Config) (string, error) {
-	return withProcessor(func(p *Processor) (string, error) {
-		return p.GetString(jsonStr, path, cfg...)
-	})
+// Returns defaultValue if provided, otherwise "" when: path not found, value is null, or type conversion fails.
+func GetString(jsonStr, path string, defaultValue ...string) string {
+	return withTypedGetter((*Processor).GetString, jsonStr, path, defaultValue...)
 }
 
 // GetInt retrieves an int value from JSON at the specified path.
-func GetInt(jsonStr, path string, cfg ...Config) (int, error) {
-	return withProcessor(func(p *Processor) (int, error) {
-		return p.GetInt(jsonStr, path, cfg...)
-	})
+// Returns defaultValue if provided, otherwise 0 when: path not found, value is null, or type conversion fails.
+func GetInt(jsonStr, path string, defaultValue ...int) int {
+	return withTypedGetter((*Processor).GetInt, jsonStr, path, defaultValue...)
 }
 
 // GetFloat retrieves a float64 value from JSON at the specified path.
-func GetFloat(jsonStr, path string, cfg ...Config) (float64, error) {
-	return withProcessor(func(p *Processor) (float64, error) {
-		return p.GetFloat(jsonStr, path, cfg...)
-	})
+// Returns defaultValue if provided, otherwise 0.0 when: path not found, value is null, or type conversion fails.
+func GetFloat(jsonStr, path string, defaultValue ...float64) float64 {
+	return withTypedGetter((*Processor).GetFloat, jsonStr, path, defaultValue...)
 }
 
 // GetBool retrieves a bool value from JSON at the specified path.
-func GetBool(jsonStr, path string, cfg ...Config) (bool, error) {
-	return withProcessor(func(p *Processor) (bool, error) {
-		return p.GetBool(jsonStr, path, cfg...)
-	})
+// Returns defaultValue if provided, otherwise false when: path not found, value is null, or type conversion fails.
+func GetBool(jsonStr, path string, defaultValue ...bool) bool {
+	return withTypedGetter((*Processor).GetBool, jsonStr, path, defaultValue...)
 }
 
 // GetArray retrieves an array value from JSON at the specified path.
-func GetArray(jsonStr, path string, cfg ...Config) ([]any, error) {
-	return withProcessor(func(p *Processor) ([]any, error) {
-		return p.GetArray(jsonStr, path, cfg...)
-	})
+// Returns defaultValue if provided, otherwise nil when: path not found, value is null, or type conversion fails.
+func GetArray(jsonStr, path string, defaultValue ...[]any) []any {
+	return withTypedGetter((*Processor).GetArray, jsonStr, path, defaultValue...)
 }
 
 // GetObject retrieves an object value from JSON at the specified path.
-func GetObject(jsonStr, path string, cfg ...Config) (map[string]any, error) {
-	return withProcessor(func(p *Processor) (map[string]any, error) {
-		return p.GetObject(jsonStr, path, cfg...)
-	})
+// Returns defaultValue if provided, otherwise nil when: path not found, value is null, or type conversion fails.
+func GetObject(jsonStr, path string, defaultValue ...map[string]any) map[string]any {
+	return withTypedGetter((*Processor).GetObject, jsonStr, path, defaultValue...)
 }
 
-// =============================================================================
-// Get with Default - Unified Naming Convention (GetOr)
-// =============================================================================
-
-// GetTypedOr retrieves a typed value from JSON at the specified path with a default fallback.
-// Returns defaultValue if: path not found, value is null, or type conversion fails.
-// This is the recommended generic function for getting values with defaults.
+// GetMultiple retrieves multiple values from JSON at the specified paths.
+// Returns a map of path to value for each successfully retrieved path.
 //
-// Example:
-//
-//	name := json.GetOr[string](data, "user.name", "unknown")
-//	age := json.GetOr[int](data, "user.age", 0)
-func GetTypedOr[T any](jsonStr, path string, defaultValue T, cfg ...Config) T {
-	// PERFORMANCE: Single parse - get raw value once, then convert
-	result, err := withProcessor(func(p *Processor) (T, error) {
-		rawValue, err := p.Get(jsonStr, path, cfg...)
-		if err != nil {
-			var zero T
-			return zero, err
-		}
-		if rawValue == nil {
-			var zero T
-			return zero, ErrPathNotFound // Return error to trigger default
-		}
-		// Convert the already-parsed value
-		return convertValueToType[T](rawValue, path)
-	})
-	if err != nil {
-		return defaultValue
-	}
-	return result
-}
-
-// GetStringOr retrieves a string value from JSON at the specified path with a default fallback.
-// Returns defaultValue if: path not found, value is null, or type conversion fails.
-func GetStringOr(jsonStr, path string, defaultValue string, cfg ...Config) string {
-	p, err := getProcessorOrFail()
-	if err != nil {
-		return defaultValue
-	}
-	return p.GetStringOr(jsonStr, path, defaultValue, cfg...)
-}
-
-// GetIntOr retrieves an int value from JSON at the specified path with a default fallback.
-// Returns defaultValue if: path not found, value is null, or type conversion fails.
-func GetIntOr(jsonStr, path string, defaultValue int, cfg ...Config) int {
-	p, err := getProcessorOrFail()
-	if err != nil {
-		return defaultValue
-	}
-	return p.GetIntOr(jsonStr, path, defaultValue, cfg...)
-}
-
-// GetFloatOr retrieves a float64 value from JSON at the specified path with a default fallback.
-// Returns defaultValue if: path not found, value is null, or type conversion fails.
-func GetFloatOr(jsonStr, path string, defaultValue float64, cfg ...Config) float64 {
-	p, err := getProcessorOrFail()
-	if err != nil {
-		return defaultValue
-	}
-	return p.GetFloatOr(jsonStr, path, defaultValue, cfg...)
-}
-
-// GetBoolOr retrieves a bool value from JSON at the specified path with a default fallback.
-// Returns defaultValue if: path not found, value is null, or type conversion fails.
-func GetBoolOr(jsonStr, path string, defaultValue bool, cfg ...Config) bool {
-	p, err := getProcessorOrFail()
-	if err != nil {
-		return defaultValue
-	}
-	return p.GetBoolOr(jsonStr, path, defaultValue, cfg...)
-}
-
-// GetMultiple retrieves multiple values from JSON at the specified paths
+// Errors:
+//   - ErrInvalidJSON: jsonStr is not valid JSON
 func GetMultiple(jsonStr string, paths []string, cfg ...Config) (map[string]any, error) {
 	return withProcessor(func(p *Processor) (map[string]any, error) {
 		return p.GetMultiple(jsonStr, paths, cfg...)
 	})
 }
 
-// Set sets a value in JSON at the specified path
+// SafeGet performs a type-safe get operation returning an AccessResult
+// with type conversion methods (AsString, AsInt, AsFloat64, AsBool).
+// Accepts optional Config for controlling validation, security, and caching behavior.
+//
+// Example:
+//
+//	result := json.SafeGet(data, "user.age")
+//	if result.Ok() {
+//	    age, _ := result.AsInt()
+//	}
+func SafeGet(jsonStr, path string, cfg ...Config) AccessResult {
+	p, err := getProcessorOrFail()
+	if err != nil {
+		return AccessResult{Exists: false}
+	}
+	return p.SafeGet(jsonStr, path, cfg...)
+}
+
+// Set sets a value in JSON at the specified path.
+// Creates intermediate paths if Config.CreatePaths is true.
+//
 // Returns:
 //   - On success: modified JSON string and nil error
 //   - On failure: original unmodified JSON string and error information
+//
+// Errors:
+//   - ErrInvalidJSON: jsonStr is not valid JSON
+//   - ErrInvalidPath: path syntax is invalid
+//   - ErrPathNotFound: path does not exist and CreatePaths is false
+//   - ErrTypeMismatch: cannot set value at path due to type conflict
 func Set(jsonStr, path string, value any, cfg ...Config) (string, error) {
 	return withProcessorStringResult(func(p *Processor) (string, error) {
 		return p.Set(jsonStr, path, value, cfg...)
 	}, jsonStr)
 }
 
-// SetMultiple sets multiple values using a map of path-value pairs
+// SetMultiple sets multiple values using a map of path-value pairs.
+// Creates intermediate paths if Config.CreatePaths is true.
+//
+// Errors:
+//   - ErrInvalidJSON: jsonStr is not valid JSON
+//   - ErrInvalidPath: any path syntax is invalid
+//   - ErrPathNotFound: path does not exist and CreatePaths is false
 func SetMultiple(jsonStr string, updates map[string]any, cfg ...Config) (string, error) {
 	return withProcessorStringResult(func(p *Processor) (string, error) {
 		return p.SetMultiple(jsonStr, updates, cfg...)
 	}, jsonStr)
 }
 
-// Delete deletes a value from JSON at the specified path
+// SetCreate sets a value in JSON at the specified path, creating intermediate paths as needed.
+// This is equivalent to calling Set with CreatePaths enabled.
+//
+// Example:
+//
+//	result, err := json.SetCreate(data, "users[0].profile.name", "Alice")
+func SetCreate(jsonStr, path string, value any, cfg ...Config) (string, error) {
+	return withProcessorStringResult(func(p *Processor) (string, error) {
+		return p.SetCreate(jsonStr, path, value, cfg...)
+	}, jsonStr)
+}
+
+// SetMultipleCreate sets multiple values, creating intermediate paths as needed.
+// This is equivalent to calling SetMultiple with CreatePaths enabled.
+//
+// Example:
+//
+//	result, err := json.SetMultipleCreate(data, map[string]any{"user.name": "Alice", "user.age": 30})
+func SetMultipleCreate(jsonStr string, updates map[string]any, cfg ...Config) (string, error) {
+	return withProcessorStringResult(func(p *Processor) (string, error) {
+		return p.SetMultipleCreate(jsonStr, updates, cfg...)
+	}, jsonStr)
+}
+
+// Delete deletes a value from JSON at the specified path.
+//
+// Errors:
+//   - ErrInvalidJSON: jsonStr is not valid JSON
+//   - ErrPathNotFound: path does not exist
+//   - ErrInvalidPath: path syntax is invalid
 func Delete(jsonStr, path string, cfg ...Config) (string, error) {
 	return withProcessorStringResult(func(p *Processor) (string, error) {
 		return p.Delete(jsonStr, path, cfg...)
 	}, jsonStr)
 }
 
+// DeleteClean deletes a value from JSON and cleans up null values and empty arrays.
+// This is equivalent to calling Delete with CleanupNulls and CompactArrays enabled.
+//
+// Example:
+//
+//	result, err := json.DeleteClean(data, "users[0].profile")
+func DeleteClean(jsonStr, path string, cfg ...Config) (string, error) {
+	return withProcessorStringResult(func(p *Processor) (string, error) {
+		return p.DeleteClean(jsonStr, path, cfg...)
+	}, jsonStr)
+}
+
 // Marshal returns the JSON encoding of v.
 // This function is 100% compatible with encoding/json.Marshal.
 // For configuration options, use EncodeWithConfig or Processor.Marshal with cfg parameter.
-func Marshal(v any) ([]byte, error) {
+func Marshal(value any) ([]byte, error) {
 	return withProcessorBytesResult(func(p *Processor) ([]byte, error) {
-		return p.Marshal(v)
+		return p.Marshal(value)
 	})
 }
 
 // Unmarshal parses the JSON-encoded data and stores the result in v.
 // This function is 100% compatible with encoding/json.Unmarshal.
 // For configuration options, use Processor.Unmarshal with cfg parameter.
-func Unmarshal(data []byte, v any) error {
+func Unmarshal(data []byte, value any) error {
 	return withProcessorError(func(p *Processor) error {
-		return p.Unmarshal(data, v)
+		return p.Unmarshal(data, value)
 	})
 }
 
@@ -567,77 +731,61 @@ func MarshalIndent(v any, prefix, indent string) ([]byte, error) {
 
 // Compact appends to dst the JSON-encoded src with insignificant space characters elided.
 // This function is 100% compatible with encoding/json.Compact.
-func Compact(dst *bytes.Buffer, src []byte) error {
+// Accepts optional Config to control compact behavior (e.g., number preservation).
+//
+// Example:
+//
+//	// encoding/json compatible usage (no Config)
+//	var buf bytes.Buffer
+//	err := json.Compact(&buf, []byte(`{"name": "Alice"}`))
+//
+//	// With configuration
+//	cfg := json.DefaultConfig()
+//	cfg.PreserveNumbers = true
+//	err = json.Compact(&buf, []byte(jsonStr), cfg)
+func Compact(dst *bytes.Buffer, src []byte, cfg ...Config) error {
 	return withProcessorError(func(p *Processor) error {
-		compacted, err := p.CompactString(string(src))
-		if err != nil {
-			return err
-		}
-		dst.WriteString(compacted)
-		return nil
+		return p.CompactBuffer(dst, src, cfg...)
 	})
 }
 
 // Indent appends to dst an indented form of the JSON-encoded src.
 // This function is 100% compatible with encoding/json.Indent.
-func Indent(dst *bytes.Buffer, src []byte, prefix, indent string) error {
+// Accepts optional Config for controlling indentation behavior.
+//
+// Example:
+//
+//	var buf bytes.Buffer
+//	err := json.Indent(&buf, []byte(`{"name":"Alice"}`), "", "  ")
+func Indent(dst *bytes.Buffer, src []byte, prefix, indent string, cfg ...Config) error {
 	return withProcessorError(func(p *Processor) error {
-		cfg := DefaultConfig()
-		cfg.Pretty = true
-		cfg.Prefix = prefix
-		cfg.Indent = indent
-		result, err := p.Prettify(string(src), cfg)
-		if err != nil {
-			return err
-		}
-		dst.WriteString(result)
-		return nil
+		return p.Indent(dst, src, prefix, indent, cfg...)
 	})
 }
 
 // HTMLEscape appends to dst the JSON-encoded src with <, >, &, U+2028, and U+2029 characters escaped.
 // This function is 100% compatible with encoding/json.HTMLEscape.
-func HTMLEscape(dst *bytes.Buffer, src []byte) {
-	// Use shared implementation from internal package
-	dst.WriteString(internal.HTMLEscape(string(src)))
+// Accepts optional Config for consistent API pattern.
+//
+// Example:
+//
+//	var buf bytes.Buffer
+//	json.HTMLEscape(&buf, []byte(`{"url":"<script>alert(1)</script>"}`))
+func HTMLEscape(dst *bytes.Buffer, src []byte, cfg ...Config) {
+	p := getDefaultProcessor()
+	if p == nil {
+		internal.HTMLEscapeTo(dst, string(src))
+		return
+	}
+	p.HTMLEscape(dst, src, cfg...)
 }
 
-// CompactBuffer is an alias for Compact for buffer operations
-func CompactBuffer(dst *bytes.Buffer, src []byte, cfg ...Config) error {
+// compactBuffer compacts JSON data and writes the result to dst.
+// Delegates to Processor.CompactBuffer for consistent behavior.
+func compactBuffer(dst *bytes.Buffer, src []byte, cfg ...Config) error {
 	return withProcessorError(func(p *Processor) error {
-		compacted, err := p.CompactString(string(src), cfg...)
-		if err != nil {
-			return err
-		}
-		dst.WriteString(compacted)
-		return nil
+		return p.CompactBuffer(dst, src, cfg...)
 	})
-}
-
-// IndentBuffer appends to dst an indented form of the JSON-encoded src.
-func IndentBuffer(dst *bytes.Buffer, src []byte, prefix, indent string, cfg ...Config) error {
-	return withProcessorError(func(p *Processor) error {
-		c := DefaultConfig()
-		if len(cfg) > 0 {
-			c = cfg[0]
-		}
-		c.Pretty = true
-		c.Prefix = prefix
-		c.Indent = indent
-		result, err := p.Prettify(string(src), c)
-		if err != nil {
-			return err
-		}
-		dst.WriteString(result)
-		return nil
-	})
-}
-
-// HTMLEscapeBuffer is an alias for HTMLEscape for buffer operations
-func HTMLEscapeBuffer(dst *bytes.Buffer, src []byte, cfg ...Config) {
-	// Use shared implementation - cfg is ignored for HTMLEscape (encoding/json compatible behavior)
-	_ = cfg // cfg parameter kept for API consistency
-	dst.WriteString(internal.HTMLEscape(string(src)))
 }
 
 // Encode converts any Go value to JSON string.
@@ -645,6 +793,23 @@ func HTMLEscapeBuffer(dst *bytes.Buffer, src []byte, cfg ...Config) {
 func Encode(value any, cfg ...Config) (string, error) {
 	return withProcessor(func(p *Processor) (string, error) {
 		return p.EncodeWithConfig(value, cfg...)
+	})
+}
+
+// EncodePretty converts any Go value to pretty-printed JSON string.
+// This is the package-level equivalent of Processor.EncodePretty().
+//
+// Example:
+//
+//	result, err := json.EncodePretty(data)
+//
+//	// With custom configuration
+//	cfg := json.DefaultConfig()
+//	cfg.Indent = "    "
+//	result, err := json.EncodePretty(data, cfg)
+func EncodePretty(value any, cfg ...Config) (string, error) {
+	return withProcessor(func(p *Processor) (string, error) {
+		return p.EncodePretty(value, cfg...)
 	})
 }
 
@@ -690,122 +855,84 @@ func Prettify(jsonStr string, cfg ...Config) (string, error) {
 	})
 }
 
-// CompactString removes whitespace from JSON string.
-// This is the recommended function for compacting JSON strings.
-func CompactString(jsonStr string, cfg ...Config) (string, error) {
-	return withProcessor(func(p *Processor) (string, error) {
-		return p.CompactString(jsonStr, cfg...)
-	})
-}
-
-// Print prints any Go value as JSON to stdout in compact format.
-// Note: Writes errors to stderr. Use PrintE for error handling.
-func Print(data any) {
+// print writes any Go value as JSON to stdout in compact format.
+// Note: Writes errors to stderr. Use printE for error handling.
+func print(data any) {
 	result, err := printData(data, false)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "json.Print error: %v\n", err)
+		fmt.Fprintf(os.Stderr, "json.print error: %v\n", err)
 		return
 	}
 	fmt.Println(result)
 }
 
-// PrintPretty prints any Go value as formatted JSON to stdout.
-// Note: Writes errors to stderr. Use PrintPrettyE for error handling.
-func PrintPretty(data any) {
+// printPretty prints any Go value as formatted JSON to stdout.
+// Note: Writes errors to stderr. Use printPrettyE for error handling.
+func printPretty(data any) {
 	result, err := printData(data, true)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "json.PrintPretty error: %v\n", err)
+		fmt.Fprintf(os.Stderr, "json.printPretty error: %v\n", err)
 		return
 	}
 	fmt.Println(result)
 }
 
-// PrintE prints any Go value as JSON to stdout in compact format.
+// printE prints any Go value as JSON to stdout in compact format.
 // Returns an error instead of writing to stderr, allowing callers to handle errors.
-func PrintE(data any) error {
+func printE(data any) error {
 	result, err := printData(data, false)
 	if err != nil {
-		return fmt.Errorf("json.Print error: %w", err)
+		return fmt.Errorf("json.print error: %w", err)
 	}
 	fmt.Println(result)
 	return nil
 }
 
-// PrintPrettyE prints any Go value as formatted JSON to stdout.
+// printPrettyE prints any Go value as formatted JSON to stdout.
 // Returns an error instead of writing to stderr, allowing callers to handle errors.
-func PrintPrettyE(data any) error {
+func printPrettyE(data any) error {
 	result, err := printData(data, true)
 	if err != nil {
-		return fmt.Errorf("json.PrintPretty error: %w", err)
+		return fmt.Errorf("json.printPretty error: %w", err)
 	}
 	fmt.Println(result)
 	return nil
 }
 
-// formatJSONString formats a JSON string or encodes a non-JSON string.
-func formatJSONString(jsonStr string, pretty bool, p *Processor) (string, error) {
-	if isValid, _ := p.Valid(jsonStr); isValid {
-		if pretty {
-			return p.Prettify(jsonStr)
-		}
-		return p.Compact(jsonStr)
-	}
-	// Not valid JSON - encode as a string value
-	cfg := DefaultConfig()
-	cfg.Pretty = pretty
-	return EncodeWithConfig(jsonStr, cfg)
-}
-
-// encodeValue encodes any Go value to JSON string.
-func encodeValue(value any, pretty bool) (string, error) {
-	cfg := DefaultConfig()
-	cfg.Pretty = pretty
-	return EncodeWithConfig(value, cfg)
-}
-
-// printData handles the core logic for Print and PrintPretty
+// printData handles the core logic for Print and PrintPretty.
+// Delegates to Processor.printData to avoid duplication.
 func printData(data any, pretty bool) (string, error) {
-	processor := getDefaultProcessor()
-	if processor == nil {
-		return "", ErrInternalError
-	}
-
-	switch v := data.(type) {
-	case string:
-		return formatJSONString(v, pretty, processor)
-	case []byte:
-		return formatJSONString(string(v), pretty, processor)
-	default:
-		return encodeValue(v, pretty)
-	}
+	return withProcessor(func(p *Processor) (string, error) {
+		return p.printData(data, pretty)
+	})
 }
 
 // Valid reports whether data is valid JSON.
 // This function is 100% compatible with encoding/json.Valid.
+// Delegates to Processor.ValidBytes for consistent []byte → bool behavior.
 func Valid(data []byte) bool {
-	jsonStr := string(data)
 	p := getDefaultProcessor()
 	if p == nil {
 		return false
 	}
-	valid, err := p.Valid(jsonStr)
-	return err == nil && valid
+	return p.ValidBytes(data)
 }
 
-// ValidString reports whether the JSON string is valid.
+// validString reports whether the JSON string is valid.
 // This is a convenience wrapper for Valid that accepts a string directly.
-func ValidString(jsonStr string) bool {
-	p := getDefaultProcessor()
-	if p == nil {
-		return false
-	}
-	valid, err := p.Valid(jsonStr)
-	return err == nil && valid
+func validString(jsonStr string) bool {
+	return Valid([]byte(jsonStr))
 }
 
-// ValidWithOptions reports whether the JSON string is valid with optional configuration.
+// ValidWithConfig reports whether the JSON string is valid with configuration.
 // Returns both the validation result and any error that occurred during validation.
-func ValidWithOptions(jsonStr string, cfg ...Config) (bool, error) {
+// This is the unified API for validation with configuration.
+//
+// Example:
+//
+//	cfg := json.SecurityConfig()
+//	valid, err := json.ValidWithConfig(jsonStr, cfg)
+func ValidWithConfig(jsonStr string, cfg ...Config) (bool, error) {
 	return withProcessor(func(p *Processor) (bool, error) {
 		return p.Valid(jsonStr, cfg...)
 	})
@@ -826,6 +953,20 @@ func LoadFromFile(filePath string, cfg ...Config) (string, error) {
 	})
 }
 
+// LoadFromReader loads JSON data from an io.Reader with size limiting.
+// The reader is limited to MaxJSONSize to prevent excessive memory usage.
+//
+// Example:
+//
+//	file, _ := os.Open("data.json")
+//	defer file.Close()
+//	jsonStr, err := json.LoadFromReader(file)
+func LoadFromReader(reader io.Reader, cfg ...Config) (string, error) {
+	return withProcessor(func(p *Processor) (string, error) {
+		return p.LoadFromReader(reader, cfg...)
+	})
+}
+
 // UnmarshalFromFile reads JSON from a file and unmarshals it into v.
 // This is a convenience function that combines file reading and unmarshalling.
 // Uses the default processor for security validation and decoding.
@@ -836,9 +977,9 @@ func LoadFromFile(filePath string, cfg ...Config) (string, error) {
 //   - cfg: optional Config for security validation and processing
 //
 // Returns error if file reading fails or JSON cannot be unmarshaled.
-func UnmarshalFromFile(path string, v any, cfg ...Config) error {
+func UnmarshalFromFile(filePath string, v any, cfg ...Config) error {
 	return withProcessorError(func(p *Processor) error {
-		return p.UnmarshalFromFile(path, v, cfg...)
+		return p.UnmarshalFromFile(filePath, v, cfg...)
 	})
 }
 
@@ -888,47 +1029,48 @@ func GetHealthStatus() HealthStatus {
 // Unified API - Use these functions for common scenarios
 // =============================================================================
 
-// Parse parses a JSON string and returns the root value.
-// This is the recommended entry point for parsing JSON strings.
+// ParseAny parses a JSON string and returns the root value as any.
+// This is the unified name matching Processor.ParseAny().
 //
-// Layer Architecture:
-//   - Package-level (this function): Convenience wrapper that uses cached processors
-//   - Processor-level: Use Processor.ParseAny() for the same behavior, or Processor.Parse() for unmarshaling into a target
+// For unmarshaling into a specific target type, use Parse() instead.
 //
 // Example:
 //
-//	// Simple parsing (uses default processor)
-//	data, err := json.Parse(jsonStr)
+//	// Parse to any (uses default processor)
+//	data, err := json.ParseAny(jsonStr)
 //
 //	// With configuration (uses config-cached processor)
 //	cfg := json.SecurityConfig()
-//	data, err := json.Parse(jsonStr, cfg)
+//	data, err := json.ParseAny(jsonStr, cfg)
+func ParseAny(jsonStr string, cfg ...Config) (any, error) {
+	return withProcessor(func(p *Processor) (any, error) {
+		return p.ParseAny(jsonStr, cfg...)
+	})
+}
+
+// Parse parses a JSON string into the target variable.
+// This is the unified package-level method matching Processor.Parse().
 //
-// Performance Tips:
-//   - For repeated operations on the same JSON, use Processor.PreParse() to parse once
-//   - For batch operations, use Processor.ProcessBatch()
+// target must be a non-nil pointer. For parsing to any, use ParseAny() instead.
 //
-// Note: Get(jsonStr, "$") is equivalent but slightly less efficient due to path parsing overhead.
-func Parse(jsonStr string, cfg ...Config) (any, error) {
-	var p *Processor
-	var err error
-
-	if len(cfg) > 0 {
-		p, err = getProcessorWithConfig(cfg[0])
-	} else {
-		p, err = getProcessorOrFail()
-	}
-
-	if err != nil {
-		return nil, err
-	}
-
-	// Direct parsing is more efficient than Get(jsonStr, "$")
-	var data any
-	if parseErr := p.Parse(jsonStr, &data); parseErr != nil {
-		return nil, parseErr
-	}
-	return data, nil
+// Example:
+//
+//	// Parse into a map
+//	var obj map[string]any
+//	err := json.Parse(jsonStr, &obj)
+//
+//	// Parse into a struct
+//	var user User
+//	err := json.Parse(jsonStr, &user)
+//
+//	// With configuration
+//	cfg := json.DefaultConfig()
+//	cfg.PreserveNumbers = true
+//	err := json.Parse(jsonStr, &data, cfg)
+func Parse(jsonStr string, target any, cfg ...Config) error {
+	return withProcessorError(func(p *Processor) error {
+		return p.Parse(jsonStr, target, cfg...)
+	})
 }
 
 // SaveToFile saves JSON data to a file with optional configuration.
@@ -943,15 +1085,9 @@ func Parse(jsonStr string, cfg ...Config) (any, error) {
 //	cfg := json.PrettyConfig()
 //	err := json.SaveToFile("data.json", data, cfg)
 func SaveToFile(filePath string, data any, cfg ...Config) error {
-	c := DefaultConfig()
-	if len(cfg) > 0 {
-		c = cfg[0]
-	}
-	p, err := getProcessorWithConfig(c)
-	if err != nil {
-		return err
-	}
-	return p.SaveToFile(filePath, data, c)
+	return withConfigProcessorError(cfg, func(p *Processor, c Config) error {
+		return p.SaveToFile(filePath, data, c)
+	})
 }
 
 // MarshalToFile marshals data to JSON and writes to a file.
@@ -961,15 +1097,9 @@ func SaveToFile(filePath string, data any, cfg ...Config) error {
 //
 //	err := json.MarshalToFile("data.json", myStruct, json.PrettyConfig())
 func MarshalToFile(filePath string, data any, cfg ...Config) error {
-	c := DefaultConfig()
-	if len(cfg) > 0 {
-		c = cfg[0]
-	}
-	p, err := getProcessorWithConfig(c)
-	if err != nil {
-		return err
-	}
-	return p.MarshalToFile(filePath, data, c)
+	return withConfigProcessorError(cfg, func(p *Processor, c Config) error {
+		return p.MarshalToFile(filePath, data, c)
+	})
 }
 
 // SaveToWriter writes JSON data to an io.Writer.
@@ -980,15 +1110,9 @@ func MarshalToFile(filePath string, data any, cfg ...Config) error {
 //	var buf bytes.Buffer
 //	err := json.SaveToWriter(&buf, data, json.PrettyConfig())
 func SaveToWriter(writer io.Writer, data any, cfg ...Config) error {
-	c := DefaultConfig()
-	if len(cfg) > 0 {
-		c = cfg[0]
-	}
-	p, err := getProcessorWithConfig(c)
-	if err != nil {
-		return err
-	}
-	return p.SaveToWriter(writer, data, c)
+	return withConfigProcessorError(cfg, func(p *Processor, c Config) error {
+		return p.SaveToWriter(writer, data, c)
+	})
 }
 
 // EncodeBatch encodes multiple key-value pairs as a JSON object.
@@ -998,15 +1122,9 @@ func SaveToWriter(writer io.Writer, data any, cfg ...Config) error {
 //
 //	result, err := json.EncodeBatch(map[string]any{"name": "Alice", "age": 30})
 func EncodeBatch(pairs map[string]any, cfg ...Config) (string, error) {
-	c := DefaultConfig()
-	if len(cfg) > 0 {
-		c = cfg[0]
-	}
-	p, err := getProcessorWithConfig(c)
-	if err != nil {
-		return "", err
-	}
-	return p.EncodeBatch(pairs, c)
+	return withConfigProcessor(cfg, func(p *Processor, c Config) (string, error) {
+		return p.EncodeBatch(pairs, c)
+	})
 }
 
 // EncodeFields encodes specific fields from a struct or map.
@@ -1016,15 +1134,9 @@ func EncodeBatch(pairs map[string]any, cfg ...Config) (string, error) {
 //
 //	result, err := json.EncodeFields(user, []string{"name", "email"})
 func EncodeFields(value any, fields []string, cfg ...Config) (string, error) {
-	c := DefaultConfig()
-	if len(cfg) > 0 {
-		c = cfg[0]
-	}
-	p, err := getProcessorWithConfig(c)
-	if err != nil {
-		return "", err
-	}
-	return p.EncodeFields(value, fields, c)
+	return withConfigProcessor(cfg, func(p *Processor, c Config) (string, error) {
+		return p.EncodeFields(value, fields, c)
+	})
 }
 
 // EncodeStream encodes multiple values as a JSON array.
@@ -1034,15 +1146,9 @@ func EncodeFields(value any, fields []string, cfg ...Config) (string, error) {
 //
 //	result, err := json.EncodeStream([]any{1, 2, 3}, json.PrettyConfig())
 func EncodeStream(values any, cfg ...Config) (string, error) {
-	c := DefaultConfig()
-	if len(cfg) > 0 {
-		c = cfg[0]
-	}
-	p, err := getProcessorWithConfig(c)
-	if err != nil {
-		return "", err
-	}
-	return p.EncodeStream(values, c)
+	return withConfigProcessor(cfg, func(p *Processor, c Config) (string, error) {
+		return p.EncodeStream(values, c)
+	})
 }
 
 // getProcessorWithConfig returns a processor configured with the given config.
@@ -1087,26 +1193,45 @@ func getProcessorWithConfig(cfg Config) (*Processor, error) {
 				return ep, nil
 			}
 			// Existing entry is stale; try to replace it atomically
-			// Use CompareAndSwap pattern to avoid race with other goroutines
 			if configProcessorCache.CompareAndSwap(cacheKey, existing, p) {
 				// Successfully replaced stale entry
-				// Close the old stale processor asynchronously
-				go func(stale *Processor) {
-					_ = stale.Close() // best-effort cleanup
-				}(existing.(*Processor))
-				break
+				// Close the old stale processor asynchronously with timeout
+				if staleProc, ok := existing.(*Processor); ok {
+					go func(stale *Processor) {
+						done := make(chan struct{})
+						go func() {
+							defer close(done)
+							_ = stale.Close() // best-effort cleanup
+						}()
+						select {
+						case <-done:
+							// Close completed
+						case <-time.After(closeOperationTimeout):
+							// Timeout — inner goroutine will complete on its own eventually
+						}
+					}(staleProc)
+				}
+				// Check cache size and evict if necessary
+				maybeEvictConfigCache()
+				return p, nil
 			}
-			// CAS failed - another goroutine modified the entry, retry
+			// CAS failed - close our processor and create a fresh one for retry
+			_ = p.Close()
+			p, err = New(cfg)
+			if err != nil {
+				return nil, err
+			}
 			continue
 		}
 		// Successfully stored new entry
-		break
+		// Check cache size and evict if necessary
+		maybeEvictConfigCache()
+		return p, nil
 	}
 
-	// Check cache size and evict if necessary
-	maybeEvictConfigCache()
-
-	return p, nil
+	// All attempts exhausted - close the orphaned processor
+	_ = p.Close()
+	return nil, newOperationError("get_processor", "failed to store processor in cache after retries", errOperationFailed)
 }
 
 // maybeEvictConfigCache checks if the cache exceeds the size limit and evicts if needed.
@@ -1117,6 +1242,8 @@ func getProcessorWithConfig(cfg Config) (*Processor, error) {
 // between our delete and their new creation will get a fresh processor, which is safe.
 // GOROUTINE FIX: Uses buffered channel as semaphore to limit concurrent close goroutines
 // and prevent unbounded goroutine growth.
+// DETERMINISM FIX: Uses hash-based eviction order instead of random map iteration
+// to ensure consistent behavior across runs.
 func maybeEvictConfigCache() {
 	configProcessorCacheMu.Lock()
 	defer configProcessorCacheMu.Unlock()
@@ -1132,45 +1259,53 @@ func maybeEvictConfigCache() {
 	}
 
 	var keysToDelete []uint64
-	var validCount int
+	var validEntries []struct {
+		key  uint64
+		proc *Processor
+	}
 
-	// Scan and remove closed/invalid processors
+	// Scan and categorize processors
 	configProcessorCache.Range(func(key, value any) bool {
+		cacheKey, keyOk := key.(uint64)
+		if !keyOk {
+			return true // skip invalid cache key type
+		}
 		if p, ok := value.(*Processor); ok {
 			if p.IsClosed() {
-				keysToDelete = append(keysToDelete, key.(uint64))
+				keysToDelete = append(keysToDelete, cacheKey)
 			} else {
-				validCount++
+				validEntries = append(validEntries, struct {
+					key  uint64
+					proc *Processor
+				}{cacheKey, p})
 			}
 		} else {
-			keysToDelete = append(keysToDelete, key.(uint64))
+			keysToDelete = append(keysToDelete, cacheKey)
 		}
 		return true
 	})
 
+	// Delete closed/invalid processors first
 	for _, key := range keysToDelete {
 		configProcessorCache.Delete(key)
 	}
 
-	// If still over limit, evict entries (random eviction)
-	// SECURITY: Delete from cache BEFORE closing to ensure no goroutine
-	// can retrieve this processor while it's being closed.
-	// PERFORMANCE: Close asynchronously to avoid blocking eviction on Close() timeout.
-	if validCount >= configProcessorCacheLimit {
-		var toClose []*Processor
-		evicted := 0
-
-		configProcessorCache.Range(func(key, value any) bool {
-			if evicted >= configProcessorCacheEvictNum {
-				return false
-			}
-			configProcessorCache.Delete(key)
-			if p, ok := value.(*Processor); ok && !p.IsClosed() {
-				toClose = append(toClose, p)
-			}
-			evicted++
-			return true
+	// If still over limit, evict entries using deterministic hash-based order
+	// This ensures consistent eviction behavior across runs
+	if len(validEntries) >= configProcessorCacheLimit {
+		// Sort by key hash to get deterministic eviction order
+		// Keys with lower hash values are evicted first
+		sort.Slice(validEntries, func(i, j int) bool {
+			return validEntries[i].key < validEntries[j].key
 		})
+
+		var toClose []*Processor
+		evictCount := min(configProcessorCacheEvictNum, len(validEntries))
+
+		for i := 0; i < evictCount; i++ {
+			configProcessorCache.Delete(validEntries[i].key)
+			toClose = append(toClose, validEntries[i].proc)
+		}
 
 		// Close evicted processors asynchronously with timeout (best-effort cleanup)
 		// RESOURCE FIX: Added timeout to prevent goroutine leak if Close() hangs

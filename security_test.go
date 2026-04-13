@@ -104,7 +104,7 @@ func TestSecurityValidation(t *testing.T) {
 					var jsonErr *JsonsError
 					if errors.As(err, &jsonErr) {
 						helper.AssertTrue(
-							jsonErr.Err == ErrSizeLimit || jsonErr.Err == ErrOperationFailed,
+							jsonErr.Err == ErrSizeLimit || jsonErr.Err == errOperationFailed,
 							"Expected size limit error, got: %v", jsonErr.Err)
 					}
 				}
@@ -138,7 +138,7 @@ func TestSecurityValidation(t *testing.T) {
 			defer processor.Close()
 
 			// Generate deeply nested JSON
-			deepJSON := generateDeepNesting(50) // 50 levels
+			deepJSON := genNestedJSON(50, "deep") // 50 levels
 
 			_, err := processor.Get(deepJSON, "a")
 			// SecurityConfig has conservative nesting depth limits
@@ -334,47 +334,7 @@ func TestSecurityEdgeCases(t *testing.T) {
 // Helper functions for test data generation
 
 func generateLargeJSON(size int) string {
-	var sb strings.Builder
-
-	// Pre-allocate to avoid reallocations
-	sb.Grow(size + 20) // Add some buffer
-
-	sb.WriteString(`{"data": [`)
-
-	remaining := size - 12 // len(`{"data": []}`) approximately
-	item := `{"value":"data"},`
-	itemLen := len(item)
-
-	for remaining >= itemLen {
-		sb.WriteString(item)
-		remaining -= itemLen
-	}
-
-	// Remove trailing comma and close
-	str := sb.String()
-	if len(str) > 0 && str[len(str)-1] == ',' {
-		str = str[:len(str)-1]
-	}
-	var result strings.Builder
-	result.Grow(len(str) + 3)
-	result.WriteString(str)
-	result.WriteString(`]}`)
-	return result.String()
-}
-
-func generateDeepNesting(depth int) string {
-	var sb strings.Builder
-	// Pre-allocate: each level adds ~7 chars {"a": and 1 char for }
-	sb.Grow(depth*8 + 10)
-
-	for i := 0; i < depth; i++ {
-		sb.WriteString(`{"a":`)
-	}
-	sb.WriteString(`"deep"`)
-	for i := 0; i < depth; i++ {
-		sb.WriteString(`}`)
-	}
-	return sb.String()
+	return genLargeJSONBytes(size)
 }
 
 // ============================================================================
@@ -689,8 +649,8 @@ func TestPathLengthValidation(t *testing.T) {
 	processor, _ := New()
 	defer processor.Close()
 
-	// Create a path that exceeds MaxPathLength
-	longPath := strings.Repeat("a", MaxPathLength+1)
+	// Create a path that exceeds maxPathLength
+	longPath := strings.Repeat("a", maxPathLength+1)
 
 	tests := []struct {
 		name        string
@@ -706,7 +666,7 @@ func TestPathLengthValidation(t *testing.T) {
 		},
 		{
 			name:        "exactly max length",
-			filePath:    strings.Repeat("b", MaxPathLength),
+			filePath:    strings.Repeat("b", maxPathLength),
 			expectError: false,
 			description: "Path at maximum length",
 		},
@@ -1399,4 +1359,108 @@ func BenchmarkValidatePathComplex(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		_ = processor.validateFilePath(path)
 	}
+}
+
+// ============================================================================
+// Pattern Registry API Tests (M2 fix)
+// ============================================================================
+
+func TestPatternRegistryAPI(t *testing.T) {
+	t.Run("RegisterAndList", func(t *testing.T) {
+		defer clearDangerousPatterns()
+
+		RegisterDangerousPattern(DangerousPattern{
+			Pattern: "custom_test_pattern",
+			Name:    "Test Pattern",
+			Level:   PatternLevelCritical,
+		})
+		patterns := ListDangerousPatterns()
+		found := false
+		for _, p := range patterns {
+			if p.Pattern == "custom_test_pattern" {
+				found = true
+				if p.Name != "Test Pattern" {
+					t.Errorf("pattern name = %q, want %q", p.Name, "Test Pattern")
+				}
+			}
+		}
+		if !found {
+			t.Error("registered pattern not found in list")
+		}
+	})
+
+	t.Run("Unregister", func(t *testing.T) {
+		defer clearDangerousPatterns()
+
+		RegisterDangerousPattern(DangerousPattern{
+			Pattern: "temp_pattern",
+			Name:    "Temporary",
+			Level:   PatternLevelWarning,
+		})
+		UnregisterDangerousPattern("temp_pattern")
+
+		for _, p := range ListDangerousPatterns() {
+			if p.Pattern == "temp_pattern" {
+				t.Error("pattern should have been unregistered")
+			}
+		}
+	})
+
+	t.Run("Clear", func(t *testing.T) {
+		RegisterDangerousPattern(DangerousPattern{
+			Pattern: "clearable_pattern",
+			Name:    "Clearable",
+			Level:   PatternLevelInfo,
+		})
+		clearDangerousPatterns()
+		if len(ListDangerousPatterns()) != 0 {
+			t.Error("patterns should be empty after clear")
+		}
+	})
+
+	t.Run("GetDefaultPatterns", func(t *testing.T) {
+		defaults := getDefaultPatterns()
+		if len(defaults) == 0 {
+			t.Error("expected non-empty default patterns")
+		}
+		for _, p := range defaults {
+			if p.Pattern == "" || p.Name == "" {
+				t.Errorf("default pattern has empty field: %+v", p)
+			}
+			if p.Level != PatternLevelCritical {
+				t.Errorf("default pattern level = %v, want Critical", p.Level)
+			}
+		}
+	})
+
+	t.Run("GetCriticalPatterns", func(t *testing.T) {
+		critical := getCriticalPatterns()
+		if len(critical) == 0 {
+			t.Error("expected non-empty critical patterns")
+		}
+		for _, p := range critical {
+			if p.Level != PatternLevelCritical {
+				t.Errorf("critical pattern level = %v, want Critical", p.Level)
+			}
+		}
+	})
+
+	t.Run("MaxPatternLenDynamic", func(t *testing.T) {
+		defer clearDangerousPatterns()
+
+		baseLen := maxDangerousPatternLen()
+		longPattern := "this_is_a_very_long_custom_pattern_for_testing"
+		RegisterDangerousPattern(DangerousPattern{
+			Pattern: longPattern,
+			Name:    "Long Pattern",
+			Level:   PatternLevelCritical,
+		})
+		newLen := maxDangerousPatternLen()
+		if newLen < len(longPattern) {
+			t.Errorf("maxDangerousPatternLen() = %d, want >= %d after registering long pattern", newLen, len(longPattern))
+		}
+		if newLen <= baseLen {
+			t.Errorf("maxDangerousPatternLen() should increase after registering a longer pattern: before=%d after=%d", baseLen, newLen)
+		}
+	})
 }

@@ -24,9 +24,9 @@ import "github.com/cybergodev/json"
 | `Unmarshal(data []byte, v any) error`                                | ✅      | Identical behavior and error handling |
 | `MarshalIndent(v any, prefix, indent string) ([]byte, error)`        | ✅      | Same formatting rules                 |
 | `Valid(data []byte) bool`                                            | ✅      | Same validation logic                 |
-| `Compact(dst *bytes.Buffer, src []byte) error`                       | ✅      | Identical whitespace removal          |
-| `Indent(dst *bytes.Buffer, src []byte, prefix, indent string) error` | ✅      | Same indentation behavior             |
-| `HTMLEscape(dst *bytes.Buffer, src []byte)`                          | ✅      | Same HTML escaping rules              |
+| `Compact(dst *bytes.Buffer, src []byte, cfg ...Config) error`                       | ✅      | Identical whitespace removal (extended with optional `Config`) |
+| `Indent(dst *bytes.Buffer, src []byte, prefix, indent string, cfg ...Config) error` | ✅      | Same indentation behavior (extended with optional `Config`)    |
+| `HTMLEscape(dst *bytes.Buffer, src []byte, cfg ...Config)`                          | ✅      | Same HTML escaping rules (extended with optional `Config`)     |
 
 ## ✅ Fully Compatible Types
 
@@ -35,8 +35,8 @@ import "github.com/cybergodev/json"
 |-----------------------------------------------|--------|----------------------------|
 | `Encoder`                                     | ✅      | Complete implementation    |
 | `Decoder`                                     | ✅      | Complete implementation    |
-| `NewEncoder(w io.Writer) *Encoder`            | ✅      | Identical constructor      |
-| `NewDecoder(r io.Reader) *Decoder`            | ✅      | Identical constructor      |
+| `NewEncoder(w io.Writer, cfg ...Config) *Encoder` | ✅ | Extended with optional `Config` |
+| `NewDecoder(r io.Reader, cfg ...Config) *Decoder` | ✅  | Extended with optional `Config` |
 | `(*Encoder).Encode(v any) error`              | ✅      | Same encoding behavior     |
 | `(*Encoder).SetEscapeHTML(on bool)`           | ✅      | Same HTML escaping control |
 | `(*Encoder).SetIndent(prefix, indent string)` | ✅      | Same indentation control   |
@@ -62,7 +62,7 @@ import "github.com/cybergodev/json"
 
 | Error Type              | Status | Notes                                   |
 |-------------------------|--------|-----------------------------------------|
-| `SyntaxError`           | ✅      | Same error messages and offset tracking |
+| `SyntaxError`           | ✅      | Same structure and offset tracking (message details may vary) |
 | `UnmarshalTypeError`    | ✅      | Same type mismatch reporting            |
 | `InvalidUnmarshalError` | ✅      | Same invalid target detection           |
 | `UnsupportedTypeError`  | ✅      | Same unsupported type handling          |
@@ -75,10 +75,18 @@ In addition to standard library errors, the library provides:
 
 | Error Type       | Description                                |
 |------------------|--------------------------------------------|
-| `JsonsError`     | Custom error with operation context        |
-| `PathError`      | Path-related errors with detailed info     |
-| `SizeLimitError` | Size limit exceeded errors                 |
-| `SecurityError`  | Security validation failures               |
+| `JsonsError`     | Custom error with operation context (`Op`, `Path`, `Message`, `Err`) |
+| `ValidationError`| Schema validation error (`Path`, `Message`) |
+
+**Extended Error Variables:**
+| Variable | Description |
+|----------|-------------|
+| `ErrSizeLimit` | JSON size exceeds configured limit |
+| `ErrDepthLimit` | Nesting depth exceeds configured limit |
+| `ErrSecurityViolation` | Potentially dangerous content detected |
+| `ErrProcessorClosed` | Operation on closed processor |
+| `ErrConcurrencyLimit` | Concurrent operation count exceeds limit |
+| `ErrOperationTimeout` | Operation exceeded timeout duration |
 
 ## ✅ Fully Compatible Interfaces
 
@@ -98,13 +106,13 @@ In addition to standard library errors, the library provides:
 data := map[string]any{"name": "John", "age": 30}
 jsonBytes, err := json.Marshal(data)
 if err != nil {
-    panic(err)
+    log.Fatal(err)
 }
 
 var result map[string]any
 err = json.Unmarshal(jsonBytes, &result)
 if err != nil {
-    panic(err)
+    log.Fatal(err)
 }
 ```
 
@@ -135,16 +143,15 @@ if syntaxErr, ok := err.(*json.SyntaxError); ok {
 Beyond 100% compatibility, our library also provides:
 
 - **Advanced Path Operations**: `json.Get()`, `json.Set()`, `json.Delete()`
-- **Type-Safe Generics**: `json.GetTyped[T]()`, `json.GetTypedOr[T]()`
+- **Type-Safe Generics**: `json.GetTyped[T]()`, `json.SafeGet()`
 - **Performance Optimizations**: Caching, memory pools, string interning
 - **Thread Safety**: Concurrent-safe operations with atomic operations
-- **Rich Query Syntax**: Dot notation, array slicing, JSON Pointer
-- **Streaming Processing**: `json.NewStreamingProcessor()`, `json.StreamArrayFilter()`
-- **JSONL Support**: `json.NewJSONLProcessor()`, `json.ParseJSONL()`, `json.ToJSONL()`
+- **Rich Query Syntax**: Dot notation, array slicing, batch extraction
+- **JSONL Support**: `json.ParseJSONL()`, `json.ToJSONL()`, `json.StreamLinesInto[T]()`
 - **Advanced Encoding**: `json.EncodeStream()`, `json.EncodeBatch()`, `json.EncodeFields()`
 - **File Operations**: `json.LoadFromFile()`, `json.SaveToFile()`, `json.MarshalToFile()`
 - **Schema Validation**: `json.ValidateSchema()` with comprehensive schema support
-- **Data Utilities**: `json.DeepCopy()`, `json.CompareJson()`, `json.MergeJson()`
+- **Data Utilities**: `json.CompareJSON()`, `json.MergeJSON()` (note: `deepCopy` is unexported; deep copy is performed internally by operations like `Set` and `MergeJSON`)
 
 ## 🔒 Compatibility Guarantee
 
@@ -154,7 +161,7 @@ We guarantee:
 2. **Behavioral Compatibility**: Semantically equivalent output for same input (JSON object key ordering may differ, which is compliant with JSON specification)
 3. **Error Compatibility**: Same error types and messages
 4. **Performance Compatibility**: Same or better performance
-5. **Version Compatibility**: Works with all Go versions that support `encoding/json`
+5. **Version Compatibility**: Requires Go 1.25.0+ (as specified in `go.mod`)
 
 **Important Notes**:
 - **Key Ordering**: JSON object key ordering is not guaranteed by the JSON specification (RFC 7159). While our library may produce different key ordering than `encoding/json` for map serialization, the output is semantically equivalent and fully compliant with JSON standards.

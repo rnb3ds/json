@@ -77,7 +77,7 @@ func main() {
 }
 
 func demonstrateSimpleIteration(data string) {
-	fmt.Println("1️⃣  Simple Iteration (Foreach)")
+	fmt.Println("1. Simple Iteration (Foreach)")
 	fmt.Println("────────────────────────────────")
 
 	fmt.Println("   Iterating over entire JSON:")
@@ -89,7 +89,7 @@ func demonstrateSimpleIteration(data string) {
 }
 
 func demonstrateIterationWithPath(data string) {
-	fmt.Println("\n2️⃣  Iteration with Path (ForeachWithPath)")
+	fmt.Println("\n2. Iteration with Path (ForeachWithPath)")
 	fmt.Println("──────────────────────────────────────────")
 
 	fmt.Println("   Iterating over users array:")
@@ -127,7 +127,7 @@ func demonstrateIterationWithPath(data string) {
 }
 
 func demonstrateNestedIteration(data string) {
-	fmt.Println("\n3️⃣  Nested Iteration (ForeachNested)")
+	fmt.Println("\n3. Nested Iteration (ForeachNested)")
 	fmt.Println("───────────────────────────────────────")
 
 	fmt.Println("   Recursively iterating all values:")
@@ -162,7 +162,7 @@ func demonstrateNestedIteration(data string) {
 }
 
 func demonstrateIterableValueAPI(data string) {
-	fmt.Println("\n4️⃣  IterableValue API")
+	fmt.Println("\n4. IterableValue API")
 	fmt.Println("──────────────────────")
 
 	fmt.Println("   IterableValue convenience methods:")
@@ -221,7 +221,7 @@ func demonstrateIterableValueAPI(data string) {
 }
 
 func demonstrateTransformation(data string) {
-	fmt.Println("\n5️⃣  Data Transformation with Iteration")
+	fmt.Println("\n5. Data Transformation with Iteration")
 	fmt.Println("────────────────────────────────────────")
 
 	fmt.Println("   Building summary using iteration:")

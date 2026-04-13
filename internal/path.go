@@ -2,51 +2,151 @@ package internal
 
 import (
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
+	"time"
 )
 
 // ============================================================================
 // GLOBAL PATH SEGMENT CACHE
-// PERFORMANCE v2: Uses sync.Map for lock-free reads and existing infrastructure
+// PERFORMANCE v2: Uses sync.Map for lock-free reads with size limit and LRU eviction
 // SECURITY: Thread-safe by design using sync.Map
+// FIX: Added size limit to prevent memory leak from unbounded cache growth
 // ============================================================================
+
+// Path cache configuration
+const (
+	pathCacheMaxPathLength = 256   // Maximum path length to cache
+	pathCacheMaxSize       = 10000 // Maximum cached paths
+	pathCacheEvictCount    = 1000  // Number of entries to evict when limit reached
+)
+
+// pathCacheEntry wraps cached segments with access time for LRU eviction
+type pathCacheEntry struct {
+	segments   []PathSegment
+	lastAccess int64
+}
 
 // pathSegmentCache stores parsed path segments for reuse
 // Uses sync.Map for lock-free concurrent reads
 var pathSegmentCache sync.Map
 
-// pathCacheMaxPathLength is the maximum path length to cache
-const pathCacheMaxPathLength = 256
+// pathCacheSize tracks the current number of cached paths
+var pathCacheSize int64
+
+// pathCacheMu protects size counter during eviction
+var pathCacheMu sync.Mutex
 
 // getCachedPathSegments retrieves cached path segments if available
 // PERFORMANCE: Lock-free read using sync.Map
+// SECURITY FIX: Access time update now uses atomic Store to ensure visibility
 func getCachedPathSegments(path string) ([]PathSegment, bool) {
 	if len(path) > pathCacheMaxPathLength || len(path) == 0 {
 		return nil, false
 	}
 	if v, ok := pathSegmentCache.Load(path); ok {
-		return v.([]PathSegment), true
+		entry, ok := v.(pathCacheEntry)
+		if !ok {
+			return nil, false
+		}
+		// PERFORMANCE: Update access time only every ~1 second to avoid
+		// time.Now() syscall on every cache hit. Approximate LRU is sufficient.
+		now := time.Now().UnixNano()
+		if now-entry.lastAccess > int64(time.Second) {
+			pathSegmentCache.Store(path, pathCacheEntry{
+				segments:   entry.segments,
+				lastAccess: now,
+			})
+		}
+		return entry.segments, true
 	}
 	return nil, false
 }
 
-// setCachedPathSegments stores path segments in cache
+// setCachedPathSegments stores path segments in cache with size limit
 // PERFORMANCE: Only stores if path is reasonably sized
+// FIX: Added size limit and prevent unbounded memory growth
 func setCachedPathSegments(path string, segments []PathSegment) {
 	if len(path) > pathCacheMaxPathLength || len(path) == 0 || len(segments) == 0 {
 		return
 	}
+
+	// Check cache size limit and evict if needed
+	if atomic.LoadInt64(&pathCacheSize) >= pathCacheMaxSize {
+		evictPathCacheEntries()
+	}
+
 	// Store a copy to prevent mutation
 	copied := make([]PathSegment, len(segments))
 	copy(copied, segments)
-	pathSegmentCache.Store(path, copied)
+
+	// Wrap in entry for LRU tracking
+	entry := pathCacheEntry{
+		segments:   copied,
+		lastAccess: time.Now().UnixNano(),
+	}
+
+	// Only increment counter for new entries, not overwrites
+	if _, loaded := pathSegmentCache.LoadOrStore(path, entry); !loaded {
+		atomic.AddInt64(&pathCacheSize, 1)
+	} else {
+		pathSegmentCache.Store(path, entry) // Update existing entry with fresh timestamp
+	}
+}
+
+// evictPathCacheEntries removes oldest entries when cache is full
+// Uses LRU strategy based on lastAccess time
+func evictPathCacheEntries() {
+	pathCacheMu.Lock()
+	defer pathCacheMu.Unlock()
+
+	// Check again after acquiring lock
+	if atomic.LoadInt64(&pathCacheSize) < pathCacheMaxSize {
+		return
+	}
+
+	// Collect entries with access times for LRU eviction
+	type evictionCandidate struct {
+		path       string
+		lastAccess int64
+	}
+	candidates := make([]evictionCandidate, 0, pathCacheMaxSize/10) // Estimate
+
+	pathSegmentCache.Range(func(key, value any) bool {
+		if entry, ok := value.(pathCacheEntry); ok {
+			candidates = append(candidates, evictionCandidate{
+				path:       func() string { s, _ := key.(string); return s }(),
+				lastAccess: entry.lastAccess,
+			})
+		}
+		return true
+	})
+
+	// Sort by access time (oldest first)
+	sort.Slice(candidates, func(i, j int) bool {
+		return candidates[i].lastAccess < candidates[j].lastAccess
+	})
+
+	// Remove oldest entries
+	evictCount := pathCacheEvictCount
+	if evictCount > len(candidates) {
+		evictCount = len(candidates)
+	}
+
+	for i := 0; i < evictCount; i++ {
+		pathSegmentCache.Delete(candidates[i].path)
+	}
+
+	atomic.AddInt64(&pathCacheSize, -int64(evictCount))
 }
 
 // fastParseInt parses a string as an integer without allocation.
 // Returns the parsed integer and true if successful, 0 and false otherwise.
 // PERFORMANCE: Avoids strconv.Atoi's error allocation for invalid inputs.
+// SECURITY: Properly handles overflow for both positive and negative numbers.
 func fastParseInt(s string) (int, bool) {
 	if len(s) == 0 {
 		return 0, false
@@ -62,25 +162,45 @@ func fastParseInt(s string) (int, bool) {
 		}
 	}
 
-	// Fast path for overflow check and parsing
-	var n int
+	// Overflow bounds - use int64 for intermediate calculations
+	// Correct threshold: math.MaxInt64 / 10 = 922337203685477580
+	// Last valid digit for positive: 7 (MaxInt64 % 10 = 7)
+	// Last valid digit for negative: 8 (|MinInt64| last digit)
+	const overflowThreshold = int64(922337203685477580)
+	const overflowDigitPositive = int64(7)
+	const overflowDigitNegative = int64(8)
+
+	var n int64
 	for ; i < len(s); i++ {
 		c := s[i]
 		if c < '0' || c > '9' {
 			return 0, false
 		}
-		// Check overflow before multiplying
-		if n > (1<<31-1)/10 {
-			return 0, false
+		digit := int64(c - '0')
+		if neg {
+			if n > overflowThreshold || (n == overflowThreshold && digit > overflowDigitNegative) {
+				return 0, false
+			}
+		} else {
+			if n > overflowThreshold || (n == overflowThreshold && digit > overflowDigitPositive) {
+				return 0, false
+			}
 		}
-		n = n*10 + int(c-'0')
+		n = n*10 + digit
 	}
 
 	if neg {
 		n = -n
 	}
 
-	return n, true
+	// Platform-specific int size check
+	const maxInt = int64(int(^uint(0) >> 1))
+	const minInt = int64(-maxInt - 1)
+	if n > maxInt || n < minInt {
+		return 0, false
+	}
+
+	return int(n), true
 }
 
 // EscapeJSONPointer escapes special characters for JSON Pointer
@@ -153,6 +273,59 @@ func UnescapeJSONPointer(s string) string {
 			sb.WriteByte(s[i])
 		}
 	}
+	return sb.String()
+}
+
+// HasEscapeSequence checks if path contains backslash escape sequences
+// PERFORMANCE: Single scan, returns early on first match
+func HasEscapeSequence(path string) bool {
+	pathLen := len(path)
+	for i := 0; i < pathLen; i++ {
+		if path[i] == '\\' && i+1 < pathLen {
+			next := path[i+1]
+			// Support escaping: . \ [ ] { }
+			if next == '.' || next == '\\' || next == '[' || next == ']' || next == '{' || next == '}' {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// UnescapePathSegment unescapes special characters in a path segment
+// Handles: \. \\ \[ \] \{ \}
+// PERFORMANCE: Fast path for segments without backslash
+func UnescapePathSegment(segment string) string {
+	segmentLen := len(segment)
+	// Fast path: scan for backslash first
+	hasBackslash := false
+	for i := 0; i < segmentLen; i++ {
+		if segment[i] == '\\' {
+			hasBackslash = true
+			break
+		}
+	}
+	if !hasBackslash {
+		return segment
+	}
+
+	// Slow path: unescape
+	var sb strings.Builder
+	sb.Grow(segmentLen)
+
+	for i := 0; i < segmentLen; i++ {
+		if segment[i] == '\\' && i+1 < segmentLen {
+			next := segment[i+1]
+			switch next {
+			case '.', '\\', '[', ']', '{', '}':
+				sb.WriteByte(next)
+				i++
+				continue
+			}
+		}
+		sb.WriteByte(segment[i])
+	}
+
 	return sb.String()
 }
 
@@ -349,24 +522,21 @@ func NewWildcardSegment() PathSegment {
 	}
 }
 
-// NewRecursiveSegment creates a recursive descent segment
-func NewRecursiveSegment() PathSegment {
-	return PathSegment{
-		Type: RecursiveSegment,
-	}
-}
+// emptyPathSegments is a cached empty slice for empty/root paths
+// PERFORMANCE: Avoids repeated allocations for common empty path case
+var emptyPathSegments = make([]PathSegment, 0)
 
 // ParsePath parses a JSON path string into segments
 // PERFORMANCE v3: Added sync.Map-based cache for lock-free reads
 // PERFORMANCE v2: Added fast path for simple single-property access
 func ParsePath(path string) ([]PathSegment, error) {
 	if path == "" {
-		return []PathSegment{}, nil
+		return emptyPathSegments, nil
 	}
 
 	// Handle root path special case
 	if path == "." {
-		return []PathSegment{}, nil
+		return emptyPathSegments, nil
 	}
 
 	// PERFORMANCE v3: Check cache first (lock-free)
@@ -419,13 +589,15 @@ func ParseComplexSegment(part string) ([]PathSegment, error) {
 // parseDotNotation parses dot notation paths like "user.name" or "users[0].name"
 // PERFORMANCE: Pre-calculates segment count to avoid slice growth allocations
 // PERFORMANCE v2: Added fast paths for common simple cases (1-2 segments, no brackets)
+// ESCAPE: Handles \. \\ \[ \] \{ \} escape sequences
 // SECURITY: Enforces MaxPathParseDepth limit to prevent stack overflow attacks
 func parseDotNotation(path string) ([]PathSegment, error) {
 	pathLen := len(path)
 
-	// FAST PATH: Check for simple dot-separated properties (no brackets/braces)
+	// FAST PATH: Check for simple dot-separated properties (no brackets/braces/escapes)
 	// This handles cases like "user.name" or "a.b.c" efficiently
 	hasBrackets := false
+	hasEscape := false
 	dotPos := -1
 	dotCount := 0
 	for i := 0; i < pathLen; i++ {
@@ -433,6 +605,12 @@ func parseDotNotation(path string) ([]PathSegment, error) {
 		if c == '[' || c == '{' || c == '}' {
 			hasBrackets = true
 			break
+		}
+		if c == '\\' && i+1 < pathLen {
+			next := path[i+1]
+			if next == '.' || next == '\\' || next == '[' || next == ']' || next == '{' || next == '}' {
+				hasEscape = true
+			}
 		}
 		if c == '.' {
 			dotCount++
@@ -442,8 +620,8 @@ func parseDotNotation(path string) ([]PathSegment, error) {
 		}
 	}
 
-	// FAST PATH: Simple dot-separated path without brackets/braces
-	if !hasBrackets && dotCount > 0 && dotCount <= 8 {
+	// FAST PATH: Simple dot-separated path without brackets/braces/escapes
+	if !hasBrackets && !hasEscape && dotCount > 0 && dotCount <= 8 {
 		// SECURITY: Check depth
 		if dotCount+1 > MaxPathParseDepth {
 			return nil, fmt.Errorf("path too deep: %d segments (max %d)", dotCount+1, MaxPathParseDepth)
@@ -454,7 +632,24 @@ func parseDotNotation(path string) ([]PathSegment, error) {
 		idx := 0
 		for i := 0; i <= pathLen; i++ {
 			if i == pathLen || path[i] == '.' {
-				segments[idx] = PathSegment{Type: PropertySegment, Key: path[start:i]}
+				part := path[start:i]
+				// Check if this is a numeric array index (supports negative indices)
+				if index, ok := fastParseInt(part); ok {
+					var flags PathSegmentFlags
+					if index < 0 {
+						flags |= FlagIsNegative
+					}
+					segments[idx] = PathSegment{
+						Type:  ArrayIndexSegment,
+						Index: index,
+						Flags: flags,
+					}
+				} else {
+					segments[idx] = PathSegment{
+						Type: PropertySegment,
+						Key:  part,
+					}
+				}
 				start = i + 1
 				idx++
 			}
@@ -549,7 +744,7 @@ func parseDotNotation(path string) ([]PathSegment, error) {
 			} else {
 				segments = append(segments, PathSegment{
 					Type: PropertySegment,
-					Key:  part,
+					Key:  UnescapePathSegment(part),
 				})
 			}
 		}
@@ -561,6 +756,7 @@ func parseDotNotation(path string) ([]PathSegment, error) {
 // smartSplitPath splits path by dots while respecting extraction and array operation boundaries
 // Optimized version: uses byte index tracking instead of strings.Builder to reduce allocations
 // PERFORMANCE: Single-pass algorithm with pre-estimated capacity
+// ESCAPE: Handles \. \\ \[ \] \{ \} escape sequences
 func smartSplitPath(path string) []string {
 	pathLen := len(path)
 	if pathLen == 0 {
@@ -568,15 +764,25 @@ func smartSplitPath(path string) []string {
 	}
 
 	// Pre-estimate capacity: count dots outside brackets in single pass
+	// Also detect escape sequences and brackets/braces
 	dotCount := 0
 	braceDepth := 0
 	bracketDepth := 0
 	hasBrackets := false
 	hasBraces := false
+	hasEscape := false
 
 	for i := range pathLen {
 		c := path[i]
 		switch c {
+		case '\\':
+			// Check for escape sequence
+			if i+1 < pathLen {
+				next := path[i+1]
+				if next == '.' || next == '\\' || next == '[' || next == ']' || next == '{' || next == '}' {
+					hasEscape = true
+				}
+			}
 		case '{':
 			braceDepth++
 			hasBraces = true
@@ -594,9 +800,9 @@ func smartSplitPath(path string) []string {
 		}
 	}
 
-	// Fast path for simple paths (no brackets or braces) - use strings.Split
+	// Fast path for simple paths (no brackets, braces, or escapes) - use strings.Split
 	// PERFORMANCE: strings.Split is highly optimized for simple cases
-	if !hasBrackets && !hasBraces && dotCount > 0 {
+	if !hasBrackets && !hasBraces && !hasEscape && dotCount > 0 {
 		return strings.Split(path, ".")
 	}
 
@@ -611,9 +817,19 @@ func smartSplitPath(path string) []string {
 	braceDepth = 0
 	bracketDepth = 0
 
-	for i := range pathLen {
+	// Use traditional for loop so i++ can skip escaped characters
+	for i := 0; i < pathLen; i++ {
 		c := path[i]
 		switch c {
+		case '\\':
+			// Skip escaped character (don't treat as special)
+			if i+1 < pathLen {
+				next := path[i+1]
+				if next == '.' || next == '\\' || next == '[' || next == ']' || next == '{' || next == '}' {
+					i++ // Skip next character - works in traditional for loop
+					continue
+				}
+			}
 		case '{':
 			braceDepth++
 		case '}':
@@ -650,7 +866,7 @@ func parsePropertyWithArray(part string) ([]PathSegment, error) {
 		propertyName := part[:bracketIndex]
 		segments = append(segments, PathSegment{
 			Type: PropertySegment,
-			Key:  propertyName,
+			Key:  UnescapePathSegment(propertyName),
 		})
 	}
 
@@ -701,9 +917,27 @@ func parseComplexSegment(part string) ([]PathSegment, error) {
 				actualExtract = strings.TrimPrefix(extractPart, "flat:")
 			}
 
-			// Validate extraction field name
+			// Validate extraction field name(s)
 			if actualExtract == "" {
 				return nil, fmt.Errorf("empty extraction field in '%s'", remaining[:braceEnd+1])
+			}
+
+			// Validate and normalize multi-field extraction (e.g., {id,name,email})
+			if strings.Contains(actualExtract, ",") {
+				fields := strings.Split(actualExtract, ",")
+				validatedFields := make([]string, 0, len(fields))
+				for _, field := range fields {
+					field = strings.TrimSpace(field)
+					if field == "" {
+						return nil, fmt.Errorf("empty field name in extraction '%s'", remaining[:braceEnd+1])
+					}
+					if !isValidFieldName(field) {
+						return nil, fmt.Errorf("invalid field name '%s' in extraction", field)
+					}
+					validatedFields = append(validatedFields, field)
+				}
+				// Rebuild with trimmed and validated fields
+				actualExtract = strings.Join(validatedFields, ",")
 			}
 
 			var flags PathSegmentFlags
@@ -1044,6 +1278,11 @@ func validateArrayIndexContent(content string, maxIndex int) error {
 		return nil
 	}
 
+	// Handle append syntax [+] - append to array
+	if content == "+" {
+		return nil
+	}
+
 	// Fast path: scan for colon without allocation
 	hasColon := false
 	for i := 0; i < len(content); i++ {
@@ -1126,6 +1365,27 @@ func validateNumericIndex(s string, maxIndex int) error {
 	}
 
 	return nil
+}
+
+// isValidFieldName validates if a string is a valid JSON field name
+// Allows alphanumeric characters, underscores, and hyphens
+func isValidFieldName(name string) bool {
+	if len(name) == 0 {
+		return false
+	}
+	// First character must be letter, underscore, or digit
+	c := name[0]
+	if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_' || (c >= '0' && c <= '9')) {
+		return false
+	}
+	// Check remaining characters
+	for i := 1; i < len(name); i++ {
+		c := name[i]
+		if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '-') {
+			return false
+		}
+	}
+	return true
 }
 
 // String returns a string representation of the path segment

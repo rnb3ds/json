@@ -41,7 +41,10 @@ The library performs comprehensive validation on all JSON inputs:
 
 ```go
 // Automatic validation with default configuration
-processor := json.New()
+processor, err := json.New()
+if err != nil {
+    log.Fatal(err)
+}
 defer processor.Close()
 
 // Validation includes:
@@ -69,7 +72,7 @@ Automatic sanitization of JSON paths to prevent injection attacks:
 ```go
 // Paths are validated for:
 // - Null bytes (\x00)
-// - Excessive length (>10,000 characters)
+// - Excessive length (>5,000 characters)
 // - Suspicious patterns (script tags, eval, etc.)
 // - Path traversal attempts (../, ..\)
 ```
@@ -116,7 +119,10 @@ For high-security environments, use the `SecurityConfig`:
 
 ```go
 config := json.SecurityConfig()
-processor := json.New(config)
+processor, err := json.New(config)
+if err != nil {
+    log.Fatal(err)
+}
 defer processor.Close()
 
 // SecurityConfig settings:
@@ -126,6 +132,8 @@ defer processor.Close()
 // - MaxSecurityValidationSize: 10MB
 // - MaxObjectKeys: 5,000 (fewer keys)
 // - MaxArrayElements: 5,000 (fewer elements)
+// - MaxCacheSize: 256 (larger than DefaultConfig's 128)
+// - CacheTTL: 3 minutes (shorter than DefaultConfig's 5 minutes)
 // - StrictMode: true (strict validation)
 // - EnableValidation: true (forced validation)
 // - FullSecurityScan: true (disables sampling, full scan all JSON)
@@ -167,25 +175,32 @@ config := &json.Config{
     CacheTTL:     5 * time.Minute,
 }
 
-processor := json.New(config)
+processor, err := json.New(config)
+if err != nil {
+    log.Fatal(err)
+}
 defer processor.Close()
 ```
 
 ### Viewing Security Limits
 
-Check current security configuration:
+Access security-related configuration fields directly:
 
 ```go
-limits := config.GetSecurityLimits()
-fmt.Printf("Security Limits: %+v\n", limits)
+// Access security limits directly from Config
+fmt.Printf("Max Nesting Depth: %d\n", config.MaxNestingDepthSecurity)
+fmt.Printf("Max JSON Size: %d\n", config.MaxJSONSize)
+fmt.Printf("Max Path Depth: %d\n", config.MaxPathDepth)
+fmt.Printf("Max Object Keys: %d\n", config.MaxObjectKeys)
+fmt.Printf("Max Array Elements: %d\n", config.MaxArrayElements)
+fmt.Printf("Full Security Scan: %v\n", config.FullSecurityScan)
 // Output (DefaultConfig values):
-// {
-//   "max_nesting_depth": 200,
-//   "max_security_validation_size": 10485760,
-//   "max_object_keys": 100000,
-//   "max_array_elements": 100000,
-//   "max_json_size": 104857600,
-//   "max_path_depth": 50
+// Max Nesting Depth: 200
+// Max JSON Size: 104857600
+// Max Path Depth: 50
+// Max Object Keys: 100000
+// Max Array Elements: 100000
+// Full Security Scan: false
 // }
 // Note: SecurityConfig() uses more restrictive values than DefaultConfig().
 ```
@@ -199,7 +214,10 @@ fmt.Printf("Security Limits: %+v\n", limits)
 All JSON inputs are automatically validated when `EnableValidation` is true:
 
 ```go
-processor := json.New()
+processor, err := json.New()
+if err != nil {
+    log.Fatal(err)
+}
 defer processor.Close()
 
 // This will be validated automatically
@@ -286,15 +304,16 @@ For large JSON (>4KB), the library uses an optimized security scanning approach:
 
 ```go
 // Default mode (FullSecurityScan: false) - Optimized for performance:
-// - 32KB rolling window scan with guaranteed 100% coverage
+// - Rolling window scan (32KB windows) over the entire JSON content
+// - Suspicious character density sampling (4KB beginning, middle, and end regions)
 // - Critical patterns (__proto__, constructor, prototype) always fully scanned
-// - Suspicious character density triggers automatic full scan
+// - High suspicious density triggers automatic full scan
 // - Pattern fragment detection for targeted scanning
-// - SHA-256 based cache key generation for validation results
 
 // Full scan mode (FullSecurityScan: true) - Maximum security:
 // - All JSON is fully scanned regardless of size
 // - Recommended for untrusted input and sensitive data
+// - Adds ~10-30% overhead for JSON >100KB
 config := json.SecurityConfig()  // Has FullSecurityScan: true by default
 ```
 
@@ -326,7 +345,10 @@ Prevent excessive path traversal:
 config := &json.Config{
     MaxPathDepth: 20, // Maximum 20 levels deep
 }
-processor := json.New(config)
+processor, err := json.New(config)
+if err != nil {
+    log.Fatal(err)
+}
 defer processor.Close()
 
 // This will fail if path depth exceeds limit
@@ -344,12 +366,15 @@ result, err := processor.Get(jsonString, "a.b.c.d.e.f.g.h.i.j.k.l.m.n.o.p.q.r.s.
 File operations include comprehensive path validation:
 
 ```go
-processor := json.New()
+processor, err := json.New()
+if err != nil {
+    log.Fatal(err)
+}
 defer processor.Close()
 
 // Safe file operations
 data, err := processor.LoadFromFile("./data/config.json")  // ✓ Safe
-err = processor.SaveToFile("./output/result.json", data, true) // ✓ Safe
+err = processor.SaveToFile("./output/result.json", data) // ✓ Safe
 
 // Unsafe operations (will be rejected)
 _, err = processor.LoadFromFile("../../../etc/passwd")     // ✗ Path traversal
@@ -381,7 +406,10 @@ File operations respect size limits:
 config := &json.Config{
     MaxJSONSize: 10 * 1024 * 1024, // 10MB limit
 }
-processor := json.New(config)
+processor, err := json.New(config)
+if err != nil {
+    log.Fatal(err)
+}
 defer processor.Close()
 
 // Files larger than MaxJSONSize will be rejected
@@ -404,7 +432,7 @@ data := map[string]interface{}{
     "data":   result,
 }
 
-err := processor.SaveToFile("output.json", data, true)
+err := processor.SaveToFile("output.json", data)
 if err != nil {
     log.Printf("Write failed: %v", err)
 }
@@ -434,7 +462,10 @@ The cache automatically excludes sensitive data by detecting patterns:
 // - Crypto: private_key, encryption_key, certificate
 
 // These patterns prevent sensitive data from being cached
-processor := json.New()
+processor, err := json.New()
+if err != nil {
+    log.Fatal(err)
+}
 defer processor.Close()
 
 // Cache will skip values containing sensitive patterns
@@ -446,20 +477,18 @@ result, err := processor.Get(jsonString, "user.credentials")
 
 Cache keys use secure hashing:
 
-### Secure Cache Keys
-
-Cache keys use secure hashing:
-
 ```go
-// Cache keys are generated using SHA-256
+// Cache keys are generated using secure hashing:
+// - Small JSON (<4KB): Secure FNV-1a with length XOR
+// - Large JSON (>=4KB): SHA-256 (full 32 bytes / 64 hex chars)
 // This prevents:
 // 1. Cache key collision attacks
 // 2. Cache timing attacks
 // 3. Information disclosure through cache keys
 
-// Example internal implementation:
+// Example for large JSON:
 hash := sha256.Sum256([]byte(input))
-cacheKey := fmt.Sprintf("%x", hash[:16])
+cacheKey := fmt.Sprintf("%d:%x", len(input), hash[:])  // full 32 bytes
 ```
 
 ### Cache Key Validation
@@ -485,7 +514,10 @@ config := &json.Config{
     MaxCacheSize: 1000,           // Maximum 1000 entries
     CacheTTL:     5 * time.Minute, // 5 minute expiration
 }
-processor := json.New(config)
+processor, err := json.New(config)
+if err != nil {
+    log.Fatal(err)
+}
 defer processor.Close()
 
 // Cache will automatically evict old entries when full
@@ -501,14 +533,25 @@ defer processor.Close()
 Error messages are sanitized to prevent information disclosure:
 
 ```go
-processor := json.New()
+processor, err := json.New()
+if err != nil {
+    log.Fatal(err)
+}
 defer processor.Close()
 
 _, err := processor.Get(jsonString, "user.password")
 if err != nil {
-    // Error messages sanitize sensitive paths
+    // Default Error() includes full path - do NOT expose to clients
     fmt.Printf("Error: %v\n", err)
-    // Output: "JSON get failed at path '[REDACTED_PATH]': ..."
+    // Output: "JSON get failed at path 'user.password': ..."
+
+    // Use SafeError() for client-safe messages (redacts path details)
+    fmt.Printf("Safe: %s\n", json.SafeError(err))
+    // Output: "path not found"
+
+    // Or use RedactedPath() for safe logging
+    fmt.Printf("Safe path: %s\n", json.RedactedPath("user.password"))
+    // Output: "***"
 }
 ```
 
@@ -586,10 +629,13 @@ Always validate JSON from external sources:
 result, _ := processor.Get(untrustedJSON, "data")
 
 // Good: With validation
-processor := json.New(json.Config{
+processor, err := json.New(json.Config{
     EnableValidation: true,
     StrictMode:       true,
 })
+if err != nil {
+    log.Fatal(err)
+}
 defer processor.Close()
 
 result, err := processor.Get(untrustedJSON, "data")
@@ -639,7 +685,10 @@ Protect against resource exhaustion with concurrency limits:
 config := &json.Config{
     MaxConcurrency: 100, // Maximum concurrent operations
 }
-processor := json.New(config)
+processor, err := json.New(config)
+if err != nil {
+    log.Fatal(err)
+}
 defer processor.Close()
 
 // Operations will respect concurrency limits automatically
@@ -711,11 +760,14 @@ Always close processors to free resources:
 
 ```go
 // Use defer to ensure cleanup
-processor := json.New()
+processor, err := json.New()
+if err != nil {
+    log.Fatal(err)
+}
 defer processor.Close()
 
 // Or use explicit cleanup
-processor := json.New()
+processor, err := json.New()
 // ... use processor ...
 processor.Close()
 
@@ -732,7 +784,10 @@ Use proper synchronization for concurrent operations:
 
 ```go
 // The processor is thread-safe by default
-processor := json.New()
+processor, err := json.New()
+if err != nil {
+    log.Fatal(err)
+}
 defer processor.Close()
 
 // Safe concurrent access
@@ -759,7 +814,10 @@ Use multiple layers of security:
 // Layer 1: Network/Transport security (TLS, authentication)
 // Layer 2: Input validation
 config := json.SecurityConfig()
-processor := json.New(config)
+processor, err := json.New(config)
+if err != nil {
+    log.Fatal(err)
+}
 defer processor.Close()
 
 // Layer 3: Schema validation
@@ -850,7 +908,10 @@ func ProcessUserJSON(userInput string) error {
     config := json.SecurityConfig()
     config.MaxJSONSize = 1 * 1024 * 1024 // 1MB limit for user input
 
-    processor := json.New(config)
+    processor, err := json.New(config)
+    if err != nil {
+        return fmt.Errorf("failed to create processor: %w", err)
+    }
     defer processor.Close()
 
     // Define strict schema
@@ -913,7 +974,10 @@ func ProcessAPIRequests() {
         MaxConcurrency:           100,
     }
 
-    processor := json.New(config)
+    processor, err := json.New(config)
+    if err != nil {
+        return fmt.Errorf("failed to create processor: %w", err)
+    }
     defer processor.Close()
 
     // Process requests with monitoring
@@ -940,16 +1004,17 @@ func ProcessSensitiveData(jsonData string) error {
     config := json.SecurityConfig()
     config.EnableCache = false // Don't cache sensitive data
 
-    processor := json.New(config)
+    processor, err := json.New(config)
+    if err != nil {
+        return fmt.Errorf("failed to create processor: %w", err)
+    }
     defer processor.Close()
 
-    // Process without caching
-    opts := &json.ProcessorOptions{
-        CacheResults: false,
-        StrictMode:   true,
-    }
+    // Process without caching - pass config with caching disabled
+    cfg := json.SecurityConfig()
+    cfg.CacheResults = false
 
-    result, err := processor.Get(jsonData, "sensitive.data", opts)
+    result, err := processor.Get(jsonData, "sensitive.data", cfg)
     if err != nil {
         // Don't log the actual data
         log.Printf("Failed to process sensitive data: operation failed")
@@ -967,12 +1032,15 @@ func ProcessSensitiveData(jsonData string) error {
 
 ```go
 func LoadSecureConfig(configPath string) (*Config, error) {
-    // Validate file path
-    if !isValidConfigPath(configPath) {
-        return nil, fmt.Errorf("invalid config path")
+    // Validate file path (implement your own validation logic)
+    if strings.Contains(configPath, "..") || filepath.IsAbs(configPath) {
+        return nil, fmt.Errorf("invalid config path: potential path traversal")
     }
 
-    processor := json.New(json.SecurityConfig())
+    processor, err := json.New(json.SecurityConfig())
+    if err != nil {
+        return nil, fmt.Errorf("failed to create processor: %w", err)
+    }
     defer processor.Close()
 
     // Read and validate config file
@@ -998,7 +1066,6 @@ func LoadSecureConfig(configPath string) (*Config, error) {
     }
 
     // Validate config structure
-    jsonStr, _ := processor.Encode(processor)
     errors, err := processor.ValidateSchema(jsonStr, configSchema)
     if err != nil || len(errors) > 0 {
         return nil, fmt.Errorf("invalid config structure")
@@ -1132,7 +1199,7 @@ The library implements a multi-layered security validation system:
 │         ↓                                                       │
 │  ┌─────────────────────────────────────────────────────────┐   │
 │  │              SECURITY PATTERN SCANNER                    │   │
-│  │  • 55+ Dangerous Patterns (XSS, Injection, etc.)        │   │
+│  │  • 28 Dangerous Patterns (XSS, Injection, etc.)         │   │
 │  │  • Optimized for Large JSON (>4KB)                      │   │
 │  │  • Rolling Window with Overlap (No Gaps)                │   │
 │  └─────────────────────────────────────────────────────────┘   │
@@ -1146,9 +1213,9 @@ The library implements a multi-layered security validation system:
 
 ### Dangerous Pattern Detection
 
-The library detects **55+ dangerous patterns** across multiple categories:
+The library detects **28 dangerous patterns** across multiple categories, plus supports custom patterns via `RegisterDangerousPattern`:
 
-#### Prototype Pollution Patterns
+#### Prototype Pollution Patterns (Critical — always fully scanned)
 ```go
 // Detected patterns:
 "__proto__"           // Prototype pollution
@@ -1156,57 +1223,72 @@ The library detects **55+ dangerous patterns** across multiple categories:
 "prototype."          // Prototype manipulation
 "__defineGetter__"    // Getter definition
 "__defineSetter__"    // Setter definition
-"Object.assign"       // Object assignment
-"Reflect."            // Reflection API
-"Proxy("              // Proxy creation
-"Symbol("             // Symbol creation
 ```
 
-#### XSS (Cross-Site Scripting) Patterns
+#### HTML/XML Injection Patterns
 ```go
-// HTML Injection:
 "<script"             // Script tag injection
 "<iframe"             // Iframe injection
 "<object"             // Object injection
 "<embed"              // Embed injection
 "<svg"                // SVG injection
+```
 
-// Protocol Injection:
+#### Protocol Injection Patterns
+```go
 "javascript:"         // JavaScript protocol
 "vbscript:"           // VBScript protocol
-"data:"               // Data protocol
+```
 
-// JavaScript Execution:
+#### Code Execution Patterns
+```go
 "eval("               // Dynamic code execution
-"function("           // Function expression
 "setTimeout("         // Timer manipulation
 "setInterval("        // Interval manipulation
 "require("            // Code injection
 "new function("       // Dynamic function creation
-"import("             // Dynamic import
 ```
 
-#### Event Handler Patterns (26 patterns)
+#### DOM Access Patterns
+```go
+"document.cookie"     // Cookie access
+"window.location"     // Redirect manipulation
+"innerhtml"           // DOM manipulation
+```
+
+#### Encoding Bypass Patterns
+```go
+"fromcharcode("       // Character encoding bypass
+"atob("               // Base64 decoding
+"expression("         // CSS expression injection
+```
+
+#### Event Handler Patterns
 ```go
 // Detected event handlers:
-"onerror", "onload", "onclick", "onmouseover", "onfocus", "onblur",
-"onkeyup", "onchange", "onsubmit", "ondblclick", "onmousedown",
-"onmouseup", "onmousemove", "onkeydown", "onkeypress", "onreset",
-"onselect", "onunload", "onabort", "ondrag", "ondragend",
-"ondragenter", "ondragleave", "ondragover", "ondragstart",
-"ondrop", "onscroll", "onwheel", "oncopy", "oncut", "onpaste"
+"onerror", "onload", "onclick", "onmouseover", "onfocus"
 ```
 
-#### Sensitive Data Patterns (55+ patterns)
+#### Sensitive Data Detection (for cache exclusion)
+The library also detects sensitive data patterns to prevent caching of sensitive values. These are separate from dangerous patterns and are used by the cache layer:
+
 ```go
 // Authentication:
 "password", "passwd", "pwd", "token", "bearer", "jwt",
 "access_token", "refresh_token", "auth_token", "secret",
-"secret_key", "client_secret", "apikey", "api_key", "api-key"
+"secret_key", "client_secret", "apikey", "api_key", "api-key",
+"x-api-key", "auth", "authorization", "authenticate",
+"credential", "credentials", "private"
 
 // PII (Personally Identifiable Information):
-"ssn", "social_security", "credit_card", "creditcard",
-"card_number", "cvv", "cvc", "passport", "passport_number"
+"ssn", "social_security", "social_security_number",
+"credit_card", "creditcard", "card_number", "cvv", "cvc",
+"passport", "passport_number",
+"driver_license", "license_number"
+
+// Financial:
+"account_number", "bank_account", "routing_number",
+"pin", "pin_number"
 
 // Cryptographic:
 "private_key", "public_key", "encryption_key", "signing_key",
@@ -1214,7 +1296,17 @@ The library detects **55+ dangerous patterns** across multiple categories:
 
 // Session:
 "session", "session_id", "session_key", "cookie", "csrf", "xsrf"
+
+// Database:
+"database_url", "db_password", "db_user", "db_pass",
+"connection_string", "connectionstring"
+
+// Cloud:
+"aws_access_key", "aws_secret", "aws_key",
+"azure_key", "gcp_key", "gcp_credentials"
 ```
+
+**Note:** Sensitive data patterns prevent values from being cached but do not trigger security violations. Use `AdditionalDangerousPatterns` in Config to add custom dangerous patterns that trigger violations.
 
 ### Optimized Security Scanning for Large JSON
 
@@ -1232,12 +1324,12 @@ Overlap Size = maxPatternLength + 8 bytes
 
 #### Multi-Region Sampling
 ```
-┌────────────────────────────────────────────────────────────┐
-│  [Sample 4KB]          [Sample 4KB]         [Sample 4KB]  │
-│   Beginning    →       Middle Region  →        End        │
-│       ↓                     ↓                      ↓       │
-│  Density Check      Density Check         Density Check   │
-└────────────────────────────────────────────────────────────┘
+┌───────────────────────────────────────────────────────────┐
+│  [Sample 4KB]       [Sample 4KB]        [Sample 4KB]     │
+│   Beginning    →    Middle Region  →        End          │
+│       ↓                  ↓                    ↓           │
+│  Density Check     Density Check       Density Check     │
+└───────────────────────────────────────────────────────────┘
 ```
 
 #### Suspicious Character Density Check
@@ -1255,16 +1347,16 @@ Overlap Size = maxPatternLength + 8 bytes
 The validation cache uses secure key generation to prevent collision attacks:
 
 ```go
-// For small JSON (< 4KB): FNV-1a with length prefix
-key := fmt.Sprintf("%d:%016x", len(json), fnv1aHash(json))
+// For small JSON (< 4KB): Secure FNV-1a with length XOR
+key := fmt.Sprintf("%d:%016x", len(json), fnv1aHash(json) ^ uint64(len(json)))
 
-// For large JSON (≥ 4KB): SHA-256 truncated
+// For large JSON (>= 4KB): SHA-256 full 32 bytes
 hash := sha256.Sum256([]byte(json))
-key := fmt.Sprintf("%d:%x", len(json), hash[:16])
+key := fmt.Sprintf("%d:%x", len(json), hash[:]) // Full 32 bytes (64 hex chars)
 
 // Cache management:
-// - Maximum entries: 10,000
-// - LRU eviction at 80% capacity (8,000 entries)
+// - Maximum entries: configurable via MaxCacheSize (default: 128, max: 2,000)
+// - LRU eviction at 80% capacity
 // - Entry includes last access timestamp
 ```
 
@@ -1302,17 +1394,29 @@ Input Path
 // URL encoded:
 "%2e%2e", "%252e%252e", "%25252e%25252e"
 
+// Mixed case encoding:
+"%2E%2E", "%2E%2e", "%2e%2E", "..%2F", "..%5C"
+
 // Mixed encoding:
 "..%2f", "..%5c", "..%c0%af", "..%c1%9c"
+"%c0%ae", "%c1%1c"
 
 // Partial encoding:
 ".%2e", "%2e.", "%2e%2e%2f", "%2e%2e%5c"
 
 // Control character injection:
 "..%00", "..%0a", "..%0d", "..%09", "..%20"
+"%00", "%0a", "%0d", "%09", "%20"
+
+// Fullwidth encoding:
+"%uff0e%uff0e", "..%ef%bc%8f"
+
+// Partial double encoding:
+"%2e%2", "%25%2e", "%2f%2", "%5c%2"
 
 // Double patterns:
 "....//", "....\\\\", ".....", "......"
+"..\\/"  // Additional Windows pattern
 ```
 
 #### Unicode Lookalike Character Detection
@@ -1344,11 +1448,11 @@ The library detects all zero-width and invisible Unicode characters:
 '\u200B', '\u200C', '\u200D', // Zero-width characters
 '\u200E', '\u200F',           // Directional marks
 '\uFEFF',                     // BOM
-'\u2060' - '\u2064',          // Format characters
-'\u206A' - '\u206F',          // Deprecated format chars
+'\u2060', '\u2061', '\u2062', '\u2063', '\u2064', // Format characters
+'\u206A', '\u206B', '\u206C', '\u206D', '\u206E', '\u206F', // Deprecated format chars
 '\u00AD', '\u034F', '\u061C', // Other invisible
 '\u115F', '\u1160', '\u180E', // Jamo fillers
-'\u2066' - '\u2069',          // Isolate controls
+'\u2066', '\u2067', '\u2068', '\u2069', // Isolate controls
 '\uFFFD'                      // Replacement character
 ```
 
@@ -1357,7 +1461,7 @@ The library detects all zero-width and invisible Unicode characters:
 #### Windows Protection
 ```go
 // Reserved device names blocked:
-"CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$"
+"CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$", "CLOCK$"
 "COM0"-"COM9", "LPT0"-"LPT9"
 
 // UNC paths blocked:
@@ -1431,22 +1535,19 @@ All type conversions include overflow checking:
 
 ```go
 func (r AccessResult) AsInt() (int, error) {
-    case int64:
-        // Check for overflow when converting int64 to int
-        if v > int64(1<<(strconv.IntSize-1)-1) ||
-           v < int64(-1<<(strconv.IntSize-1)) {
-            return 0, fmt.Errorf("value %d overflows int", v)
-        }
-    case uint64:
-        // Check for overflow when converting uint64 to int
-        if v > uint64(math.MaxInt64) {
-            return 0, fmt.Errorf("value %d overflows int", v)
-        }
-    case float64:
-        // Check for precision loss
-        if v != float64(int64(v)) {
-            return 0, fmt.Errorf("value %v is not an integer", v)
-        }
+    if !r.Exists {
+        return 0, ErrPathNotFound
+    }
+    // Delegates to convertToInt() which handles:
+    // - int64 overflow checks (platform-adaptive minInt/maxInt)
+    // - uint64 overflow checks (math.MaxInt64)
+    // - float64 precision loss detection
+    // - bool rejection
+    result, ok := convertToInt(r.Value)
+    if !ok {
+        return 0, fmt.Errorf("cannot convert %T to int", r.Value)
+    }
+    return result, nil
 }
 ```
 
@@ -1455,7 +1556,7 @@ func (r AccessResult) AsInt() (int, error) {
 #### Worker Pool Protection
 ```go
 // Parallel processing limits:
-maxWorkers: 16                 // Cap at 16 workers
+maxWorkers: 64                 // Cap at 64 workers
 semaphorePool: chan struct{}   // Limit concurrent goroutines
 taskTracking: atomic.Int32     // Track pending tasks
 conditionVariable: sync.Cond   // Efficient waiting
@@ -1467,7 +1568,11 @@ atomic.CompareAndSwapInt32()   // First error wins
 #### Cache Sharding
 ```go
 // Sharded cache for reduced lock contention:
-shardCount: 32 (or CPU*4)      // Based on cache size
+shardCount: dynamic             // Based on cache size and CPU count:
+                                //   Large (>10000): max(CPU*4, 32)
+                                //   Medium (>1000): max(CPU*2, 16)
+                                //   Small (>100): max(CPU, 8)
+                                //   Tiny: max(CPU/2, 4)
 shardMask: shardCount - 1      // Fast modulo via AND
 perShardMutex: sync.RWMutex    // Fine-grained locking
 ```
@@ -1478,7 +1583,7 @@ perShardMutex: sync.RWMutex    // Fine-grained locking
 type Config struct {
     // Size Limits
     MaxJSONSize              int64  // Default: 100MB
-    MaxSecurityValidationSize int64  // Default: 100MB
+    MaxSecurityValidationSize int64 // Default: 10MB
 
     // Depth Limits
     MaxNestingDepthSecurity  int    // Default: 200
@@ -1494,8 +1599,8 @@ type Config struct {
     FullSecurityScan         bool   // Default: false
 
     // Concurrency
-    MaxConcurrency           int    // Default: CPU count
-    MaxBatchSize             int    // Default: 1000
+    MaxConcurrency           int    // Default: 50
+    MaxBatchSize             int    // Default: 2000
 }
 ```
 
@@ -1526,23 +1631,25 @@ The library caches validation results to avoid redundant security scans:
 
 #### Cache Key Generation
 ```go
-// Small JSON strings (<4KB): FNV-1a hash with length prefix
-// - Fast computation
-// - Low collision probability for short strings
+// Small JSON strings (<4KB): Secure FNV-1a hash with length XOR
+// - Uses HashStringFNV1aSecure (hardened variant)
+// - String length XOR'd into hash for collision resistance
 
-// Large JSON strings (>=4KB): SHA-256 (first 16 bytes)
-// - Strong collision resistance
+// Large JSON strings (>=4KB): SHA-256 (full 32 bytes / 64 hex chars)
+// - Uses full 256-bit output to prevent birthday attacks
 // - Prevents cache poisoning attacks
 
-func getValidationCacheKey(jsonStr string) string {
+// getValidationCacheKey is a method on securityValidator (internal)
+func (sv *securityValidator) getValidationCacheKey(jsonStr string) string {
     if len(jsonStr) <= 4096 {
-        // FNV-1a for small strings
-        h := fnv1aHash(jsonStr)
+        // Secure FNV-1a for small strings (with length XOR)
+        h := HashStringFNV1aSecure(jsonStr)
         return fmt.Sprintf("%d:%016x", len(jsonStr), h)
     }
-    // SHA-256 for large strings (security)
+    // SHA-256 full 32 bytes for large strings (security)
     hash := sha256.Sum256([]byte(jsonStr))
-    return fmt.Sprintf("%d:%x", len(jsonStr), hash[:16])
+    // Uses full 32 bytes (64 hex chars) to prevent birthday attacks
+    return fmt.Sprintf("%d:%x", len(jsonStr), hash[:])
 }
 ```
 
@@ -1553,7 +1660,7 @@ func getValidationCacheKey(jsonStr string) string {
 // - Removes oldest 25% of entries
 // - Prevents memory spikes
 
-const cacheHighWatermark = 8000  // 80% of 10,000 max entries
+const cacheHighWatermark = 80  // 80% of MaxCacheSize (configurable, max 2,000)
 
 func evictLRUEntries() {
     // Sort by lastAccess time
@@ -1598,13 +1705,13 @@ For large JSON (>4KB), the library uses optimized scanning:
 ```go
 // Checks suspicious character density in 3 regions:
 // 1. Beginning (0 to 4KB)
-// 2. Middle ((len/2) - 2KB to (len/2) + 2KB)
+// 2. Middle ((len - 4KB) / 2 to (len - 4KB) / 2 + 4KB)
 // 3. End (len - 4KB to len)
 
 // Suspicious characters: < > ( ) ; = &
-// Threshold: 0.5% density triggers full scan
+// Threshold per region: 0.5% density triggers full scan
 
-func hasSuspiciousCharacterDensity(jsonStr string) bool {
+func (sv *securityValidator) hasSuspiciousCharacterDensity(jsonStr string) bool {
     // Sample from beginning, middle, and end
     // Detects attacks hidden anywhere in payload
 }
@@ -1627,9 +1734,9 @@ func hasSuspiciousCharacterDensity(jsonStr string) bool {
 #### Path Length and Depth Limits
 ```go
 const (
-    maxPathLength  = 1000   // Maximum path characters
-    maxPathDepth   = 100    // Maximum path segments
-    maxArrayIndex  = 10000  // Maximum array index value
+    maxPathLength  = 5000     // Maximum path characters
+    maxPathDepth   = 50       // Default maximum path segments (Config.MaxPathDepth)
+    maxArrayIndex  = 1000000  // Maximum array index value
 )
 ```
 
@@ -1702,7 +1809,7 @@ reservedDevices := []string{
     "CON", "PRN", "AUX", "NUL",
     "COM0", "COM1"-"COM9",
     "LPT0", "LPT1"-"LPT9",
-    "CONIN$", "CONOUT$",
+    "CONIN$", "CONOUT$", "CLOCK$",
 }
 
 // Blocked patterns:

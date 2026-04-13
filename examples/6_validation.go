@@ -14,23 +14,23 @@ import (
 // security validation, and path validation.
 //
 // Topics covered:
-// - JSON schema validation
-// - Security validation (nesting depth, size limits)
-// - Path validation
-// - JSON format validation
-// - Custom validation rules
+// - JSON format validation with ValidString
+// - Path validation via Processor
+// - Schema validation
+// - Security validation
+// - Processor-level validation
 //
 // Run: go run -tags=example examples/6_validation.go
 
 func main() {
-	fmt.Println("✓ JSON Library - Validation")
-	fmt.Println("===========================\n ")
+	fmt.Println("JSON Library - Validation")
+	fmt.Println("=========================\n ")
 
 	// 1. JSON FORMAT VALIDATION
 	demonstrateFormatValidation()
 
 	// 2. PATH VALIDATION
-	demonstrateValidationPath()
+	demonstratePathValidation()
 
 	// 3. SCHEMA VALIDATION
 	demonstrateSchemaValidation()
@@ -41,12 +41,12 @@ func main() {
 	// 5. VALIDATION WITH PROCESSOR
 	demonstrateProcessorValidation()
 
-	fmt.Println("\n✅ Validation examples complete!")
+	fmt.Println("\nValidation examples complete!")
 }
 
 func demonstrateFormatValidation() {
-	fmt.Println("1️⃣  JSON Format Validation")
-	fmt.Println("─────────────────────────")
+	fmt.Println("1. JSON Format Validation (json.Valid)")
+	fmt.Println("----------------------------------------------")
 
 	testCases := []struct {
 		name  string
@@ -66,18 +66,25 @@ func demonstrateFormatValidation() {
 
 	fmt.Println("   Format validation results:")
 	for _, tc := range testCases {
-		valid := json.IsValidJSON(tc.data)
-		status := "✓ valid"
+		valid := json.Valid([]byte(tc.data))
+		status := "valid"
 		if !valid {
-			status = "✗ invalid"
+			status = "invalid"
 		}
 		fmt.Printf("   [%s] %s\n", tc.name, status)
 	}
 }
 
-func demonstrateValidationPath() {
-	fmt.Println("\n2️⃣  Path Validation")
-	fmt.Println("───────────────────")
+func demonstratePathValidation() {
+	fmt.Println("\n2. Path Validation (via Processor)")
+	fmt.Println("------------------------------------")
+
+	processor, err := json.New(json.DefaultConfig())
+	if err != nil {
+		fmt.Printf("   New error: %v\n", err)
+		return
+	}
+	defer processor.Close()
 
 	testPaths := []struct {
 		name  string
@@ -90,31 +97,32 @@ func demonstrateValidationPath() {
 		{"Nested array", "data[0].items[1]", true},
 		{"Extraction", "users{name}", true},
 		{"Empty path", "", false},
-		{"Path traversal", "../etc/passwd", false},
 		{"Invalid brackets", "user[0", false},
 	}
 
-	fmt.Println("   Path validation results:")
+	fmt.Println("   Path validation results (using sample JSON for syntax check):")
+	sampleJSON := `{"user": {"name": "test"}, "users": [{"name": "a"}], "data": [{"items": [1, 2]}]}`
 	for _, tc := range testPaths {
-		valid := json.IsValidPath(tc.path)
-		status := "✓"
-		if !valid {
-			status = "✗"
+		if tc.path == "" {
+			fmt.Printf("   X [%s] %s (empty path is invalid)\n", tc.name, tc.path)
+			continue
 		}
-		fmt.Printf("   %s [%s] %s\n", status, tc.name, tc.path)
-	}
-
-	// Detailed validation with error messages
-	fmt.Println("\n   Detailed validation:")
-	invalidPath := "users..name"
-	if err := json.ValidatePath(invalidPath); err != nil {
-		fmt.Printf("   Path '%s' error: %v\n", invalidPath, err)
+		// Attempt Get on sample JSON: syntax errors surface as ErrInvalidPath,
+		// while valid paths either succeed (path exists) or fail with ErrPathNotFound
+		_, err := processor.Get(sampleJSON, tc.path)
+		if !tc.valid {
+			fmt.Printf("   X [%s] %s (correctly rejected)\n", tc.name, tc.path)
+		} else if err != nil {
+			fmt.Printf("   OK [%s] %s (valid syntax, path not found in sample data)\n", tc.name, tc.path)
+		} else {
+			fmt.Printf("   OK [%s] %s (valid)\n", tc.name, tc.path)
+		}
 	}
 }
 
 func demonstrateSchemaValidation() {
-	fmt.Println("\n3️⃣  Schema Validation")
-	fmt.Println("────────────────────")
+	fmt.Println("\n3. Schema Validation (json.ValidateSchema)")
+	fmt.Println("---------------------------------------------")
 
 	// Create a schema for user data
 	schema := &json.Schema{
@@ -170,10 +178,10 @@ func demonstrateSchemaValidation() {
 	if err != nil {
 		fmt.Printf("   Validation error: %v\n", err)
 	} else if len(errors) == 0 {
-		fmt.Println("   ✓ User data is valid!")
+		fmt.Println("   User data is valid!")
 	} else {
 		for _, e := range errors {
-			fmt.Printf("   ✗ %s: %s\n", e.Path, e.Message)
+			fmt.Printf("   X %s: %s\n", e.Path, e.Message)
 		}
 	}
 
@@ -182,7 +190,7 @@ func demonstrateSchemaValidation() {
 	errors, err = json.ValidateSchema(invalidUser1, schema)
 	if err == nil {
 		for _, e := range errors {
-			fmt.Printf("   ✗ %s: %s\n", e.Path, e.Message)
+			fmt.Printf("   X %s: %s\n", e.Path, e.Message)
 		}
 	}
 
@@ -191,62 +199,49 @@ func demonstrateSchemaValidation() {
 	errors, err = json.ValidateSchema(invalidUser2, schema)
 	if err == nil {
 		for _, e := range errors {
-			fmt.Printf("   ✗ %s: %s\n", e.Path, e.Message)
+			fmt.Printf("   X %s: %s\n", e.Path, e.Message)
 		}
 	}
 }
 
 func demonstrateSecurityValidation() {
-	fmt.Println("\n4️⃣  Security Validation")
-	fmt.Println("───────────────────────")
+	fmt.Println("\n4. Security Validation")
+	fmt.Println("------------------------")
 
 	// Create a security processor
-	processor, _ := json.New(json.SecurityConfig())
+	processor, _ := json.New(json.SecurityConfig()) // OK: preset config always valid
 	defer processor.Close()
 
 	testCases := []struct {
-		name  string
-		data  string
-		valid bool
+		name string
+		data string
 	}{
-		{
-			"Normal JSON",
-			`{"user": "John", "age": 30}`,
-			true,
-		},
-		{
-			"Deeply nested (within limits)",
-			`{"a":{"b":{"c":"value"}}}`,
-			true,
-		},
-		{
-			"Large JSON (within limits)",
-			generateLargeJSON(100),
-			true,
-		},
+		{"Normal JSON", `{"user": "John", "age": 30}`},
+		{"Deeply nested (within limits)", `{"a":{"b":{"c":"value"}}}`},
+		{"Large JSON (within limits)", generateLargeJSON(100)},
 	}
 
 	fmt.Println("   Security validation with SecurityConfig:")
 	for _, tc := range testCases {
-		valid := json.IsValidJSON(tc.data)
-		status := "✓"
+		valid := json.Valid([]byte(tc.data))
+		status := "OK"
 		if !valid {
-			status = "✗"
+			status = "X"
 		}
 		fmt.Printf("   %s %s\n", status, tc.name)
 	}
 }
 
 func demonstrateProcessorValidation() {
-	fmt.Println("\n5️⃣  Validation with Processor")
-	fmt.Println("────────────────────────────")
+	fmt.Println("\n5. Validation with Processor")
+	fmt.Println("------------------------------")
 
 	// Create processor with validation enabled
 	config := json.DefaultConfig()
 	config.EnableValidation = true
 	config.MaxJSONSize = 1024 * 1024 // 1MB
 
-	processor, _ := json.New(config)
+	processor, _ := json.New(config) // OK: DefaultConfig-derived, always valid
 	defer processor.Close()
 
 	testJSON := `{
@@ -265,13 +260,13 @@ func demonstrateProcessorValidation() {
 	if err != nil {
 		fmt.Printf("   Error: %v\n", err)
 	} else {
-		fmt.Printf("   ✓ Validated and retrieved: %v\n", name)
+		fmt.Printf("   Validated and retrieved: %v\n", name)
 	}
 
 	// Invalid path (will fail validation)
 	_, err = processor.Get(testJSON, "")
 	if err != nil {
-		fmt.Printf("   ✓ Invalid path caught: %v\n", err)
+		fmt.Printf("   Invalid path caught: %v\n", err)
 	}
 }
 

@@ -1139,3 +1139,127 @@ func BenchmarkDeepMergeWithMode_Difference(b *testing.B) {
 		_ = DeepMergeWithMode(base, override, MergeDifference)
 	}
 }
+
+// ============================================================================
+// Additional helpers coverage tests
+// ============================================================================
+
+// TestCleanupNullValues tests CleanupNullValues function
+func TestCleanupNullValues(t *testing.T) {
+	t.Run("object with nulls", func(t *testing.T) {
+		input := map[string]any{"a": nil, "b": 1, "c": nil, "d": "hello"}
+		result := CleanupNullValues(input, false)
+		m := result.(map[string]any)
+		if _, exists := m["a"]; exists {
+			t.Error("null key 'a' should be removed")
+		}
+		if _, exists := m["c"]; exists {
+			t.Error("null key 'c' should be removed")
+		}
+		if m["b"] != 1 || m["d"] != "hello" {
+			t.Error("non-null values should be preserved")
+		}
+	})
+
+	t.Run("nested object with nulls", func(t *testing.T) {
+		input := map[string]any{
+			"outer": map[string]any{
+				"inner": nil,
+				"keep":  42,
+			},
+		}
+		result := CleanupNullValues(input, false)
+		outer := result.(map[string]any)["outer"].(map[string]any)
+		if _, exists := outer["inner"]; exists {
+			t.Error("nested null key should be removed")
+		}
+		if outer["keep"] != 42 {
+			t.Error("nested non-null value should be preserved")
+		}
+	})
+
+	t.Run("array with nulls and compact", func(t *testing.T) {
+		input := map[string]any{
+			"items": []any{1, nil, 3, nil, 5},
+		}
+		result := CleanupNullValues(input, true)
+		m := result.(map[string]any)
+		arr := m["items"].([]any)
+		for _, v := range arr {
+			if v == nil {
+				t.Error("null items should be removed when compactArrays=true")
+			}
+		}
+	})
+
+	t.Run("array with nulls no compact", func(t *testing.T) {
+		input := map[string]any{
+			"items": []any{1, nil, 3},
+		}
+		result := CleanupNullValues(input, false)
+		m := result.(map[string]any)
+		arr := m["items"].([]any)
+		if len(arr) != 3 {
+			t.Errorf("array length = %d, want 3 (nulls preserved without compact)", len(arr))
+		}
+	})
+}
+
+// TestConvertNumbersToFloat tests ConvertNumbersToFloat function
+func TestConvertNumbersToFloat(t *testing.T) {
+	t.Run("basic conversion", func(t *testing.T) {
+		input := map[string]any{"int": 42, "float": 3.14, "str": "hello"}
+		result := ConvertNumbersToFloat(input)
+		m := result.(map[string]any)
+		if m["str"] != "hello" {
+			t.Error("string should be preserved")
+		}
+	})
+
+	t.Run("nested conversion", func(t *testing.T) {
+		input := map[string]any{
+			"data": map[string]any{
+				"val": 100,
+			},
+		}
+		result := ConvertNumbersToFloat(input)
+		m := result.(map[string]any)
+		data := m["data"].(map[string]any)
+		// Non-json.Number values are returned as-is
+		if data["val"] != 100 {
+			t.Errorf("nested int should be preserved, got %v", data["val"])
+		}
+	})
+
+	t.Run("array conversion", func(t *testing.T) {
+		input := []any{1, 2, 3}
+		result := ConvertNumbersToFloat(input)
+		arr := result.([]any)
+		if len(arr) != 3 {
+			t.Errorf("array length = %d, want 3", len(arr))
+		}
+	})
+}
+
+// TestMatchBytesIgnoreCase tests matchBytesIgnoreCase function
+func TestMatchBytesIgnoreCase(t *testing.T) {
+	tests := []struct {
+		name string
+		a, b string
+		want bool
+	}{
+		{"same case 8 chars", "testtest", "testtest", true},
+		{"different case 8 chars", "TESTTEST", "testtest", true},
+		{"mixed case 8 chars", "TestTest", "testtest", true},
+		{"no match", "testXXXX", "testtest", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := matchBytesIgnoreCase(tt.a, tt.b)
+			if got != tt.want {
+				t.Errorf("matchBytesIgnoreCase(%q, %q) = %v, want %v", tt.a, tt.b, got, tt.want)
+			}
+		})
+	}
+}

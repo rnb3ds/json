@@ -1,7 +1,6 @@
 package json
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -156,31 +155,11 @@ func BenchmarkStringIntern_Batch(b *testing.B) {
 // ----------------------------------------------------------------------------
 
 func generateLargeJSONArray(size int) string {
-	var sb strings.Builder
-	sb.WriteString("[")
-	for i := 0; i < size; i++ {
-		if i > 0 {
-			sb.WriteString(",")
-		}
-		sb.WriteString(fmt.Sprintf(`{"id":%d,"name":"user%d","email":"user%d@example.com","active":true,"score":%.2f}`,
-			i, i, i, float64(i)*1.5))
-	}
-	sb.WriteString("]")
-	return sb.String()
+	return genJSONArrayRaw(size)
 }
 
 func generateLargeJSONObject(size int) string {
-	var sb strings.Builder
-	sb.WriteString("{")
-	for i := 0; i < size; i++ {
-		if i > 0 {
-			sb.WriteString(",")
-		}
-		sb.WriteString(fmt.Sprintf(`"key%d":{"value":%d,"label":"Label %d"}`,
-			i, i, i))
-	}
-	sb.WriteString("}")
-	return sb.String()
+	return genJSONObject(size)
 }
 
 func BenchmarkLargeJSONArray_Parse_1000(b *testing.B) {
@@ -299,30 +278,6 @@ func BenchmarkIterator_LargeObject(b *testing.B) {
 // ----------------------------------------------------------------------------
 // STREAMING BENCHMARKS
 // ----------------------------------------------------------------------------
-
-func BenchmarkStreaming_Array_1000(b *testing.B) {
-	jsonData := []byte(generateLargeJSONArray(1000))
-
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		sp := NewStreamingProcessor(bytes.NewReader(jsonData), 0)
-		_ = sp.StreamArray(func(index int, item any) bool {
-			return true
-		})
-	}
-}
-
-func BenchmarkStreaming_Array_10000(b *testing.B) {
-	jsonData := []byte(generateLargeJSONArray(10000))
-
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		sp := NewStreamingProcessor(bytes.NewReader(jsonData), 0)
-		_ = sp.StreamArray(func(index int, item any) bool {
-			return true
-		})
-	}
-}
 
 func BenchmarkStreamIterator_1000(b *testing.B) {
 	jsonData := generateLargeJSONArray(1000)
@@ -496,15 +451,7 @@ func BenchmarkConcurrent_Marshal(b *testing.B) {
 // ----------------------------------------------------------------------------
 
 func generateDeepNestedJSON(depth int) string {
-	var sb strings.Builder
-	for i := 0; i < depth; i++ {
-		sb.WriteString(fmt.Sprintf(`{"level%d":`, i))
-	}
-	sb.WriteString(`"value"`)
-	for i := 0; i < depth; i++ {
-		sb.WriteString("}")
-	}
-	return sb.String()
+	return genNestedJSONDynamicKeys(depth)
 }
 
 func BenchmarkDeepNesting_Parse_10(b *testing.B) {
@@ -559,7 +506,7 @@ func BenchmarkBatchSet_Small(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, _ = processor.BatchSetOptimized(jsonStr, updates)
+		_, _ = processor.batchSetOptimized(jsonStr, updates)
 	}
 }
 
@@ -587,7 +534,7 @@ func BenchmarkBatchSet_Large(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, _ = processor.BatchSetOptimized(jsonStr, updates)
+		_, _ = processor.batchSetOptimized(jsonStr, updates)
 	}
 }
 
@@ -600,7 +547,7 @@ func BenchmarkFastGetMultiple_Small(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, _ = processor.FastGetMultiple(jsonStr, paths)
+		_, _ = processor.fastGetMultiple(jsonStr, paths)
 	}
 }
 
@@ -628,7 +575,7 @@ func BenchmarkFastGetMultiple_Large(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, _ = processor.FastGetMultiple(jsonStr, paths)
+		_, _ = processor.fastGetMultiple(jsonStr, paths)
 	}
 }
 
@@ -746,7 +693,7 @@ func BenchmarkIterableValue_Get(b *testing.B) {
 			"value": 42,
 		},
 	}
-	iv := NewIterableValue(data)
+	iv := newIterableValue(data)
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -764,7 +711,7 @@ func BenchmarkIterableValue_GetNested(b *testing.B) {
 			},
 		},
 	}
-	iv := NewIterableValue(data)
+	iv := newIterableValue(data)
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -779,7 +726,7 @@ func BenchmarkIterableValue_GetTyped(b *testing.B) {
 		"price":  99.99,
 		"active": true,
 	}
-	iv := NewIterableValue(data)
+	iv := newIterableValue(data)
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -803,7 +750,7 @@ func BenchmarkFastSet_Simple(b *testing.B) {
 	b.ResetTimer()
 
 	for i := 0; i < b.N; i++ {
-		_, _ = processor.FastSet(jsonStr, "name", "updated")
+		_, _ = processor.fastSet(jsonStr, "name", "updated")
 	}
 }
 
@@ -829,7 +776,7 @@ func BenchmarkFastDelete_Simple(b *testing.B) {
 	b.ResetTimer()
 
 	for i := 0; i < b.N; i++ {
-		_, _ = processor.FastDelete(jsonStr, "name")
+		_, _ = processor.fastDelete(jsonStr, "name")
 	}
 }
 
@@ -860,7 +807,7 @@ func BenchmarkBatchSetOptimized(b *testing.B) {
 	b.ResetTimer()
 
 	for i := 0; i < b.N; i++ {
-		_, _ = processor.BatchSetOptimized(jsonStr, updates)
+		_, _ = processor.batchSetOptimized(jsonStr, updates)
 	}
 }
 
@@ -874,7 +821,7 @@ func BenchmarkFastGetMultiple(b *testing.B) {
 	b.ResetTimer()
 
 	for i := 0; i < b.N; i++ {
-		_, _ = processor.FastGetMultiple(jsonStr, paths)
+		_, _ = processor.fastGetMultiple(jsonStr, paths)
 	}
 }
 
@@ -942,26 +889,6 @@ func BenchmarkRegularMapIteration(b *testing.B) {
 	}
 }
 
-// BenchmarkLargeBufferPool benchmarks large buffer pool operations
-func BenchmarkLargeBufferPool(b *testing.B) {
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		buf := getLargeBuffer()
-		*buf = append(*buf, make([]byte, 1024)...)
-		putLargeBuffer(buf)
-	}
-}
-
-// BenchmarkEncodeBufferPool benchmarks encode buffer pool operations
-func BenchmarkEncodeBufferPool(b *testing.B) {
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		buf := getEncodeBuffer()
-		buf = append(buf, make([]byte, 512)...)
-		putEncodeBuffer(buf)
-	}
-}
-
 // BenchmarkIsSimplePropertyAccess benchmarks simple property detection
 func BenchmarkIsSimplePropertyAccess(b *testing.B) {
 	paths := []string{
@@ -977,29 +904,5 @@ func BenchmarkIsSimplePropertyAccess(b *testing.B) {
 		for _, p := range paths {
 			_ = isSimplePropertyAccess(p)
 		}
-	}
-}
-
-// BenchmarkStreamingProcessor_Array benchmarks streaming processor for arrays
-func BenchmarkStreamingProcessor_Array(b *testing.B) {
-	var buf bytes.Buffer
-	buf.WriteString("[")
-	for i := 0; i < 1000; i++ {
-		if i > 0 {
-			buf.WriteString(",")
-		}
-		buf.WriteString(`{"id":`)
-		buf.WriteString(strings.Repeat("0", 3))
-		buf.WriteString(`}`)
-	}
-	buf.WriteString("]")
-	data := buf.Bytes()
-
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		sp := NewStreamingProcessor(bytes.NewReader(data), 0)
-		_ = sp.StreamArray(func(index int, item any) bool {
-			return true
-		})
 	}
 }

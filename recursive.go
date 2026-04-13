@@ -642,6 +642,11 @@ func (urp *recursiveProcessor) handleExtractSegmentUnified(data any, segment int
 		actualKey = strings.TrimPrefix(actualKey, "flat:")
 	}
 
+	// Check for multi-field extraction (comma-separated fields)
+	if strings.Contains(actualKey, ",") {
+		return urp.handleMultiFieldExtractSegment(data, actualKey, isFlat, segments, segmentIndex, isLastSegment, op, value, createPaths)
+	}
+
 	switch container := data.(type) {
 	case []any:
 		// Extract from each array element
@@ -853,6 +858,80 @@ func (urp *recursiveProcessor) handleExtractSegmentUnified(data any, segment int
 	}
 }
 
+// handleMultiFieldExtractSegment handles multi-field extraction (e.g., {id,name})
+// Returns a new object (or array of objects) containing only the specified fields.
+// Note: isFlat is unused for multi-field extraction as flattening doesn't apply when
+// extracting multiple fields into an object (only applicable to single-field extraction).
+func (urp *recursiveProcessor) handleMultiFieldExtractSegment(data any, fieldsStr string, _ bool, segments []internal.PathSegment, segmentIndex int, isLastSegment bool, op operation, value any, createPaths bool) (any, error) {
+	fields := strings.Split(fieldsStr, ",")
+
+	// Trim whitespace from field names
+	for i, f := range fields {
+		fields[i] = strings.TrimSpace(f)
+	}
+
+	switch container := data.(type) {
+	case []any:
+		// Extract from each array element
+		results := make([]any, 0, len(container))
+
+		for _, item := range container {
+			if itemMap, ok := item.(map[string]any); ok {
+				extracted := urp.extractMultipleFieldsFromMap(itemMap, fields)
+				if extracted != nil {
+					results = append(results, extracted)
+				}
+			}
+		}
+
+		// If not last segment, continue processing
+		if !isLastSegment && len(results) > 0 {
+			return urp.processRecursivelyAtSegmentsWithOptions(results, segments, segmentIndex+1, op, value, createPaths)
+		}
+
+		return results, nil
+
+	case map[string]any:
+		extracted := urp.extractMultipleFieldsFromMap(container, fields)
+		if extracted == nil {
+			return nil, nil
+		}
+
+		// If not last segment, continue processing
+		if !isLastSegment {
+			return urp.processRecursivelyAtSegmentsWithOptions(extracted, segments, segmentIndex+1, op, value, createPaths)
+		}
+
+		return extracted, nil
+
+	default:
+		if op == opGet {
+			return nil, nil // Cannot extract from non-object/array
+		}
+		return nil, fmt.Errorf("cannot extract from type %T", data)
+	}
+}
+
+// extractMultipleFieldsFromMap extracts specified fields from a map
+// Returns a new map containing only the specified fields that exist in the source
+func (urp *recursiveProcessor) extractMultipleFieldsFromMap(source map[string]any, fields []string) map[string]any {
+	result := make(map[string]any, len(fields))
+
+	for _, field := range fields {
+		if field == "" {
+			continue
+		}
+		if value, exists := source[field]; exists {
+			result[field] = value
+		}
+	}
+
+	if len(result) == 0 {
+		return nil
+	}
+	return result
+}
+
 // handleExtractThenSlice handles the special case of {extract}[slice] pattern
 func (urp *recursiveProcessor) handleExtractThenSlice(data any, extractSegment, sliceSegment internal.PathSegment, segments []internal.PathSegment, segmentIndex int, op operation, value any) (any, error) {
 	// For Delete ops on {extract}[slice] patterns, we need to apply the slice op
@@ -945,7 +1024,8 @@ func (urp *recursiveProcessor) handleExtractThenSlice(data any, extractSegment, 
 }
 
 // handleExtractThenSliceDelete handles Delete ops for {extract}[slice] patterns
-func (urp *recursiveProcessor) handleExtractThenSliceDelete(data any, extractSegment, sliceSegment internal.PathSegment, segments []internal.PathSegment, segmentIndex int, value any) (any, error) {
+// Note: segments, segmentIndex, and value are unused but kept for API consistency with other handlers.
+func (urp *recursiveProcessor) handleExtractThenSliceDelete(data any, extractSegment, sliceSegment internal.PathSegment, _ []internal.PathSegment, _ int, _ any) (any, error) {
 	switch container := data.(type) {
 	case []any:
 		// Apply slice deletion to each extracted array
@@ -1008,8 +1088,9 @@ func (urp *recursiveProcessor) applySliceDeletion(arr []any, sliceSegment intern
 	return nil
 }
 
-// handleWildcardSegmentUnified handles wildcard segments for all ops
-func (urp *recursiveProcessor) handleWildcardSegmentUnified(data any, segment internal.PathSegment, segments []internal.PathSegment, segmentIndex int, isLastSegment bool, op operation, value any, createPaths bool) (any, error) {
+// handleWildcardSegmentUnified handles wildcard segments for all ops.
+// Note: segment parameter is unused as wildcard operations don't need segment-specific data.
+func (urp *recursiveProcessor) handleWildcardSegmentUnified(data any, _ internal.PathSegment, segments []internal.PathSegment, segmentIndex int, isLastSegment bool, op operation, value any, createPaths bool) (any, error) {
 	switch container := data.(type) {
 	case []any:
 		if isLastSegment {

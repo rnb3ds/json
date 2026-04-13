@@ -4,9 +4,12 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"reflect"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -29,8 +32,7 @@ const (
 type IteratorControl int
 
 const (
-	// IteratorNormal continues iteration normally
-	IteratorNormal IteratorControl = iota
+	IteratorNormal IteratorControl = iota // continue normally
 	// IteratorContinue skips the current item and continues iteration
 	IteratorContinue
 	// IteratorBreak stops iteration entirely
@@ -61,6 +63,18 @@ func init() {
 	}
 }
 
+// clearPathTypeCache clears the global path type cache.
+// Called during processor shutdown to prevent memory accumulation from cached path types.
+func clearPathTypeCache() {
+	for i := range pathTypeCacheShards {
+		shard := &pathTypeCacheShards[i]
+		shard.mu.Lock()
+		shard.entries = make(map[string]pathType, 64)
+		shard.size = 0
+		shard.mu.Unlock()
+	}
+}
+
 // getPathTypeShard returns the shard for a path using FNV-1a hash
 func getPathTypeShard(path string) *pathTypeCacheShard {
 	h := internal.HashStringFNV1a(path)
@@ -70,10 +84,14 @@ func getPathTypeShard(path string) *pathTypeCacheShard {
 // getPathType determines if a path is simple or complex
 // Simple paths are single keys with no dots or brackets
 // SECURITY: Added size limit with eviction to prevent unbounded memory growth
+// FIX: Added double-check pattern to prevent race condition between RLock and Lock
+// FIX: Use deterministic eviction based on hash to avoid unpredictable map iteration
 func getPathType(path string) pathType {
 	// Check cache first (only for short paths to avoid memory bloat)
 	if len(path) <= 64 {
 		shard := getPathTypeShard(path)
+
+		// Fast path: read lock only
 		shard.mu.RLock()
 		if pt, ok := shard.entries[path]; ok {
 			shard.mu.RUnlock()
@@ -81,6 +99,7 @@ func getPathType(path string) pathType {
 		}
 		shard.mu.RUnlock()
 
+		// Calculate path type (no lock needed)
 		var pt pathType
 		if strings.ContainsAny(path, ".[]") {
 			pt = pathTypeComplex
@@ -88,22 +107,37 @@ func getPathType(path string) pathType {
 			pt = pathTypeSimple
 		}
 
-		// Cache short paths with size limit
+		// Slow path: write lock with double-check to prevent duplicate entries
 		shard.mu.Lock()
-		// Evict entries if shard is full (simple random eviction)
-		if shard.size >= maxEntriesPerShard {
-			// Remove approximately half the entries
-			evictCount := maxEntriesPerShard / 2
-			count := 0
-			for k := range shard.entries {
-				if count >= evictCount {
-					break
-				}
-				delete(shard.entries, k)
-				count++
-			}
-			shard.size -= count
+
+		// Double-check: another goroutine may have filled the entry
+		if existing, ok := shard.entries[path]; ok {
+			shard.mu.Unlock()
+			return existing
 		}
+
+		// Evict entries if shard is full using deterministic hash-based eviction
+		if shard.size >= maxEntriesPerShard {
+			evictCount := maxEntriesPerShard / 2
+
+			// Collect keys for deterministic eviction
+			keys := make([]string, 0, len(shard.entries))
+			for k := range shard.entries {
+				keys = append(keys, k)
+			}
+
+			// Sort by hash value for deterministic eviction order
+			sort.Slice(keys, func(i, j int) bool {
+				return internal.HashStringFNV1a(keys[i]) < internal.HashStringFNV1a(keys[j])
+			})
+
+			// Evict entries with lowest hash values
+			for i := 0; i < evictCount && i < len(keys); i++ {
+				delete(shard.entries, keys[i])
+			}
+			shard.size -= min(evictCount, len(keys))
+		}
+
 		shard.entries[path] = pt
 		shard.size++
 		shard.mu.Unlock()
@@ -140,13 +174,36 @@ func safeTypeAssert[T any](value any) (T, bool) {
 
 	if targetType != nil && val.Type().ConvertibleTo(targetType) {
 		converted := val.Convert(targetType)
-		return converted.Interface().(T), true
+		// Use comma-ok to avoid panic if converted value doesn't satisfy T
+		if result, ok := converted.Interface().(T); ok {
+			return result, true
+		}
 	}
 
 	return zero, false
 }
 
-// Iterator represents an iterator over JSON data
+// Iterator represents an iterator over JSON data for sequential access.
+// Supports iteration over both arrays and objects.
+// Thread-safe for single goroutine use; for concurrent access, create separate iterators.
+//
+// Example:
+//
+//	// Iterate over an array
+//	data, _ := json.ParseAny(`[1, 2, 3]`)
+//	iter := json.NewIterator(data)
+//	for iter.HasNext() {
+//	    value, _ := iter.Next()
+//	    fmt.Println(value)
+//	}
+//
+//	// Iterate over an object
+//	data, _ := json.ParseAny(`{"a": 1, "b": 2}`)
+//	iter := json.NewIterator(data)
+//	for iter.HasNext() {
+//	    value, _ := iter.Next()
+//	    fmt.Println(value)
+//	}
 type Iterator struct {
 	data     any
 	position int
@@ -155,9 +212,27 @@ type Iterator struct {
 }
 
 // NewIterator creates a new Iterator over the provided data.
-// Simplified API: creates an iterator for traversing arrays and objects.
-// Note: The opts parameter is reserved for future use and currently ignored.
-func NewIterator(data any, opts ...Config) *Iterator {
+// Creates an iterator for traversing arrays and objects.
+//
+// The optional cfg parameter is reserved for future configuration options
+// and maintains API consistency with other constructors. Currently no
+// configuration options affect Iterator behavior.
+//
+// Example:
+//
+//	data, _ := json.ParseAny(`{"name": "Alice", "age": 30}`)
+//	iter := json.NewIterator(data)
+//	for iter.HasNext() {
+//	    value, ok := iter.Next()
+//	    if !ok {
+//	        break
+//	    }
+//	    fmt.Println(value)
+//	}
+func NewIterator(data any, cfg ...Config) *Iterator {
+	// Note: cfg parameter is reserved for future use.
+	// Currently Iterator does not use any configuration options.
+	// The parameter is kept for API consistency.
 	return &Iterator{
 		data:     data,
 		position: 0,
@@ -190,7 +265,18 @@ var iterableValuePool = sync.Pool{
 	},
 }
 
-// HasNext checks if there are more elements
+// releaseIterableValues returns a slice of IterableValue objects to the pool.
+func releaseIterableValues(items []*IterableValue) {
+	for _, iv := range items {
+		iv.data = nil
+		iterableValuePool.Put(iv)
+	}
+}
+
+// HasNext checks if there are more elements to iterate.
+// Returns true if the iterator has not reached the end of the data.
+// For arrays, checks if position < array length.
+// For objects, checks if position < number of keys.
 func (it *Iterator) HasNext() bool {
 	if arr, ok := it.data.([]any); ok {
 		return it.position < len(arr)
@@ -203,7 +289,10 @@ func (it *Iterator) HasNext() bool {
 	return false
 }
 
-// Next returns the next element
+// Next returns the next element and advances the iterator.
+// Returns (value, true) if an element is available, or (nil, false) at the end.
+// For arrays, returns the array element at the current position.
+// For objects, returns the value at the current key position.
 func (it *Iterator) Next() (any, bool) {
 	if !it.HasNext() {
 		return nil, false
@@ -229,20 +318,85 @@ func (it *Iterator) Next() (any, bool) {
 	return nil, false
 }
 
-// IterableValue wraps a value to provide convenient access methods
-// Note: Simplified to avoid resource leaks from holding processor/iterator references
+// Reset clears the iterator state and releases cached resources.
+// After calling Reset, the iterator can be reused with new data via ResetWith.
+// This is useful for reducing allocations when iterating over multiple JSON structures.
+//
+// Example:
+//
+//	iter := json.NewIterator(data1)
+//	for iter.HasNext() {
+//	    iter.Next()
+//	}
+//	iter.Reset() // Clear cached keys
+//	iter.ResetWith(data2) // Reuse iterator with new data
+func (it *Iterator) Reset() {
+	it.data = nil
+	it.position = 0
+	// Clear cached keys to release memory
+	it.keys = nil
+	// Reset sync.Once to allow re-initialization with new data
+	it.keysOnce = sync.Once{}
+}
+
+// ResetWith clears the iterator state and initializes it with new data.
+// This allows reusing the iterator to avoid allocations.
+//
+// Example:
+//
+//	iter := json.NewIterator(data1)
+//	// ... iterate over data1 ...
+//	iter.ResetWith(data2) // Reuse iterator with new data
+//	// ... iterate over data2 ...
+func (it *Iterator) ResetWith(data any) {
+	it.data = data
+	it.position = 0
+	// Clear cached keys to release memory
+	it.keys = nil
+	// Reset sync.Once to allow re-initialization with new data
+	it.keysOnce = sync.Once{}
+}
+
+// IterableValue wraps a value to provide convenient access methods during iteration.
+// Used by Foreach and ForeachKey callback functions to provide structured access.
+// Note: Simplified to avoid resource leaks from holding processor/iterator references.
+//
+// Example:
+//
+//	err := processor.Foreach(data, "items", func(item json.IterableValue) error {
+//	    name, _ := item.GetString("name")
+//	    age, _ := item.GetInt("age")
+//	    fmt.Printf("Name: %s, Age: %d\n", name, age)
+//	    return nil
+//	})
 type IterableValue struct {
 	data any
 }
 
-// NewIterableValue creates an IterableValue from data
-func NewIterableValue(data any) *IterableValue {
+// newIterableValue creates an IterableValue from data.
+// This is primarily used internally by iteration functions.
+func newIterableValue(data any) *IterableValue {
 	return &IterableValue{data: data}
 }
 
 // GetData returns the underlying data
 func (iv *IterableValue) GetData() any {
 	return iv.data
+}
+
+// Break returns a signal to stop iteration without error.
+// Use it in ForeachFile/ForeachFileChunked callback to exit early.
+//
+// Example:
+//
+//	processor.ForeachFile("data.json", func(key any, item *json.IterableValue) error {
+//	    if item.GetInt("id") == targetId {
+//	        return item.Break() // stop iteration
+//	    }
+//	    return nil // continue
+//	})
+func (iv *IterableValue) Break() error {
+	return errBreak
 }
 
 // Get returns a value by path (supports dot notation and array indices)
@@ -301,7 +455,7 @@ func (iv *IterableValue) GetString(key string) string {
 		if str, ok := val.(string); ok {
 			return str
 		}
-		return ConvertToString(val)
+		return convertToString(val)
 	case pathTypeSimple:
 		obj, ok := iv.data.(map[string]any)
 		if !ok {
@@ -317,7 +471,7 @@ func (iv *IterableValue) GetString(key string) string {
 			return str
 		}
 
-		return ConvertToString(val)
+		return convertToString(val)
 	}
 	return ""
 }
@@ -332,7 +486,7 @@ func (iv *IterableValue) GetInt(key string) int {
 		if val == nil {
 			return 0
 		}
-		if result, ok := ConvertToInt(val); ok {
+		if result, ok := convertToInt(val); ok {
 			return result
 		}
 		return 0
@@ -347,7 +501,7 @@ func (iv *IterableValue) GetInt(key string) int {
 			return 0
 		}
 
-		if result, ok := ConvertToInt(val); ok {
+		if result, ok := convertToInt(val); ok {
 			return result
 		}
 	}
@@ -364,7 +518,7 @@ func (iv *IterableValue) GetFloat64(key string) float64 {
 		if val == nil {
 			return 0
 		}
-		if result, ok := ConvertToFloat64(val); ok {
+		if result, ok := convertToFloat64(val); ok {
 			return result
 		}
 		return 0
@@ -379,7 +533,7 @@ func (iv *IterableValue) GetFloat64(key string) float64 {
 			return 0
 		}
 
-		if result, ok := ConvertToFloat64(val); ok {
+		if result, ok := convertToFloat64(val); ok {
 			return result
 		}
 	}
@@ -396,7 +550,7 @@ func (iv *IterableValue) GetBool(key string) bool {
 		if val == nil {
 			return false
 		}
-		if result, ok := ConvertToBool(val); ok {
+		if result, ok := convertToBool(val); ok {
 			return result
 		}
 		return false
@@ -411,7 +565,7 @@ func (iv *IterableValue) GetBool(key string) bool {
 			return false
 		}
 
-		if result, ok := ConvertToBool(val); ok {
+		if result, ok := convertToBool(val); ok {
 			return result
 		}
 	}
@@ -551,7 +705,7 @@ func (iv *IterableValue) GetIntWithDefault(key string, defaultValue int) int {
 		if val == nil {
 			return defaultValue
 		}
-		if result, ok := ConvertToInt(val); ok {
+		if result, ok := convertToInt(val); ok {
 			return result
 		}
 		return defaultValue
@@ -566,7 +720,7 @@ func (iv *IterableValue) GetIntWithDefault(key string, defaultValue int) int {
 			return defaultValue
 		}
 
-		if result, ok := ConvertToInt(val); ok {
+		if result, ok := convertToInt(val); ok {
 			return result
 		}
 	}
@@ -583,7 +737,7 @@ func (iv *IterableValue) GetFloat64WithDefault(key string, defaultValue float64)
 		if val == nil {
 			return defaultValue
 		}
-		if result, ok := ConvertToFloat64(val); ok {
+		if result, ok := convertToFloat64(val); ok {
 			return result
 		}
 		return defaultValue
@@ -598,7 +752,7 @@ func (iv *IterableValue) GetFloat64WithDefault(key string, defaultValue float64)
 			return defaultValue
 		}
 
-		if result, ok := ConvertToFloat64(val); ok {
+		if result, ok := convertToFloat64(val); ok {
 			return result
 		}
 	}
@@ -615,7 +769,7 @@ func (iv *IterableValue) GetBoolWithDefault(key string, defaultValue bool) bool 
 		if val == nil {
 			return defaultValue
 		}
-		if result, ok := ConvertToBool(val); ok {
+		if result, ok := convertToBool(val); ok {
 			return result
 		}
 		return defaultValue
@@ -630,7 +784,7 @@ func (iv *IterableValue) GetBoolWithDefault(key string, defaultValue bool) bool 
 			return defaultValue
 		}
 
-		if result, ok := ConvertToBool(val); ok {
+		if result, ok := convertToBool(val); ok {
 			return result
 		}
 	}
@@ -763,15 +917,19 @@ func (iv *IterableValue) ForeachNested(path string, fn func(key any, item *Itera
 	foreachNestedOnValue(data, fn)
 }
 
-// ForeachWithPathAndControl iterates over JSON arrays or objects and applies a function
-// This is the 3-parameter version used by most code
-func ForeachWithPathAndControl(jsonStr, path string, fn func(key any, value any) IteratorControl) error {
+// ForeachWithPathAndControl iterates over JSON arrays or objects and applies a function.
+// This is the 3-parameter version used by most code.
+// Accepts optional Config for consistency with Processor.ForeachWithPathAndControl.
+func ForeachWithPathAndControl(jsonStr, path string, fn func(key any, value any) IteratorControl, cfg ...Config) error {
 	processor := getDefaultProcessor()
 	if processor == nil {
-		return ErrInternalError
+		return errInternalError
+	}
+	if processor.IsClosed() {
+		return ErrProcessorClosed
 	}
 
-	data, err := processor.Get(jsonStr, path)
+	data, err := processor.Get(jsonStr, path, cfg...)
 	if err != nil {
 		return err
 	}
@@ -779,14 +937,15 @@ func ForeachWithPathAndControl(jsonStr, path string, fn func(key any, value any)
 	return foreachOnValue(data, fn)
 }
 
-// Foreach iterates over JSON arrays or objects with simplified signature (for test compatibility)
-func Foreach(jsonStr string, fn func(key any, item *IterableValue)) {
+// Foreach iterates over JSON arrays or objects with simplified signature (for test compatibility).
+// Accepts optional Config for consistency with Processor.Foreach.
+func Foreach(jsonStr string, fn func(key any, item *IterableValue), cfg ...Config) {
 	processor := getDefaultProcessor()
-	if processor == nil {
+	if processor == nil || processor.IsClosed() {
 		return
 	}
 
-	data, err := processor.Get(jsonStr, ".")
+	data, err := processor.Get(jsonStr, ".", cfg...)
 	if err != nil {
 		return
 	}
@@ -817,14 +976,18 @@ func foreachWithIterableValue(data any, fn func(key any, item *IterableValue)) {
 	}
 }
 
-// ForeachWithPath iterates over JSON arrays or objects with simplified signature (for test compatibility)
-func ForeachWithPath(jsonStr, path string, fn func(key any, item *IterableValue)) error {
+// ForeachWithPath iterates over JSON arrays or objects with simplified signature (for test compatibility).
+// Accepts optional Config for consistency with Processor.ForeachWithPath.
+func ForeachWithPath(jsonStr, path string, fn func(key any, item *IterableValue), cfg ...Config) error {
 	processor := getDefaultProcessor()
 	if processor == nil {
-		return ErrInternalError
+		return errInternalError
+	}
+	if processor.IsClosed() {
+		return ErrProcessorClosed
 	}
 
-	data, err := processor.Get(jsonStr, path)
+	data, err := processor.Get(jsonStr, path, cfg...)
 	if err != nil {
 		return err
 	}
@@ -839,7 +1002,13 @@ func foreachWithPathIterableValue(data any, currentPath string, fn func(key any,
 	switch v := data.(type) {
 	case []any:
 		for i, item := range v {
-			path := fmt.Sprintf("%s[%d]", currentPath, i)
+			// PERFORMANCE: Build path using strconv.AppendInt instead of fmt.Sprintf
+			var buf []byte
+			buf = append(buf, currentPath...)
+			buf = append(buf, '[')
+			buf = strconv.AppendInt(buf, int64(i), 10)
+			buf = append(buf, ']')
+			path := string(buf)
 			iv := iterableValuePool.Get().(*IterableValue)
 			iv.data = item
 			ctrl := fn(i, iv, path)
@@ -868,14 +1037,18 @@ func foreachWithPathIterableValue(data any, currentPath string, fn func(key any,
 	return nil
 }
 
-// ForeachReturn is a variant that returns error (for compatibility with test expectations)
-func ForeachReturn(jsonStr string, fn func(key any, item *IterableValue)) (string, error) {
+// ForeachReturn is a variant that returns error (for compatibility with test expectations).
+// Accepts optional Config for consistency with Processor.ForeachReturn.
+func ForeachReturn(jsonStr string, fn func(key any, item *IterableValue), cfg ...Config) (string, error) {
 	processor := getDefaultProcessor()
 	if processor == nil {
-		return "", ErrInternalError
+		return "", errInternalError
+	}
+	if processor.IsClosed() {
+		return "", ErrProcessorClosed
 	}
 
-	data, err := processor.Get(jsonStr, ".")
+	data, err := processor.Get(jsonStr, ".", cfg...)
 	if err != nil {
 		return "", err
 	}
@@ -909,14 +1082,15 @@ func foreachOnValue(data any, fn func(key any, value any) IteratorControl) error
 	return nil
 }
 
-// ForeachNested iterates over nested JSON structures
-func ForeachNested(jsonStr string, fn func(key any, item *IterableValue)) {
+// ForeachNested iterates over nested JSON structures.
+// Accepts optional Config for consistency with Processor.ForeachNested.
+func ForeachNested(jsonStr string, fn func(key any, item *IterableValue), cfg ...Config) {
 	processor := getDefaultProcessor()
-	if processor == nil {
+	if processor == nil || processor.IsClosed() {
 		return
 	}
 
-	data, err := processor.Get(jsonStr, ".")
+	data, err := processor.Get(jsonStr, ".", cfg...)
 	if err != nil {
 		return
 	}
@@ -924,16 +1098,28 @@ func ForeachNested(jsonStr string, fn func(key any, item *IterableValue)) {
 	foreachNestedOnValue(data, fn)
 }
 
-// foreachNestedOnValue recursively iterates over nested values
-// PERFORMANCE: Uses pooled IterableValue to reduce allocations
+// foreachNestedMaxDepth limits recursion depth for nested iteration to prevent stack overflow.
+const foreachNestedMaxDepth = 200
+
+// foreachNestedOnValue recursively iterates over nested values.
+// PERFORMANCE: Uses pooled IterableValue to reduce allocations.
+// SECURITY: Depth-limited to prevent stack overflow from deeply nested structures.
 func foreachNestedOnValue(data any, fn func(key any, item *IterableValue)) {
+	foreachNestedOnValueDepth(data, fn, 0)
+}
+
+// foreachNestedOnValueDepth is the depth-tracked implementation of foreachNestedOnValue.
+func foreachNestedOnValueDepth(data any, fn func(key any, item *IterableValue), depth int) {
+	if depth > foreachNestedMaxDepth {
+		return
+	}
 	switch v := data.(type) {
 	case []any:
 		for i, item := range v {
 			iv := iterableValuePool.Get().(*IterableValue)
 			iv.data = item
 			fn(i, iv)
-			foreachNestedOnValue(item, fn)
+			foreachNestedOnValueDepth(item, fn, depth+1)
 			iv.data = nil
 			iterableValuePool.Put(iv)
 		}
@@ -942,11 +1128,104 @@ func foreachNestedOnValue(data any, fn func(key any, item *IterableValue)) {
 			iv := iterableValuePool.Get().(*IterableValue)
 			iv.data = val
 			fn(key, iv)
-			foreachNestedOnValue(val, fn)
+			foreachNestedOnValueDepth(val, fn, depth+1)
 			iv.data = nil
 			iterableValuePool.Put(iv)
 		}
 	}
+}
+
+// foreachWithIterableValueError iterates with error-returning callback
+// PERFORMANCE: Uses pooled IterableValue to reduce allocations
+func foreachWithIterableValueError(data any, fn func(key any, item *IterableValue) error) error {
+	switch v := data.(type) {
+	case []any:
+		for i, item := range v {
+			iv := iterableValuePool.Get().(*IterableValue)
+			iv.data = item
+			err := fn(i, iv)
+			iv.data = nil
+			iterableValuePool.Put(iv)
+			if err != nil {
+				if errors.Is(err, errBreak) {
+					return nil // Break is not an error
+				}
+				return err
+			}
+		}
+	case map[string]any:
+		for key, val := range v {
+			iv := iterableValuePool.Get().(*IterableValue)
+			iv.data = val
+			err := fn(key, iv)
+			iv.data = nil
+			iterableValuePool.Put(iv)
+			if err != nil {
+				if errors.Is(err, errBreak) {
+					return nil // Break is not an error
+				}
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// foreachNestedOnValueError recursively iterates with error-returning callback.
+// PERFORMANCE: Uses pooled IterableValue to reduce allocations.
+// SECURITY: Depth-limited to prevent stack overflow from deeply nested structures.
+func foreachNestedOnValueError(data any, fn func(key any, item *IterableValue) error) error {
+	return foreachNestedOnValueErrorDepth(data, fn, 0)
+}
+
+// foreachNestedOnValueErrorDepth is the depth-tracked implementation of foreachNestedOnValueError.
+func foreachNestedOnValueErrorDepth(data any, fn func(key any, item *IterableValue) error, depth int) error {
+	if depth > foreachNestedMaxDepth {
+		return fmt.Errorf("foreach nested depth limit exceeded: maximum depth is %d", foreachNestedMaxDepth)
+	}
+	switch v := data.(type) {
+	case []any:
+		for i, item := range v {
+			iv := iterableValuePool.Get().(*IterableValue)
+			iv.data = item
+			err := fn(i, iv)
+			if err != nil {
+				iv.data = nil
+				iterableValuePool.Put(iv)
+				if errors.Is(err, errBreak) {
+					return nil
+				}
+				return err
+			}
+			err = foreachNestedOnValueErrorDepth(item, fn, depth+1)
+			iv.data = nil
+			iterableValuePool.Put(iv)
+			if err != nil {
+				return err
+			}
+		}
+	case map[string]any:
+		for key, val := range v {
+			iv := iterableValuePool.Get().(*IterableValue)
+			iv.data = val
+			err := fn(key, iv)
+			if err != nil {
+				iv.data = nil
+				iterableValuePool.Put(iv)
+				if errors.Is(err, errBreak) {
+					return nil
+				}
+				return err
+			}
+			err = foreachNestedOnValueErrorDepth(val, fn, depth+1)
+			iv.data = nil
+			iterableValuePool.Put(iv)
+			if err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 // isComplexPathIterator checks if the path contains array indices or other complex syntax
@@ -983,14 +1262,8 @@ func navigateToPathSimple(data any, path string) (any, error) {
 // STREAM ITERATOR - Memory-efficient iteration over large JSON data
 // ============================================================================
 
-// StreamIteratorConfig holds configuration options for StreamIterator
-type StreamIteratorConfig struct {
-	BufferSize int  // Buffer size for underlying reader (default: 32KB)
-	ReadAhead  bool // Enable read-ahead buffering for improved performance
-}
-
-// StreamIterator provides memory-efficient iteration over large JSON arrays
-// It processes elements one at a time without loading the entire array into memory
+// StreamIterator provides memory-efficient iteration over large JSON arrays.
+// It processes elements one at a time without loading the entire array into memory.
 type StreamIterator struct {
 	decoder    *json.Decoder
 	index      int
@@ -1001,28 +1274,41 @@ type StreamIterator struct {
 	bufferSize int           // Configured buffer size
 }
 
-// NewStreamIterator creates a stream iterator from a reader with default settings
-func NewStreamIterator(reader io.Reader) *StreamIterator {
-	return NewStreamIteratorWithConfig(reader, StreamIteratorConfig{})
-}
+// NewStreamIterator creates a stream iterator from a reader with default settings.
+// The optional cfg parameter allows customization using the unified Config pattern.
+//
+// Example:
+//
+//	// Default settings
+//	iter := json.NewStreamIterator(reader)
+//
+//	// With custom configuration
+//	cfg := json.DefaultConfig()
+//	cfg.BufferSize = 64 * 1024
+//	iter := json.NewStreamIterator(reader, cfg)
+func NewStreamIterator(reader io.Reader, cfg ...Config) *StreamIterator {
+	var config Config
+	if len(cfg) > 0 {
+		config = cfg[0]
+	} else {
+		config = DefaultConfig()
+	}
 
-// NewStreamIteratorWithConfig creates a stream iterator with custom configuration
-// PERFORMANCE: Configurable buffer size improves throughput for large JSON streams
-func NewStreamIteratorWithConfig(reader io.Reader, config StreamIteratorConfig) *StreamIterator {
-	// Default buffer size: 32KB - good balance between memory and performance
-	if config.BufferSize <= 0 {
-		config.BufferSize = 32 * 1024
+	// Get buffer size from config, default to 32KB
+	bufSize := config.BufferSize
+	if bufSize <= 0 {
+		bufSize = 32 * 1024
 	}
 
 	// Create buffered reader for improved I/O performance
-	buffered := bufio.NewReaderSize(reader, config.BufferSize)
+	buffered := bufio.NewReaderSize(reader, bufSize)
 	decoder := json.NewDecoder(buffered)
 
 	return &StreamIterator{
 		decoder:    decoder,
 		index:      -1,
 		buffer:     buffered,
-		bufferSize: config.BufferSize,
+		bufferSize: bufSize,
 	}
 }
 
@@ -1107,9 +1393,36 @@ type StreamObjectIterator struct {
 	started bool
 }
 
-// NewStreamObjectIterator creates a stream object iterator from a reader
-func NewStreamObjectIterator(reader io.Reader) *StreamObjectIterator {
-	decoder := json.NewDecoder(reader)
+// NewStreamObjectIterator creates a stream object iterator from a reader.
+// The optional cfg parameter allows customization using the unified Config pattern.
+// When config is provided, cfg.BufferSize is used for buffered reading.
+//
+// Example:
+//
+//	// Default settings
+//	iter := json.NewStreamObjectIterator(reader)
+//
+//	// With custom buffer size
+//	cfg := json.DefaultConfig()
+//	cfg.BufferSize = 128 * 1024
+//	iter := json.NewStreamObjectIterator(reader, cfg)
+func NewStreamObjectIterator(reader io.Reader, cfg ...Config) *StreamObjectIterator {
+	var config Config
+	if len(cfg) > 0 {
+		config = cfg[0]
+	} else {
+		config = DefaultConfig()
+	}
+
+	bufSize := config.BufferSize
+	if bufSize <= 0 {
+		bufSize = 32 * 1024 // Default buffer size
+	}
+
+	// Create buffered reader for improved I/O performance
+	buffered := bufio.NewReaderSize(reader, bufSize)
+	decoder := json.NewDecoder(buffered)
+
 	return &StreamObjectIterator{
 		decoder: decoder,
 	}
@@ -1338,11 +1651,35 @@ type BatchIterator struct {
 	current   int
 }
 
-// NewBatchIterator creates a new batch iterator
-func NewBatchIterator(data []any, batchSize int) *BatchIterator {
+// NewBatchIterator creates a new batch iterator.
+// The optional cfg parameter allows customization using the unified Config pattern.
+// When config is provided, cfg.MaxBatchSize is used as the batch size.
+//
+// Example:
+//
+//	// Default settings (batch size = 100)
+//	iter := json.NewBatchIterator(data)
+//
+//	// With custom batch size
+//	cfg := json.DefaultConfig()
+//	cfg.MaxBatchSize = 50
+//	iter := json.NewBatchIterator(data, cfg)
+//
+//	// Legacy pattern (backward compatible)
+//	iter := json.NewBatchIteratorWithSize(data, 50)
+func NewBatchIterator(data []any, cfg ...Config) *BatchIterator {
+	var config Config
+	if len(cfg) > 0 {
+		config = cfg[0]
+	} else {
+		config = DefaultConfig()
+	}
+
+	batchSize := config.MaxBatchSize
 	if batchSize <= 0 {
 		batchSize = 100 // Default batch size
 	}
+
 	return &BatchIterator{
 		data:      data,
 		batchSize: batchSize,
@@ -1377,8 +1714,12 @@ func (it *BatchIterator) Reset() {
 	it.current = 0
 }
 
-// TotalBatches returns the total number of batches
+// TotalBatches returns the total number of batches.
+// Returns 0 if batch size is not positive.
 func (it *BatchIterator) TotalBatches() int {
+	if it.batchSize <= 0 {
+		return 0
+	}
 	return (len(it.data) + it.batchSize - 1) / it.batchSize
 }
 
@@ -1407,8 +1748,31 @@ type ParallelIterator struct {
 	sem     chan struct{}
 }
 
-// NewParallelIterator creates a new parallel iterator
-func NewParallelIterator(data []any, workers int) *ParallelIterator {
+// NewParallelIterator creates a new parallel iterator.
+// The optional cfg parameter allows customization using the unified Config pattern.
+// When config is provided, cfg.MaxConcurrency is used as the worker count.
+//
+// Example:
+//
+//	// Default settings (workers = 4)
+//	iter := json.NewParallelIterator(data)
+//
+//	// With custom worker count
+//	cfg := json.DefaultConfig()
+//	cfg.MaxConcurrency = 8
+//	iter := json.NewParallelIterator(data, cfg)
+//
+//	// Legacy pattern (backward compatible)
+//	iter := json.NewParallelIteratorWithWorkers(data, 8)
+func NewParallelIterator(data []any, cfg ...Config) *ParallelIterator {
+	var config Config
+	if len(cfg) > 0 {
+		config = cfg[0]
+	} else {
+		config = DefaultConfig()
+	}
+
+	workers := config.MaxConcurrency
 	if workers <= 0 {
 		workers = 4 // Default worker count
 	}
@@ -1456,7 +1820,14 @@ func (it *ParallelIterator) ForEachWithContext(ctx context.Context, fn func(int,
 			break
 		}
 
-		it.sem <- struct{}{} // Acquire semaphore
+		// RESOURCE FIX: Select on ctx.Done() during semaphore acquire to prevent
+		// goroutine leak when all workers are busy and context is cancelled.
+		select {
+		case it.sem <- struct{}{}: // Acquire semaphore
+		case <-ctx.Done():
+			wg.Wait()
+			return ctx.Err()
+		}
 		wg.Add(1)
 
 		go func(idx int, val any) {
@@ -1536,7 +1907,14 @@ func (it *ParallelIterator) ForEachBatchWithContext(ctx context.Context, batchSi
 			break
 		}
 
-		it.sem <- struct{}{}
+		// RESOURCE FIX: Select on ctx.Done() during semaphore acquire to prevent
+		// goroutine leak when all workers are busy and context is cancelled.
+		select {
+		case it.sem <- struct{}{}: // Acquire semaphore
+		case <-ctx.Done():
+			wg.Wait()
+			return ctx.Err()
+		}
 		wg.Add(1)
 
 		go func(idx int, b []any) {
@@ -1580,8 +1958,6 @@ func (it *ParallelIterator) ForEachBatchWithContext(ctx context.Context, batchSi
 func (it *ParallelIterator) Map(transform func(int, any) (any, error)) ([]any, error) {
 	result := make([]any, len(it.data))
 	var mu sync.Mutex
-	var hasError int32
-	var firstError error
 
 	err := it.ForEach(func(idx int, val any) error {
 		transformed, err := transform(idx, val)
@@ -1598,10 +1974,6 @@ func (it *ParallelIterator) Map(transform func(int, any) (any, error)) ([]any, e
 
 	if err != nil {
 		return nil, err
-	}
-
-	if atomic.LoadInt32(&hasError) == 1 {
-		return nil, firstError
 	}
 
 	return result, nil
@@ -1639,4 +2011,57 @@ func (it *ParallelIterator) Close() {
 func (iv *IterableValue) Release() {
 	iv.data = nil
 	iterableValuePool.Put(iv)
+}
+
+// ============================================================================
+// Package-level Foreach* wrappers for Processor methods (dual-layer design)
+// ============================================================================
+
+// ForeachWithError iterates over JSON arrays or objects with error-returning callback.
+// The callback returns an error to signal iteration control:
+//   - nil: continue iteration
+//   - item.Break(): stop iteration without error
+//   - other error: stop iteration and return the error
+//
+// Example:
+//
+//	err := json.ForeachWithError(jsonStr, ".", func(key any, item *json.IterableValue) error {
+//	    if item.GetInt("id") == targetId {
+//	        return item.Break() // stop iteration
+//	    }
+//	    return nil // continue
+//	})
+func ForeachWithError(jsonStr, path string, fn func(key any, item *IterableValue) error) error {
+	return withProcessorError(func(p *Processor) error {
+		return p.ForeachWithError(jsonStr, path, fn)
+	})
+}
+
+// ForeachNestedWithError recursively iterates over all nested JSON structures with error-returning callback.
+//
+// Example:
+//
+//	err := json.ForeachNestedWithError(jsonStr, func(key any, item *json.IterableValue) error {
+//	    fmt.Printf("Key: %v\n", key)
+//	    return nil
+//	})
+func ForeachNestedWithError(jsonStr string, fn func(key any, item *IterableValue) error) error {
+	return withProcessorError(func(p *Processor) error {
+		return p.ForeachNestedWithError(jsonStr, fn)
+	})
+}
+
+// ForeachWithPathAndIterator iterates over JSON at a path with path information in the callback.
+// The callback receives the current path and returns IteratorControl to control iteration flow.
+//
+// Example:
+//
+//	err := json.ForeachWithPathAndIterator(jsonStr, ".users", func(key any, item *json.IterableValue, currentPath string) json.IteratorControl {
+//	    fmt.Printf("Path: %s, Key: %v\n", currentPath, key)
+//	    return json.IteratorNormal // continue
+//	})
+func ForeachWithPathAndIterator(jsonStr, path string, fn func(key any, item *IterableValue, currentPath string) IteratorControl) error {
+	return withProcessorError(func(p *Processor) error {
+		return p.ForeachWithPathAndIterator(jsonStr, path, fn)
+	})
 }

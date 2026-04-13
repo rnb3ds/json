@@ -371,7 +371,10 @@ func IsJSONArray(data any) bool {
 // IsJSONPrimitive checks if data is a JSON primitive type
 func IsJSONPrimitive(data any) bool {
 	switch data.(type) {
-	case string, int, int32, int64, float32, float64, bool, nil:
+	case string, bool, nil,
+		int, int8, int16, int32, int64,
+		uint, uint8, uint16, uint32, uint64,
+		float32, float64:
 		return true
 	default:
 		return false
@@ -572,6 +575,16 @@ func cleanupArrayCompact(arr []any, compactArrays bool) []any {
 // This is needed because standard json.Marshal encodes json.Number as strings
 // PERFORMANCE: Pre-allocates result containers with capacity hints
 func ConvertNumbersToFloat(data any) any {
+	return convertNumbersToFloatDepth(data, 0)
+}
+
+const maxNumberConversionDepth = 100
+
+// convertNumbersToFloatDepth is the recursive implementation with depth protection.
+func convertNumbersToFloatDepth(data any, depth int) any {
+	if depth > maxNumberConversionDepth {
+		return data
+	}
 	switch v := data.(type) {
 	case json.Number:
 		f, err := v.Float64()
@@ -583,14 +596,14 @@ func ConvertNumbersToFloat(data any) any {
 		// PERFORMANCE: Pre-allocate with exact size
 		result := make(map[string]any, len(v))
 		for key, value := range v {
-			result[key] = ConvertNumbersToFloat(value)
+			result[key] = convertNumbersToFloatDepth(value, depth+1)
 		}
 		return result
 	case []any:
 		// PERFORMANCE: Pre-allocate with exact size
 		result := make([]any, len(v))
 		for i, item := range v {
-			result[i] = ConvertNumbersToFloat(item)
+			result[i] = convertNumbersToFloatDepth(item, depth+1)
 		}
 		return result
 	default:

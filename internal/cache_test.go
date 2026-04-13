@@ -7,34 +7,9 @@ import (
 	"time"
 )
 
-// mockConfig implements ConfigInterface for testing
-type mockConfig struct {
-	cacheEnabled bool
-	maxCacheSize int
-	cacheTTL     time.Duration
-}
-
-func (m *mockConfig) IsCacheEnabled() bool         { return m.cacheEnabled }
-func (m *mockConfig) GetMaxCacheSize() int         { return m.maxCacheSize }
-func (m *mockConfig) GetCacheTTL() time.Duration   { return m.cacheTTL }
-func (m *mockConfig) GetMaxJSONSize() int64        { return 10485760 }
-func (m *mockConfig) GetMaxPathDepth() int         { return 100 }
-func (m *mockConfig) GetMaxConcurrency() int       { return 10 }
-func (m *mockConfig) IsMetricsEnabled() bool       { return false }
-func (m *mockConfig) IsStrictMode() bool           { return false }
-func (m *mockConfig) IsCommentsAllowed() bool      { return false }
-func (m *mockConfig) ShouldPreserveNumbers() bool  { return false }
-func (m *mockConfig) ShouldCreatePaths() bool      { return false }
-func (m *mockConfig) ShouldCleanupNulls() bool     { return false }
-func (m *mockConfig) ShouldCompactArrays() bool    { return false }
-func (m *mockConfig) ShouldValidateInput() bool    { return false }
-func (m *mockConfig) GetMaxNestingDepth() int      { return 100 }
-func (m *mockConfig) ShouldValidateFilePath() bool { return false }
-
 func TestCacheManager(t *testing.T) {
 	t.Run("Creation", func(t *testing.T) {
-		config := &mockConfig{cacheEnabled: true, maxCacheSize: 100}
-		cm := NewCacheManager(config)
+		cm := NewCacheManager(true, 100, 0)
 		if cm == nil {
 			t.Fatal("NewCacheManager returned nil")
 		}
@@ -44,8 +19,7 @@ func TestCacheManager(t *testing.T) {
 	})
 
 	t.Run("BasicSetGet", func(t *testing.T) {
-		config := &mockConfig{cacheEnabled: true, maxCacheSize: 100}
-		cm := NewCacheManager(config)
+		cm := NewCacheManager(true, 100, 0)
 
 		key := "test_key"
 		value := "test_value"
@@ -62,8 +36,7 @@ func TestCacheManager(t *testing.T) {
 	})
 
 	t.Run("CacheMiss", func(t *testing.T) {
-		config := &mockConfig{cacheEnabled: true, maxCacheSize: 100}
-		cm := NewCacheManager(config)
+		cm := NewCacheManager(true, 100, 0)
 
 		_, found := cm.Get("nonexistent_key")
 		if found {
@@ -77,8 +50,7 @@ func TestCacheManager(t *testing.T) {
 	})
 
 	t.Run("CacheHit", func(t *testing.T) {
-		config := &mockConfig{cacheEnabled: true, maxCacheSize: 100}
-		cm := NewCacheManager(config)
+		cm := NewCacheManager(true, 100, 0)
 
 		cm.Set("key", "value")
 		cm.Get("key")
@@ -90,12 +62,7 @@ func TestCacheManager(t *testing.T) {
 	})
 
 	t.Run("TTLExpiration", func(t *testing.T) {
-		config := &mockConfig{
-			cacheEnabled: true,
-			maxCacheSize: 100,
-			cacheTTL:     50 * time.Millisecond,
-		}
-		cm := NewCacheManager(config)
+		cm := NewCacheManager(true, 100, 50*time.Millisecond)
 
 		cm.Set("key", "value")
 
@@ -116,8 +83,7 @@ func TestCacheManager(t *testing.T) {
 	})
 
 	t.Run("ConcurrentAccess", func(t *testing.T) {
-		config := &mockConfig{cacheEnabled: true, maxCacheSize: 1000}
-		cm := NewCacheManager(config)
+		cm := NewCacheManager(true, 1000, 0)
 
 		var wg sync.WaitGroup
 		workers := 10
@@ -160,8 +126,7 @@ func TestCacheManager(t *testing.T) {
 	})
 
 	t.Run("DisabledCache", func(t *testing.T) {
-		config := &mockConfig{cacheEnabled: false, maxCacheSize: 100}
-		cm := NewCacheManager(config)
+		cm := NewCacheManager(false, 100, 0)
 
 		cm.Set("key", "value")
 		_, found := cm.Get("key")
@@ -172,8 +137,7 @@ func TestCacheManager(t *testing.T) {
 	})
 
 	t.Run("MultipleValues", func(t *testing.T) {
-		config := &mockConfig{cacheEnabled: true, maxCacheSize: 100}
-		cm := NewCacheManager(config)
+		cm := NewCacheManager(true, 100, 0)
 
 		testData := map[string]any{
 			"string": "test",
@@ -199,8 +163,7 @@ func TestCacheManager(t *testing.T) {
 	})
 
 	t.Run("Sharding", func(t *testing.T) {
-		config := &mockConfig{cacheEnabled: true, maxCacheSize: 10000}
-		cm := NewCacheManager(config)
+		cm := NewCacheManager(true, 10000, 0)
 
 		if cm.shardCount < 2 {
 			t.Error("Large cache should use multiple shards")
@@ -220,7 +183,7 @@ func TestCacheManager(t *testing.T) {
 	})
 
 	t.Run("NilConfig", func(t *testing.T) {
-		cm := NewCacheManager(nil)
+		cm := NewCacheManager(false, 0, 0)
 		if cm == nil {
 			t.Fatal("Should handle nil config")
 		}
@@ -235,8 +198,7 @@ func TestCacheManager(t *testing.T) {
 
 func TestCacheEntry(t *testing.T) {
 	t.Run("AccessTracking", func(t *testing.T) {
-		config := &mockConfig{cacheEnabled: true, maxCacheSize: 100}
-		cm := NewCacheManager(config)
+		cm := NewCacheManager(true, 100, 0)
 
 		cm.Set("key", "value")
 
@@ -254,8 +216,7 @@ func TestCacheEntry(t *testing.T) {
 }
 
 func BenchmarkCacheGet(b *testing.B) {
-	config := &mockConfig{cacheEnabled: true, maxCacheSize: 1000}
-	cm := NewCacheManager(config)
+	cm := NewCacheManager(true, 1000, 0)
 
 	cm.Set("benchmark_key", "benchmark_value")
 
@@ -266,8 +227,7 @@ func BenchmarkCacheGet(b *testing.B) {
 }
 
 func BenchmarkCacheSet(b *testing.B) {
-	config := &mockConfig{cacheEnabled: true, maxCacheSize: 10000}
-	cm := NewCacheManager(config)
+	cm := NewCacheManager(true, 10000, 0)
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -276,8 +236,7 @@ func BenchmarkCacheSet(b *testing.B) {
 }
 
 func BenchmarkCacheConcurrent(b *testing.B) {
-	config := &mockConfig{cacheEnabled: true, maxCacheSize: 10000}
-	cm := NewCacheManager(config)
+	cm := NewCacheManager(true, 10000, 0)
 
 	// Pre-populate
 	for i := 0; i < 100; i++ {
@@ -301,8 +260,7 @@ func BenchmarkCacheConcurrent(b *testing.B) {
 
 func TestCacheManager_Delete(t *testing.T) {
 	t.Run("delete existing key", func(t *testing.T) {
-		config := &mockConfig{cacheEnabled: true, maxCacheSize: 100}
-		cm := NewCacheManager(config)
+		cm := NewCacheManager(true, 100, 0)
 
 		cm.Set("key", "value")
 		_, found := cm.Get("key")
@@ -318,8 +276,7 @@ func TestCacheManager_Delete(t *testing.T) {
 	})
 
 	t.Run("delete non-existent key", func(t *testing.T) {
-		config := &mockConfig{cacheEnabled: true, maxCacheSize: 100}
-		cm := NewCacheManager(config)
+		cm := NewCacheManager(true, 100, 0)
 
 		// Should not panic
 		cm.Delete("nonexistent_key")
@@ -327,8 +284,7 @@ func TestCacheManager_Delete(t *testing.T) {
 }
 
 func TestCacheManager_Clear(t *testing.T) {
-	config := &mockConfig{cacheEnabled: true, maxCacheSize: 100}
-	cm := NewCacheManager(config)
+	cm := NewCacheManager(true, 100, 0)
 
 	// Add multiple entries
 	cm.Set("key1", "value1")
@@ -355,12 +311,7 @@ func TestCacheManager_Clear(t *testing.T) {
 }
 
 func TestCacheManager_CleanExpiredCache(t *testing.T) {
-	config := &mockConfig{
-		cacheEnabled: true,
-		maxCacheSize: 100,
-		cacheTTL:     50 * time.Millisecond,
-	}
-	cm := NewCacheManager(config)
+	cm := NewCacheManager(true, 100, 50*time.Millisecond)
 
 	cm.Set("key1", "value1")
 	cm.Set("key2", "value2")
@@ -382,8 +333,7 @@ func TestCacheManager_CleanExpiredCache(t *testing.T) {
 }
 
 func TestCacheManager_GetStats(t *testing.T) {
-	config := &mockConfig{cacheEnabled: true, maxCacheSize: 100}
-	cm := NewCacheManager(config)
+	cm := NewCacheManager(true, 100, 0)
 
 	// Add entries and access them
 	cm.Set("key1", "value1")
@@ -409,8 +359,7 @@ func TestCacheManager_GetStats(t *testing.T) {
 }
 
 func TestCacheManager_Eviction(t *testing.T) {
-	config := &mockConfig{cacheEnabled: true, maxCacheSize: 5}
-	cm := NewCacheManager(config)
+	cm := NewCacheManager(true, 5, 0)
 
 	// Add more entries than max size to trigger eviction
 	for i := 0; i < 10; i++ {
@@ -425,8 +374,7 @@ func TestCacheManager_Eviction(t *testing.T) {
 }
 
 func TestCacheManager_LargeKey(t *testing.T) {
-	config := &mockConfig{cacheEnabled: true, maxCacheSize: 100}
-	cm := NewCacheManager(config)
+	cm := NewCacheManager(true, 100, 0)
 
 	// Create a key longer than MaxCacheKeyLength
 	largeKey := ""
@@ -442,8 +390,7 @@ func TestCacheManager_LargeKey(t *testing.T) {
 }
 
 func TestCacheManager_VariousTypes(t *testing.T) {
-	config := &mockConfig{cacheEnabled: true, maxCacheSize: 100}
-	cm := NewCacheManager(config)
+	cm := NewCacheManager(true, 100, 0)
 
 	// Test simple comparable types
 	t.Run("simple types", func(t *testing.T) {

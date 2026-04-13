@@ -6,8 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -18,9 +16,10 @@ import (
 
 // Processor state constants for lifecycle management
 const (
-	processorStateActive  int32 = iota // 0: Processor is active and accepting operations
-	processorStateClosing              // 1: Processor is closing, no new operations
-	processorStateClosed               // 2: Processor is fully closed
+	processorStateActive        int32 = iota // 0: Processor is active and accepting operations
+	processorStateClosing                    // 1: Processor is closing, no new operations
+	processorStateClosed                     // 2: Processor is fully closed
+	processorStateCloseTimedOut              // 3: Processor close timed out, resources not fully released
 )
 
 // Processor is the main JSON processing engine with thread safety and performance optimization
@@ -36,29 +35,10 @@ type Processor struct {
 	securityValidator *securityValidator
 	// Cached recursiveProcessor for reuse across operations (performance optimization)
 	recursiveProcessor *recursiveProcessor
-	// Wait group for tracking active operations during Close()
-	activeOps sync.WaitGroup
-	// OPTIMIZED: Hash cache for large JSON strings to avoid repeated hash calculations
-	// Uses uint64 keys directly instead of hex strings for memory efficiency
-	hashCache   map[uint64]*hashCacheEntry
-	hashCacheMu sync.RWMutex
 	// Extension points for hooks
-	hooks []Hook
+	hooks   []Hook
+	hooksMu sync.Mutex // protects hooks slice for concurrent AddHook
 }
-
-// hashCacheEntry stores a cached hash with its last access time for LRU eviction
-type hashCacheEntry struct {
-	hash       uint64 // The actual hash value of the JSON string
-	lastAccess int64  // Last access timestamp for LRU eviction
-	expiresAt  int64  // Expiration timestamp for TTL-based cleanup
-}
-
-// hashCacheTTL is the time-to-live for hash cache entries (5 minutes)
-// Entries older than this are recomputed on next access
-const hashCacheTTL = int64(5 * 60 * 1000 * 1000 * 1000) // 5 minutes in nanoseconds
-
-// hashCacheMaxSize is the maximum number of entries in the hash cache
-const hashCacheMaxSize = 64
 
 type processorResources struct {
 	lastPoolReset   int64
@@ -78,16 +58,23 @@ type processorMetrics struct {
 
 // New creates a new JSON processor with the given configuration.
 // If no configuration is provided, uses default configuration.
-// Returns an error if the configuration is invalid.
+//
+// Returns an error if the configuration is invalid (see Config.Validate).
+// Always call Close() when done to release resources.
 //
 // Example:
 //
 //	// Using default configuration
 //	processor, err := json.New()
+//	if err != nil {
+//	    // Handle configuration error
+//	}
+//	defer processor.Close()
 //
 //	// With custom configuration
 //	cfg := json.DefaultConfig()
 //	cfg.CreatePaths = true
+//	cfg.EnableCache = true
 //	processor, err := json.New(cfg)
 //
 //	// Using preset configuration
@@ -107,11 +94,11 @@ func New(cfg ...Config) (*Processor, error) {
 
 	p := &Processor{
 		config:          config,
-		cache:           internal.NewCacheManager(&config),
+		cache:           internal.NewCacheManager(config.EnableCache, config.MaxCacheSize, config.CacheTTL),
 		resourceMonitor: newResourceMonitor(),
 		securityValidator: newSecurityValidator(
 			config.MaxJSONSize,
-			MaxPathLength,
+			maxPathLength,
 			config.MaxNestingDepthSecurity,
 			config.FullSecurityScan,
 		),
@@ -125,8 +112,6 @@ func New(cfg ...Config) (*Processor, error) {
 			concurrencySemaphore: make(chan struct{}, config.MaxConcurrency),
 			enabled:              config.EnableMetrics,
 		},
-		// OPTIMIZED: Initialize hash cache for large JSON strings
-		hashCache: make(map[uint64]*hashCacheEntry, hashCacheMaxSize),
 	}
 
 	// Initialize logger atomically for thread safety
@@ -143,30 +128,24 @@ func New(cfg ...Config) (*Processor, error) {
 	return p, nil
 }
 
-// Close closes the processor and cleans up resources
-// This method is idempotent and thread-safe
+// Close closes the processor and cleans up resources.
+// This method is idempotent and thread-safe.
+// After Close is called, all operations on the processor will return ErrProcessorClosed.
+//
+// IMPORTANT: Always call Close() to release resources:
+//
+//	processor, err := json.New()
+//	if err != nil {
+//	    return err
+//	}
+//	defer processor.Close()
 func (p *Processor) Close() error {
+	if p == nil {
+		return nil
+	}
 	p.cleanupOnce.Do(func() {
 		// Mark as closing to prevent new operations
 		atomic.StoreInt32(&p.state, processorStateClosing)
-
-		// Wait for all active operations to complete with timeout
-		done := make(chan struct{})
-		go func() {
-			p.activeOps.Wait()
-			close(done)
-		}()
-
-		select {
-		case <-done:
-			// All operations completed normally
-		case <-time.After(closeOperationTimeout):
-			// Timeout waiting for operations
-			// Log warning if logger is available (non-blocking)
-			if logger, ok := p.logger.Load().(*slog.Logger); ok && logger != nil {
-				logger.Warn("timeout waiting for active operations during close")
-			}
-		}
 
 		// Drain the concurrency semaphore to release any waiting goroutines
 		// Use context cancellation for clean goroutine termination
@@ -191,16 +170,30 @@ func (p *Processor) Close() error {
 
 			select {
 			case <-drainDone:
-				// Drain completed
+				// Drain completed - goroutine exited cleanly
+				drainCancel()
 			case <-drainCtx.Done():
-				// Timeout on drain - continue with cleanup
+				// Timeout on drain - cancel context to signal goroutine to exit,
+				// then wait briefly for it to acknowledge
+				drainCancel()
+				select {
+				case <-drainDone:
+					// Goroutine exited after context cancellation
+				case <-time.After(100 * time.Millisecond):
+					// Goroutine still running - cannot wait indefinitely
+					// The goroutine will exit when it checks drainCtx.Done()
+				}
 			}
-			drainCancel() // Ensure context is cancelled to stop goroutine
 		}
 
 		// Safely close cache: cancels cleanup goroutines and clears data
 		if p.cache != nil {
 			p.cache.Close()
+		}
+
+		// Close security validator to release its cache
+		if p.securityValidator != nil {
+			p.securityValidator.Close()
 		}
 
 		// Reset resource tracking
@@ -210,15 +203,31 @@ func (p *Processor) Close() error {
 			atomic.StoreInt64(&p.resources.lastPoolReset, 0)
 		}
 
+		// Release hook references to allow GC of captured closures
+		p.hooksMu.Lock()
+		p.hooks = nil
+		p.hooksMu.Unlock()
+
+		// NOTE: Global caches (pathTypeCache, structEncoderCache) are NOT cleared
+		// here because they are shared across ALL processor instances. Clearing them
+		// in individual Close() would invalidate caches for other active processors.
+		// Use ShutdownGlobalProcessor() for complete cleanup at application shutdown.
+
 		// Mark as fully closed
 		atomic.StoreInt32(&p.state, processorStateClosed)
 	})
+
 	return nil
 }
 
-// IsClosed returns true if the processor has been closed
+// IsClosed returns true if the processor has been closed or close timed out.
+// In both states the processor should not accept new operations.
 func (p *Processor) IsClosed() bool {
-	return atomic.LoadInt32(&p.state) == processorStateClosed
+	if p == nil {
+		return true
+	}
+	state := atomic.LoadInt32(&p.state)
+	return state == processorStateClosed || state == processorStateCloseTimedOut
 }
 
 // AddHook adds an operation hook to the processor.
@@ -237,22 +246,32 @@ func (p *Processor) IsClosed() bool {
 //	    return result, err
 //	}
 //
-//	p := json.MustNew()
-//	p.AddHook(&LoggingHook{})
+//	processor, err := json.New()
+//	if err != nil {
+//	    return err
+//	}
+//	defer processor.Close()
+//	processor.AddHook(&LoggingHook{})
 func (p *Processor) AddHook(hook Hook) {
+	if p == nil {
+		return
+	}
+	p.hooksMu.Lock()
 	p.hooks = append(p.hooks, hook)
+	p.hooksMu.Unlock()
 }
 
 // ProcessBatch processes multiple operations in a single batch
-func (p *Processor) ProcessBatch(operations []BatchOperation, opts ...Config) ([]BatchResult, error) {
+func (p *Processor) ProcessBatch(operations []BatchOperation, cfg ...Config) ([]BatchResult, error) {
 	if err := p.checkClosed(); err != nil {
 		return nil, err
 	}
 
-	_, err := p.prepareOptions(opts...)
+	options, err := p.prepareOptions(cfg...)
 	if err != nil {
 		return nil, err
 	}
+	defer releaseConfig(options)
 
 	if len(operations) > p.config.MaxBatchSize {
 		return nil, &JsonsError{
@@ -269,13 +288,13 @@ func (p *Processor) ProcessBatch(operations []BatchOperation, opts ...Config) ([
 
 		switch op.Type {
 		case "get":
-			result.Result, result.Error = p.Get(op.JSONStr, op.Path, opts...)
+			result.Result, result.Error = p.Get(op.JSONStr, op.Path, cfg...)
 		case "set":
-			result.Result, result.Error = p.Set(op.JSONStr, op.Path, op.Value, opts...)
+			result.Result, result.Error = p.Set(op.JSONStr, op.Path, op.Value, cfg...)
 		case "delete":
-			result.Result, result.Error = p.Delete(op.JSONStr, op.Path, opts...)
+			result.Result, result.Error = p.Delete(op.JSONStr, op.Path, cfg...)
 		case "validate":
-			valid, err := p.Valid(op.JSONStr, opts...)
+			valid, err := p.Valid(op.JSONStr, cfg...)
 			result.Result = map[string]any{"valid": valid}
 			result.Error = err
 		default:
@@ -296,7 +315,7 @@ func (p *Processor) ClearCache() {
 }
 
 // WarmupCache pre-loads commonly used paths into cache to improve first-access performance
-func (p *Processor) WarmupCache(jsonStr string, paths []string, opts ...Config) (*WarmupResult, error) {
+func (p *Processor) WarmupCache(jsonStr string, paths []string, cfg ...Config) (*WarmupResult, error) {
 	if err := p.checkClosed(); err != nil {
 		return nil, err
 	}
@@ -305,7 +324,7 @@ func (p *Processor) WarmupCache(jsonStr string, paths []string, opts ...Config) 
 		return nil, &JsonsError{
 			Op:      "warmup_cache",
 			Message: "cache is disabled, cannot warmup cache",
-			Err:     ErrCacheDisabled,
+			Err:     errCacheDisabled,
 		}
 	}
 
@@ -329,7 +348,7 @@ func (p *Processor) WarmupCache(jsonStr string, paths []string, opts ...Config) 
 	}
 
 	// Prepare options
-	options, err := p.prepareOptions(opts...)
+	options, err := p.prepareOptions(cfg...)
 	if err != nil {
 		return nil, &JsonsError{
 			Op:      "warmup_cache",
@@ -337,6 +356,7 @@ func (p *Processor) WarmupCache(jsonStr string, paths []string, opts ...Config) 
 			Err:     err,
 		}
 	}
+	defer releaseConfig(options)
 
 	// Track warmup statistics
 	successCount := 0
@@ -360,13 +380,8 @@ func (p *Processor) WarmupCache(jsonStr string, paths []string, opts ...Config) 
 		}
 
 		// Try to get the value (this will cache it if successful)
-		// Handle nil options to prevent nil pointer dereference
-		var err error
-		if options != nil {
-			_, err = p.Get(jsonStr, path, *options)
-		} else {
-			_, err = p.Get(jsonStr, path)
-		}
+		// options is guaranteed non-nil after prepareOptions()
+		_, err := p.Get(jsonStr, path, *options)
 		if err != nil {
 			errorCount++
 			failedPaths = append(failedPaths, path)
@@ -411,155 +426,34 @@ func (p *Processor) WarmupCache(jsonStr string, paths []string, opts ...Config) 
 // Delegates to internal package for consistent implementation.
 // PERFORMANCE: For large strings (> 4KB), uses sampling to avoid full scan.
 func hashStringToUint64(s string) uint64 {
-	if len(s) > internal.LargeStringHashThreshold {
+	if len(s) > largeStringHashThreshold {
 		return internal.HashStringFNV1aSampled(s)
 	}
 	return internal.HashStringFNV1a(s)
 }
 
-// computeHashCacheKey computes a cache lookup key for JSON strings.
-// Delegates to hashStringToUint64 for consistent implementation.
-// PERFORMANCE: Uses sampled FNV-1a hash for large strings.
-func computeHashCacheKey(s string) uint64 {
-	return hashStringToUint64(s)
-}
-
-// evictOldestHashCacheEntriesLocked removes the oldest entries from the hash cache using LRU strategy.
-// PERFORMANCE: LRU eviction keeps frequently accessed entries in cache for better hit rate.
-// CONCURRENCY: Must be called with hashCacheMu.Lock() held.
-func (p *Processor) evictOldestHashCacheEntriesLocked(count int) {
-	if count <= 0 || len(p.hashCache) == 0 {
-		return
-	}
-
-	// Collect entries with their access times for LRU eviction
-	type entryWithTime struct {
-		key        uint64
-		lastAccess int64
-	}
-
-	entries := make([]entryWithTime, 0, len(p.hashCache))
-	for key, entry := range p.hashCache {
-		entries = append(entries, entryWithTime{key: key, lastAccess: entry.lastAccess})
-	}
-
-	// Sort by lastAccess ascending (oldest first)
-	// For small counts, use simple selection instead of full sort
-	if count < len(entries)/2 {
-		// Partial selection sort - find the oldest 'count' entries
-		for i := 0; i < count && i < len(entries); i++ {
-			oldestIdx := i
-			for j := i + 1; j < len(entries); j++ {
-				if entries[j].lastAccess < entries[oldestIdx].lastAccess {
-					oldestIdx = j
-				}
-			}
-			entries[i], entries[oldestIdx] = entries[oldestIdx], entries[i]
-		}
-	} else {
-		// Full sort for larger evictions
-		sort.Slice(entries, func(i, j int) bool {
-			return entries[i].lastAccess < entries[j].lastAccess
-		})
-	}
-
-	// Remove the oldest entries
-	for i := 0; i < count && i < len(entries); i++ {
-		delete(p.hashCache, entries[i].key)
-	}
-}
-
-// getOrCacheHash gets a cached hash for a JSON string, or computes and caches it
-// OPTIMIZED: Caches hashes for large JSON strings to avoid repeated calculations
-// Uses uint64 keys directly instead of hex strings for memory efficiency
-// CONCURRENCY FIX: Uses double-checked locking to avoid TOCTOU race condition
-// where multiple goroutines could compute the same hash simultaneously
-func (p *Processor) getOrCacheHash(jsonStr string) uint64 {
-	// For small strings, just compute directly (no caching overhead)
-	if len(jsonStr) <= 4096 {
-		return hashStringToUint64(jsonStr)
-	}
-
-	// For large strings, try to use cache
-	// PERFORMANCE: Use strong FNV-1a hash of first/last 1KB + length for cache key
-	cacheLookupKey := computeHashCacheKey(jsonStr)
-
-	// Fast path: read lock lookup with TTL check
-	p.hashCacheMu.RLock()
-	if entry, ok := p.hashCache[cacheLookupKey]; ok {
-		// Check if entry has expired
-		if now := time.Now().UnixNano(); now > entry.expiresAt {
-			p.hashCacheMu.RUnlock()
-			// Entry expired, compute fresh hash (will replace in slow path)
-			h := hashStringToUint64(jsonStr)
-			// Try to update cache with new entry
-			p.hashCacheMu.Lock()
-			// Double-check after acquiring write lock
-			if e, exists := p.hashCache[cacheLookupKey]; exists && e.expiresAt == entry.expiresAt {
-				p.hashCache[cacheLookupKey] = &hashCacheEntry{
-					hash:       h,
-					lastAccess: now,
-					expiresAt:  now + hashCacheTTL,
-				}
-			}
-			p.hashCacheMu.Unlock()
-			return h
-		}
-		hash := entry.hash
-		p.hashCacheMu.RUnlock()
-		return hash
-	}
-	p.hashCacheMu.RUnlock()
-
-	// Slow path: compute hash outside of lock to avoid blocking other goroutines
-	h := hashStringToUint64(jsonStr)
-	now := time.Now().UnixNano()
-
-	// Double-checked locking: re-verify under write lock
-	// This prevents multiple goroutines from computing and storing the same hash
-	p.hashCacheMu.Lock()
-	// Check if another goroutine already stored this hash
-	if entry, ok := p.hashCache[cacheLookupKey]; ok {
-		p.hashCacheMu.Unlock()
-		return entry.hash
-	}
-
-	// Cache the result with size limit
-	if len(p.hashCache) >= hashCacheMaxSize {
-		// Evict 25% to make room using LRU
-		p.evictOldestHashCacheEntriesLocked(len(p.hashCache) / 4)
-	}
-	p.hashCache[cacheLookupKey] = &hashCacheEntry{
-		hash:       h,
-		lastAccess: now,
-		expiresAt:  now + hashCacheTTL,
-	}
-	p.hashCacheMu.Unlock()
-
-	return h
-}
-
 // createCacheKey creates a cache key with optimized efficiency
 // Uses direct hash values instead of hex strings for better performance
-// OPTIMIZED: Uses cached hash for large JSON strings
 func (p *Processor) createCacheKey(operation, jsonStr, path string, options *Config) string {
-	// OPTIMIZED: Use cached hash for large JSON strings
-	jsonHash := p.getOrCacheHash(jsonStr)
+	jsonHash := hashStringToUint64(jsonStr)
 	return p.createCacheKeyWithHash(operation, jsonHash, path, options)
 }
 
 // createCacheKeyWithHash creates a cache key using a pre-computed hash
-// PERFORMANCE: Allows hash reuse across multiple cache key creations
+// PERFORMANCE: Allows hash reuse across multiple cache key creations.
+// Uses pointer identity check for default config to avoid 40+ field comparisons.
 func (p *Processor) createCacheKeyWithHash(operation string, jsonHash uint64, path string, options *Config) string {
+	// Determine if options are default — pointer identity is the fastest check
+	isDefault := options == nil || options == cachedDefaultConfigPtr
+
 	// Use a fixed-size array buffer for small keys to avoid allocations
 	// Most cache keys are < 128 bytes
 	var buf [128]byte
-	var key string
 
 	// Try to use stack-allocated buffer
 	estimatedLen := len(operation) + 1 + 16 + 1 + len(path) + 16 // op:hash16:path:opts
-	if estimatedLen < len(buf) && options == nil {
-		// Fast path: use stack buffer
+	if estimatedLen < len(buf) && isDefault {
+		// Fast path: use stack buffer (covers >99% of real-world cases)
 		n := copy(buf[:], operation)
 		buf[n] = ':'
 		n++
@@ -567,40 +461,30 @@ func (p *Processor) createCacheKeyWithHash(operation string, jsonHash uint64, pa
 		buf[n] = ':'
 		n++
 		n += copy(buf[n:], path)
-		key = string(buf[:n])
-	} else {
-		// Slow path: use string builder for larger keys
-		sb := p.getStringBuilder()
-		defer p.putStringBuilder(sb)
-
-		sb.Grow(estimatedLen + 32)
-		sb.WriteString(operation)
-		sb.WriteByte(':')
-		sb.WriteString(formatUint64HexString(jsonHash))
-		sb.WriteByte(':')
-		sb.WriteString(path)
-
-		// Include relevant options in the key
-		if options != nil {
-			if options.StrictMode {
-				sb.WriteString(":s")
-			}
-			if options.AllowComments {
-				sb.WriteString(":c")
-			}
-			if options.PreserveNumbers {
-				sb.WriteString(":p")
-			}
-			if options.MaxDepth > 0 {
-				sb.WriteString(":d")
-				sb.WriteString(strconv.Itoa(options.MaxDepth))
-			}
-		}
-
-		key = sb.String()
+		return string(buf[:n])
 	}
 
-	return key
+	// Slow path: use string builder for larger keys or non-default options
+	sb := p.getStringBuilder()
+	defer p.putStringBuilder(sb)
+
+	sb.Grow(estimatedLen + 32)
+	sb.WriteString(operation)
+	sb.WriteByte(':')
+	sb.WriteString(formatUint64HexString(jsonHash))
+	sb.WriteByte(':')
+	sb.WriteString(path)
+
+	// Include all options that affect output using config hash.
+	// Ensures different configs never share cached results.
+	// PERFORMANCE: Skip hash computation for default config (common case)
+	if !isDefault {
+		optHash := hashConfig(*options)
+		sb.WriteByte(':')
+		sb.WriteString(formatUint64HexString(optHash))
+	}
+
+	return sb.String()
 }
 
 // formatUint64Hex formats a uint64 as hex without allocation
@@ -730,6 +614,15 @@ func (p *Processor) setCachedResultInternal(key string, result any) {
 	p.cache.Set(key, result)
 }
 
+// invalidateCachedResult removes a cache entry by key.
+// Used when a cached value has a type mismatch (corrupted entry).
+func (p *Processor) invalidateCachedResult(key string) {
+	if !p.config.EnableCache {
+		return
+	}
+	p.cache.Delete(key)
+}
+
 // containsSensitiveData checks if the result contains sensitive information
 // SECURITY: Delegates to securityValidator for consistent detection logic
 func (p *Processor) containsSensitiveData(result any) bool {
@@ -744,11 +637,17 @@ func (p *Processor) isValidCacheKey(key string) bool {
 
 // GetConfig returns a copy of the processor configuration
 func (p *Processor) GetConfig() Config {
+	if p == nil {
+		return Config{}
+	}
 	return *p.config.Clone()
 }
 
 // SetLogger sets a custom structured logger for the processor
 func (p *Processor) SetLogger(logger *slog.Logger) {
+	if p == nil {
+		return
+	}
 	if logger != nil {
 		p.logger.Store(logger.With("component", "json-processor"))
 	} else {
@@ -756,30 +655,32 @@ func (p *Processor) SetLogger(logger *slog.Logger) {
 	}
 }
 
-// getLogger safely retrieves the current logger (thread-safe)
+// getLogger safely retrieves the current logger (thread-safe).
+// Returns slog.Default() when called on a nil Processor.
 func (p *Processor) getLogger() *slog.Logger {
+	if p == nil {
+		return slog.Default().With("component", "json-processor")
+	}
 	if l, ok := p.logger.Load().(*slog.Logger); ok {
 		return l
 	}
 	return slog.Default().With("component", "json-processor")
 }
 
-// checkClosed returns an error if the processor is closed or closing
+// checkClosed returns an error if the processor is closed or closing.
+// Returns ErrProcessorClosed when called on a nil Processor to prevent
+// nil-pointer panics on every public method that delegates here.
 func (p *Processor) checkClosed() error {
+	if p == nil {
+		return &JsonsError{Op: "check_closed", Message: "processor is nil", Err: ErrProcessorClosed}
+	}
 	state := atomic.LoadInt32(&p.state)
 	if state != processorStateActive {
+		msg := "processor is closed"
 		if state == processorStateClosing {
-			return &JsonsError{
-				Op:      "check_closed",
-				Message: "processor is closing",
-				Err:     ErrProcessorClosed,
-			}
+			msg = "processor is closing"
 		}
-		return &JsonsError{
-			Op:      "check_closed",
-			Message: "processor is closed",
-			Err:     ErrProcessorClosed,
-		}
+		return &JsonsError{Op: "check_closed", Message: msg, Err: ErrProcessorClosed}
 	}
 	return nil
 }
@@ -793,36 +694,61 @@ var configPool = sync.Pool{
 	},
 }
 
-// getConfig gets a Config from the pool, applies defaults or provided config, and validates
-func (p *Processor) getConfig(opts ...Config) (*Config, error) {
-	cfg := configPool.Get().(*Config)
-	if len(opts) > 0 {
-		*cfg = opts[0]
-	} else {
-		*cfg = DefaultConfig()
-	}
-	if err := cfg.Validate(); err != nil {
-		configPool.Put(cfg)
-		return nil, err
-	}
-	return cfg, nil
-}
+// cachedDefaultConfigPtr is a pre-validated pointer to the default config.
+// PERFORMANCE: When no options are provided, return this instead of allocating
+// from the pool and calling DefaultConfig() + Validate() on every operation.
+var cachedDefaultConfigPtr = func() *Config {
+	cfg := DefaultConfig()
+	return &cfg
+}()
 
-// putConfig returns a Config to the pool after clearing sensitive data
-func (p *Processor) putConfig(cfg *Config) {
+// releaseConfig returns a pooled Config, clearing all reference-type fields first
+// to prevent data leaks back into the pool.
+// SECURITY: Must clear all map/slice/interface fields to avoid cross-request contamination.
+func releaseConfig(cfg *Config) {
 	if cfg == nil {
 		return
 	}
-	// Clear sensitive fields to prevent memory leaks
+	// PERFORMANCE: Skip returning the cached default pointer to the pool
+	if cfg == cachedDefaultConfigPtr {
+		return
+	}
 	cfg.Context = nil
+	cfg.CustomEncoder = nil
+	cfg.CustomPathParser = nil
+	cfg.CustomEscapes = nil
+	cfg.CustomTypeEncoders = nil
+	cfg.CustomValidators = nil
+	cfg.AdditionalDangerousPatterns = nil
+	cfg.Hooks = nil
 	configPool.Put(cfg)
 }
 
-// prepareOptions prepares and validates processor options
-// Accepts Config values and returns a pointer for internal use
-// PERFORMANCE: Uses pooled Config objects to reduce allocations
-func (p *Processor) prepareOptions(opts ...Config) (*Config, error) {
-	return p.getConfig(opts...)
+// prepareOptions prepares and validates processor options.
+// Accepts Config values and returns a pointer for internal use.
+// PERFORMANCE: When no options are provided, returns a cached default pointer
+// without allocation or validation — avoids DefaultConfig() + Validate() per operation.
+// SECURITY: Clears reference fields from pooled objects to prevent leaks.
+func (p *Processor) prepareOptions(cfg ...Config) (*Config, error) {
+	if len(cfg) == 0 {
+		// Fast path: return cached default config pointer (no allocation, no validation)
+		return cachedDefaultConfigPtr, nil
+	}
+	c := configPool.Get().(*Config)
+	c.Context = nil
+	c.CustomEncoder = nil
+	c.CustomPathParser = nil
+	c.Hooks = nil
+	c.CustomEscapes = nil
+	c.CustomTypeEncoders = nil
+	c.CustomValidators = nil
+	c.AdditionalDangerousPatterns = nil
+	*c = cfg[0]
+	if err := c.Validate(); err != nil {
+		releaseConfig(c)
+		return nil, err
+	}
+	return c, nil
 }
 
 // mergeOptionsWithOverride creates a new Config with overrides applied.
@@ -840,15 +766,16 @@ func mergeOptionsWithOverride(opts []Config, override func(*Config)) Config {
 }
 
 // Delete removes a value from JSON at the specified path
-func (p *Processor) Delete(jsonStr, path string, opts ...Config) (string, error) {
+func (p *Processor) Delete(jsonStr, path string, cfg ...Config) (string, error) {
 	if err := p.checkClosed(); err != nil {
 		return "", err
 	}
 
-	options, err := p.prepareOptions(opts...)
+	options, err := p.prepareOptions(cfg...)
 	if err != nil {
 		return "", err
 	}
+	defer releaseConfig(options)
 
 	if err := p.validateInput(jsonStr); err != nil {
 		return jsonStr, err
@@ -860,7 +787,7 @@ func (p *Processor) Delete(jsonStr, path string, opts ...Config) (string, error)
 
 	// Parse JSON
 	var data any
-	err = p.Parse(jsonStr, &data, opts...)
+	err = p.Parse(jsonStr, &data, cfg...)
 	if err != nil {
 		return jsonStr, err
 	}
@@ -908,8 +835,8 @@ func (p *Processor) Delete(jsonStr, path string, opts ...Config) (string, error)
 		return jsonStr, &JsonsError{
 			Op:      "delete",
 			Path:    path,
-			Message: fmt.Sprintf("failed to marshal result: %v", err),
-			Err:     ErrOperationFailed,
+			Message: "failed to marshal result",
+			Err:     err,
 		}
 	}
 
@@ -933,8 +860,8 @@ func (p *Processor) isArrayDeletePath(path string) bool {
 // Example:
 //
 //	result, err := processor.DeleteClean(data, "users[0].profile")
-func (p *Processor) DeleteClean(jsonStr, path string, opts ...Config) (string, error) {
-	cleanupOpts := mergeOptionsWithOverride(opts, func(o *Config) {
+func (p *Processor) DeleteClean(jsonStr, path string, cfg ...Config) (string, error) {
+	cleanupOpts := mergeOptionsWithOverride(cfg, func(o *Config) {
 		o.CleanupNulls = true
 		o.CompactArrays = true
 	})
@@ -1033,8 +960,57 @@ func (p *Processor) ForeachNested(jsonStr string, fn func(key any, item *Iterabl
 	foreachNestedOnValue(data, fn)
 }
 
-// SafeGet performs a type-safe get operation with comprehensive error handling
-func (p *Processor) SafeGet(jsonStr, path string) AccessResult {
+// ForeachWithError iterates over JSON arrays or objects with error-returning callback.
+// The callback returns an error to signal iteration control:
+//   - nil: continue iteration
+//   - errBreak (via item.Break()): stop iteration without error
+//   - other error: stop iteration and return the error
+//
+// Example:
+//
+//	err := processor.ForeachWithError(jsonStr, ".", func(key any, item *json.IterableValue) error {
+//	    if item.GetInt("id") == targetId {
+//	        return item.Break() // stop iteration
+//	    }
+//	    return nil // continue
+//	})
+func (p *Processor) ForeachWithError(jsonStr, path string, fn func(key any, item *IterableValue) error) error {
+	if err := p.checkClosed(); err != nil {
+		return err
+	}
+
+	data, err := p.Get(jsonStr, path)
+	if err != nil {
+		return err
+	}
+
+	return foreachWithIterableValueError(data, fn)
+}
+
+// ForeachNestedWithError recursively iterates over all nested JSON structures with error-returning callback.
+//
+// Example:
+//
+//	err := processor.ForeachNestedWithError(jsonStr, func(key any, item *json.IterableValue) error {
+//	    fmt.Printf("Key: %v\n", key)
+//	    return nil
+//	})
+func (p *Processor) ForeachNestedWithError(jsonStr string, fn func(key any, item *IterableValue) error) error {
+	if err := p.checkClosed(); err != nil {
+		return err
+	}
+
+	data, err := p.Get(jsonStr, ".")
+	if err != nil {
+		return err
+	}
+
+	return foreachNestedOnValueError(data, fn)
+}
+
+// SafeGet performs a type-safe get operation with comprehensive error handling.
+// Accepts optional Config for controlling validation, security, and caching behavior.
+func (p *Processor) SafeGet(jsonStr, path string, cfg ...Config) AccessResult {
 	// Validate inputs
 	if jsonStr == "" {
 		return AccessResult{Exists: false}
@@ -1044,7 +1020,7 @@ func (p *Processor) SafeGet(jsonStr, path string) AccessResult {
 	}
 
 	// Perform the get operation
-	value, err := p.Get(jsonStr, path)
+	value, err := p.Get(jsonStr, path, cfg...)
 	if err != nil {
 		return AccessResult{Exists: false}
 	}
@@ -1065,40 +1041,50 @@ func (p *Processor) SafeGet(jsonStr, path string) AccessResult {
 }
 
 // Get retrieves a value from JSON using a path expression with performance
-func (p *Processor) Get(jsonStr, path string, opts ...Config) (any, error) {
-	// Check rate limiting for security
-	if err := p.checkRateLimit(); err != nil {
+func (p *Processor) Get(jsonStr, path string, cfg ...Config) (result any, err error) {
+	// PERFORMANCE: Fast path — check nil/closed before any field access
+	if err := p.checkClosed(); err != nil {
 		return nil, err
 	}
 
-	// Only track time if metrics are enabled
-	var startTime time.Time
-	var recordMetrics func(success bool)
-	if p.metrics != nil && p.metrics.enabled && p.metrics.collector != nil {
-		startTime = time.Now()
-		p.metrics.collector.StartConcurrentOperation()
-		recordMetrics = func(success bool) {
-			p.metrics.collector.EndConcurrentOperation()
-			p.metrics.collector.RecordOperation(time.Since(startTime), success, 0)
+	// Check rate limiting for security (fast return when disabled, which is default)
+	if p.metrics.operationWindow > 0 {
+		if err := p.checkRateLimit(); err != nil {
+			return nil, err
 		}
-	} else {
-		recordMetrics = func(success bool) {}
 	}
 
 	// Increment operation counter for statistics
 	p.incrementOperationCount()
 
-	if err := p.checkClosed(); err != nil {
-		p.incrementErrorCount()
-		recordMetrics(false)
-		return nil, err
-	}
-
-	options, err := p.prepareOptions(opts...)
+	options, err := p.prepareOptions(cfg...)
 	if err != nil {
 		p.incrementErrorCount()
 		return nil, err
 	}
+	defer releaseConfig(options)
+
+	// PERFORMANCE: Metrics tracking — only allocate closures when metrics are enabled
+	var metricsCollector *internal.MetricsCollector
+	var startTime time.Time
+	if p.metrics != nil && p.metrics.enabled {
+		metricsCollector = p.metrics.collector
+		if metricsCollector != nil {
+			startTime = time.Now()
+			metricsCollector.StartConcurrentOperation()
+		}
+	}
+
+	// Cleanup metrics via defer using named return values
+	// Uses success flag based on whether err was set
+	defer func() {
+		if metricsCollector != nil {
+			metricsCollector.EndConcurrentOperation()
+			if !startTime.IsZero() {
+				metricsCollector.RecordOperation(time.Since(startTime), err == nil, 0)
+			}
+		}
+	}()
 
 	// Get context from options or use background
 	ctx := context.Background()
@@ -1115,48 +1101,62 @@ func (p *Processor) Get(jsonStr, path string, opts ...Config) (any, error) {
 	default:
 	}
 
-	// Continue with the rest of the method...
+	// Defer slow operation logging (no-op when logger is at default level)
 	defer func() {
-		if startTime.IsZero() {
-			return
+		if !startTime.IsZero() {
+			p.logOperation(ctx, "get", path, time.Since(startTime))
 		}
-		duration := time.Since(startTime)
-		p.logOperation(ctx, "get", path, duration)
 	}()
 
-	// PERFORMANCE: Compute hash ONCE for entire operation, reuse for all cache keys
-	jsonHash := p.getOrCacheHash(jsonStr)
-
-	// Check cache first with optimized key generation (BEFORE validation for performance)
-	cacheKey := p.createCacheKeyWithHash("get", jsonHash, path, options)
-	if cached, ok := p.getCachedResult(cacheKey); ok {
-		// Record cache hit operation
-		if p.metrics != nil && p.metrics.collector != nil {
-			p.metrics.collector.RecordCacheHit()
-		}
-		recordMetrics(true)
-		return cached, nil
-	}
-
-	// Validate input only if cache miss and validation not skipped
-	// OPTIMIZED: Allow skipping validation for trusted input
+	// Validate input BEFORE cache lookup to prevent cache pollution
+	// SECURITY: Essential checks (size + depth) are always enforced to protect the process.
+	// Full validation (UTF-8, security patterns, structure) can be skipped for trusted input.
 	if !options.SkipValidation {
 		if err := p.validateInput(jsonStr); err != nil {
 			p.incrementErrorCount()
-			recordMetrics(false)
 			return nil, err
 		}
 
 		if err := p.validatePath(path); err != nil {
 			p.incrementErrorCount()
-			recordMetrics(false)
+			return nil, err
+		}
+	} else {
+		// SECURITY: Always enforce essential checks even for trusted input.
+		// Size and depth limits protect the process from DoS.
+		if err := p.validateInputEssential(jsonStr); err != nil {
+			p.incrementErrorCount()
 			return nil, err
 		}
 	}
 
+	// PERFORMANCE: Compute hash ONCE for entire operation, reuse for all cache keys
+	// Hash is computed after validation to avoid wasted work on invalid input
+	jsonHash := hashStringToUint64(jsonStr)
+
+	// Check cache after validation
+	cacheKey := p.createCacheKeyWithHash("get", jsonHash, path, options)
+	if cached, ok := p.getCachedResult(cacheKey); ok {
+		// Record cache hit operation
+		if metricsCollector != nil {
+			metricsCollector.RecordCacheHit()
+		}
+		// PERFORMANCE v2: Skip deep copy for JSON primitives (immutable types).
+		// For parsed JSON data, only map[string]any and []any need copying.
+		// This avoids the deepCopySubtree overhead for ~60% of Get results.
+		switch cached.(type) {
+		case nil, bool, float64, string, json.Number:
+			return cached, nil
+		}
+		if copied, copyErr := deepCopySubtree(cached); copyErr == nil {
+			return copied, nil
+		}
+		return cached, nil
+	}
+
 	// Record cache miss
-	if p.metrics != nil && p.metrics.collector != nil {
-		p.metrics.collector.RecordCacheMiss()
+	if metricsCollector != nil {
+		metricsCollector.RecordCacheMiss()
 	}
 
 	// Try to get parsed data from cache first - reuse pre-computed hash
@@ -1167,10 +1167,9 @@ func (p *Processor) Get(jsonStr, path string, opts ...Config) (any, error) {
 		data = cachedData
 	} else {
 		// Parse JSON with error context
-		parseErr := p.Parse(jsonStr, &data, opts...)
+		parseErr := p.Parse(jsonStr, &data, cfg...)
 		if parseErr != nil {
 			p.incrementErrorCount()
-			recordMetrics(false)
 			return nil, parseErr
 		}
 
@@ -1183,10 +1182,9 @@ func (p *Processor) Get(jsonStr, path string, opts ...Config) (any, error) {
 	}
 
 	// Use unified recursive processor for all paths (cached instance)
-	result, err := p.recursiveProcessor.ProcessRecursively(data, path, opGet, nil)
+	result, err = p.recursiveProcessor.ProcessRecursively(data, path, opGet, nil)
 	if err != nil {
 		p.incrementErrorCount()
-		recordMetrics(false)
 		return nil, &JsonsError{
 			Op:      "get",
 			Path:    path,
@@ -1197,9 +1195,6 @@ func (p *Processor) Get(jsonStr, path string, opts ...Config) (any, error) {
 
 	// Cache result if enabled
 	p.setCachedResult(cacheKey, result, options)
-
-	// Record successful operation
-	recordMetrics(true)
 
 	return result, nil
 }
@@ -1216,15 +1211,16 @@ func (p *Processor) Get(jsonStr, path string, opts ...Config) (any, error) {
 //	if err != nil { return err }
 //	value1, _ := processor.GetFromParsed(parsed, "path1")
 //	value2, _ := processor.GetFromParsed(parsed, "path2")
-func (p *Processor) PreParse(jsonStr string, opts ...Config) (*ParsedJSON, error) {
+func (p *Processor) PreParse(jsonStr string, cfg ...Config) (*ParsedJSON, error) {
 	if err := p.checkClosed(); err != nil {
 		return nil, err
 	}
 
-	options, err := p.prepareOptions(opts...)
+	options, err := p.prepareOptions(cfg...)
 	if err != nil {
 		return nil, err
 	}
+	defer releaseConfig(options)
 
 	// Validate input
 	if err := p.validateInput(jsonStr); err != nil {
@@ -1239,7 +1235,7 @@ func (p *Processor) PreParse(jsonStr string, opts ...Config) (*ParsedJSON, error
 		data = cachedData
 	} else {
 		// Parse JSON
-		parseErr := p.Parse(jsonStr, &data, opts...)
+		parseErr := p.Parse(jsonStr, &data, cfg...)
 		if parseErr != nil {
 			return nil, parseErr
 		}
@@ -1252,8 +1248,7 @@ func (p *Processor) PreParse(jsonStr string, opts ...Config) (*ParsedJSON, error
 
 	return &ParsedJSON{
 		data:      data,
-		hash:      p.getOrCacheHash(jsonStr),
-		jsonLen:   len(jsonStr),
+		hash:      hashStringToUint64(jsonStr),
 		processor: p,
 	}, nil
 }
@@ -1262,12 +1257,12 @@ func (p *Processor) PreParse(jsonStr string, opts ...Config) (*ParsedJSON, error
 // This is significantly faster than Get() for repeated queries on the same JSON.
 //
 // OPTIMIZED: Skips JSON parsing, goes directly to path navigation.
-func (p *Processor) GetFromParsed(parsed *ParsedJSON, path string, opts ...Config) (any, error) {
+func (p *Processor) GetFromParsed(parsed *ParsedJSON, path string, cfg ...Config) (any, error) {
 	if parsed == nil {
 		return nil, &JsonsError{
 			Op:      "get_from_parsed",
 			Message: "parsed JSON is nil",
-			Err:     ErrOperationFailed,
+			Err:     errOperationFailed,
 		}
 	}
 
@@ -1275,10 +1270,11 @@ func (p *Processor) GetFromParsed(parsed *ParsedJSON, path string, opts ...Confi
 		return nil, err
 	}
 
-	options, err := p.prepareOptions(opts...)
+	options, err := p.prepareOptions(cfg...)
 	if err != nil {
 		return nil, err
 	}
+	defer releaseConfig(options)
 
 	if err := p.validatePath(path); err != nil {
 		return nil, err
@@ -1297,7 +1293,7 @@ func (p *Processor) GetFromParsed(parsed *ParsedJSON, path string, opts ...Confi
 
 	// Cache result if enabled
 	if p.config.EnableCache && options.CacheResults {
-		cacheKey := p.createCacheKey("get", string(rune(parsed.hash)), path, options)
+		cacheKey := p.createCacheKeyWithHash("get", parsed.hash, path, options)
 		p.setCachedResult(cacheKey, result, options)
 	}
 
@@ -1308,12 +1304,12 @@ func (p *Processor) GetFromParsed(parsed *ParsedJSON, path string, opts ...Confi
 // Returns a new ParsedJSON with the modified data (original is not modified).
 //
 // OPTIMIZED: Skips JSON parsing, works directly on parsed data.
-func (p *Processor) SetFromParsed(parsed *ParsedJSON, path string, value any, opts ...Config) (*ParsedJSON, error) {
+func (p *Processor) SetFromParsed(parsed *ParsedJSON, path string, value any, cfg ...Config) (*ParsedJSON, error) {
 	if parsed == nil {
 		return nil, &JsonsError{
 			Op:      "set_from_parsed",
 			Message: "parsed JSON is nil",
-			Err:     ErrOperationFailed,
+			Err:     errOperationFailed,
 		}
 	}
 
@@ -1321,17 +1317,18 @@ func (p *Processor) SetFromParsed(parsed *ParsedJSON, path string, value any, op
 		return nil, err
 	}
 
-	options, err := p.prepareOptions(opts...)
+	options, err := p.prepareOptions(cfg...)
 	if err != nil {
 		return nil, err
 	}
+	defer releaseConfig(options)
 
 	if err := p.validatePath(path); err != nil {
 		return nil, err
 	}
 
 	// Deep copy the data before modification
-	dataCopy, err := p.deepCopyData(parsed.data)
+	dataCopy, err := deepCopy(parsed.data)
 	if err != nil {
 		return nil, &JsonsError{Op: "set_from_parsed", Path: path, Err: err}
 	}
@@ -1350,83 +1347,48 @@ func (p *Processor) SetFromParsed(parsed *ParsedJSON, path string, value any, op
 	return &ParsedJSON{
 		data:      result,
 		hash:      0, // New hash will be computed when needed
-		jsonLen:   0, // Length unknown until serialized
 		processor: p,
 	}, nil
 }
 
-// GetString retrieves a string value from JSON at the specified path
-func (p *Processor) GetString(jsonStr, path string, opts ...Config) (string, error) {
-	return getTypedWithProcessor[string](p, jsonStr, path, opts...)
+// GetString retrieves a string value from JSON at the specified path.
+// Returns defaultValue if provided, otherwise "" when: path not found, value is null, or type conversion fails.
+func (p *Processor) GetString(jsonStr, path string, defaultValue ...string) string {
+	return getTypedWithDefault[string](p, jsonStr, path, defaultValue...)
 }
 
-// GetInt retrieves an int value from JSON at the specified path
-func (p *Processor) GetInt(jsonStr, path string, opts ...Config) (int, error) {
-	return getTypedWithProcessor[int](p, jsonStr, path, opts...)
+// GetInt retrieves an int value from JSON at the specified path.
+// Returns defaultValue if provided, otherwise 0 when: path not found, value is null, or type conversion fails.
+func (p *Processor) GetInt(jsonStr, path string, defaultValue ...int) int {
+	return getTypedWithDefault[int](p, jsonStr, path, defaultValue...)
 }
 
-// GetFloat retrieves a float64 value from JSON at the specified path
-func (p *Processor) GetFloat(jsonStr, path string, opts ...Config) (float64, error) {
-	return getTypedWithProcessor[float64](p, jsonStr, path, opts...)
+// GetFloat retrieves a float64 value from JSON at the specified path.
+// Returns defaultValue if provided, otherwise 0.0 when: path not found, value is null, or type conversion fails.
+func (p *Processor) GetFloat(jsonStr, path string, defaultValue ...float64) float64 {
+	return getTypedWithDefault[float64](p, jsonStr, path, defaultValue...)
 }
 
-// GetBool retrieves a bool value from JSON at the specified path
-func (p *Processor) GetBool(jsonStr, path string, opts ...Config) (bool, error) {
-	return getTypedWithProcessor[bool](p, jsonStr, path, opts...)
+// GetBool retrieves a bool value from JSON at the specified path.
+// Returns defaultValue if provided, otherwise false when: path not found, value is null, or type conversion fails.
+func (p *Processor) GetBool(jsonStr, path string, defaultValue ...bool) bool {
+	return getTypedWithDefault[bool](p, jsonStr, path, defaultValue...)
 }
 
-// GetArray retrieves an array value from JSON at the specified path
-func (p *Processor) GetArray(jsonStr, path string, opts ...Config) ([]any, error) {
-	return getTypedWithProcessor[[]any](p, jsonStr, path, opts...)
+// GetArray retrieves an array value from JSON at the specified path.
+// Returns defaultValue if provided, otherwise nil when: path not found, value is null, or type conversion fails.
+func (p *Processor) GetArray(jsonStr, path string, defaultValue ...[]any) []any {
+	return getTypedWithDefault[[]any](p, jsonStr, path, defaultValue...)
 }
 
-// GetObject retrieves an object value from JSON at the specified path
-func (p *Processor) GetObject(jsonStr, path string, opts ...Config) (map[string]any, error) {
-	return getTypedWithProcessor[map[string]any](p, jsonStr, path, opts...)
-}
-
-// GetStringOr retrieves a string value from JSON at the specified path with a default fallback.
-// Returns defaultValue if: path not found, value is null, or type conversion fails.
-func (p *Processor) GetStringOr(jsonStr, path string, defaultValue string, opts ...Config) string {
-	result, err := p.GetString(jsonStr, path, opts...)
-	if err != nil {
-		return defaultValue
-	}
-	return result
-}
-
-// GetIntOr retrieves an int value from JSON at the specified path with a default fallback.
-// Returns defaultValue if: path not found, value is null, or type conversion fails.
-func (p *Processor) GetIntOr(jsonStr, path string, defaultValue int, opts ...Config) int {
-	result, err := p.GetInt(jsonStr, path, opts...)
-	if err != nil {
-		return defaultValue
-	}
-	return result
-}
-
-// GetFloatOr retrieves a float64 value from JSON at the specified path with a default fallback.
-// Returns defaultValue if: path not found, value is null, or type conversion fails.
-func (p *Processor) GetFloatOr(jsonStr, path string, defaultValue float64, opts ...Config) float64 {
-	result, err := p.GetFloat(jsonStr, path, opts...)
-	if err != nil {
-		return defaultValue
-	}
-	return result
-}
-
-// GetBoolOr retrieves a bool value from JSON at the specified path with a default fallback.
-// Returns defaultValue if: path not found, value is null, or type conversion fails.
-func (p *Processor) GetBoolOr(jsonStr, path string, defaultValue bool, opts ...Config) bool {
-	result, err := p.GetBool(jsonStr, path, opts...)
-	if err != nil {
-		return defaultValue
-	}
-	return result
+// GetObject retrieves an object value from JSON at the specified path.
+// Returns defaultValue if provided, otherwise nil when: path not found, value is null, or type conversion fails.
+func (p *Processor) GetObject(jsonStr, path string, defaultValue ...map[string]any) map[string]any {
+	return getTypedWithDefault[map[string]any](p, jsonStr, path, defaultValue...)
 }
 
 // GetMultiple retrieves multiple values from JSON using multiple path expressions
-func (p *Processor) GetMultiple(jsonStr string, paths []string, opts ...Config) (map[string]any, error) {
+func (p *Processor) GetMultiple(jsonStr string, paths []string, cfg ...Config) (map[string]any, error) {
 	if err := p.checkClosed(); err != nil {
 		return nil, err
 	}
@@ -1439,14 +1401,15 @@ func (p *Processor) GetMultiple(jsonStr string, paths []string, opts ...Config) 
 		return make(map[string]any), nil
 	}
 
-	_, err := p.prepareOptions(opts...)
+	options, err := p.prepareOptions(cfg...)
 	if err != nil {
 		return nil, err
 	}
+	defer releaseConfig(options)
 
 	// Parse JSON once for all operations
 	var data any
-	if err := p.Parse(jsonStr, &data, opts...); err != nil {
+	if err := p.Parse(jsonStr, &data, cfg...); err != nil {
 		return nil, err
 	}
 
@@ -1491,7 +1454,7 @@ func (p *Processor) checkRateLimit() error {
 			return &JsonsError{
 				Op:      "rate_limit",
 				Message: "operation rate limit exceeded",
-				Err:     ErrOperationFailed,
+				Err:     errOperationFailed,
 			}
 		}
 	}
@@ -1609,39 +1572,44 @@ func (p *Processor) getProcessorID() string {
 	return fmt.Sprintf("proc_%p", p)
 }
 
-// getPathSegments gets a path segments slice from the unified resource manager
+// getPathSegments gets a path segments slice from the pool
 func (p *Processor) getPathSegments() []internal.PathSegment {
-	return getGlobalResourceManager().GetPathSegments()
+	seg := internal.GetPathSegmentSlice(8)
+	return *seg
 }
 
-// putPathSegments returns a path segments slice to the unified resource manager
+// putPathSegments returns a path segments slice to the pool
 func (p *Processor) putPathSegments(segments []internal.PathSegment) {
-	getGlobalResourceManager().PutPathSegments(segments)
+	if segments == nil {
+		return
+	}
+	internal.PutPathSegmentSlice(&segments)
 }
 
-// getStringBuilder gets a string builder from the unified resource manager
+// getStringBuilder gets a string builder from the pool
 func (p *Processor) getStringBuilder() *strings.Builder {
-	return getGlobalResourceManager().GetStringBuilder()
+	return internal.GetStringBuilder()
 }
 
-// putStringBuilder returns a string builder to the unified resource manager
+// putStringBuilder returns a string builder to the pool
 func (p *Processor) putStringBuilder(sb *strings.Builder) {
-	getGlobalResourceManager().PutStringBuilder(sb)
+	internal.PutStringBuilder(sb)
 }
 
 // Set sets a value in JSON at the specified path
 // Returns:
 //   - On success: modified JSON string and nil error
 //   - On failure: original unmodified JSON string and error information
-func (p *Processor) Set(jsonStr, path string, value any, opts ...Config) (string, error) {
+func (p *Processor) Set(jsonStr, path string, value any, cfg ...Config) (string, error) {
 	if err := p.checkClosed(); err != nil {
 		return jsonStr, err
 	}
 
-	options, err := p.prepareOptions(opts...)
+	options, err := p.prepareOptions(cfg...)
 	if err != nil {
 		return jsonStr, err
 	}
+	defer releaseConfig(options)
 
 	if err := p.validateInput(jsonStr); err != nil {
 		return jsonStr, err
@@ -1653,7 +1621,7 @@ func (p *Processor) Set(jsonStr, path string, value any, opts ...Config) (string
 
 	// Parse JSON
 	var data any
-	err = p.Parse(jsonStr, &data, opts...)
+	err = p.Parse(jsonStr, &data, cfg...)
 	if err != nil {
 		return jsonStr, &JsonsError{
 			Op:      "set",
@@ -1703,8 +1671,8 @@ func (p *Processor) Set(jsonStr, path string, value any, opts ...Config) (string
 		return jsonStr, &JsonsError{
 			Op:      "set",
 			Path:    path,
-			Message: fmt.Sprintf("failed to marshal modified data: %v", err),
-			Err:     ErrOperationFailed,
+			Message: "failed to marshal modified data",
+			Err:     err,
 		}
 	}
 
@@ -1715,7 +1683,7 @@ func (p *Processor) Set(jsonStr, path string, value any, opts ...Config) (string
 // Returns:
 //   - On success: modified JSON string and nil error
 //   - On failure: original unmodified JSON string and error information
-func (p *Processor) SetMultiple(jsonStr string, updates map[string]any, opts ...Config) (string, error) {
+func (p *Processor) SetMultiple(jsonStr string, updates map[string]any, cfg ...Config) (string, error) {
 	if err := p.checkClosed(); err != nil {
 		return jsonStr, err
 	}
@@ -1726,10 +1694,11 @@ func (p *Processor) SetMultiple(jsonStr string, updates map[string]any, opts ...
 	}
 
 	// Prepare options
-	options, err := p.prepareOptions(opts...)
+	options, err := p.prepareOptions(cfg...)
 	if err != nil {
 		return jsonStr, err
 	}
+	defer releaseConfig(options)
 
 	// Validate JSON input
 	if err := p.validateInput(jsonStr); err != nil {
@@ -1750,7 +1719,7 @@ func (p *Processor) SetMultiple(jsonStr string, updates map[string]any, opts ...
 
 	// Parse JSON
 	var data any
-	err = p.Parse(jsonStr, &data, opts...)
+	err = p.Parse(jsonStr, &data, cfg...)
 	if err != nil {
 		return jsonStr, &JsonsError{
 			Op:      "set_multiple",
@@ -1760,20 +1729,12 @@ func (p *Processor) SetMultiple(jsonStr string, updates map[string]any, opts ...
 	}
 
 	// Create a deep copy of the data for modification attempts
-	var dataCopy any
-	if copyBytes, marshalErr := json.Marshal(data); marshalErr == nil {
-		if unmarshalErr := json.Unmarshal(copyBytes, &dataCopy); unmarshalErr != nil {
-			return jsonStr, &JsonsError{
-				Op:      "set_multiple",
-				Message: fmt.Sprintf("failed to create data copy: %v", unmarshalErr),
-				Err:     unmarshalErr,
-			}
-		}
-	} else {
+	dataCopy, copyErr := deepCopy(data)
+	if copyErr != nil {
 		return jsonStr, &JsonsError{
 			Op:      "set_multiple",
-			Message: fmt.Sprintf("failed to create data copy: %v", marshalErr),
-			Err:     marshalErr,
+			Message: fmt.Sprintf("failed to create data copy: %v", copyErr),
+			Err:     copyErr,
 		}
 	}
 
@@ -1829,8 +1790,8 @@ func (p *Processor) SetMultiple(jsonStr string, updates map[string]any, opts ...
 		// Return original data if marshaling fails
 		return jsonStr, &JsonsError{
 			Op:      "set_multiple",
-			Message: fmt.Sprintf("failed to marshal modified data: %v", err),
-			Err:     ErrOperationFailed,
+			Message: "failed to marshal modified data",
+			Err:     err,
 		}
 	}
 
@@ -1843,8 +1804,8 @@ func (p *Processor) SetMultiple(jsonStr string, updates map[string]any, opts ...
 // Example:
 //
 //	result, err := processor.SetCreate(data, "users[0].profile.name", "Alice")
-func (p *Processor) SetCreate(jsonStr, path string, value any, opts ...Config) (string, error) {
-	addOpts := mergeOptionsWithOverride(opts, func(o *Config) {
+func (p *Processor) SetCreate(jsonStr, path string, value any, cfg ...Config) (string, error) {
+	addOpts := mergeOptionsWithOverride(cfg, func(o *Config) {
 		o.CreatePaths = true
 	})
 	return p.Set(jsonStr, path, value, addOpts)
@@ -1856,8 +1817,8 @@ func (p *Processor) SetCreate(jsonStr, path string, value any, opts ...Config) (
 // Example:
 //
 //	result, err := processor.SetMultipleCreate(data, map[string]any{"user.name": "Alice", "user.age": 30})
-func (p *Processor) SetMultipleCreate(jsonStr string, updates map[string]any, opts ...Config) (string, error) {
-	addOpts := mergeOptionsWithOverride(opts, func(o *Config) {
+func (p *Processor) SetMultipleCreate(jsonStr string, updates map[string]any, cfg ...Config) (string, error) {
+	addOpts := mergeOptionsWithOverride(cfg, func(o *Config) {
 		o.CreatePaths = true
 	})
 	return p.SetMultiple(jsonStr, updates, addOpts)
@@ -1865,6 +1826,9 @@ func (p *Processor) SetMultipleCreate(jsonStr string, updates map[string]any, op
 
 // GetStats returns processor performance statistics
 func (p *Processor) GetStats() Stats {
+	if p == nil {
+		return Stats{}
+	}
 	cacheStats := p.cache.GetStats()
 
 	return Stats{
@@ -1885,6 +1849,18 @@ func (p *Processor) GetStats() Stats {
 
 // GetHealthStatus returns the current health status
 func (p *Processor) GetHealthStatus() HealthStatus {
+	if p == nil {
+		return HealthStatus{
+			Timestamp: time.Now(),
+			Healthy:   false,
+			Checks: map[string]CheckResult{
+				"processor": {
+					Healthy: false,
+					Message: "processor is nil",
+				},
+			},
+		}
+	}
 	if p.metrics == nil {
 		return HealthStatus{
 			Timestamp: time.Now(),
@@ -1917,217 +1893,21 @@ func (p *Processor) GetHealthStatus() HealthStatus {
 	}
 }
 
-// processorUtils provides utility functions for JSON processing
-type processorUtils struct {
-	// String builder pool for efficient string operations
-	stringBuilderPool *stringBuilderPool
-}
-
-// NewProcessorUtils creates a new processor utils instance
-func NewProcessorUtils() *processorUtils {
-	return &processorUtils{
-		stringBuilderPool: newStringBuilderPool(),
-	}
-}
-
-// IsArrayType checks if the data is an array type
-func (u *processorUtils) IsArrayType(data any) bool {
-	switch data.(type) {
-	case []any:
-		return true
-	default:
-		return false
-	}
-}
-
-// IsObjectType checks if the data is an object type
-func (u *processorUtils) IsObjectType(data any) bool {
-	switch data.(type) {
-	case map[string]any, map[any]any:
-		return true
-	default:
-		return false
-	}
-}
-
-// IsEmptyContainer checks if a container (object or array) is empty
-func (u *processorUtils) IsEmptyContainer(data any) bool {
-	switch v := data.(type) {
-	case map[string]any:
-		return len(v) == 0
-	case map[any]any:
-		return len(v) == 0
-	case []any:
-		// Check if all elements are nil
-		for _, item := range v {
-			if item != nil {
-				return false
-			}
-		}
-		return true
-	default:
-		return false
-	}
-}
-
-// stringBuilderPool provides a pool of string builders for efficient string operations
-type stringBuilderPool struct {
-	pool sync.Pool
-}
-
-// newStringBuilderPool creates a new string builder pool
-func newStringBuilderPool() *stringBuilderPool {
-	return &stringBuilderPool{
-		pool: sync.Pool{
-			New: func() any {
-				return &strings.Builder{}
-			},
-		},
-	}
-}
-
-// Get gets a string builder from the pool
-func (p *stringBuilderPool) Get() *strings.Builder {
-	return p.pool.Get().(*strings.Builder)
-}
-
-// Put returns a string builder to the pool
-func (p *stringBuilderPool) Put(sb *strings.Builder) {
-	sb.Reset()
-	p.pool.Put(sb)
-}
-
-// ParseInt parses a string to integer with error handling
-func ParseInt(s string) (int, error) {
-	return strconv.Atoi(s)
-}
-
-// ParseFloat parses a string to float64 with error handling
-func ParseFloat(s string) (float64, error) {
-	return strconv.ParseFloat(s, 64)
-}
-
-// ParseBool parses a string to boolean with error handling
-func ParseBool(s string) (bool, error) {
-	return strconv.ParseBool(s)
-}
-
-// IsNumeric checks if a string represents a numeric value
-func IsNumeric(s string) bool {
-	_, err := strconv.ParseFloat(s, 64)
-	return err == nil
-}
-
-// IsInteger checks if a string represents an integer value
-func IsInteger(s string) bool {
-	_, err := strconv.Atoi(s)
-	return err == nil
-}
-
-// ClampIndex clamps an index to valid bounds for an array
-func ClampIndex(index, length int) int {
-	if index < 0 {
-		return 0
-	}
-	if index >= length {
-		return length - 1
-	}
-	return index
-}
-
-// SanitizeKey sanitizes a key for safe use in maps
-func SanitizeKey(key string) string {
-	// Remove any null bytes or other problematic characters
-	return strings.ReplaceAll(key, "\x00", "")
-}
-
 // EscapeJSONPointer escapes special characters for JSON Pointer
-func EscapeJSONPointer(s string) string {
+func escapeJSONPointer(s string) string {
 	return internal.EscapeJSONPointer(s)
-}
-
-// UnescapeJSONPointer unescapes JSON Pointer special characters
-func UnescapeJSONPointer(s string) string {
-	return internal.UnescapeJSONPointer(s)
-}
-
-// IsContainer checks if the data is a container type (map or slice)
-func IsContainer(data any) bool {
-	switch data.(type) {
-	case map[string]any, map[any]any, []any:
-		return true
-	default:
-		return false
-	}
-}
-
-// GetContainerSize returns the size of a container
-func GetContainerSize(data any) int {
-	switch v := data.(type) {
-	case map[string]any:
-		return len(v)
-	case map[any]any:
-		return len(v)
-	case []any:
-		return len(v)
-	default:
-		return 0
-	}
-}
-
-// CreateEmptyContainer creates an empty container of the specified type
-func CreateEmptyContainer(containerType string) any {
-	switch containerType {
-	case "object":
-		return make(map[string]any)
-	case "array":
-		return make([]any, 0)
-	default:
-		return make(map[string]any) // Default to object
-	}
-}
-
-// ConvertToString converts a value to string
-func (u *processorUtils) ConvertToString(value any) string {
-	if value == nil {
-		return ""
-	}
-
-	switch v := value.(type) {
-	case string:
-		return v
-	case int:
-		return strconv.Itoa(v)
-	case int64:
-		return strconv.FormatInt(v, 10)
-	case float64:
-		return strconv.FormatFloat(v, 'f', -1, 64)
-	case bool:
-		return strconv.FormatBool(v)
-	default:
-		return fmt.Sprintf("%v", v)
-	}
-}
-
-// ConvertToNumber converts a value to a number (float64)
-func (u *processorUtils) ConvertToNumber(value any) (float64, error) {
-	switch v := value.(type) {
-	case float64:
-		return v, nil
-	case int:
-		return float64(v), nil
-	case int64:
-		return float64(v), nil
-	case string:
-		return strconv.ParseFloat(v, 64)
-	default:
-		return 0, fmt.Errorf("cannot convert %T to number", value)
-	}
 }
 
 // validateInput validates JSON input string with optimized security checks
 func (p *Processor) validateInput(jsonString string) error {
 	return p.securityValidator.ValidateJSONInput(jsonString)
+}
+
+// validateInputEssential performs only essential safety checks (size + depth).
+// SECURITY: These checks protect the process from DoS and must always be enforced,
+// even when SkipValidation is true for trusted input.
+func (p *Processor) validateInputEssential(jsonString string) error {
+	return p.securityValidator.ValidateJSONInputEssential(jsonString)
 }
 
 // validatePath validates a JSON path string with enhanced security and efficiency
@@ -2142,8 +1922,9 @@ func (p *Processor) validatePath(path string) error {
 // ============================================================================
 
 // CompilePath compiles a JSON path string into a CompiledPath for fast repeated operations
-// The returned CompiledPath can be reused for multiple Get/Set/Delete operations
-func (p *Processor) CompilePath(path string) (*internal.CompiledPath, error) {
+// The returned CompiledPath can be reused for multiple Get/Set/Delete operations.
+// Call Release() on the returned CompiledPath when done to return it to the pool.
+func (p *Processor) CompilePath(path string) (*CompiledPath, error) {
 	if err := p.checkClosed(); err != nil {
 		return nil, err
 	}
@@ -2152,9 +1933,9 @@ func (p *Processor) CompilePath(path string) (*internal.CompiledPath, error) {
 	return internal.GetGlobalCompiledPathCache().Get(path)
 }
 
-// GetCompiled retrieves a value from JSON using a pre-compiled path
-// PERFORMANCE: Skips path parsing for faster repeated operations
-func (p *Processor) GetCompiled(jsonStr string, cp *internal.CompiledPath) (any, error) {
+// GetCompiled retrieves a value from JSON using a pre-compiled path.
+// PERFORMANCE: Skips path parsing for faster repeated operations.
+func (p *Processor) GetCompiled(jsonStr string, cp *CompiledPath) (any, error) {
 	if err := p.checkClosed(); err != nil {
 		return nil, err
 	}
@@ -2167,19 +1948,4 @@ func (p *Processor) GetCompiled(jsonStr string, cp *internal.CompiledPath) (any,
 
 	// Navigate using compiled path
 	return cp.Get(data)
-}
-
-// GetCompiledFromParsed retrieves a value from pre-parsed JSON data using a compiled path
-// PERFORMANCE: No JSON parsing overhead - uses already parsed data
-func (p *Processor) GetCompiledFromParsed(data any, cp *internal.CompiledPath) (any, error) {
-	if err := p.checkClosed(); err != nil {
-		return nil, err
-	}
-
-	return cp.Get(data)
-}
-
-// GetCompiledExists checks if a path exists in pre-parsed JSON data using a compiled path
-func (p *Processor) GetCompiledExists(data any, cp *internal.CompiledPath) bool {
-	return cp.Exists(data)
 }

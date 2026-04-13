@@ -2,6 +2,7 @@ package json
 
 import (
 	"context"
+	"reflect"
 	"testing"
 	"time"
 )
@@ -413,5 +414,95 @@ func TestConfigFieldSync(t *testing.T) {
 				t.Errorf("configFieldsEqual returned false for identical configs with field %s", tt.name)
 			}
 		})
+	}
+}
+
+// ============================================================================
+// MAINTENANCE GUARDRAIL TESTS
+// Ensure internal bookkeeping stays in sync with Config struct changes.
+// ============================================================================
+
+// TestConfigFieldListCoverage verifies that configFieldList covers all exported
+// Config fields. If a new field is added to Config but not to configFieldList,
+// config hashing/comparison silently breaks. This test prevents that.
+func TestConfigFieldListCoverage(t *testing.T) {
+	configType := reflect.TypeOf(Config{})
+
+	// Build set of names in configFieldList
+	fieldListNames := make(map[string]bool, len(configFieldList))
+	for _, accessor := range configFieldList {
+		fieldListNames[accessor.name] = true
+	}
+
+	// Check every exported Config field is covered
+	for i := 0; i < configType.NumField(); i++ {
+		field := configType.Field(i)
+		if !field.IsExported() {
+			continue
+		}
+		if !fieldListNames[field.Name] {
+			t.Errorf("Config field %q is missing from configFieldList; "+
+				"add an entry to configFieldList in api.go to ensure correct "+
+				"config comparison and hashing", field.Name)
+		}
+	}
+
+	// Check for stale entries in configFieldList (names that no longer exist in Config)
+	configFields := make(map[string]bool, configType.NumField())
+	for i := 0; i < configType.NumField(); i++ {
+		configFields[configType.Field(i).Name] = true
+	}
+	for _, accessor := range configFieldList {
+		if !configFields[accessor.name] {
+			t.Errorf("configFieldList contains %q but Config has no such field; "+
+				"remove the stale entry from configFieldList", accessor.name)
+		}
+	}
+}
+
+// TestReleaseConfigCoversAllReferenceFields verifies that releaseConfig and
+// prepareOptions clear all reference-type fields in Config. If a new reference
+// field is added but not cleared, pooled Config objects leak data between operations.
+func TestReleaseConfigCoversAllReferenceFields(t *testing.T) {
+	configType := reflect.TypeOf(Config{})
+
+	// Collect all reference-type fields from Config
+	var refFields []string
+	for i := 0; i < configType.NumField(); i++ {
+		field := configType.Field(i)
+		if !field.IsExported() {
+			continue
+		}
+		kind := field.Type.Kind()
+		isRef := kind == reflect.Slice || kind == reflect.Map ||
+			kind == reflect.Chan || kind == reflect.Func ||
+			kind == reflect.Interface || kind == reflect.Ptr
+		// context.Context is an interface
+		if !isRef && field.Type.String() == "context.Context" {
+			isRef = true
+		}
+		if isRef {
+			refFields = append(refFields, field.Name)
+		}
+	}
+
+	// Known reference-type fields that are cleared in releaseConfig/prepareOptions
+	knownRefFields := map[string]bool{
+		"Context":                     true,
+		"CustomEncoder":               true,
+		"CustomPathParser":            true,
+		"CustomEscapes":               true,
+		"CustomTypeEncoders":          true,
+		"CustomValidators":            true,
+		"AdditionalDangerousPatterns": true,
+		"Hooks":                       true,
+	}
+
+	for _, field := range refFields {
+		if !knownRefFields[field] {
+			t.Errorf("Config has reference-type field %q that is NOT cleared in "+
+				"releaseConfig/prepareOptions. Add clearing logic to prevent pool "+
+				"contamination.", field)
+		}
 	}
 }

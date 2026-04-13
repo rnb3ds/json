@@ -56,13 +56,13 @@ func main() {
 }
 
 func demonstrateSaveToFile(tempDir string) {
-	fmt.Println("1️⃣  Save to File")
+	fmt.Println("1. Save to File")
 	fmt.Println("─────────────────")
 
 	// Sample data
-	config := map[string]interface{}{
+	config := map[string]any{
 		"version": "1.0.0",
-		"server": map[string]interface{}{
+		"server": map[string]any{
 			"host": "localhost",
 			"port": 8080,
 		},
@@ -100,7 +100,7 @@ func demonstrateSaveToFile(tempDir string) {
 }
 
 func demonstrateLoadFromFile(tempDir string) {
-	fmt.Println("\n2️⃣  Load from File")
+	fmt.Println("\n2. Load from File")
 	fmt.Println("───────────────────")
 
 	// First create a file
@@ -110,7 +110,10 @@ func demonstrateLoadFromFile(tempDir string) {
 		"active": true
 	}`
 	filePath := filepath.Join(tempDir, "user.json")
-	os.WriteFile(filePath, []byte(data), 0644)
+	if err := os.WriteFile(filePath, []byte(data), 0644); err != nil {
+		fmt.Printf("   Error writing file: %v\n", err)
+		return
+	}
 
 	// Load from file
 	jsonStr, err := json.LoadFromFile(filePath)
@@ -121,15 +124,15 @@ func demonstrateLoadFromFile(tempDir string) {
 	fmt.Printf("   ✓ Loaded from: %s\n", filepath.Base(filePath))
 
 	// Process the loaded JSON
-	name, _ := json.GetString(jsonStr, "user")
-	age, _ := json.GetInt(jsonStr, "age")
-	active, _ := json.GetBool(jsonStr, "active")
+	name := json.GetString(jsonStr, "user", "")
+	age := json.GetInt(jsonStr, "age", 0)
+	active := json.GetBool(jsonStr, "active", false)
 
 	fmt.Printf("   User: %s, Age: %d, Active: %t\n", name, age, active)
 }
 
 func demonstrateMarshalToFile(tempDir string) {
-	fmt.Println("\n3️⃣  Marshal to File")
+	fmt.Println("\n3. Marshal to File")
 	fmt.Println("────────────────────")
 
 	type User struct {
@@ -166,7 +169,7 @@ func demonstrateMarshalToFile(tempDir string) {
 }
 
 func demonstrateUnmarshalFromFile(tempDir string) {
-	fmt.Println("\n4️⃣  Unmarshal from File")
+	fmt.Println("\n4.  Unmarshal from File")
 	fmt.Println("───────────────────────")
 
 	// First create a file with JSON data
@@ -178,7 +181,10 @@ func demonstrateUnmarshalFromFile(tempDir string) {
 		"active": true
 	}`
 	filePath := filepath.Join(tempDir, "user_unmarshal.json")
-	os.WriteFile(filePath, []byte(data), 0644)
+	if err := os.WriteFile(filePath, []byte(data), 0644); err != nil {
+		fmt.Printf("   Error writing file: %v\n", err)
+		return
+	}
 
 	// Unmarshal into struct
 	type User struct {
@@ -199,7 +205,7 @@ func demonstrateUnmarshalFromFile(tempDir string) {
 	fmt.Printf("   User: %+v\n", user)
 
 	// Also can unmarshal into map
-	var userMap map[string]interface{}
+	var userMap map[string]any
 	err = json.UnmarshalFromFile(filePath, &userMap)
 	if err == nil {
 		fmt.Printf("\n   As map: %+v\n", userMap)
@@ -207,7 +213,7 @@ func demonstrateUnmarshalFromFile(tempDir string) {
 }
 
 func demonstrateReadModifyWrite(tempDir string) {
-	fmt.Println("\n5️⃣  Read-Modify-Write Pattern")
+	fmt.Println("\n5.  Read-Modify-Write Pattern")
 	fmt.Println("────────────────────────────")
 
 	// Create initial config file
@@ -220,7 +226,10 @@ func demonstrateReadModifyWrite(tempDir string) {
 		"debug": false
 	}`
 	configPath := filepath.Join(tempDir, "config.json")
-	os.WriteFile(configPath, []byte(initialConfig), 0644)
+	if err := os.WriteFile(configPath, []byte(initialConfig), 0644); err != nil {
+		fmt.Printf("   Error writing config file: %v\n", err)
+		return
+	}
 
 	fmt.Println("   Initial config:")
 	content, _ := os.ReadFile(configPath)
@@ -237,14 +246,26 @@ func demonstrateReadModifyWrite(tempDir string) {
 	}
 
 	// Modify values
-	updated, _ := json.Set(configStr, "version", "1.1.0")
-	updated, _ = json.Set(updated, "server.port", 9090)
-	updated, _ = json.Set(updated, "debug", true)
+	updated, err := json.Set(configStr, "version", "1.1.0")
+	if err != nil {
+		fmt.Printf("   Error setting version: %v\n", err)
+		return
+	}
+	updated, err = json.Set(updated, "server.port", 9090)
+	if err != nil {
+		fmt.Printf("   Error setting port: %v\n", err)
+		return
+	}
+	updated, _ = json.Set(updated, "debug", true) // OK: valid path, valid value
 
-	// Add new field with automatic path creation using fluent config
+	// Add new field with automatic path creation using Config
 	cfg := json.DefaultConfig()
 	cfg.CreatePaths = true
-	updated, _ = json.Set(updated, "server.ssl", true, cfg)
+	updated, err = json.Set(updated, "server.ssl", true, cfg)
+	if err != nil {
+		fmt.Printf("   Error setting ssl: %v\n", err)
+		return
+	}
 
 	// Save back
 	opts := json.DefaultConfig()

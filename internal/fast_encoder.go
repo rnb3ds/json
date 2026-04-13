@@ -41,14 +41,15 @@ var needsEscapeTable = [256]bool{
 
 // FastEncoder provides fast JSON encoding without reflection for common types
 type FastEncoder struct {
-	buf []byte
+	buf        []byte
+	htmlEscape bool // SECURITY: When true, escape <, >, & to \u003c, \u003e, \u0026
 }
 
 // encoderPool pools encoder objects to reduce allocations
 var encoderPool = sync.Pool{
 	New: func() any {
 		return &FastEncoder{
-			buf: make([]byte, 0, 256),
+			buf: make([]byte, 0, 512),
 		}
 	},
 }
@@ -77,29 +78,27 @@ var largeEncoderPool = sync.Pool{
 func GetEncoder() *FastEncoder {
 	e := encoderPool.Get().(*FastEncoder)
 	e.buf = e.buf[:0]
+	e.htmlEscape = false
 	return e
 }
 
 // GetEncoderWithSize retrieves an encoder with appropriate capacity hint
 // PERFORMANCE: Use tiered pools for better memory management and reduced allocations
 func GetEncoderWithSize(hint int) *FastEncoder {
+	var e *FastEncoder
 	switch {
 	case hint <= 1024:
 		return GetEncoder()
 	case hint <= 4096:
-		e := mediumEncoderPool.Get().(*FastEncoder)
-		e.buf = e.buf[:0]
-		return e
+		e = mediumEncoderPool.Get().(*FastEncoder)
 	case hint <= 65536:
-		e := largeEncoderPool.Get().(*FastEncoder)
-		e.buf = e.buf[:0]
-		return e
+		e = largeEncoderPool.Get().(*FastEncoder)
 	default:
-		// For very large hints, use large pool but buffer will be discarded
-		e := largeEncoderPool.Get().(*FastEncoder)
-		e.buf = e.buf[:0]
-		return e
+		e = largeEncoderPool.Get().(*FastEncoder)
 	}
+	e.buf = e.buf[:0]
+	e.htmlEscape = false
+	return e
 }
 
 // PutEncoder returns an encoder to the appropriate pool
@@ -234,16 +233,23 @@ func (e *FastEncoder) encodeSlow(v any) error {
 	return nil
 }
 
+// SetHTMLEscape enables or disables HTML-safe escaping for this encoder.
+// SECURITY: When enabled, <, >, & are escaped to \u003c, \u003e, \u0026.
+// This prevents XSS when JSON output is embedded in HTML contexts.
+func (e *FastEncoder) SetHTMLEscape(enabled bool) {
+	e.htmlEscape = enabled
+}
+
 // EncodeString encodes a JSON string
-// PERFORMANCE: Avoids reflection, uses inline escaping
-// SECURITY: Validates UTF-8 encoding per RFC 8259
+// PERFORMANCE: Avoids reflection, uses inline escaping with combined UTF-8 validation
+// SECURITY: Validates UTF-8 encoding per RFC 8259. Escapes HTML chars when htmlEscape is set.
 func (e *FastEncoder) EncodeString(s string) {
 	e.buf = append(e.buf, '"')
 
-	// Fast path: check if escaping is needed AND UTF-8 is valid
+	// Fast path: combined check for escape needs and UTF-8 validity
 	// SECURITY: RFC 8259 requires JSON strings to be valid UTF-8
-	// We must validate UTF-8 even in the fast path to prevent invalid output
-	if !needsEscape(s) && utf8.ValidString(s) {
+	// PERFORMANCE: Single pass validation instead of separate needsEscape + utf8.ValidString
+	if isSafeString(s) {
 		e.buf = append(e.buf, s...)
 		e.buf = append(e.buf, '"')
 		return
@@ -254,8 +260,80 @@ func (e *FastEncoder) EncodeString(s string) {
 	e.buf = append(e.buf, '"')
 }
 
-// needsEscape checks if a string needs JSON escaping
+// isSafeString checks if a string is safe for direct JSON output (no escaping needed AND valid UTF-8)
+// PERFORMANCE v2: Combined single-pass check with optimized paths for common cases
+// Returns true only if the string:
+// 1. Contains no characters that need JSON escaping (control chars, quotes, backslashes)
+// 2. Is valid UTF-8 (all high bytes are part of valid multi-byte sequences)
+func isSafeString(s string) bool {
+	n := len(s)
+	if n == 0 {
+		return true
+	}
+
+	// PERFORMANCE v2: Fast path for short strings (<=8 bytes)
+	// Avoids SWAR loop overhead for very common small strings
+	if n <= 8 {
+		for i := 0; i < n; i++ {
+			c := s[i]
+			if needsEscapeTable[c] || c >= 0x80 {
+				return false
+			}
+		}
+		return true
+	}
+
+	// Process 8 bytes at a time using SWAR technique
+	for i := 0; i+8 <= n; i += 8 {
+		// Load 8 bytes
+		b0, b1, b2, b3 := s[i], s[i+1], s[i+2], s[i+3]
+		b4, b5, b6, b7 := s[i+4], s[i+5], s[i+6], s[i+7]
+
+		// Check for control characters (< 0x20) using bit manipulation
+		// A byte is a control char if (byte - 0x20) has the sign bit set
+		ctrlMask := ((b0 - 0x20) & 0x80) | ((b1 - 0x20) & 0x80) | ((b2 - 0x20) & 0x80) | ((b3 - 0x20) & 0x80) |
+			((b4 - 0x20) & 0x80) | ((b5 - 0x20) & 0x80) | ((b6 - 0x20) & 0x80) | ((b7 - 0x20) & 0x80)
+
+		// Quick check for common safe case: no control chars, no quotes, no backslashes
+		if ctrlMask != 0 ||
+			b0 == '"' || b1 == '"' || b2 == '"' || b3 == '"' ||
+			b4 == '"' || b5 == '"' || b6 == '"' || b7 == '"' ||
+			b0 == '\\' || b1 == '\\' || b2 == '\\' || b3 == '\\' ||
+			b4 == '\\' || b5 == '\\' || b6 == '\\' || b7 == '\\' {
+			// Found potential escape needed, verify with table lookup
+			if needsEscapeTable[b0] || needsEscapeTable[b1] || needsEscapeTable[b2] || needsEscapeTable[b3] ||
+				needsEscapeTable[b4] || needsEscapeTable[b5] || needsEscapeTable[b6] || needsEscapeTable[b7] {
+				return false
+			}
+		}
+
+		// UTF-8 validation: check for high bytes (>= 0x80)
+		// High bytes indicate multi-byte UTF-8 sequences which need validation
+		if (b0 | b1 | b2 | b3 | b4 | b5 | b6 | b7) >= 0x80 {
+			// Has high bytes - fall back to full UTF-8 validation
+			// This is slower but handles all UTF-8 edge cases correctly
+			return false
+		}
+	}
+
+	// Check remaining bytes (less than 8)
+	for i := n &^ 7; i < n; i++ {
+		c := s[i]
+		if needsEscapeTable[c] {
+			return false
+		}
+		// Check for high bytes in remainder
+		if c >= 0x80 {
+			return false
+		}
+	}
+
+	return true
+}
+
+// needsEscape checks if a string needs JSON escaping (without UTF-8 validation)
 // PERFORMANCE: Uses SWAR (SIMD Within A Register) technique for batch processing
+// Note: Use isSafeString for combined escape + UTF-8 check
 func needsEscape(s string) bool {
 	n := len(s)
 	if n == 0 {
@@ -299,7 +377,8 @@ func needsEscape(s string) bool {
 
 // escapeString escapes special characters for JSON
 // PERFORMANCE: Batch copies safe segments to reduce append calls
-// SECURITY: Validates UTF-8 encoding and replaces invalid sequences
+// SECURITY: Validates UTF-8 encoding and replaces invalid sequences.
+// Escapes HTML characters (<, >, &) when htmlEscape is enabled.
 func (e *FastEncoder) escapeString(s string) {
 	start := 0
 	n := len(s)
@@ -322,6 +401,24 @@ func (e *FastEncoder) escapeString(s string) {
 			}
 			// Valid multi-byte UTF-8 - skip entire rune
 			i += size
+			continue
+		}
+
+		// SECURITY: Escape HTML characters when htmlEscape is enabled
+		if e.htmlEscape && (c == '<' || c == '>' || c == '&') {
+			if start < i {
+				e.buf = append(e.buf, s[start:i]...)
+			}
+			switch c {
+			case '<':
+				e.buf = append(e.buf, `\u003c`...)
+			case '>':
+				e.buf = append(e.buf, `\u003e`...)
+			case '&':
+				e.buf = append(e.buf, `\u0026`...)
+			}
+			i++
+			start = i
 			continue
 		}
 
@@ -375,7 +472,7 @@ func appendHex(buf []byte, c byte) []byte {
 }
 
 // EncodeInt encodes an integer
-// PERFORMANCE: Uses pre-computed lookup tables for integers -999 to 9999
+// PERFORMANCE: Uses pre-computed lookup tables for integers -9999 to 9999
 func (e *FastEncoder) EncodeInt(n int64) {
 	// Fast path for small positive integers (0-99)
 	if n >= 0 && n < 100 {
@@ -404,6 +501,12 @@ func (e *FastEncoder) EncodeInt(n int64) {
 	// Fast path for medium negative integers (-100 to -999)
 	if n <= -100 && n > -1000 {
 		e.buf = append(e.buf, mediumIntsNeg[-n-100]...)
+		return
+	}
+
+	// Fast path for large negative integers (-1000 to -9999)
+	if n <= -1000 && n > -10000 {
+		e.buf = append(e.buf, largeIntsNeg[-n-1000]...)
 		return
 	}
 
@@ -475,38 +578,56 @@ var smallIntsNeg [100][]byte
 // PERFORMANCE: Avoids strconv.AppendInt for common negative 3-digit integer range
 var mediumIntsNeg [900][]byte
 
+// largeIntsNeg contains pre-computed string representations of negative integers -1000 to -9999
+// PERFORMANCE: Avoids strconv.AppendInt for common negative 4-digit integer range
+var largeIntsNeg [9000][]byte
+
 // init initializes the medium and negative integer lookup tables and common floats
+// PERFORMANCE v2: Optimized initialization using direct byte array construction
+// avoids string concatenation allocations
 func init() {
-	// Initialize medium integers (100-999)
+	// Pre-allocate a single buffer for building numbers
+	var buf [4]byte
+
+	// Initialize medium integers (100-999) - direct byte construction
 	for i := range 900 {
 		n := i + 100
-		mediumInts[i] = []byte(
-			string(byte('0'+n/100)) +
-				string(byte('0'+(n/10)%10)) +
-				string(byte('0'+n%10)),
-		)
+		buf[0] = byte('0' + n/100)
+		buf[1] = byte('0' + (n/10)%10)
+		buf[2] = byte('0' + n%10)
+		// Create a copy since buf will be reused
+		mediumInts[i] = []byte{buf[0], buf[1], buf[2]}
 	}
 
-	// Initialize large integers (1000-9999)
+	// Initialize large integers (1000-9999) - direct byte construction
+	var buf4 [4]byte
 	for i := range 9000 {
 		n := i + 1000
-		largeInts[i] = []byte(
-			string(byte('0'+n/1000)) +
-				string(byte('0'+(n/100)%10)) +
-				string(byte('0'+(n/10)%10)) +
-				string(byte('0'+n%10)),
-		)
+		buf4[0] = byte('0' + n/1000)
+		buf4[1] = byte('0' + (n/100)%10)
+		buf4[2] = byte('0' + (n/10)%10)
+		buf4[3] = byte('0' + n%10)
+		largeInts[i] = []byte{buf4[0], buf4[1], buf4[2], buf4[3]}
 	}
 
 	// Initialize negative integers (-1 to -99)
 	smallIntsNeg[0] = []byte{} // unused (index 0)
 	for i := 1; i < 100; i++ {
-		smallIntsNeg[i] = []byte("-" + string(smallInts[i]))
+		positive := smallInts[i]
+		smallIntsNeg[i] = []byte{'-', positive[0]}
+		if len(positive) > 1 {
+			smallIntsNeg[i] = append(smallIntsNeg[i], positive[1:]...)
+		}
 	}
 
 	// Initialize medium negative integers (-100 to -999)
 	for i := range 900 {
-		mediumIntsNeg[i] = []byte("-" + string(mediumInts[i]))
+		mediumIntsNeg[i] = []byte{'-', mediumInts[i][0], mediumInts[i][1], mediumInts[i][2]}
+	}
+
+	// Initialize large negative integers (-1000 to -9999)
+	for i := range 9000 {
+		largeIntsNeg[i] = []byte{'-', largeInts[i][0], largeInts[i][1], largeInts[i][2], largeInts[i][3]}
 	}
 
 	// Initialize common floats table
@@ -704,7 +825,15 @@ func (e *FastEncoder) EncodeBool(b bool) {
 }
 
 // EncodeMap encodes a map[string]any
+// PERFORMANCE v2: Pre-allocates buffer capacity based on map size estimate
 func (e *FastEncoder) EncodeMap(m map[string]any) error {
+	// PERFORMANCE v2: Pre-grow buffer to reduce reallocations
+	// Estimate: each entry needs ~32 bytes on average (key + value + quotes + colon + comma)
+	needed := len(m) * 32
+	if cap(e.buf)-len(e.buf) < needed {
+		e.buf = append(e.buf[:cap(e.buf)], make([]byte, needed)...)[:len(e.buf)]
+	}
+
 	e.buf = append(e.buf, '{')
 	first := true
 
@@ -728,6 +857,12 @@ func (e *FastEncoder) EncodeMap(m map[string]any) error {
 
 // EncodeMapStringString encodes a map[string]string
 func (e *FastEncoder) EncodeMapStringString(m map[string]string) error {
+	// PERFORMANCE: Pre-grow buffer to reduce reallocations
+	needed := len(m) * 32
+	if cap(e.buf)-len(e.buf) < needed {
+		e.buf = append(e.buf[:cap(e.buf)], make([]byte, needed)...)[:len(e.buf)]
+	}
+
 	e.buf = append(e.buf, '{')
 	first := true
 
@@ -748,6 +883,12 @@ func (e *FastEncoder) EncodeMapStringString(m map[string]string) error {
 
 // EncodeMapStringInt encodes a map[string]int
 func (e *FastEncoder) EncodeMapStringInt(m map[string]int) error {
+	// PERFORMANCE: Pre-grow buffer to reduce reallocations
+	needed := len(m) * 24
+	if cap(e.buf)-len(e.buf) < needed {
+		e.buf = append(e.buf[:cap(e.buf)], make([]byte, needed)...)[:len(e.buf)]
+	}
+
 	e.buf = append(e.buf, '{')
 	first := true
 
@@ -767,7 +908,18 @@ func (e *FastEncoder) EncodeMapStringInt(m map[string]int) error {
 }
 
 // EncodeArray encodes a []any
+// PERFORMANCE v2: Pre-allocates buffer capacity based on array size estimate
 func (e *FastEncoder) EncodeArray(arr []any) error {
+	// PERFORMANCE: Pre-grow buffer to reduce reallocations for large arrays
+	n := len(arr)
+	if n > 8 {
+		// Estimate: each element needs ~16 bytes on average
+		needed := n * 16
+		if cap(e.buf)-len(e.buf) < needed {
+			e.buf = append(e.buf[:cap(e.buf)], make([]byte, needed)...)[:len(e.buf)]
+		}
+	}
+
 	e.buf = append(e.buf, '[')
 
 	for i, v := range arr {
@@ -784,7 +936,19 @@ func (e *FastEncoder) EncodeArray(arr []any) error {
 }
 
 // EncodeStringSlice encodes a []string
+// PERFORMANCE v2: Pre-allocates buffer for large slices
 func (e *FastEncoder) EncodeStringSlice(arr []string) {
+	// Pre-allocate for large slices
+	if n := len(arr); n > 8 {
+		totalLen := n * 2 // brackets and commas
+		for _, s := range arr {
+			totalLen += len(s) + 4 // quotes + potential escape overhead
+		}
+		if cap(e.buf)-len(e.buf) < totalLen {
+			e.buf = append(e.buf[:cap(e.buf)], make([]byte, totalLen)...)[:len(e.buf)]
+		}
+	}
+
 	e.buf = append(e.buf, '[')
 
 	for i, v := range arr {
@@ -798,7 +962,16 @@ func (e *FastEncoder) EncodeStringSlice(arr []string) {
 }
 
 // EncodeIntSlice encodes a []int
+// PERFORMANCE v2: Pre-allocates buffer for large slices
 func (e *FastEncoder) EncodeIntSlice(arr []int) {
+	// Each int needs at most 20 bytes (max int64 digits + comma)
+	if n := len(arr); n > 8 {
+		needed := n * 12 // average estimate
+		if cap(e.buf)-len(e.buf) < needed {
+			e.buf = append(e.buf[:cap(e.buf)], make([]byte, needed)...)[:len(e.buf)]
+		}
+	}
+
 	e.buf = append(e.buf, '[')
 
 	for i, v := range arr {
@@ -812,7 +985,16 @@ func (e *FastEncoder) EncodeIntSlice(arr []int) {
 }
 
 // EncodeFloatSlice encodes a []float64
+// PERFORMANCE v2: Pre-allocates buffer for large slices
 func (e *FastEncoder) EncodeFloatSlice(arr []float64) {
+	// Each float needs at most 24 bytes
+	if n := len(arr); n > 8 {
+		needed := n * 16 // average estimate
+		if cap(e.buf)-len(e.buf) < needed {
+			e.buf = append(e.buf[:cap(e.buf)], make([]byte, needed)...)[:len(e.buf)]
+		}
+	}
+
 	e.buf = append(e.buf, '[')
 
 	for i, v := range arr {
@@ -868,15 +1050,31 @@ func (e *FastEncoder) EncodeTime(t time.Time) {
 }
 
 // EncodeBase64 encodes a []byte as base64 string
+// EncodeBase64 encodes a []byte as base64 string
+// PERFORMANCE: Encodes directly into buffer to avoid intermediate string allocation
 func (e *FastEncoder) EncodeBase64(b []byte) {
+	encLen := base64.StdEncoding.EncodedLen(len(b))
+	// Ensure capacity: 1 (quote) + encLen + 1 (quote)
+	if cap(e.buf)-len(e.buf) < encLen+2 {
+		newBuf := make([]byte, len(e.buf), len(e.buf)+encLen+2)
+		copy(newBuf, e.buf)
+		e.buf = newBuf
+	}
 	e.buf = append(e.buf, '"')
-	encoded := base64.StdEncoding.EncodeToString(b)
-	e.buf = append(e.buf, encoded...)
+	start := len(e.buf)
+	e.buf = e.buf[:start+encLen]
+	base64.StdEncoding.Encode(e.buf[start:], b)
 	e.buf = append(e.buf, '"')
 }
 
 // EncodeMapStringInt64 encodes a map[string]int64
 func (e *FastEncoder) EncodeMapStringInt64(m map[string]int64) error {
+	// PERFORMANCE: Pre-grow buffer to reduce reallocations
+	needed := len(m) * 24
+	if cap(e.buf)-len(e.buf) < needed {
+		e.buf = append(e.buf[:cap(e.buf)], make([]byte, needed)...)[:len(e.buf)]
+	}
+
 	e.buf = append(e.buf, '{')
 	first := true
 
@@ -897,6 +1095,12 @@ func (e *FastEncoder) EncodeMapStringInt64(m map[string]int64) error {
 
 // EncodeMapStringFloat64 encodes a map[string]float64
 func (e *FastEncoder) EncodeMapStringFloat64(m map[string]float64) error {
+	// PERFORMANCE: Pre-grow buffer to reduce reallocations
+	needed := len(m) * 28
+	if cap(e.buf)-len(e.buf) < needed {
+		e.buf = append(e.buf[:cap(e.buf)], make([]byte, needed)...)[:len(e.buf)]
+	}
+
 	e.buf = append(e.buf, '{')
 	first := true
 
@@ -1225,6 +1429,16 @@ func GetStructEncoder(t reflect.Type) []StructFieldInfo {
 	// Cache it
 	actual, _ := structEncoderCache.LoadOrStore(t, fields)
 	return actual.([]StructFieldInfo)
+}
+
+// ClearStructEncoderCache removes all entries from the struct encoder cache.
+// Call this to reclaim memory when the set of encoded struct types changes
+// (e.g., after unloading plugins or in long-running services with dynamic types).
+func ClearStructEncoderCache() {
+	structEncoderCache.Range(func(key, _ any) bool {
+		structEncoderCache.Delete(key)
+		return true
+	})
 }
 
 // getEncodeFn returns a type-specific encoding function for the given type

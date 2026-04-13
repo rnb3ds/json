@@ -40,12 +40,11 @@ type Config struct {
 	MaxArrayElements          int   `json:"max_array_elements"`
 	// FullSecurityScan enables full (non-sampling) security validation for all JSON input.
 	//
-	// When false (default): Large JSON (>4KB) uses optimized sampling with:
-	//   - 16KB beginning section scan
-	//   - 8KB end section scan
-	//   - 15-30 distributed middle samples with 512-byte overlap
+	// When false (default): Large JSON (>4KB) uses optimized scanning with:
+	//   - Rolling window scan (32KB windows) over the entire JSON content
+	//   - Suspicious character density sampling (4KB beginning, middle, and end regions)
 	//   - Critical patterns (__proto__, constructor, prototype) always fully scanned
-	//   - Suspicious character density triggers automatic full scan
+	//   - High suspicious density triggers automatic full scan
 	//
 	// When true: All JSON is fully scanned regardless of size.
 	//
@@ -101,6 +100,68 @@ type Config struct {
 	EnableMetrics     bool `json:"enable_metrics"`
 	EnableHealthCheck bool `json:"enable_health_check"`
 
+	// ===== Large File Processing =====
+	// ChunkSize is the size of each chunk when processing large files.
+	// Default: 1MB (1024 * 1024 bytes)
+	ChunkSize int64 `json:"chunk_size"`
+
+	// MaxMemory is the maximum memory to use for large file processing.
+	// Default: 100MB (100 * 1024 * 1024 bytes)
+	MaxMemory int64 `json:"max_memory"`
+
+	// BufferSize is the buffer size for reading large files.
+	// Default: 64KB (64 * 1024 bytes)
+	BufferSize int `json:"buffer_size"`
+
+	// SamplingEnabled enables sampling for very large files.
+	// When true, only a subset of data is validated for security.
+	// Default: true
+	SamplingEnabled bool `json:"sampling_enabled"`
+
+	// SampleSize is the number of samples to take when sampling is enabled.
+	// Default: 1000
+	SampleSize int `json:"sample_size"`
+
+	// ===== JSONL (JSON Lines) Configuration =====
+	// These settings control JSONL/NDJSON file processing
+
+	// JSONLBufferSize is the buffer size for reading JSONL files.
+	// Default: 64KB (64 * 1024 bytes)
+	JSONLBufferSize int `json:"jsonl_buffer_size"`
+
+	// JSONLMaxLineSize is the maximum allowed line size for JSONL files.
+	// Default: 1MB (1024 * 1024 bytes)
+	JSONLMaxLineSize int `json:"jsonl_max_line_size"`
+
+	// JSONLSkipEmpty skips empty lines when processing JSONL files.
+	// Default: true
+	JSONLSkipEmpty bool `json:"jsonl_skip_empty"`
+
+	// JSONLSkipComments skips lines starting with # or //.
+	// Default: false
+	JSONLSkipComments bool `json:"jsonl_skip_comments"`
+
+	// JSONLContinueOnErr continues processing on parse errors.
+	// Default: false
+	JSONLContinueOnErr bool `json:"jsonl_continue_on_err"`
+
+	// JSONLWorkers is the number of parallel workers for JSONL processing.
+	// Default: 4
+	JSONLWorkers int `json:"jsonl_workers"`
+
+	// JSONLChunkSize is the chunk size for batched JSONL processing.
+	// Default: 1000
+	JSONLChunkSize int `json:"jsonl_chunk_size"`
+
+	// JSONLMaxMemory is the maximum memory for JSONL file processing in bytes.
+	// Default: 100MB
+	JSONLMaxMemory int64 `json:"jsonl_max_memory"`
+
+	// ===== Merge Options =====
+	// MergeMode controls how JSON documents are merged by MergeJSON and MergeMany.
+	// Default: MergeUnion (combine all keys/elements)
+	MergeMode MergeMode `json:"merge_mode"`
+
 	// ===== Context =====
 	Context context.Context `json:"-"` // Operation context
 
@@ -119,12 +180,15 @@ type Config struct {
 	CustomValidators []Validator
 
 	// AdditionalDangerousPatterns adds security patterns beyond defaults.
-	// These are checked in addition to built-in patterns unless
-	// DisableDefaultPatterns is true.
+	// These are checked in addition to built-in patterns.
+	// SECURITY: Critical patterns (__proto__, constructor[, prototype.) are always
+	// enforced and cannot be disabled.
 	AdditionalDangerousPatterns []DangerousPattern
 
-	// DisableDefaultPatterns disables built-in security patterns.
-	// Set to true to use only AdditionalDangerousPatterns.
+	// DisableDefaultPatterns disables built-in warning-level security patterns
+	// (HTML tags, event handlers, etc.) but has no effect on critical patterns.
+	// SECURITY: Critical patterns (__proto__, constructor[, prototype.) are always
+	// enforced regardless of this setting. These patterns are too dangerous to disable.
 	DisableDefaultPatterns bool
 
 	// Hooks provide before/after interception for operations.
@@ -135,8 +199,11 @@ type Config struct {
 	CustomPathParser PathParser
 }
 
-// GetSecurityLimits returns a summary of current security limits
-func (c *Config) GetSecurityLimits() map[string]any {
+// getSecurityLimits returns a summary of current security limits
+func (c *Config) getSecurityLimits() map[string]any {
+	if c == nil {
+		return map[string]any{}
+	}
 	return map[string]any{
 		"max_nesting_depth":            c.MaxNestingDepthSecurity,
 		"max_security_validation_size": c.MaxSecurityValidationSize,
@@ -150,17 +217,26 @@ func (c *Config) GetSecurityLimits() map[string]any {
 // AddHook adds an operation hook to the configuration.
 // Hooks are executed in order for Before and in reverse order for After.
 func (c *Config) AddHook(hook Hook) {
+	if c == nil {
+		return
+	}
 	c.Hooks = append(c.Hooks, hook)
 }
 
 // AddValidator adds a custom validator to the configuration.
 // Validators are executed in order; all must pass for operations to proceed.
 func (c *Config) AddValidator(validator Validator) {
+	if c == nil {
+		return
+	}
 	c.CustomValidators = append(c.CustomValidators, validator)
 }
 
 // AddDangerousPattern adds a security pattern to the configuration.
 func (c *Config) AddDangerousPattern(pattern DangerousPattern) {
+	if c == nil {
+		return
+	}
 	c.AdditionalDangerousPatterns = append(c.AdditionalDangerousPatterns, pattern)
 }
 
@@ -170,12 +246,14 @@ func (c *Config) AddDangerousPattern(pattern DangerousPattern) {
 type ParsedJSON struct {
 	data      any
 	hash      uint64
-	jsonLen   int
 	processor *Processor
 }
 
 // Data returns the underlying parsed data
 func (p *ParsedJSON) Data() any {
+	if p == nil {
+		return nil
+	}
 	return p.data
 }
 
@@ -233,40 +311,10 @@ type BatchResult struct {
 	Error  error  `json:"error"`
 }
 
-// Marshaler is the interface implemented by types that
+// marshaler is the interface implemented by types that
 // can marshal themselves into valid JSON.
-type Marshaler interface {
+type marshaler interface {
 	MarshalJSON() ([]byte, error)
-}
-
-// Unmarshaler is the interface implemented by types
-// that can unmarshal a JSON description of themselves.
-// The input can be assumed to be a valid encoding of
-// a JSON value. UnmarshalJSON must copy the JSON data
-// if it wishes to retain the data after returning.
-//
-// By convention, to approximate the behavior of Unmarshal itself,
-// Unmarshalers implement UnmarshalJSON([]byte("null")) as a no-op.
-type Unmarshaler interface {
-	UnmarshalJSON([]byte) error
-}
-
-// TextMarshaler is the interface implemented by an object that can
-// marshal itself into a textual form.
-//
-// MarshalText encodes the receiver into UTF-8-encoded text and returns the result.
-type TextMarshaler interface {
-	MarshalText() (text []byte, err error)
-}
-
-// TextUnmarshaler is the interface implemented by an object that can
-// unmarshal a textual representation of itself.
-//
-// UnmarshalText must be able to decode the form generated by MarshalText.
-// UnmarshalText must copy the text if it wishes to retain the text
-// after returning.
-type TextUnmarshaler interface {
-	UnmarshalText(text []byte) error
 }
 
 // InvalidUnmarshalError describes an invalid argument passed to Unmarshal.
@@ -276,6 +324,9 @@ type InvalidUnmarshalError struct {
 }
 
 func (e *InvalidUnmarshalError) Error() string {
+	if e == nil {
+		return "json: Unmarshal(nil)"
+	}
 	if e.Type == nil {
 		return "json: Unmarshal(nil)"
 	}
@@ -293,7 +344,12 @@ type SyntaxError struct {
 	Offset int64  // error occurred after reading Offset bytes
 }
 
-func (e *SyntaxError) Error() string { return e.msg }
+func (e *SyntaxError) Error() string {
+	if e == nil {
+		return "json: nil syntax error"
+	}
+	return e.msg
+}
 
 // UnmarshalTypeError describes a JSON value that was
 // not appropriate for a value of a specific Go type.
@@ -307,6 +363,9 @@ type UnmarshalTypeError struct {
 }
 
 func (e *UnmarshalTypeError) Error() string {
+	if e == nil {
+		return "json: cannot unmarshal into nil target"
+	}
 	if e.Struct != "" || e.Field != "" {
 		return "json: cannot unmarshal " + e.Value + " into Go struct field " + e.Struct + "." + e.Field + " of type " + e.Type.String()
 	}
@@ -324,6 +383,9 @@ type UnsupportedTypeError struct {
 }
 
 func (e *UnsupportedTypeError) Error() string {
+	if e == nil {
+		return "json: unsupported type: nil"
+	}
 	return "json: unsupported type: " + e.Type.String()
 }
 
@@ -335,6 +397,9 @@ type UnsupportedValueError struct {
 }
 
 func (e *UnsupportedValueError) Error() string {
+	if e == nil {
+		return "json: unsupported value: nil"
+	}
 	return "json: unsupported value: " + e.Str
 }
 
@@ -346,6 +411,9 @@ type MarshalerError struct {
 }
 
 func (e *MarshalerError) Error() string {
+	if e == nil {
+		return "json: nil marshaler error"
+	}
 	srcFunc := e.sourceFunc
 	if srcFunc == "" {
 		srcFunc = "MarshalJSON"
@@ -368,9 +436,9 @@ func (e *MarshalerError) Unwrap() error { return e.Err }
 // IMPORTANT: Do not reassign this variable. Use IsDeletedMarker() for comparisons.
 var deletedMarker = &struct{}{} // deleted marker - empty struct for pointer identity
 
-// IsDeletedMarker checks if a value is the deleted marker sentinel.
-// This is the recommended way to check for deleted markers instead of direct comparison.
-func IsDeletedMarker(v any) bool {
+// isDeletedMarker checks if a value is the deleted marker sentinel.
+// This is the internal function for checking deleted markers.
+func isDeletedMarker(v any) bool {
 	return v == deletedMarker
 }
 
@@ -433,20 +501,6 @@ type resourceMonitor struct {
 	totalOperations   int64
 }
 
-// resourceStats represents resource usage statistics
-type resourceStats struct {
-	AllocatedBytes    int64         `json:"allocated_bytes"`
-	FreedBytes        int64         `json:"freed_bytes"`
-	PeakMemoryUsage   int64         `json:"peak_memory_usage"`
-	PoolHits          int64         `json:"pool_hits"`
-	PoolMisses        int64         `json:"pool_misses"`
-	PoolEvictions     int64         `json:"pool_evictions"`
-	MaxGoroutines     int64         `json:"max_goroutines"`
-	CurrentGoroutines int64         `json:"current_goroutines"`
-	AvgResponseTime   time.Duration `json:"avg_response_time"`
-	TotalOperations   int64         `json:"total_operations"`
-}
-
 // newResourceMonitor creates a new resource monitor
 func newResourceMonitor() *resourceMonitor {
 	return &resourceMonitor{
@@ -458,55 +512,83 @@ func newResourceMonitor() *resourceMonitor {
 // RecordAllocation records an allocation of the specified size.
 // Note: the peak memory calculation uses a snapshot of allocated/freed counters,
 // so it is approximate under high concurrency. This is acceptable for monitoring.
-func (rm *resourceMonitor) RecordAllocation(bytes int64) {
-	allocated := atomic.AddInt64(&rm.allocatedBytes, bytes)
-	freed := atomic.LoadInt64(&rm.freedBytes)
-	current := allocated - freed
-	for {
+// FIX: Limited CAS retries to prevent unbounded loops under high contention.
+// After maxCASRetries, we accept a slightly stale peak value for better throughput.
+func (rm *resourceMonitor) recordAllocation(bytes int64) {
+	// Atomically update allocation counter
+	atomic.AddInt64(&rm.allocatedBytes, bytes)
+
+	// FIX: Limit CAS retries to prevent unbounded loops under high contention
+	// This is a reasonable trade-off: we accept slightly stale peak values
+	// in exchange for better throughput and avoiding goroutine starvation
+	const maxCASRetries = 3
+
+	for i := 0; i < maxCASRetries; i++ {
+		allocated := atomic.LoadInt64(&rm.allocatedBytes)
+		freed := atomic.LoadInt64(&rm.freedBytes)
+		current := allocated - freed
+
 		peak := atomic.LoadInt64(&rm.peakMemoryUsage)
-		if current <= peak || atomic.CompareAndSwapInt64(&rm.peakMemoryUsage, peak, current) {
-			break
+		if current <= peak {
+			return // Current is not higher than peak, no update needed
 		}
+
+		if atomic.CompareAndSwapInt64(&rm.peakMemoryUsage, peak, current) {
+			return // Successfully updated peak
+		}
+		// CAS failed - another goroutine updated peak, retry with fresh values
 	}
+	// After maxCASRetries, accept the current peak value
+	// This is acceptable for monitoring purposes where exact precision is not critical
 }
 
 // RecordDeallocation records a deallocation of the specified size
-func (rm *resourceMonitor) RecordDeallocation(bytes int64) {
+func (rm *resourceMonitor) recordDeallocation(bytes int64) {
 	atomic.AddInt64(&rm.freedBytes, bytes)
 }
 
 // RecordPoolHit records a pool cache hit
-func (rm *resourceMonitor) RecordPoolHit() {
+func (rm *resourceMonitor) recordPoolHit() {
 	atomic.AddInt64(&rm.poolHits, 1)
 }
 
 // RecordPoolMiss records a pool cache miss
-func (rm *resourceMonitor) RecordPoolMiss() {
+func (rm *resourceMonitor) recordPoolMiss() {
 	atomic.AddInt64(&rm.poolMisses, 1)
 }
 
 // RecordPoolEviction records a pool eviction
-func (rm *resourceMonitor) RecordPoolEviction() {
+func (rm *resourceMonitor) recordPoolEviction() {
 	atomic.AddInt64(&rm.poolEvictions, 1)
 }
 
-// RecordOperation records an operation with its duration
-func (rm *resourceMonitor) RecordOperation(duration time.Duration) {
+// RecordOperation records an operation with its duration.
+// FIX: Limited CAS retries to prevent unbounded loops under high contention.
+// After maxCASRetries, we accept a slightly stale average for better throughput.
+func (rm *resourceMonitor) recordOperation(duration time.Duration) {
 	atomic.AddInt64(&rm.totalOperations, 1)
 
 	newTime := duration.Nanoseconds()
-	for {
+	const maxCASRetries = 3
+
+	for i := 0; i < maxCASRetries; i++ {
 		oldAvg := atomic.LoadInt64(&rm.avgResponseTime)
 		newAvg := oldAvg + (newTime-oldAvg)/10
 		if atomic.CompareAndSwapInt64(&rm.avgResponseTime, oldAvg, newAvg) {
-			break
+			return
 		}
 	}
+	// After maxCASRetries, accept slightly stale average — acceptable for monitoring
 }
 
-// CheckForLeaks checks for potential resource leaks
-func (rm *resourceMonitor) CheckForLeaks() []string {
-	for {
+// CheckForLeaks checks for potential resource leaks.
+// FIX: Limited CAS retries to prevent unbounded loops under high contention.
+func (rm *resourceMonitor) checkForLeaks() []string {
+	const maxCASRetries = 3
+
+	// Try to update lastLeakCheck timestamp via CAS; proceed if interval elapsed.
+	casSucceeded := false
+	for i := 0; i < maxCASRetries; i++ {
 		now := time.Now().Unix()
 		lastCheck := atomic.LoadInt64(&rm.lastLeakCheck)
 
@@ -515,8 +597,14 @@ func (rm *resourceMonitor) CheckForLeaks() []string {
 		}
 
 		if atomic.CompareAndSwapInt64(&rm.lastLeakCheck, lastCheck, now) {
+			casSucceeded = true
 			break
 		}
+		// CAS failed - another goroutine updated, retry with fresh values
+	}
+	// After maxCASRetries without successful CAS, another goroutine won and will run the check.
+	if !casSucceeded {
+		return nil
 	}
 
 	var issues []string
@@ -551,24 +639,8 @@ func (rm *resourceMonitor) CheckForLeaks() []string {
 	return issues
 }
 
-// getStats returns current resource statistics
-func (rm *resourceMonitor) getStats() resourceStats {
-	return resourceStats{
-		AllocatedBytes:    atomic.LoadInt64(&rm.allocatedBytes),
-		FreedBytes:        atomic.LoadInt64(&rm.freedBytes),
-		PeakMemoryUsage:   atomic.LoadInt64(&rm.peakMemoryUsage),
-		PoolHits:          atomic.LoadInt64(&rm.poolHits),
-		PoolMisses:        atomic.LoadInt64(&rm.poolMisses),
-		PoolEvictions:     atomic.LoadInt64(&rm.poolEvictions),
-		MaxGoroutines:     atomic.LoadInt64(&rm.maxGoroutines),
-		CurrentGoroutines: atomic.LoadInt64(&rm.currentGoroutines),
-		AvgResponseTime:   time.Duration(atomic.LoadInt64(&rm.avgResponseTime)),
-		TotalOperations:   atomic.LoadInt64(&rm.totalOperations),
-	}
-}
-
 // Reset resets all resource statistics
-func (rm *resourceMonitor) Reset() {
+func (rm *resourceMonitor) reset() {
 	atomic.StoreInt64(&rm.allocatedBytes, 0)
 	atomic.StoreInt64(&rm.freedBytes, 0)
 	atomic.StoreInt64(&rm.peakMemoryUsage, 0)
@@ -582,66 +654,92 @@ func (rm *resourceMonitor) Reset() {
 	atomic.StoreInt64(&rm.lastLeakCheck, time.Now().Unix())
 }
 
-// GetDeallocationRatio returns the ratio of freed bytes to allocated bytes as a percentage.
-// Values > 100% indicate the same memory was reused multiple times via pooling.
-func (rm *resourceMonitor) GetDeallocationRatio() float64 {
-	allocated := atomic.LoadInt64(&rm.allocatedBytes)
-	freed := atomic.LoadInt64(&rm.freedBytes)
-
-	if allocated == 0 {
-		return 100.0
-	}
-
-	return float64(freed) / float64(allocated) * 100.0
-}
-
-// GetPoolEfficiency returns the pool efficiency percentage
-// This is the hit ratio of the pool cache
-func (rm *resourceMonitor) GetPoolEfficiency() float64 {
-	return rm.GetPoolHitRatio()
-}
-
-// GetPoolHitRatio returns the pool cache hit ratio as a percentage.
-// This is an alias for GetPoolEfficiency with consistent naming.
-func (rm *resourceMonitor) GetPoolHitRatio() float64 {
-	hits := atomic.LoadInt64(&rm.poolHits)
-	misses := atomic.LoadInt64(&rm.poolMisses)
-	total := hits + misses
-
-	if total == 0 {
-		return 100.0
-	}
-
-	return float64(hits) / float64(total) * 100.0
-}
-
-// Schema represents a JSON schema for validation
+// Schema represents a JSON schema for validation.
+// Supports a subset of JSON Schema Draft 7 for validating JSON structures.
+//
+// Example:
+//
+//	schema := &json.Schema{
+//	    Type:     "object",
+//	    Required: []string{"name", "email"},
+//	    Properties: map[string]*json.Schema{
+//	        "name":  {Type: "string", MinLength: 1},
+//	        "email": {Type: "string", Format: "email"},
+//	        "age":   {Type: "integer", Minimum: 0},
+//	    },
+//	}
+//	err := processor.ValidateSchema(jsonStr, schema)
 type Schema struct {
-	Type                 string             `json:"type,omitempty"`
-	Properties           map[string]*Schema `json:"properties,omitempty"`
-	Items                *Schema            `json:"items,omitempty"`
-	Required             []string           `json:"required,omitempty"`
-	MinLength            int                `json:"minLength,omitempty"`
-	MaxLength            int                `json:"maxLength,omitempty"`
-	Minimum              float64            `json:"minimum,omitempty"`
-	Maximum              float64            `json:"maximum,omitempty"`
-	Pattern              string             `json:"pattern,omitempty"`
-	Format               string             `json:"format,omitempty"`
-	AdditionalProperties bool               `json:"additionalProperties,omitempty"`
-	MinItems             int                `json:"minItems,omitempty"`
-	MaxItems             int                `json:"maxItems,omitempty"`
-	UniqueItems          bool               `json:"uniqueItems,omitempty"`
-	Enum                 []any              `json:"enum,omitempty"`
-	Const                any                `json:"const,omitempty"`
-	MultipleOf           float64            `json:"multipleOf,omitempty"`
-	ExclusiveMinimum     bool               `json:"exclusiveMinimum,omitempty"`
-	ExclusiveMaximum     bool               `json:"exclusiveMaximum,omitempty"`
-	Title                string             `json:"title,omitempty"`
-	Description          string             `json:"description,omitempty"`
-	Default              any                `json:"default,omitempty"`
-	Examples             []any              `json:"examples,omitempty"`
+	// Type specifies the JSON type: "object", "array", "string", "number", "integer", "boolean", "null".
+	Type string `json:"type,omitempty"`
 
-	// Internal flags
+	// Properties defines the schema for each property when Type is "object".
+	Properties map[string]*Schema `json:"properties,omitempty"`
+
+	// Items defines the schema for array elements when Type is "array".
+	Items *Schema `json:"items,omitempty"`
+
+	// Required lists property names that must be present (for objects).
+	Required []string `json:"required,omitempty"`
+
+	// MinLength is the minimum string length (for strings).
+	MinLength int `json:"minLength,omitempty"`
+
+	// MaxLength is the maximum string length (for strings).
+	MaxLength int `json:"maxLength,omitempty"`
+
+	// Minimum is the minimum numeric value (for numbers/integers).
+	Minimum float64 `json:"minimum,omitempty"`
+
+	// Maximum is the maximum numeric value (for numbers/integers).
+	Maximum float64 `json:"maximum,omitempty"`
+
+	// Pattern is a regex pattern that the string must match (for strings).
+	Pattern string `json:"pattern,omitempty"`
+
+	// Format specifies a semantic format: "email", "uri", "date", "date-time", etc.
+	Format string `json:"format,omitempty"`
+
+	// AdditionalProperties controls whether extra properties are allowed (for objects).
+	AdditionalProperties bool `json:"additionalProperties,omitempty"`
+
+	// MinItems is the minimum number of items (for arrays).
+	MinItems int `json:"minItems,omitempty"`
+
+	// MaxItems is the maximum number of items (for arrays).
+	MaxItems int `json:"maxItems,omitempty"`
+
+	// UniqueItems requires all array elements to be unique (for arrays).
+	UniqueItems bool `json:"uniqueItems,omitempty"`
+
+	// Enum restricts the value to one of the specified values.
+	Enum []any `json:"enum,omitempty"`
+
+	// Const requires the value to equal this exact value.
+	Const any `json:"const,omitempty"`
+
+	// MultipleOf requires the value to be a multiple of this number.
+	MultipleOf float64 `json:"multipleOf,omitempty"`
+
+	// ExclusiveMinimum excludes the minimum value itself (for numbers).
+	ExclusiveMinimum bool `json:"exclusiveMinimum,omitempty"`
+
+	// ExclusiveMaximum excludes the maximum value itself (for numbers).
+	ExclusiveMaximum bool `json:"exclusiveMaximum,omitempty"`
+
+	// Title is a human-readable title for the schema.
+	Title string `json:"title,omitempty"`
+
+	// Description is a human-readable description of the schema.
+	Description string `json:"description,omitempty"`
+
+	// Default is the default value for the property.
+	Default any `json:"default,omitempty"`
+
+	// Examples provides example values for documentation.
+	Examples []any `json:"examples,omitempty"`
+
+	// Internal flags for tracking which constraints are explicitly set
 	hasMinLength bool
 	hasMaxLength bool
 	hasMinimum   bool
@@ -650,9 +748,22 @@ type Schema struct {
 	hasMaxItems  bool
 }
 
-// ValidationError represents a schema validation error
+// ValidationError represents a schema validation error.
+// It includes the path where the error occurred and a descriptive message.
+//
+// Example:
+//
+//	err := processor.ValidateSchema(jsonStr, schema)
+//	if err != nil {
+//	    var valErr *json.ValidationError
+//	    if errors.As(err, &valErr) {
+//	        fmt.Printf("Error at %s: %s\n", valErr.Path, valErr.Message)
+//	    }
+//	}
 type ValidationError struct {
-	Path    string `json:"path"`
+	// Path is the JSON path where the validation error occurred.
+	Path string `json:"path"`
+	// Message describes the validation failure.
 	Message string `json:"message"`
 }
 
@@ -682,11 +793,6 @@ type Result[T any] struct {
 	Value  T     // The result value (exported for backward compatibility)
 	Exists bool  // Whether the path exists
 	Error  error // Error if any
-}
-
-// NewResult creates a new Result with the given value.
-func NewResult[T any](value T, exists bool, err error) Result[T] {
-	return Result[T]{Value: value, Exists: exists, Error: err}
 }
 
 // Ok returns true if the result is valid (no error and exists).
@@ -728,15 +834,6 @@ type AccessResult struct {
 	Type   string // Runtime type info (for debugging)
 }
 
-// NewAccessResult creates a new AccessResult.
-func NewAccessResult(value any, exists bool) AccessResult {
-	var typeStr string
-	if value != nil {
-		typeStr = fmt.Sprintf("%T", value)
-	}
-	return AccessResult{Value: value, Exists: exists, Type: typeStr}
-}
-
 // Ok returns true if the value exists.
 func (r AccessResult) Ok() bool { return r.Exists }
 
@@ -754,20 +851,6 @@ func (r AccessResult) UnwrapOr(defaultValue any) any {
 		return defaultValue
 	}
 	return r.Value
-}
-
-// As safely converts the result to type T.
-// Returns error if the type doesn't match.
-func As[T any](r AccessResult) (T, error) {
-	if !r.Exists {
-		var zero T
-		return zero, ErrPathNotFound
-	}
-	if v, ok := r.Value.(T); ok {
-		return v, nil
-	}
-	var zero T
-	return zero, fmt.Errorf("cannot convert %T to %T", r.Value, zero)
 }
 
 // AsString safely converts the result to string.
@@ -799,8 +882,8 @@ func (r AccessResult) AsStringConverted() (string, error) {
 }
 
 // AsInt safely converts the result to int with overflow and precision checks.
-// Unlike ConvertToInt, this method is stricter and does NOT convert bool to int.
-// Use ConvertToInt directly if you need more permissive conversion.
+// Unlike convertToInt, this method is stricter and does NOT convert bool to int.
+// Use convertToInt directly if you need more permissive conversion.
 func (r AccessResult) AsInt() (int, error) {
 	if !r.Exists {
 		return 0, ErrPathNotFound
@@ -812,7 +895,7 @@ func (r AccessResult) AsInt() (int, error) {
 		return 0, fmt.Errorf("cannot convert bool to int")
 	}
 
-	result, ok := ConvertToInt(r.Value)
+	result, ok := convertToInt(r.Value)
 	if !ok {
 		return 0, fmt.Errorf("cannot convert %T to int", r.Value)
 	}
@@ -820,8 +903,8 @@ func (r AccessResult) AsInt() (int, error) {
 }
 
 // AsFloat64 safely converts the result to float64 with precision checks.
-// Unlike ConvertToFloat64, this method is stricter and does NOT convert bool to float64.
-// Use ConvertToFloat64 directly if you need more permissive conversion.
+// Unlike convertToFloat64, this method is stricter and does NOT convert bool to float64.
+// Use convertToFloat64 directly if you need more permissive conversion.
 func (r AccessResult) AsFloat64() (float64, error) {
 	if !r.Exists {
 		return 0, ErrPathNotFound
@@ -833,7 +916,7 @@ func (r AccessResult) AsFloat64() (float64, error) {
 		return 0, fmt.Errorf("cannot convert bool to float64")
 	}
 
-	result, ok := ConvertToFloat64(r.Value)
+	result, ok := convertToFloat64(r.Value)
 	if !ok {
 		return 0, fmt.Errorf("cannot convert %T to float64", r.Value)
 	}
@@ -899,6 +982,25 @@ type SchemaConfig struct {
 	Default              any
 	Examples             []any
 }
+
+// DefaultSchemaConfig returns the default configuration for creating a Schema.
+// This follows the unified Config pattern as required by the design guidelines.
+//
+// Example:
+//
+//	cfg := json.DefaultSchemaConfig()
+//	cfg.Type = "object"
+//	cfg.Required = []string{"name", "email"}
+//	schema := json.NewSchemaWithConfig(cfg)
+func DefaultSchemaConfig() SchemaConfig {
+	return SchemaConfig{
+		AdditionalProperties: ptrBool(true),
+	}
+}
+
+// ptrBool returns a pointer to a bool value.
+// This is a helper function for SchemaConfig optional fields.
+func ptrBool(v bool) *bool { return &v }
 
 // NewSchemaWithConfig creates a new Schema with the provided configuration.
 // This is the recommended way to create configured Schema instances.
@@ -969,35 +1071,20 @@ func NewSchemaWithConfig(cfg SchemaConfig) *Schema {
 	return s
 }
 
-// HasMinLength returns true if MinLength constraint is explicitly set
-func (s *Schema) HasMinLength() bool {
-	return s.hasMinLength
-}
+// ============================================================================
+// COMPILED PATH
+// Pre-parsed JSON path for fast repeated operations.
+// ============================================================================
 
-// HasMaxLength returns true if MaxLength constraint is explicitly set
-func (s *Schema) HasMaxLength() bool {
-	return s.hasMaxLength
-}
-
-// HasMinimum returns true if Minimum constraint is explicitly set
-func (s *Schema) HasMinimum() bool {
-	return s.hasMinimum
-}
-
-// HasMaximum returns true if Maximum constraint is explicitly set
-func (s *Schema) HasMaximum() bool {
-	return s.hasMaximum
-}
-
-// HasMinItems returns true if MinItems constraint is explicitly set
-func (s *Schema) HasMinItems() bool {
-	return s.hasMinItems
-}
-
-// HasMaxItems returns true if MaxItems constraint is explicitly set
-func (s *Schema) HasMaxItems() bool {
-	return s.hasMaxItems
-}
+// CompiledPath represents a pre-parsed JSON path for fast repeated operations.
+// Use Processor.CompilePath() to create instances.
+//
+// Example:
+//
+//	cp, err := processor.CompilePath("users[0].name")
+//	defer cp.Release()
+//	value, err := processor.GetCompiled(jsonStr, cp)
+type CompiledPath = internal.CompiledPath
 
 // ============================================================================
 // MERGE CONFIGURATION

@@ -46,7 +46,7 @@ func main() {
 }
 
 func demonstrateStructuredErrors() {
-	fmt.Println("1️⃣  Structured Errors (JsonsError)")
+	fmt.Println("1️. Structured Errors (JsonsError)")
 	fmt.Println("──────────────────────────────────")
 
 	// Invalid JSON example
@@ -79,7 +79,7 @@ func demonstrateStructuredErrors() {
 }
 
 func demonstrateErrorClassification() {
-	fmt.Println("\n2️⃣  Error Classification")
+	fmt.Println("\n2️. Error Classification")
 	fmt.Println("─────────────────────────")
 
 	testCases := []struct {
@@ -95,9 +95,11 @@ func demonstrateErrorClassification() {
 
 	fmt.Println("   Error classification results:")
 	for _, tc := range testCases {
-		isSecurity := json.IsSecurityRelated(tc.err)
-		isUser := json.IsUserError(tc.err)
-		isRetryable := json.IsRetryable(tc.err)
+		isSecurity := errors.Is(tc.err, json.ErrSecurityViolation)
+		isUser := errors.Is(tc.err, json.ErrInvalidJSON) || errors.Is(tc.err, json.ErrPathNotFound) ||
+			errors.Is(tc.err, json.ErrTypeMismatch) || errors.Is(tc.err, json.ErrInvalidPath) ||
+			errors.Is(tc.err, json.ErrUnsupportedPath)
+		isRetryable := errors.Is(tc.err, json.ErrOperationTimeout) || errors.Is(tc.err, json.ErrConcurrencyLimit)
 
 		fmt.Printf("   [%s]\n", tc.name)
 		fmt.Printf("     Security-related: %t\n", isSecurity)
@@ -107,7 +109,7 @@ func demonstrateErrorClassification() {
 }
 
 func demonstrateErrorSuggestions() {
-	fmt.Println("\n3️⃣  Error Suggestions")
+	fmt.Println("\n3. Error Suggestions")
 	fmt.Println("──────────────────────")
 
 	// Simulate various errors
@@ -121,16 +123,21 @@ func demonstrateErrorSuggestions() {
 		json.ErrSecurityViolation,
 	}
 
-	fmt.Println("   Error suggestions:")
+	fmt.Println("   Error suggestions (use errors.Is for matching):")
 	for _, err := range errs {
-		suggestion := json.GetErrorSuggestion(err)
 		fmt.Printf("\n   [%v]\n", err)
-		fmt.Printf("   💡 Suggestion: %s\n", suggestion)
+		if errors.Is(err, json.ErrInvalidJSON) {
+			fmt.Printf("   Suggestion: Check JSON syntax - ensure proper quotes, brackets, and commas\n")
+		} else if errors.Is(err, json.ErrPathNotFound) {
+			fmt.Printf("   Suggestion: Verify the path exists in the JSON structure\n")
+		} else {
+			fmt.Printf("   Suggestion: Check the error message for specific details\n")
+		}
 	}
 }
 
 func demonstrateRetryLogic() {
-	fmt.Println("\n4️⃣  Retry Logic")
+	fmt.Println("\n4️. Retry Logic")
 	fmt.Println("───────────────")
 
 	// Simulate errors and check retry ability
@@ -146,7 +153,7 @@ func demonstrateRetryLogic() {
 
 	fmt.Println("   Retry decision for each error:")
 	for _, test := range testErrors {
-		retryable := json.IsRetryable(test.err)
+		retryable := errors.Is(test.err, json.ErrOperationTimeout) || errors.Is(test.err, json.ErrConcurrencyLimit)
 		action := "Skip retry"
 		if retryable {
 			action = "Attempt retry"
@@ -156,18 +163,18 @@ func demonstrateRetryLogic() {
 }
 
 func demonstrateErrorWrapping() {
-	fmt.Println("\n5️⃣  Error Wrapping")
+	fmt.Println("\n5️. Error Wrapping")
 	fmt.Println("─────────────────")
 
 	// Wrap errors with additional context
 	baseErr := json.ErrPathNotFound
 
-	// Use WrapError to add context
-	wrapped1 := json.WrapError(baseErr, "get_user", "failed to retrieve user data")
+	// WrapError and WrapPathError are internal helpers; users receive JsonsError
+	// from library operations. To create wrapped errors, use fmt.Errorf with %w:
+	wrapped1 := fmt.Errorf("get_user: failed to retrieve user data: %w", baseErr)
 	fmt.Printf("   Wrapped error 1: %v\n", wrapped1)
 
-	// Use WrapPathError to add path context
-	wrapped2 := json.WrapPathError(baseErr, "get_field", "user.profile.email", "email field not found")
+	wrapped2 := fmt.Errorf("get_field [user.profile.email]: email field not found: %w", baseErr)
 	fmt.Printf("   Wrapped error 2: %v\n", wrapped2)
 
 	// Unwrap to get original error

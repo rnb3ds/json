@@ -179,3 +179,98 @@ func BenchmarkNeedsHTMLEscape(b *testing.B) {
 		_ = NeedsHTMLEscape(s)
 	}
 }
+
+// ============================================================================
+// Bytes-based HTML escape tests
+// ============================================================================
+
+func TestNeedsHTMLEscapeBytes(t *testing.T) {
+	tests := []struct {
+		name  string
+		input []byte
+		want  bool
+	}{
+		{"empty", []byte{}, false},
+		{"no escape needed", []byte("hello world 123"), false},
+		{"less than", []byte("a < b"), true},
+		{"greater than", []byte("a > b"), true},
+		{"ampersand", []byte("a & b"), true},
+		{"U+2028", []byte{0xe2, 0x80, 0xa8}, true},
+		{"U+2029", []byte{0xe2, 0x80, 0xa9}, true},
+		{"all special", []byte("<>&" + string([]byte{0xe2, 0x80, 0xa8})), true},
+		{"normal unicode", []byte("こんにちは"), false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := NeedsHTMLEscapeBytes(tt.input)
+			if got != tt.want {
+				t.Errorf("NeedsHTMLEscapeBytes(%q) = %v, want %v", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestHTMLEscapeBytes(t *testing.T) {
+	tests := []struct {
+		name  string
+		input []byte
+		want  string
+	}{
+		{"empty", []byte{}, ""},
+		{"no escape", []byte("hello"), "hello"},
+		{"less than", []byte("<"), `\u003c`},
+		{"greater than", []byte(">"), `\u003e`},
+		{"ampersand", []byte("&"), `\u0026`},
+		{"mixed", []byte("a<b>c&d"), `a\u003cb\u003ec\u0026d`},
+		{"U+2028", []byte{0xe2, 0x80, 0xa8}, `\u2028`},
+		{"U+2029", []byte{0xe2, 0x80, 0xa9}, `\u2029`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := HTMLEscapeBytes(tt.input)
+			if string(got) != tt.want {
+				t.Errorf("HTMLEscapeBytes(%q) = %q, want %q", tt.input, string(got), tt.want)
+			}
+			// Clean up pooled buffer
+			if len(tt.input) > 0 {
+				PutHTMLEscapeBytes(got)
+			}
+		})
+	}
+}
+
+func TestHTMLEscapeBytes_NoEscapeReturnsOriginal(t *testing.T) {
+	input := []byte("no special chars")
+	result := HTMLEscapeBytes(input)
+	if &result[0] != &input[0] {
+		t.Error("HTMLEscapeBytes should return original slice when no escaping needed")
+	}
+}
+
+func TestPutHTMLEscapeBytes(t *testing.T) {
+	t.Run("normal size buffer is pooled", func(t *testing.T) {
+		input := []byte("<script>alert('xss')</script>")
+		result := HTMLEscapeBytes(input)
+		// Should not panic
+		PutHTMLEscapeBytes(result)
+	})
+
+	t.Run("large buffer not pooled", func(t *testing.T) {
+		// Create input > 8KB to exceed pool threshold
+		input := make([]byte, 9000)
+		for i := range input {
+			input[i] = 'a'
+		}
+		result := HTMLEscapeBytes(input)
+		// Should not panic even for large buffers
+		PutHTMLEscapeBytes(result)
+	})
+
+	t.Run("empty buffer", func(t *testing.T) {
+		// Should not panic
+		PutHTMLEscapeBytes(nil)
+		PutHTMLEscapeBytes([]byte{})
+	})
+}

@@ -2,36 +2,57 @@ package json
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
 
 	"github.com/cybergodev/json/internal"
 )
 
-// isPrimitiveType checks if data is a JSON primitive type
-func (p *Processor) isPrimitiveType(data any) bool {
-	switch data.(type) {
-	case string, int, int8, int16, int32, int64,
-		uint, uint8, uint16, uint32, uint64,
-		float32, float64, bool:
-		return true
-	default:
-		return false
-	}
-}
-
-// Parse parses a JSON string into the provided target with improved error handling
-func (p *Processor) Parse(jsonStr string, target any, opts ...Config) error {
+// Parse parses a JSON string into the provided target with improved error handling.
+// This is the core parsing method that supports both standard and number-preserving modes.
+//
+// Parameters:
+//   - jsonStr: the JSON string to parse
+//   - target: pointer to the target variable where parsed data will be stored
+//   - opts: optional Config for parsing options (e.g., PreserveNumbers)
+//
+// Errors:
+//   - ErrProcessorClosed: processor has been closed
+//   - ErrInvalidJSON: jsonStr is not valid JSON
+//   - ErrSizeLimit: JSON exceeds MaxJSONSize
+//   - ErrTypeMismatch: JSON structure doesn't match target type
+//
+// Example:
+//
+//	// Parse into map
+//	var obj map[string]any
+//	err := processor.Parse(`{"name":"Alice"}`, &obj)
+//
+//	// Parse into struct
+//	type User struct { Name string }
+//	var user User
+//	err := processor.Parse(`{"name":"Alice"}`, &user)
+//
+//	// Parse with number preservation
+//	cfg := json.DefaultConfig()
+//	cfg.PreserveNumbers = true
+//	var data any
+//	err := processor.Parse(`{"price":19.99}`, &data, cfg)
+func (p *Processor) Parse(jsonStr string, target any, cfg ...Config) error {
 	if err := p.checkClosed(); err != nil {
 		return err
 	}
 
-	options, err := p.prepareOptions(opts...)
+	options, err := p.prepareOptions(cfg...)
 	if err != nil {
 		return err
 	}
+	defer releaseConfig(options)
 
 	if err := p.validateInput(jsonStr); err != nil {
 		return err
@@ -41,8 +62,22 @@ func (p *Processor) Parse(jsonStr string, target any, opts ...Config) error {
 		return &JsonsError{
 			Op:      "parse",
 			Message: "target cannot be nil, use Parse for any type result",
-			Err:     ErrOperationFailed,
+			Err:     errOperationFailed,
 		}
+	}
+
+	// PERFORMANCE: Fast path for the most common case — parsing into *any
+	// without number preservation. Avoids the fmt.Sprintf allocation for error wrapping
+	// and skips the preservingUnmarshal indirection.
+	if _, ok := target.(*any); ok && !options.PreserveNumbers {
+		if err := json.Unmarshal(stringToBytes(jsonStr), target); err != nil {
+			return &JsonsError{
+				Op:      "parse",
+				Message: fmt.Sprintf("invalid JSON for target type %T: %v", target, err),
+				Err:     ErrInvalidJSON,
+			}
+		}
+		return nil
 	}
 
 	// Parse with number preservation to maintain original format
@@ -75,8 +110,8 @@ func (p *Processor) Parse(jsonStr string, target any, opts ...Config) error {
 		if err != nil {
 			return &JsonsError{
 				Op:      "parse",
-				Message: fmt.Sprintf("failed to encode data for target type %T: %v", target, err),
-				Err:     ErrOperationFailed,
+				Message: fmt.Sprintf("failed to encode data for target type %T", target),
+				Err:     err,
 			}
 		}
 
@@ -106,41 +141,72 @@ func (p *Processor) Parse(jsonStr string, target any, opts ...Config) error {
 // This method provides the same behavior as the package-level Parse function.
 // Use Parse when you need to unmarshal into a specific target type.
 //
+// Errors:
+//   - ErrProcessorClosed: processor has been closed
+//   - ErrInvalidJSON: jsonStr is not valid JSON
+//   - ErrSizeLimit: JSON exceeds MaxJSONSize
+//
 // Example:
 //
 //	data, err := processor.ParseAny(`{"name": "Alice"}`)
-func (p *Processor) ParseAny(jsonStr string, opts ...Config) (any, error) {
+//	if err != nil {
+//	    // Handle error
+//	}
+//	obj := data.(map[string]any)
+func (p *Processor) ParseAny(jsonStr string, cfg ...Config) (any, error) {
 	if err := p.checkClosed(); err != nil {
 		return nil, err
 	}
 
 	var data any
-	if err := p.Parse(jsonStr, &data, opts...); err != nil {
+	if err := p.Parse(jsonStr, &data, cfg...); err != nil {
 		return nil, err
 	}
 	return data, nil
 }
 
-// Valid validates JSON format without parsing the entire structure
-func (p *Processor) Valid(jsonStr string, opts ...Config) (bool, error) {
+// Valid validates JSON format without parsing the entire structure.
+// Returns (true, nil) if valid, (false, error) if invalid.
+// The error contains details about what makes the JSON invalid.
+//
+// Errors:
+//   - ErrProcessorClosed: processor has been closed
+//   - ErrInvalidJSON: jsonStr is not valid JSON (returned with false)
+//   - ErrSizeLimit: JSON exceeds MaxJSONSize
+//
+// Example:
+//
+//	valid, err := processor.Valid(`{"name":"Alice"}`)
+//	if err != nil {
+//	    // Handle validation error
+//	}
+//	if valid {
+//	    // JSON is valid
+//	}
+func (p *Processor) Valid(jsonStr string, cfg ...Config) (bool, error) {
 	if err := p.checkClosed(); err != nil {
 		return false, err
 	}
 
-	if err := p.validateInput(jsonStr); err != nil {
+	// Prepare options before validateInput so caller's config limits are used
+	options, err := p.prepareOptions(cfg...)
+	if err != nil {
 		return false, err
 	}
+	defer releaseConfig(options)
 
-	// Prepare options
-	options, err := p.prepareOptions(opts...)
-	if err != nil {
+	if err := p.validateInput(jsonStr); err != nil {
 		return false, err
 	}
 
 	// Check cache first
 	cacheKey := p.createCacheKey("validate", jsonStr, "", options)
 	if cached, ok := p.getCachedResult(cacheKey); ok {
-		return cached.(bool), nil
+		if val, typeOk := cached.(bool); typeOk {
+			return val, nil
+		}
+		// Cache type mismatch — evict corrupted entry
+		p.invalidateCachedResult(cacheKey)
 	}
 
 	// Valid JSON by attempting to parse
@@ -224,16 +290,8 @@ func (p *Processor) isDistributedOperationPath(path string) bool {
 	return internal.IsExtractionPath(path)
 }
 
-func (p *Processor) isDistributedOperationSegment(segment internal.PathSegment) bool {
-	return internal.IsExtractionSegment(segment)
-}
-
 func (p *Processor) handleDistributedOperation(data any, segments []internal.PathSegment) (any, error) {
-	return p.getValueWithDistributedOperation(data, p.reconstructPath(segments))
-}
-
-func (p *Processor) reconstructPath(segments []internal.PathSegment) string {
-	return internal.ReconstructPath(segments)
+	return p.getValueWithDistributedOperation(data, internal.ReconstructPath(segments))
 }
 
 // parseArraySegment parses array access segments like [0], [1:3], etc.
@@ -248,15 +306,36 @@ func (p *Processor) parseExtractionSegment(part string, segments []internal.Path
 
 // Prettify formats JSON string with indentation.
 // This is the recommended method for formatting JSON strings.
-func (p *Processor) Prettify(jsonStr string, opts ...Config) (string, error) {
+// Uses default indentation of 2 spaces, configurable via Config.Indent and Config.Prefix.
+//
+// Errors:
+//   - ErrProcessorClosed: processor has been closed
+//   - ErrInvalidJSON: jsonStr is not valid JSON
+//   - ErrSizeLimit: JSON exceeds MaxJSONSize
+//
+// Example:
+//
+//	pretty, err := processor.Prettify(`{"name":"Alice","age":30}`)
+//	// Output:
+//	// {
+//	//   "name": "Alice",
+//	//   "age": 30
+//	// }
+//
+//	// Custom indentation
+//	cfg := json.DefaultConfig()
+//	cfg.Indent = "    " // 4 spaces
+//	pretty, err := processor.Prettify(jsonStr, cfg)
+func (p *Processor) Prettify(jsonStr string, cfg ...Config) (string, error) {
 	if err := p.checkClosed(); err != nil {
 		return "", err
 	}
 
-	options, err := p.prepareOptions(opts...)
+	options, err := p.prepareOptions(cfg...)
 	if err != nil {
 		return "", err
 	}
+	defer releaseConfig(options)
 
 	if err := p.validateInput(jsonStr); err != nil {
 		return "", err
@@ -265,7 +344,11 @@ func (p *Processor) Prettify(jsonStr string, opts ...Config) (string, error) {
 	// Check cache first
 	cacheKey := p.createCacheKey("pretty", jsonStr, "", options)
 	if cached, ok := p.getCachedResult(cacheKey); ok {
-		return cached.(string), nil
+		if val, typeOk := cached.(string); typeOk {
+			return val, nil
+		}
+		// Cache type mismatch - evict corrupted entry
+		p.invalidateCachedResult(cacheKey)
 	}
 
 	// Parse with number preservation to maintain original number types
@@ -297,8 +380,8 @@ func (p *Processor) Prettify(jsonStr string, opts ...Config) (string, error) {
 	if err != nil {
 		return "", &JsonsError{
 			Op:      "pretty",
-			Message: fmt.Sprintf("failed to format JSON: %v", err),
-			Err:     ErrOperationFailed,
+			Message: "failed to format JSON",
+			Err:     err,
 		}
 	}
 
@@ -308,16 +391,117 @@ func (p *Processor) Prettify(jsonStr string, opts ...Config) (string, error) {
 	return result, nil
 }
 
-// Compact removes whitespace from JSON string
-func (p *Processor) Compact(jsonStr string, opts ...Config) (string, error) {
+// printData handles the core logic for Print and PrintPretty
+func (p *Processor) printData(data any, pretty bool) (string, error) {
+	switch v := data.(type) {
+	case string:
+		return p.formatJSONString(v, pretty)
+	case []byte:
+		return p.formatJSONString(string(v), pretty)
+	default:
+		return p.encodeValue(v, pretty)
+	}
+}
+
+// formatJSONString formats a JSON string or encodes a non-JSON string.
+func (p *Processor) formatJSONString(jsonStr string, pretty bool) (string, error) {
+	isValid, validErr := p.Valid(jsonStr)
+	if validErr != nil {
+		// Distinguish processor errors (closed, context) from invalid JSON
+		// Processor errors should propagate; invalid JSON falls through to string encoding
+		if errors.Is(validErr, ErrProcessorClosed) || errors.Is(validErr, context.Canceled) {
+			return "", validErr
+		}
+	}
+	if isValid {
+		if pretty {
+			return p.Prettify(jsonStr)
+		}
+		return p.Compact(jsonStr)
+	}
+	// Not valid JSON - encode as a string value
+	cfg := DefaultConfig()
+	cfg.Pretty = pretty
+	return p.EncodeWithConfig(jsonStr, cfg)
+}
+
+// encodeValue encodes any Go value to JSON string.
+func (p *Processor) encodeValue(value any, pretty bool) (string, error) {
+	cfg := DefaultConfig()
+	cfg.Pretty = pretty
+	return p.EncodeWithConfig(value, cfg)
+}
+
+// print writes any Go value as JSON to stdout in compact format.
+// Note: Writes errors to stderr. Use printE for error handling.
+func (p *Processor) print(data any) {
+	result, err := p.printData(data, false)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "json.Print error: %v\n", err)
+		return
+	}
+	fmt.Println(result)
+}
+
+// printE prints any Go value as JSON to stdout in compact format.
+// Returns an error instead of writing to stderr, allowing callers to handle errors.
+func (p *Processor) printE(data any) error {
+	result, err := p.printData(data, false)
+	if err != nil {
+		return fmt.Errorf("json.Print error: %w", err)
+	}
+	fmt.Println(result)
+	return nil
+}
+
+// printPretty prints any Go value as formatted JSON to stdout.
+// Note: Writes errors to stderr. Use printPrettyE for error handling.
+func (p *Processor) printPretty(data any) {
+	result, err := p.printData(data, true)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "json.PrintPretty error: %v\n", err)
+		return
+	}
+	fmt.Println(result)
+}
+
+// printPrettyE prints any Go value as formatted JSON to stdout.
+// Returns an error instead of writing to stderr, allowing callers to handle errors.
+func (p *Processor) printPrettyE(data any) error {
+	result, err := p.printData(data, true)
+	if err != nil {
+		return fmt.Errorf("json.PrintPretty error: %w", err)
+	}
+	fmt.Println(result)
+	return nil
+}
+
+// Compact removes whitespace from JSON string.
+// This is useful for minimizing JSON size for transmission or storage.
+// The result is a single-line JSON string with no unnecessary whitespace.
+//
+// Errors:
+//   - ErrProcessorClosed: processor has been closed
+//   - ErrInvalidJSON: jsonStr is not valid JSON
+//   - ErrSizeLimit: JSON exceeds MaxJSONSize
+//
+// Example:
+//
+//	compact, err := processor.Compact(`{
+//	    "name": "Alice",
+//	    "age": 30
+//	}`)
+//	// Output: {"name":"Alice","age":30}
+func (p *Processor) Compact(jsonStr string, cfg ...Config) (string, error) {
 	if err := p.checkClosed(); err != nil {
 		return "", err
 	}
 
-	options, err := p.prepareOptions(opts...)
+	options, err := p.prepareOptions(cfg...)
 	if err != nil {
 		return "", err
 	}
+	defer releaseConfig(options)
 
 	if err := p.validateInput(jsonStr); err != nil {
 		return "", err
@@ -326,7 +510,11 @@ func (p *Processor) Compact(jsonStr string, opts ...Config) (string, error) {
 	// Check cache first
 	cacheKey := p.createCacheKey("compact", jsonStr, "", options)
 	if cached, ok := p.getCachedResult(cacheKey); ok {
-		return cached.(string), nil
+		if val, typeOk := cached.(string); typeOk {
+			return val, nil
+		}
+		// Cache type mismatch - evict corrupted entry
+		p.invalidateCachedResult(cacheKey)
 	}
 
 	// Parse with number preservation to maintain original number types
@@ -351,8 +539,8 @@ func (p *Processor) Compact(jsonStr string, opts ...Config) (string, error) {
 	if err != nil {
 		return "", &JsonsError{
 			Op:      "compact",
-			Message: fmt.Sprintf("failed to compact JSON: %v", err),
-			Err:     ErrOperationFailed,
+			Message: "failed to compact JSON",
+			Err:     err,
 		}
 	}
 
@@ -362,21 +550,16 @@ func (p *Processor) Compact(jsonStr string, opts ...Config) (string, error) {
 	return result, nil
 }
 
-// FormatCompact removes whitespace from JSON string (alias for Compact)
-func (p *Processor) FormatCompact(jsonStr string, opts ...Config) (string, error) {
-	return p.Compact(jsonStr, opts...)
-}
-
-// CompactString removes whitespace from JSON string.
-// This is an alias for Compact for consistency with the package-level CompactString function.
-func (p *Processor) CompactString(jsonStr string, opts ...Config) (string, error) {
-	return p.Compact(jsonStr, opts...)
-}
-
 // CompactBuffer appends to dst the JSON-encoded src with insignificant space characters elided.
 // Compatible with encoding/json.Compact with optional Config support.
-func (p *Processor) CompactBuffer(dst *bytes.Buffer, src []byte, opts ...Config) error {
-	compacted, err := p.Compact(string(src), opts...)
+// This is the buffer-based counterpart to Compact, matching the encoding/json.Compact signature.
+//
+// Example:
+//
+//	var buf bytes.Buffer
+//	err := processor.CompactBuffer(&buf, []byte(`{"name": "Alice"}`))
+func (p *Processor) CompactBuffer(dst *bytes.Buffer, src []byte, cfg ...Config) error {
+	compacted, err := p.Compact(string(src), cfg...)
 	if err != nil {
 		return err
 	}
@@ -384,14 +567,24 @@ func (p *Processor) CompactBuffer(dst *bytes.Buffer, src []byte, opts ...Config)
 	return err
 }
 
-// IndentBuffer appends to dst an indented form of the JSON-encoded src.
+// compactBuffer is an unexported alias kept for backward compatibility with internal callers.
+func (p *Processor) compactBuffer(dst *bytes.Buffer, src []byte, cfg ...Config) error {
+	return p.CompactBuffer(dst, src, cfg...)
+}
+
+// Indent appends to dst an indented form of the JSON-encoded src.
 // Compatible with encoding/json.Indent with optional Config support.
-func (p *Processor) IndentBuffer(dst *bytes.Buffer, src []byte, prefix, indent string, opts ...Config) error {
+//
+// Example:
+//
+//	var buf bytes.Buffer
+//	err := processor.Indent(&buf, []byte(`{"name":"Alice"}`), "", "  ")
+func (p *Processor) Indent(dst *bytes.Buffer, src []byte, prefix, indent string, cfg ...Config) error {
 	var data any
-	if err := p.Unmarshal(src, &data, opts...); err != nil {
+	if err := p.Unmarshal(src, &data, cfg...); err != nil {
 		return err
 	}
-	indented, err := p.MarshalIndent(data, prefix, indent, opts...)
+	indented, err := p.MarshalIndent(data, prefix, indent, cfg...)
 	if err != nil {
 		return err
 	}
@@ -399,53 +592,20 @@ func (p *Processor) IndentBuffer(dst *bytes.Buffer, src []byte, prefix, indent s
 	return err
 }
 
-// CompactBytes appends to dst the JSON-encoded src with insignificant space characters elided.
-// This is an alias for CompactBuffer without optional Config, providing encoding/json.Compact compatibility.
-// Use this method when you need the exact encoding/json.Compact signature.
+
+// HTMLEscape appends to dst the JSON-encoded src with HTML-safe escaping.
+// Performs character-level escaping of <, >, &, U+2028, and U+2029 without re-encoding.
+// Compatible with encoding/json.HTMLEscape.
 //
 // Example:
 //
 //	var buf bytes.Buffer
-//	err := processor.CompactBytes(&buf, []byte(`{"name": "Alice"}`))
-func (p *Processor) CompactBytes(dst *bytes.Buffer, src []byte) error {
-	return p.CompactBuffer(dst, src)
+//	processor.HTMLEscape(&buf, []byte(`{"url":"<script>alert(1)</script>"}`))
+func (p *Processor) HTMLEscape(dst *bytes.Buffer, src []byte, cfg ...Config) {
+	_ = cfg // Config not used; character-level escaping requires no re-encoding
+	internal.HTMLEscapeTo(dst, string(src))
 }
 
-// IndentBytes appends to dst an indented form of the JSON-encoded src.
-// This is an alias for IndentBuffer without optional Config, providing encoding/json.Indent compatibility.
-// Use this method when you need the exact encoding/json.Indent signature.
-//
-// Example:
-//
-//	var buf bytes.Buffer
-//	err := processor.IndentBytes(&buf, []byte(`{"name":"Alice"}`), "", "  ")
-func (p *Processor) IndentBytes(dst *bytes.Buffer, src []byte, prefix, indent string) error {
-	return p.IndentBuffer(dst, src, prefix, indent)
-}
-
-// HTMLEscapeBuffer appends to dst the JSON-encoded src with HTML-safe escaping.
-// Replaces &, <, and > with \u0026, \u003c, and \u003e for safe HTML embedding.
-// Compatible with encoding/json.HTMLEscape with optional Config support.
-func (p *Processor) HTMLEscapeBuffer(dst *bytes.Buffer, src []byte, opts ...Config) {
-	var data any
-	if err := p.Unmarshal(src, &data, opts...); err != nil {
-		dst.Write(src)
-		return
-	}
-
-	config := DefaultConfig()
-	if len(opts) > 0 {
-		config = opts[0]
-	}
-	config.EscapeHTML = true
-	escaped, err := p.EncodeWithConfig(data, config)
-	if err != nil {
-		dst.Write(src)
-		return
-	}
-
-	dst.WriteString(escaped)
-}
 
 func (p *Processor) navigateToPath(data any, path string) (any, error) {
 	if path == "" || path == "." || path == "/" {
@@ -469,7 +629,7 @@ func (p *Processor) navigateDotNotation(data any, path string) (any, error) {
 
 	for i := 0; i < len(segments); i++ {
 		segment := segments[i]
-		if p.isDistributedOperationSegment(segment) {
+		if internal.IsExtractionSegment(segment) {
 			return p.handleDistributedOperation(current, segments[i:])
 		}
 
@@ -548,7 +708,22 @@ func (p *Processor) navigateJSONPointer(data any, path string) (any, error) {
 		}
 
 		if strings.Contains(segment, "~") {
-			segment = p.unescapeJSONPointer(segment)
+			segment = internal.UnescapeJSONPointer(segment)
+		}
+
+		// RFC 6902: Array index access — numeric segments target array elements
+		if arr, ok := current.([]any); ok {
+			if idx, err := strconv.Atoi(segment); err == nil {
+				if idx >= 0 && idx < len(arr) {
+					current = arr[idx]
+					continue
+				}
+				return nil, ErrPathNotFound
+			}
+			// "-" refers to the (nonexistent) element after the end of the array
+			if segment == "-" {
+				return nil, ErrPathNotFound
+			}
 		}
 
 		result := p.handlePropertyAccess(current, segment)
@@ -706,9 +881,10 @@ func (d *numberPreservingDecoder) convertJSONNumber(num json.Number) any {
 	hasScientific := false
 	for i := range numLen {
 		c := numStr[i]
-		if c == '.' {
+		switch c {
+		case '.':
 			hasDecimal = true
-		} else if c == 'e' || c == 'E' {
+		case 'e', 'E':
 			hasScientific = true
 		}
 	}
@@ -806,6 +982,8 @@ func (d *numberPreservingDecoder) convertJSONNumber(num json.Number) any {
 }
 
 // preservingUnmarshal unmarshals JSON with number preservation
+// OPTIMIZED: Uses single-pass decoding with json.Number, then direct type conversion
+// to avoid the overhead of marshal/unmarshal cycle for target types that support it.
 func preservingUnmarshal(data []byte, v any, preserveNumbers bool) error {
 	if !preserveNumbers {
 		return json.Unmarshal(data, v)
@@ -815,7 +993,19 @@ func preservingUnmarshal(data []byte, v any, preserveNumbers bool) error {
 	decoder := json.NewDecoder(strings.NewReader(string(data)))
 	decoder.UseNumber()
 
-	// First decode to any to handle json.Number conversion
+	// OPTIMIZED: Try direct decoding for *any type to avoid double conversion
+	if anyPtr, ok := v.(*any); ok {
+		var temp any
+		if err := decoder.Decode(&temp); err != nil {
+			return err
+		}
+		// Convert json.Number to our Number type for consistency
+		*anyPtr = newNumberPreservingDecoder(true).convertNumbers(temp)
+		return nil
+	}
+
+	// For other target types, we still need the conversion step
+	// but we optimize by reusing the decoder's buffer
 	var temp any
 	if err := decoder.Decode(&temp); err != nil {
 		return err
@@ -824,7 +1014,22 @@ func preservingUnmarshal(data []byte, v any, preserveNumbers bool) error {
 	// Convert numbers and then marshal/unmarshal to target type
 	converted := newNumberPreservingDecoder(true).convertNumbers(temp)
 
-	// Marshal the converted data and unmarshal to target
+	// OPTIMIZED: For map[string]any and []any targets, use direct type assertion
+	// to avoid the marshal/unmarshal overhead
+	switch target := v.(type) {
+	case *map[string]any:
+		if m, ok := converted.(map[string]any); ok {
+			*target = m
+			return nil
+		}
+	case *[]any:
+		if s, ok := converted.([]any); ok {
+			*target = s
+			return nil
+		}
+	}
+
+	// Fallback: marshal and unmarshal for complex types (structs, custom types)
 	convertedBytes, err := json.Marshal(converted)
 	if err != nil {
 		return err
@@ -833,13 +1038,9 @@ func preservingUnmarshal(data []byte, v any, preserveNumbers bool) error {
 	return json.Unmarshal(convertedBytes, v)
 }
 
-func (p *Processor) deepCopyData(data any) (any, error) {
-	return DeepCopy(data)
-}
-
 func (p *Processor) escapeJSONPointer(segment string) string {
 	// Use the centralized JSON pointer escaping helper
-	return EscapeJSONPointer(segment)
+	return escapeJSONPointer(segment)
 }
 
 func (p *Processor) normalizePathSeparators(path string) string {

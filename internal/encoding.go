@@ -6,24 +6,25 @@ import (
 	"strconv"
 	"sync"
 	"unicode/utf8"
+	"unsafe"
 )
 
 // MarshalJSON marshals a value to JSON string with optional pretty printing
 func MarshalJSON(value any, pretty bool, prefix, indent string) (string, error) {
-	var resultBytes []byte
-	var err error
-
-	if pretty {
-		resultBytes, err = json.MarshalIndent(value, prefix, indent)
-	} else {
-		resultBytes, err = json.Marshal(value)
-	}
-
+	resultBytes, err := MarshalJSONToBytes(value, pretty, prefix, indent)
 	if err != nil {
 		return "", err
 	}
-
 	return string(resultBytes), nil
+}
+
+// MarshalJSONToBytes marshals a value to JSON bytes with optional pretty printing.
+// PERFORMANCE: Returns []byte directly to avoid string conversion when caller needs bytes.
+func MarshalJSONToBytes(value any, pretty bool, prefix, indent string) ([]byte, error) {
+	if pretty {
+		return json.MarshalIndent(value, prefix, indent)
+	}
+	return json.Marshal(value)
 }
 
 // IsSpace reports whether the character is a JSON whitespace character
@@ -45,10 +46,22 @@ var (
 			return buf
 		},
 	}
-	// PERFORMANCE: Added byte slice pool for encoding operations
-	byteSlicePool = sync.Pool{
+	// PERFORMANCE: Tiered byte slice pools for better size matching
+	smallByteSlicePool = sync.Pool{
+		New: func() any {
+			b := make([]byte, 0, 256)
+			return &b
+		},
+	}
+	mediumByteSlicePool = sync.Pool{
 		New: func() any {
 			b := make([]byte, 0, 1024)
+			return &b
+		},
+	}
+	largeByteSlicePool = sync.Pool{
+		New: func() any {
+			b := make([]byte, 0, 8192)
 			return &b
 		},
 	}
@@ -85,20 +98,31 @@ func PutEncoderBufferSecure(buf *bytes.Buffer) {
 		if c >= minPoolBufferSize && c <= maxPoolBufferSize {
 			// SECURITY: Zero out the buffer content before returning to pool
 			// This prevents potential data leakage through uninitialized memory
-			b := buf.Bytes()
-			for i := range b {
-				b[i] = 0
-			}
+			clear(buf.Bytes())
 			buf.Reset()
 			encoderBufferPool.Put(buf)
 		}
 	}
 }
 
-// GetByteSlice gets a byte slice from the pool
-// PERFORMANCE: Reusable byte slices for encoding operations
-func GetByteSlice() *[]byte {
-	return byteSlicePool.Get().(*[]byte)
+// GetByteSliceWithHint gets a byte slice with appropriate capacity hint
+// PERFORMANCE: Uses tiered pools for better memory management
+func GetByteSliceWithHint(hint int) *[]byte {
+	var b *[]byte
+	switch {
+	case hint <= 256:
+		b = smallByteSlicePool.Get().(*[]byte)
+	case hint <= 1024:
+		b = mediumByteSlicePool.Get().(*[]byte)
+	case hint <= 8192:
+		b = largeByteSlicePool.Get().(*[]byte)
+	default:
+		// For very large hints, allocate directly
+		newSlice := make([]byte, 0, hint)
+		return &newSlice
+	}
+	*b = (*b)[:0]
+	return b
 }
 
 // PutByteSlice returns a byte slice to the pool
@@ -107,11 +131,18 @@ func PutByteSlice(b *[]byte) {
 		return
 	}
 	const maxByteSliceCap = 32 * 1024 // 32KB
-	const minByteSliceCap = 256
 	c := cap(*b)
-	if c >= minByteSliceCap && c <= maxByteSliceCap {
-		*b = (*b)[:0]
-		byteSlicePool.Put(b)
+	if c > maxByteSliceCap {
+		return // Don't pool very large slices
+	}
+	*b = (*b)[:0]
+	switch {
+	case c <= 256:
+		smallByteSlicePool.Put(b)
+	case c <= 1024:
+		mediumByteSlicePool.Put(b)
+	case c <= 8192:
+		largeByteSlicePool.Put(b)
 	}
 }
 
@@ -123,22 +154,34 @@ func PutByteSliceSecure(b *[]byte) {
 		return
 	}
 	const maxByteSliceCap = 32 * 1024 // 32KB
-	const minByteSliceCap = 256
 	c := cap(*b)
-	if c >= minByteSliceCap && c <= maxByteSliceCap {
-		// SECURITY: Zero out the slice content before returning to pool
-		for i := range *b {
-			(*b)[i] = 0
-		}
-		*b = (*b)[:0]
-		byteSlicePool.Put(b)
+	if c > maxByteSliceCap {
+		return // Don't pool very large slices
+	}
+	// SECURITY: Zero out the slice content before returning to pool
+	for i := range *b {
+		(*b)[i] = 0
+	}
+	*b = (*b)[:0]
+	switch {
+	case c <= 256:
+		smallByteSlicePool.Put(b)
+	case c <= 1024:
+		mediumByteSlicePool.Put(b)
+	case c <= 8192:
+		largeByteSlicePool.Put(b)
 	}
 }
 
-// StringToBytes converts string to []byte
-// Using standard conversion for safety and compatibility
+// StringToBytes converts a string to a byte slice without allocation.
+// The returned slice shares memory with the input string.
+//
+// SECURITY WARNING: The returned []byte MUST NOT be modified. Writing to it
+// corrupts the original string, violating Go's string immutability guarantee.
+// This can cause data integrity violations and security bypasses (e.g.,
+// modifying a validated JSON string after validation passes — TOCTOU).
 func StringToBytes(s string) []byte {
-	return []byte(s)
+	return unsafe.Slice(unsafe.StringData(s), len(s))
 }
 
 // ContainsAnyByte checks if string contains any of the specified bytes
@@ -272,6 +315,12 @@ func IntToStringFast(n int) string {
 // PERFORMANCE: Inline encoding for primitives avoids reflection and allocations
 // Returns true if the value was encoded, false if it needs standard encoding
 func EncodeFast(v any, buf *bytes.Buffer) bool {
+	return EncodeFastWithHTMLEscape(v, buf, false)
+}
+
+// EncodeFastWithHTMLEscape encodes a primitive value with optional HTML escaping.
+// SECURITY: When htmlEscape is true, string values have <, >, & escaped to prevent XSS.
+func EncodeFastWithHTMLEscape(v any, buf *bytes.Buffer, htmlEscape bool) bool {
 	switch val := v.(type) {
 	case nil:
 		buf.WriteString("null")
@@ -321,7 +370,7 @@ func EncodeFast(v any, buf *bytes.Buffer) bool {
 		return true
 	case string:
 		buf.WriteByte('"')
-		writeEscapedStringFast(buf, val)
+		writeEscapedStringFast(buf, val, htmlEscape)
 		buf.WriteByte('"')
 		return true
 	}
@@ -330,8 +379,9 @@ func EncodeFast(v any, buf *bytes.Buffer) bool {
 
 // writeEscapedStringFast writes an escaped JSON string to the buffer
 // PERFORMANCE: Optimized escape handling without allocations
-// SECURITY: Validates UTF-8 encoding for non-ASCII characters (RFC 8259 compliance)
-func writeEscapedStringFast(buf *bytes.Buffer, s string) {
+// SECURITY: Validates UTF-8 encoding for non-ASCII characters (RFC 8259 compliance).
+// Escapes HTML characters (<, >, &) when htmlEscape is enabled.
+func writeEscapedStringFast(buf *bytes.Buffer, s string, htmlEscape bool) {
 	for i := 0; i < len(s); i++ {
 		c := s[i]
 		switch c {
@@ -365,6 +415,18 @@ func writeEscapedStringFast(buf *bytes.Buffer, s string) {
 					// Valid UTF-8, write all bytes of the rune directly
 					buf.WriteString(s[i : i+size])
 					i += size - 1 // Skip remaining bytes of this rune
+				}
+			} else if htmlEscape {
+				// SECURITY: Escape HTML characters to prevent XSS
+				switch c {
+				case '<':
+					buf.WriteString(`\u003c`)
+				case '>':
+					buf.WriteString(`\u003e`)
+				case '&':
+					buf.WriteString(`\u0026`)
+				default:
+					buf.WriteByte(c)
 				}
 			} else {
 				buf.WriteByte(c)

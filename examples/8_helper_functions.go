@@ -3,6 +3,7 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 
 	"github.com/cybergodev/json"
@@ -17,7 +18,7 @@ import (
 // - CompareJSON for JSON comparison
 // - MergeJSON for combining JSON objects
 // - Prettify and FormatCompact for formatting
-// - Print and PrintPretty for quick output
+// - Encode and EncodePretty for JSON output
 //
 // For JSON validation, see: 6_validation.go
 // For DeepCopy, see: 7_type_conversion.go
@@ -37,7 +38,7 @@ func main() {
 	// 3. FORMATTING
 	demonstrateFormatting()
 
-	// 4. QUICK PRINT
+	// 4. ENCODE FUNCTIONS
 	demonstratePrint()
 
 	fmt.Println("\nHelper functions examples complete!")
@@ -151,37 +152,55 @@ func demonstrateMerge() {
 
 	// Verify merge results
 	fmt.Println("\n   Verification:")
-	host, _ := json.GetString(merged, "database.host")
+	host := json.GetString(merged, "database.host", "")
 	fmt.Printf("   - database.host: %s (from override)\n", host)
 
-	port, _ := json.GetInt(merged, "database.port")
+	port := json.GetInt(merged, "database.port", 0)
 	fmt.Printf("   - database.port: %d (from base)\n", port)
 
-	ssl, _ := json.GetBool(merged, "database.ssl")
+	ssl := json.GetBool(merged, "database.ssl", false)
 	fmt.Printf("   - database.ssl: %t (from override)\n", ssl)
 
-	debug, _ := json.GetBool(merged, "debug")
+	debug := json.GetBool(merged, "debug", false)
 	fmt.Printf("   - debug: %t (from base)\n", debug)
 
-	monitoring, _ := json.GetBool(merged, "monitoring")
+	monitoring := json.GetBool(merged, "monitoring", false)
 	fmt.Printf("   - monitoring: %t (from override)\n", monitoring)
 
 	// Demonstrate different merge modes
 	fmt.Println("\n   Merge Modes:")
 
 	// Intersection merge - only common keys
-	intersected, _ := json.MergeJSON(baseConfig, overrideConfig, json.MergeIntersection)
+	intersectCfg := json.DefaultConfig()
+	intersectCfg.MergeMode = json.MergeIntersection
+	intersected, _ := json.MergeJSON(baseConfig, overrideConfig, intersectCfg)
 	fmt.Println("\n   Intersection (common keys only):")
 	fmt.Println(intersected)
 
 	// Difference merge - keys only in base
-	diff, _ := json.MergeJSON(baseConfig, overrideConfig, json.MergeDifference)
+	diffCfg := json.DefaultConfig()
+	diffCfg.MergeMode = json.MergeDifference
+	diff, _ := json.MergeJSON(baseConfig, overrideConfig, diffCfg)
 	fmt.Println("\n   Difference (keys only in base):")
 	fmt.Println(diff)
+
+	// MergeMany - merge multiple JSON strings at once
+	overrides := []string{
+		`{"database": {"ssl": true}}`,
+		`{"features": ["caching", "metrics"]}`,
+		`{"monitoring": true}`,
+	}
+	mergedMany, err := json.MergeMany(overrides)
+	if err != nil {
+		fmt.Printf("   MergeMany error: %v\n", err)
+	} else {
+		fmt.Println("\n   MergeMany (3 JSONs merged):")
+		fmt.Println(mergedMany)
+	}
 }
 
 func demonstrateFormatting() {
-	fmt.Println("\n3. Formatting (FormatPretty/CompactString)")
+	fmt.Println("\n3. Formatting (Prettify/Compact)")
 	fmt.Println("-------------------------------------------")
 
 	compactJSON := `{"name":"John","age":30,"address":{"city":"NYC","zip":"10001"},"active":true}`
@@ -201,21 +220,23 @@ func demonstrateFormatting() {
 	fmt.Println(pretty)
 
 	// Format as compact
-	compact, err := json.CompactString(pretty)
+	var buf bytes.Buffer
+	err = json.Compact(&buf, []byte(pretty))
 	if err != nil {
 		fmt.Printf("   Error: %v\n", err)
 		return
 	}
+	compact := buf.String()
 
-	fmt.Println("\n   CompactString result:")
+	fmt.Println("\n   Compact result:")
 	fmt.Println(compact)
 
 	fmt.Println("\n   Formatting is reversible!")
 }
 
 func demonstratePrint() {
-	fmt.Println("\n4. Quick Print Functions")
-	fmt.Println("------------------------")
+	fmt.Println("\n4. Encode Functions")
+	fmt.Println("-------------------")
 
 	data := map[string]any{
 		"user":    "Alice",
@@ -225,14 +246,18 @@ func demonstratePrint() {
 		"balance": 1250.75,
 	}
 
-	fmt.Println("   Print (compact, single line):")
-	json.Print(data)
+	fmt.Println("   Encode (compact, single line):")
+	result, _ := json.Encode(data)
+	fmt.Println(result)
 
-	fmt.Println("\n   PrintPretty (formatted for readability):")
-	json.PrintPretty(data)
+	fmt.Println("\n   EncodePretty (formatted for readability):")
+	pretty, _ := json.EncodePretty(data)
+	fmt.Println(pretty)
 
-	fmt.Println("\n   PrintE and PrintPrettyE return errors for programmatic use:")
-	if err := json.PrintE(data); err != nil {
-		fmt.Printf("   PrintE error: %v\n", err)
+	fmt.Println("\n   Encode with error handling:")
+	if encoded, err := json.Encode(data); err != nil {
+		fmt.Printf("   Encode error: %v\n", err)
+	} else {
+		fmt.Println(encoded)
 	}
 }

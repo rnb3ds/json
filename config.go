@@ -18,17 +18,44 @@ const (
 	// Cache Sizes - Balanced for performance and memory (internal)
 	defaultCacheSize = 128
 
-	// Operation Limits - Secure defaults with reasonable headroom
-	DefaultMaxJSONSize     = 100 * 1024 * 1024 // 100MB
-	DefaultMaxNestingDepth = 200
-	DefaultMaxPathDepth    = 50
-	DefaultMaxConcurrency  = 50
+	// DefaultMaxJSONSize is the maximum allowed JSON input size (100MB).
+	// JSON documents larger than this will be rejected with ErrSizeLimit.
+	// Adjust via Config.MaxJSONSize if processing larger documents.
+	DefaultMaxJSONSize = 100 * 1024 * 1024
 
-	// Internal operation limits
-	DefaultMaxSecuritySize   = 10 * 1024 * 1024
-	DefaultMaxObjectKeys     = 100000
-	DefaultMaxArrayElements  = 100000
-	DefaultMaxBatchSize      = 2000
+	// DefaultMaxNestingDepth is the maximum allowed JSON nesting depth (200).
+	// Deeply nested JSON may indicate malicious input.
+	// Adjust via Config.MaxNestingDepthSecurity if needed.
+	DefaultMaxNestingDepth = 200
+
+	// DefaultMaxPathDepth is the maximum allowed path depth (50).
+	// Limits the number of segments in a path like "a.b.c.d...".
+	// Adjust via Config.MaxPathDepth if needed.
+	DefaultMaxPathDepth = 50
+
+	// DefaultMaxConcurrency is the maximum concurrent operations (50).
+	// Limits parallel operations to prevent resource exhaustion.
+	// Adjust via Config.MaxConcurrency for high-throughput scenarios.
+	DefaultMaxConcurrency = 50
+
+	// DefaultMaxSecuritySize is the maximum size for security validation (10MB).
+	// JSON documents larger than this use sampling-based security checks.
+	DefaultMaxSecuritySize = 10 * 1024 * 1024
+
+	// DefaultMaxObjectKeys is the maximum number of keys in an object (100000).
+	// Objects with more keys will be rejected to prevent memory exhaustion.
+	DefaultMaxObjectKeys = 100000
+
+	// DefaultMaxArrayElements is the maximum number of elements in an array (100000).
+	// Arrays with more elements will be rejected to prevent memory exhaustion.
+	DefaultMaxArrayElements = 100000
+
+	// DefaultMaxBatchSize is the maximum number of operations in a batch (2000).
+	// Larger batches will be rejected to prevent memory exhaustion.
+	DefaultMaxBatchSize = 2000
+
+	// DefaultParallelThreshold is the threshold for parallel processing (10).
+	// Operations below this count use sequential processing.
 	DefaultParallelThreshold = 10
 
 	// Timing and Intervals - Optimized for responsiveness (internal)
@@ -41,36 +68,23 @@ const (
 	closeOperationTimeout = 5 * time.Second // Timeout waiting for active operations during Close()
 	semaphoreDrainTimeout = 1 * time.Second // Timeout for draining concurrency semaphore
 
-	// LargeStringHashThreshold is the byte threshold for using sampling-based hash.
-	// Re-exported from internal package for public API access.
-	LargeStringHashThreshold = internal.LargeStringHashThreshold
+	// largeStringHashThreshold is the byte threshold for using sampling-based hash.
+	// Internal constant for hash optimization.
+	largeStringHashThreshold = internal.LargeStringHashThreshold
 
-	// Path Validation - Secure but flexible
-	// MaxPathLength is the maximum allowed path length for security.
-	// Re-exported from internal package for public API access.
-	MaxPathLength = internal.MaxPathLength
+	// maxPathLength is the maximum allowed path string length.
+	// Paths longer than this will be rejected for security reasons.
+	maxPathLength = internal.MaxPathLength
 
-	// Cache TTL
+	// DefaultCacheTTL is the default cache entry time-to-live (5 minutes).
+	// Cached values expire after this duration.
+	// Adjust via Config.CacheTTL if needed.
 	DefaultCacheTTL = 5 * time.Minute
-
-	// Cache key constants
-	// MaxCacheKeyLength is the maximum allowed cache key length.
-	// Re-exported from internal package for public API access.
-	MaxCacheKeyLength = internal.MaxCacheKeyLength
 
 	// Validation constants (internal)
 	validationBOMPrefix = "\uFEFF" // UTF-8 BOM prefix to detect and remove
 )
 
-// InvalidArrayIndex is a sentinel value indicating an invalid or out-of-bounds array index.
-// Returned by array parsing functions when the index cannot be determined
-// (e.g., invalid format, overflow, or empty string).
-//
-//	index := processor.ParseArrayIndex(str)
-//	if index == InvalidArrayIndex {
-//	    // Handle invalid index
-//	}
-const InvalidArrayIndex = internal.ArrayIndexInvalid
 
 // DefaultConfig returns the default configuration.
 // Creates a new instance each time to allow modifications without affecting other callers.
@@ -101,7 +115,7 @@ func DefaultConfig() Config {
 		// Processing Options
 		EnableValidation: true,
 		StrictMode:       false,
-		CreatePaths:      false,
+		CreatePaths:      true,
 		CleanupNulls:     false,
 		CompactArrays:    false,
 		ContinueOnError:  false,
@@ -136,9 +150,39 @@ func DefaultConfig() Config {
 		EnableMetrics:     false,
 		EnableHealthCheck: false,
 
+		// Large File Processing
+		ChunkSize:       1024 * 1024,       // 1MB chunks
+		MaxMemory:       100 * 1024 * 1024, // 100MB max
+		BufferSize:      64 * 1024,         // 64KB buffer
+		SamplingEnabled: true,
+		SampleSize:      1000,
+
+		// JSONL (JSON Lines) Configuration
+		JSONLBufferSize:    64 * 1024,         // 64KB buffer
+		JSONLMaxLineSize:   1024 * 1024,       // 1MB max line
+		JSONLSkipEmpty:     true,              // Skip empty lines by default
+		JSONLSkipComments:  false,             // Don't skip comments by default
+		JSONLContinueOnErr: false,             // Stop on errors by default
+		JSONLWorkers:       4,                 // 4 parallel workers
+		JSONLChunkSize:     1000,              // 1000 lines per chunk
+		JSONLMaxMemory:     100 * 1024 * 1024, // 100MB max memory
+
+		// Merge Options
+		MergeMode: MergeUnion, // Default: union merge
+
 		// Context
 		Context: nil,
 	}
+}
+
+// getConfigOrDefault extracts configuration from variadic parameter.
+// Internal helper to reduce code duplication across the codebase.
+// Returns the first config if provided, otherwise returns DefaultConfig().
+func getConfigOrDefault(cfg ...Config) Config {
+	if len(cfg) > 0 {
+		return cfg[0]
+	}
+	return DefaultConfig()
 }
 
 // Clone creates a copy of the configuration.
@@ -194,15 +238,15 @@ func (c *Config) Clone() *Config {
 
 // Validate validates the configuration and applies corrections.
 // This is the single source of truth for config validation.
-// DRY FIX: Delegates to ValidateWithWarnings to avoid code duplication
+// DRY FIX: Delegates to ValidateWithWarnings to avoid code duplication.
+// BEHAVIOR: Auto-corrects invalid values (e.g., negative sizes are clamped to minimums).
+// Returns nil after corrections are applied — use ValidateWithWarnings for visibility.
 func (c *Config) Validate() error {
 	if c == nil {
 		return errors.New("config cannot be nil")
 	}
 
-	// Delegate to ValidateWithWarnings, ignoring warnings for silent validation
-	// This ensures both functions use the same validation logic
-	_ = c.ValidateWithWarnings()
+	c.ValidateWithWarnings()
 	return nil
 }
 
@@ -234,6 +278,9 @@ func (c *Config) ValidateWithWarnings() []ConfigWarning {
 	var warnings []ConfigWarning
 
 	// Helper to record clamped int64 values
+	// SEMANTIC: Values <= 0 are considered invalid and set to minimum
+	// This is appropriate for fields where 0 has no meaningful interpretation
+	// (e.g., sizes, counts, limits that must be positive)
 	checkInt64Clamp := func(ptr *int64, min, max int64, fieldName string) {
 		original := *ptr
 		if original <= 0 {
@@ -256,6 +303,8 @@ func (c *Config) ValidateWithWarnings() []ConfigWarning {
 	}
 
 	// Helper to record clamped int values
+	// SEMANTIC: Values <= 0 are considered invalid and set to minimum
+	// This is appropriate for fields where 0 has no meaningful interpretation
 	checkIntClamp := func(ptr *int, min, max int, fieldName string) {
 		original := *ptr
 		if original <= 0 {
@@ -290,6 +339,8 @@ func (c *Config) ValidateWithWarnings() []ConfigWarning {
 	checkInt64Clamp(&c.MaxSecurityValidationSize, 1024*1024, 100*1024*1024, "MaxSecurityValidationSize")
 
 	// Cache settings
+	// SEMANTIC: MaxCacheSize uses < 0 check because 0 is valid (means "disabled")
+	// This differs from checkIntClamp which treats <= 0 as invalid
 	if c.MaxCacheSize < 0 {
 		warnings = append(warnings, ConfigWarning{
 			Field:    "MaxCacheSize",
@@ -309,6 +360,8 @@ func (c *Config) ValidateWithWarnings() []ConfigWarning {
 		c.MaxCacheSize = 2000
 	}
 
+	// SEMANTIC: CacheTTL uses <= 0 check because 0 duration has no meaning
+	// A zero TTL would mean "immediately expire" which is not useful
 	if c.CacheTTL <= 0 {
 		warnings = append(warnings, ConfigWarning{
 			Field:    "CacheTTL",
@@ -320,6 +373,8 @@ func (c *Config) ValidateWithWarnings() []ConfigWarning {
 	}
 
 	// Encoding options
+	// SEMANTIC: MaxDepth uses < 0 check because 0 is valid (means "no limit" in some contexts)
+	// and positive values are meaningful depth limits
 	if c.MaxDepth < 0 || c.MaxDepth > 1000 {
 		warnings = append(warnings, ConfigWarning{
 			Field:    "MaxDepth",
@@ -329,6 +384,8 @@ func (c *Config) ValidateWithWarnings() []ConfigWarning {
 		})
 		c.MaxDepth = 100
 	}
+	// SEMANTIC: FloatPrecision uses -1 as sentinel for "default precision"
+	// Range [-1, 15] where -1=auto, 0-15=explicit precision
 	if c.FloatPrecision < -1 || c.FloatPrecision > 15 {
 		warnings = append(warnings, ConfigWarning{
 			Field:    "FloatPrecision",
@@ -342,56 +399,63 @@ func (c *Config) ValidateWithWarnings() []ConfigWarning {
 	// Batch size limits
 	checkIntClamp(&c.MaxBatchSize, 10, 10000, "MaxBatchSize")
 
+	// Large file processing limits
+	checkInt64Clamp(&c.ChunkSize, 64*1024, 100*1024*1024, "ChunkSize")
+	checkInt64Clamp(&c.MaxMemory, 10*1024*1024, 1024*1024*1024, "MaxMemory")
+	checkIntClamp(&c.BufferSize, 4*1024, 1024*1024, "BufferSize")
+	checkIntClamp(&c.SampleSize, 100, 10000, "SampleSize")
+
+	// JSONL configuration limits
+	checkIntClamp(&c.JSONLBufferSize, 4*1024, 1024*1024, "JSONLBufferSize")
+	checkIntClamp(&c.JSONLMaxLineSize, 1024, 100*1024*1024, "JSONLMaxLineSize")
+	checkIntClamp(&c.JSONLWorkers, 1, 64, "JSONLWorkers")
+	checkIntClamp(&c.JSONLChunkSize, 100, 10000, "JSONLChunkSize")
+	checkInt64Clamp(&c.JSONLMaxMemory, 10*1024*1024, 1024*1024*1024, "JSONLMaxMemory")
+
 	return warnings
 }
 
 // Config accessor methods.
-// These methods implement interfaces (CacheConfig, EncoderConfig) and provide
-// consistent API for testing and interface-based programming.
 
-// Required by CacheConfig interface (internal/cache.go) - do not remove.
-func (c *Config) IsCacheEnabled() bool       { return c.EnableCache }
-func (c *Config) GetMaxCacheSize() int       { return c.MaxCacheSize }
-func (c *Config) GetCacheTTL() time.Duration { return c.CacheTTL }
+// Internal accessor methods for cache configuration.
+// Users should access Config fields directly (e.g., cfg.EnableCache, cfg.MaxCacheSize, cfg.CacheTTL).
+func (c *Config) isCacheEnabled() bool       { return c.EnableCache }
+func (c *Config) getMaxCacheSize() int       { return c.MaxCacheSize }
+func (c *Config) getCacheTTL() time.Duration { return c.CacheTTL }
 
-// Convenience accessor methods for testing and interface-based usage.
-// Rationale: These methods enable mock-based testing and potential future
-// interface abstraction. In application code, direct field access is preferred:
-//
-//	cfg.MaxJSONSize instead of cfg.GetMaxJSONSize()
-//	cfg.StrictMode instead of cfg.IsStrictMode()
-func (c *Config) GetMaxJSONSize() int64        { return c.MaxJSONSize }
-func (c *Config) GetMaxPathDepth() int         { return c.MaxPathDepth }
-func (c *Config) GetMaxConcurrency() int       { return c.MaxConcurrency }
-func (c *Config) IsMetricsEnabled() bool       { return c.EnableMetrics }
-func (c *Config) IsHealthCheckEnabled() bool   { return c.EnableHealthCheck }
-func (c *Config) IsStrictMode() bool           { return c.StrictMode }
-func (c *Config) IsCommentsAllowed() bool      { return c.AllowComments }
-func (c *Config) ShouldPreserveNumbers() bool  { return c.PreserveNumbers }
-func (c *Config) ShouldCreatePaths() bool      { return c.CreatePaths }
-func (c *Config) ShouldCleanupNulls() bool     { return c.CleanupNulls }
-func (c *Config) ShouldCompactArrays() bool    { return c.CompactArrays }
-func (c *Config) ShouldValidateInput() bool    { return c.ValidateInput }
-func (c *Config) GetMaxNestingDepth() int      { return c.MaxNestingDepthSecurity }
-func (c *Config) ShouldValidateFilePath() bool { return c.ValidateFilePath }
+// Internal accessor methods.
+// Users should access Config fields directly (e.g., cfg.MaxJSONSize).
+func (c *Config) getMaxJSONSize() int64        { return c.MaxJSONSize }
+func (c *Config) getMaxPathDepth() int         { return c.MaxPathDepth }
+func (c *Config) getMaxConcurrency() int       { return c.MaxConcurrency }
+func (c *Config) isMetricsEnabled() bool       { return c.EnableMetrics }
+func (c *Config) isHealthCheckEnabled() bool   { return c.EnableHealthCheck }
+func (c *Config) isStrictMode() bool           { return c.StrictMode }
+func (c *Config) isCommentsAllowed() bool      { return c.AllowComments }
+func (c *Config) shouldPreserveNumbers() bool  { return c.PreserveNumbers }
+func (c *Config) shouldCreatePaths() bool      { return c.CreatePaths }
+func (c *Config) shouldCleanupNulls() bool     { return c.CleanupNulls }
+func (c *Config) shouldCompactArrays() bool    { return c.CompactArrays }
+func (c *Config) shouldValidateInput() bool    { return c.ValidateInput }
+func (c *Config) getMaxNestingDepth() int      { return c.MaxNestingDepthSecurity }
+func (c *Config) shouldValidateFilePath() bool { return c.ValidateFilePath }
 
-// Required by EncoderConfig interface (interfaces.go) for custom encoders.
-// These methods provide read-only access to encoding configuration.
-func (c *Config) IsHTMLEscapeEnabled() bool      { return c.EscapeHTML }
-func (c *Config) IsPrettyEnabled() bool          { return c.Pretty }
-func (c *Config) GetIndent() string              { return c.Indent }
-func (c *Config) GetPrefix() string              { return c.Prefix }
-func (c *Config) IsSortKeysEnabled() bool        { return c.SortKeys }
-func (c *Config) GetFloatPrecision() int         { return c.FloatPrecision }
-func (c *Config) IsTruncateFloatEnabled() bool   { return c.FloatTruncate }
-func (c *Config) GetMaxDepth() int               { return c.MaxDepth }
-func (c *Config) ShouldIncludeNulls() bool       { return c.IncludeNulls }
-func (c *Config) ShouldValidateUTF8() bool       { return c.ValidateUTF8 }
-func (c *Config) IsDisallowUnknownEnabled() bool { return c.DisallowUnknown }
-func (c *Config) ShouldEscapeUnicode() bool      { return c.EscapeUnicode }
-func (c *Config) ShouldEscapeSlash() bool        { return c.EscapeSlash }
-func (c *Config) ShouldEscapeNewlines() bool     { return c.EscapeNewlines }
-func (c *Config) ShouldEscapeTabs() bool         { return c.EscapeTabs }
+// Required by encoderConfig interface (interfaces.go) for internal use.
+func (c *Config) isHTMLEscapeEnabled() bool      { return c.EscapeHTML }
+func (c *Config) isPrettyEnabled() bool          { return c.Pretty }
+func (c *Config) getIndent() string              { return c.Indent }
+func (c *Config) getPrefix() string              { return c.Prefix }
+func (c *Config) isSortKeysEnabled() bool        { return c.SortKeys }
+func (c *Config) getFloatPrecision() int         { return c.FloatPrecision }
+func (c *Config) isTruncateFloatEnabled() bool   { return c.FloatTruncate }
+func (c *Config) getMaxDepth() int               { return c.MaxDepth }
+func (c *Config) shouldIncludeNulls() bool       { return c.IncludeNulls }
+func (c *Config) shouldValidateUTF8() bool       { return c.ValidateUTF8 }
+func (c *Config) isDisallowUnknownEnabled() bool { return c.DisallowUnknown }
+func (c *Config) shouldEscapeUnicode() bool      { return c.EscapeUnicode }
+func (c *Config) shouldEscapeSlash() bool        { return c.EscapeSlash }
+func (c *Config) shouldEscapeNewlines() bool     { return c.EscapeNewlines }
+func (c *Config) shouldEscapeTabs() bool         { return c.EscapeTabs }
 
 // =============================================================================
 // API Unification - Config presets for common scenarios
@@ -413,7 +477,7 @@ func (c *Config) ShouldEscapeTabs() bool         { return c.EscapeTabs }
 //   - Conservative limits for untrusted payloads
 //   - Caching enabled for repeated operations
 //
-// This function unifies HighSecurityConfig and WebAPIConfig into a single entry point.
+// This function provides a single entry point for security-focused configuration.
 func SecurityConfig() Config {
 	config := DefaultConfig()
 	// Security settings - conservative limits for untrusted input

@@ -137,9 +137,9 @@ func TestEncoderBuffer(t *testing.T) {
 // TestByteSlice tests the byte slice pool operations
 func TestByteSlice(t *testing.T) {
 	t.Run("Get and Put", func(t *testing.T) {
-		slice := GetByteSlice()
+		slice := GetByteSliceWithHint(256)
 		if slice == nil {
-			t.Fatal("GetByteSlice returned nil")
+			t.Fatal("GetByteSliceWithHint returned nil")
 		}
 
 		*slice = append(*slice, "test"...)
@@ -156,11 +156,11 @@ func TestByteSlice(t *testing.T) {
 	})
 
 	t.Run("Reset on reuse", func(t *testing.T) {
-		slice1 := GetByteSlice()
+		slice1 := GetByteSliceWithHint(256)
 		*slice1 = append(*slice1, "data"...)
 		PutByteSlice(slice1)
 
-		slice2 := GetByteSlice()
+		slice2 := GetByteSliceWithHint(256)
 		// Slice should be reset
 		if len(*slice2) != 0 {
 			t.Errorf("Slice length = %d, want 0", len(*slice2))
@@ -392,7 +392,7 @@ func TestWriteEscapedStringFast(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var buf bytes.Buffer
-			writeEscapedStringFast(&buf, tt.input)
+			writeEscapedStringFast(&buf, tt.input, false)
 			if buf.String() != tt.expected {
 				t.Errorf("writeEscapedStringFast(%q) = %q, want %q", tt.input, buf.String(), tt.expected)
 			}

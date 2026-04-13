@@ -4,6 +4,150 @@ All notable changes to the cybergodev/json library will be documented in this fi
 
 ---
 
+## v1.4.0 - API Unification & Security Hardening (2026-04-13)
+
+> Major release: unified Config pattern, reduced API surface, production security hardening
+
+### Breaking Changes
+
+**Removed types & structs:**
+- `JSONLProcessor` → Use `Processor.StreamJSONL()`
+- `StreamingProcessor` → Use `Processor.StreamArray()` / `Processor.StreamObject()`
+- `LargeFileProcessor` → Use `Processor.ForeachFile()`
+- `ChunkedWriter` / `ChunkedReader` / `SamplingReader` / `LazyParser` → Removed
+- `JSONLConfig` / `StreamJSONLConfig` / `StreamIteratorConfig` / `LargeFileConfig` → Use `Config` with JSONL*/Chunk* fields
+- `StreamJSONLResult` / `ParallelMapResult` / `ParallelSliceResult` → Removed (dead code)
+
+**Removed interfaces:**
+- `PatternRegistry` / `PathValidator` / `SecurityValidator` / `CacheConfig` / `EncoderConfig` → Internal only
+
+**Changed signatures:**
+- `Parse(jsonStr, cfg) (any, error)` → `ParseAny(jsonStr, cfg) (any, error)`; new `Parse(jsonStr, target, cfg) error`
+- `GetString/GetInt/GetFloat/GetBool/GetArray/GetObject` now return value directly with optional `defaultValue`; `GetXxxOr` variants removed
+- `MergeJSON(a, b, mergeMode)` → `MergeJSON(a, b, cfg)` with `cfg.MergeMode`
+- `Compact(dst, src)` extended to `Compact(dst, src, cfg ...Config)`; `CompactString` removed
+
+**Privatized identifiers (~50+ exported symbols):**
+- Helpers: `ConvertToInt/ToFloat64/ToBool/ToString`, `IsValidJSON/IsValidPath`, `DeepCopy`, `CompareJSON`
+- Errors: `ErrOperationFailed/ErrInternalError/ErrCacheFull/ErrCacheDisabled`
+- Security: `GetDefaultPatterns/GetCriticalPatterns/ClearDangerousPatterns`
+- Config: `Config.IsCacheEnabled/GetMaxCacheSize/GetCacheTTL`
+- Schema: `HasMinLength/HasMaxLength/HasMinimum/HasMaximum/HasMinItems/HasMaxItems`
+- Processor: `FastSet/FastDelete/BatchSetOptimized/BatchDeleteOptimized/FastGetMultiple`
+- I/O: `CompactBuffer/ValidString/Print/PrintPretty`, `LoadFromFileAsData/LoadFromReaderAsData`
+- Path: `PathSegmentType`/`PathSegmentFlags` constants, `NewPropertySegment`/`NewArrayIndexSegment`/etc.
+- Internal: `HookChain/ValidationChain/CachedPathParser`, `NewEncoderWithConfig`
+
+**Removed deprecated methods:**
+- `ToJsonString/ToJsonStringPretty/ToJsonStringStandard` → Use `Encode()`/`EncodePretty()`
+- `CompactBytes/IndentBytes/FormatCompact/CompactString` → Use `Compact()`/`Indent()`
+- `Processor.IndentBuffer/Processor.HTMLEscapeBuffer` → Use `Indent()`/`HTMLEscape()`
+- `MergeJSONMany/MergeJSONManyWithConfig` → Use `MergeMany()`
+- `IndentBuffer/HTMLEscapeBuffer` (package-level) → Use `Indent()`/`HTMLEscape()`
+
+**Other breaking changes:**
+- `CreatePaths` default changed from `false` to `true`
+- `Processor.CompilePath/GetCompiled` now return `*CompiledPath` (public alias) instead of `*internal.CompiledPath`
+
+### Added
+
+- `SafeGet(jsonStr, path, cfg) AccessResult` — type-safe get with `Ok()`/`Unwrap()`/`UnwrapOr()`/`AsXxx()`
+- `MergeMany(jsons, cfg)` — unified merge-many with standard Config pattern
+- `EncodePretty(value, cfg)` / `ParseAny(jsonStr, cfg)` / `Parse(jsonStr, target, cfg)` — package-level methods
+- `DeleteClean/SetCreate/SetMultipleCreate` — package-level wrappers
+- `LoadFromReader` / `ForeachFile/ForeachFileWithPath/ForeachFileChunked/ForeachFileNested` — package-level file ops
+- `ForeachWithError/ForeachNestedWithError/ForeachWithPathAndIterator` — error-returning iteration
+- `StreamJSONL/StreamJSONLParallel/StreamJSONLChunked` — Processor JSONL streaming
+- `ForeachJSONL/MapJSONL/ReduceJSONL/FilterJSONL/CollectJSONL/FirstJSONL/StreamJSONLFile` — package-level JSONL wrappers
+- `StreamJSONLParallelWithContext()` — context-aware parallel JSONL processing
+- `IterableValue.Break()` — stop iteration without reporting error (replaces `ErrBreak`)
+- `SafeError()` — client-safe error messages without internal details (CWE-209)
+- `RedactedPath()` — safe path inclusion in logs
+- `CompiledPath` public type alias for `internal.CompiledPath`
+- `Config` now includes `JSONL*`, `ChunkSize`, `MaxMemory`, `BufferSize`, `SamplingEnabled`, `SampleSize` fields
+
+### Fixed
+
+**Security:**
+- Added depth limit to `Decoder.readContainerValue()` — prevents stack overflow from deeply nested JSON
+- Added per-line nesting depth validation and size limit to `NDJSONProcessor.ProcessReader()`
+- Replaced `os.ReadFile` with `io.LimitReader` in `readValidatedFile/UnmarshalFromFile` — prevents TOCTOU race
+- `FastEncoder` now escapes `<`, `>`, `&` when `htmlEscape` enabled (CWE-79 XSS)
+- Essential validation (size + depth) always enforced even with `SkipValidation: true` (CWE-20)
+- Sensitive data sampling expanded: head 100 / tail 50 / middle 20 uniform samples
+- File paths sanitized in error messages to prevent information disclosure
+
+**Data races & concurrency:**
+- Fixed `ParallelMap` data race — concurrent map writes replaced with local-slice-per-goroutine pattern
+- Fixed `CacheManager` WaitGroup reuse panic — added atomic `closed` flag
+- Fixed `StringIntern` stats/trim races — atomic loads + CAS guard
+- Fixed `SetErrorSentinels` data race — added `sync.Once`
+- Fixed `ForEachWithContext` goroutine leak — select on `ctx.Done()` during semaphore acquire
+- Fixed `CompiledPathCache.Get` TOCTOU race — clone within same lock scope
+
+**Resource & memory leaks:**
+- Fixed `configPool` reference leaks — all reference-type fields cleared before pool return
+- Fixed `Processor.Close()` no longer clears global caches (moved to `ShutdownGlobalProcessor()`)
+- Fixed `Get()` cache hit corrupts cache — deep-copy mutable values on cache hit
+- Fixed `ShutdownGlobalProcessor()` now clears all cached processors and global caches
+- Added timeout protection to stale processor close goroutine
+
+**Error handling & correctness:**
+- Restored error chains in `Delete/Set/EncodeWithConfig/SaveToWriter/Parse/Prettify/Compact`
+- `NDJSONProcessor.ProcessReader` no longer silently discards parse errors
+- `readValidatedReader` size check now uses local `maxSize` (was reading `p.config.MaxJSONSize` which could be 0)
+- `shallowCopyMap/shallowCopySlice` now propagate depth counter (was resetting to 0, bypassing stack overflow protection)
+- `Encoder.Encode` no longer unconditionally overrides processor's `EscapeHTML` config
+- `readContainerValue` validates closing delimiter matches opening
+- `readContainerValue` returns error on truncated EOF
+- `ValidateString` uses `utf8.RuneCountInString` for Unicode-correct length
+- `multipleOf` validation uses epsilon tolerance for IEEE 754 safety
+- `CompareJSON` now normalizes `Number` to `float64` for correct equality
+
+**Nil receiver safety:**
+- All public types (`Processor`, `Config`, `JsonsError`, `JSONLWriter`, `NDJSONProcessor`, error types) return safe defaults on nil receiver
+
+### Changed
+
+- All APIs unified to variadic `cfg ...Config` pattern (Encoder, Decoder, StreamIterator, JSONL, iterators)
+- Dual-layer API consistency: every package-level function delegates to corresponding Processor method
+- `Encoder` inherits processor config as base; explicit fields still take priority
+- `NDJSONProcessor` now respects `JSONLContinueOnErr` config
+- `StreamJSONL` methods use `shouldSkipJSONLLineFromConfig` respecting `JSONLSkipEmpty`/`JSONLSkipComments`
+- `Valid()` delegates to `Processor.ValidBytes()` eliminating input type mismatch
+- `Compact()` delegates to `Processor.CompactBuffer()` aligning dual-layer signatures
+- `ForeachFileChunked` uses `iterableValuePool` and releases values after chunk callback
+- Unified negative index handling into `normalizeNegativeIndex` helpers (8+ patterns consolidated)
+- `navigateToParent` helper deduplicates delete navigation logic (~40 lines eliminated)
+- `withTypedGetter[T]`/`withConfigProcessor[T]` generics eliminate typed getter boilerplate
+
+### Performance
+
+- `deepCopyJSONValue` — JSON-specialized 6-case type switch replaces 16-case generic switch
+- `Get()` primitive fast path — `nil/bool/float64/string/json.Number` skip deep copy (~60% of calls)
+- `NeedsHTMLEscapeBytes` — pre-computed lookup table replaces per-byte SWAR comparisons
+- `FastEncoder` map/array — `append`-based buffer growth eliminates separate allocation+copy
+- `operation.go` — 26+ `TypeString()` calls replaced with direct `segment.Type` enum comparisons
+- `escapeRune` — direct hex byte writes replace `fmt.Fprintf` (~10-50x faster per escape)
+- `EncodeMap`/`EncodeArray` — buffer pre-allocation for large inputs
+- `EncodeBase64` — direct buffer encoding eliminates intermediate string allocation
+- `createCacheKeyWithHash` — pointer identity check replaces 40+ field comparison
+- `prepareOptions` — cached default config pointer eliminates `DefaultConfig()+Validate()` per operation
+- `CompiledPathCache` — initial lookup uses `RLock` instead of exclusive `Lock`
+- `shouldSkipJSONLLineFromConfig` parameter changed from `Config` (value) to `*Config` (pointer)
+- `getDefaultPatterns`/`getCriticalPatterns` — `sync.OnceValue` caching avoids repeated slice allocation
+
+### Security
+
+- FastEncoder HTML escape support for `<`, `>`, `&` → `\u003c`, `\u003e`, `\u0026` (CWE-79)
+- Essential size/depth validation always enforced regardless of `SkipValidation` (CWE-20)
+- `SafeError()` returns client-safe messages without internal path/operation details (CWE-209)
+- `RedactedPath()` for safe path inclusion in logs
+- Sensitive data array sampling improved from 70-element head-only to 500-element head/tail/middle coverage
+- Security warning documentation for `HookContext.JSONStr`, `CompilePathUnsafe`, `StringToBytes`
+
+---
+
 ## v1.3.0 - Performance & API Unification (2026-03-30)
 
 >Internal core restructuring  
@@ -13,9 +157,11 @@ All notable changes to the cybergodev/json library will be documented in this fi
 - `EncodeWithOptions()` → Use `EncodeWithConfig()` (deprecated alias removed)
 - `EncodeStreamWithOptions()` → Use `EncodeStream()` (deprecated alias removed)
 - `StreamingProcessor.Release()` → Use `Close()` (deprecated method removed)
+- `ValidWithOptions()` → Use `ValidWithConfig()` (deprecated alias removed)
+- `NewEncoderWithOpts()` → Use `NewEncoderWithConfig()` (deprecated alias removed)
 
 ### Added
-- `CompactBytes()`, `IndentBytes()` - encoding/json signature compatibility
+- `CompactBytes()`, `IndentBytes()` - encoding/json signature compatibility *(removed in v1.4.0, use `CompactBuffer`/`IndentBuffer`)*
 - `GetStringOr()`, `GetIntOr()`, `GetFloatOr()`, `GetBoolOr()` instance methods
 - Streaming-optimized object pools (tiered map/slice pools)
 - Path segment cache with sync.Map (lock-free concurrent reads)
@@ -29,7 +175,6 @@ All notable changes to the cybergodev/json library will be documented in this fi
 
 ### Fixed
 - StreamLinesParallel goroutine leak and error propagation
-- SamplingReader.Sample callback return value handling
 - ProcessFileChunked data corruption (shared array issue)
 - Hash cache TTL-based expiration for stale entry prevention
 - Pool corruption recovery mechanism
@@ -111,7 +256,7 @@ All notable changes to the cybergodev/json library will be documented in this fi
 - **JSONL (JSON Lines) Support**: `ParseJSONL()`, `JSONLProcessor`, `StreamLinesParallel()`, `StreamLinesInto[T]()`, `JSONLWriter`, `ToJSONL()`
 - **Streaming Processing**: `StreamingProcessor`, `StreamArray()`, `StreamObject()`, `StreamArrayChunked()`, `StreamArrayFilter/Map/Reduce()`, `StreamArrayFirst/Take/Skip()`
 - **Lazy JSON Parsing**: `LazyJSON` with on-demand parsing, `Get()`, `IsParsed()`, `Raw()`
-- **Large File Processing**: `LargeFileProcessor`, `ProcessFile()`, `ProcessFileChunked()`, `ChunkedReader`
+- **Large File Processing**: `LargeFileProcessor`, `ProcessFile()`, `ProcessFileChunked()`
 - **Compiled Path Support**: `CompiledPath` for zero-parse overhead, `CompilePath()`, `GetCompiled()`, `CompiledPathCache`
 - **Fast Encoder**: `FastEncoder` with 4-8x faster encoding for common types, pre-computed integer tables (0-9999)
 - **String Interning**: `StringIntern`, `KeyIntern` (64 shards), `PathIntern`, `BatchIntern`
@@ -169,7 +314,7 @@ All notable changes to the cybergodev/json library will be documented in this fi
 - **Chinese Documentation**: Complete README_zh-CN.md translation with feature parity
 
 ### Changed
-- **MergeJson Behavior**: Implemented deep merge for nested objects and union merge with deduplication for arrays
+- **MergeJSON Behavior**: Implemented deep merge for nested objects and union merge with deduplication for arrays
 - **SaveToFile Behavior**: Now preprocesses string/[]byte inputs to prevent double-encoding (unified with package-level)
 - **LoadFromFile Return Type**: Returns `(string, error)` instead of `(any, error)` for consistency
   - Use `LoadFromFileAsData()` for previous `(any, error)` behavior

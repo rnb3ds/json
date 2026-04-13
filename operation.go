@@ -1,7 +1,6 @@
 package json
 
 import (
-	"encoding/json"
 	"fmt"
 	"reflect"
 	"strconv"
@@ -46,8 +45,11 @@ func (op operation) String() string {
 // INTERNAL ERROR TYPES
 // ============================================================================
 
-// arrayExtensionNeededError signals that array extension is needed
-type arrayExtensionNeededError struct {
+// arrayExtensionSignal is an internal control-flow value (implements error for
+// upward propagation through call stack). It is NOT a real error — it signals
+// that an array needs to be extended before the value can be set.
+// Used exclusively within the set-operation path when createPaths is true.
+type arrayExtensionSignal struct {
 	requiredLength int
 	currentLength  int
 	start          int
@@ -56,10 +58,49 @@ type arrayExtensionNeededError struct {
 	value          any
 }
 
-func (e *arrayExtensionNeededError) Error() string {
+func (e *arrayExtensionSignal) Error() string {
 	return "array extension needed: current length " + strconv.Itoa(e.currentLength) +
 		", required length " + strconv.Itoa(e.requiredLength) + " for slice [" +
 		strconv.Itoa(e.start) + ":" + strconv.Itoa(e.end) + "]"
+}
+
+// normalizeNegativeIndex converts a negative array index to a positive one.
+// Returns an error if the resulting index is out of bounds.
+func normalizeNegativeIndex(index, length int) (int, error) {
+	if index < 0 {
+		index = length + index
+	}
+	if index < 0 || index >= length {
+		return 0, fmt.Errorf("index %d out of range [0, %d)", index, length)
+	}
+	return index, nil
+}
+
+// normalizeNegativeIndexAllowExtend converts a negative array index to a positive one.
+// Unlike normalizeNegativeIndex, it allows index >= length (for array extension scenarios).
+func normalizeNegativeIndexAllowExtend(index, length int) (int, error) {
+	if index < 0 {
+		index = length + index
+	}
+	if index < 0 {
+		return 0, fmt.Errorf("array index %d out of bounds after negative conversion", index)
+	}
+	return index, nil
+}
+
+// normalizeNegativeSliceBounds converts negative start/end indices for slice operations.
+// end may equal length (exclusive upper bound). Returns normalized start, end, or an error.
+func normalizeNegativeSliceBounds(start, end, length int) (int, int, error) {
+	if start < 0 {
+		start = length + start
+	}
+	if end < 0 {
+		end = length + end
+	}
+	if start < 0 || start >= length || end < 0 || end > length || start >= end {
+		return 0, 0, fmt.Errorf("slice range [%d:%d] out of bounds for array length %d", start, end, length)
+	}
+	return start, end, nil
 }
 
 func (p *Processor) handleArrayAccess(data any, segment internal.PathSegment) propertyAccessResult {
@@ -73,14 +114,11 @@ func (p *Processor) handleArrayAccess(data any, segment internal.PathSegment) pr
 	}
 
 	if arr, ok := arrayData.([]any); ok {
-		index := segment.Index
-		if index < 0 {
-			index = len(arr) + index
+		index, err := normalizeNegativeIndex(segment.Index, len(arr))
+		if err != nil {
+			return propertyAccessResult{value: nil, exists: false}
 		}
-		if index >= 0 && index < len(arr) {
-			return propertyAccessResult{value: arr[index], exists: true}
-		}
-		return propertyAccessResult{value: nil, exists: false}
+		return propertyAccessResult{value: arr[index], exists: true}
 	}
 
 	return propertyAccessResult{value: nil, exists: false}
@@ -169,19 +207,19 @@ func (p *Processor) isArrayIndex(segment string) bool {
 func (p *Processor) navigateToArrayIndexWithNegative(current any, index int, createPaths bool) (any, error) {
 	switch v := current.(type) {
 	case []any:
-		// Handle negative indices
-		if index < 0 {
-			index = len(v) + index
+		idx, err := normalizeNegativeIndexAllowExtend(index, len(v))
+		if err != nil {
+			return nil, err
 		}
 
-		if index < 0 || index >= len(v) {
-			if createPaths && index == len(v) {
+		if idx >= len(v) {
+			if createPaths && idx == len(v) {
 				// Extend array by one element
 				return nil, nil // Placeholder for new element
 			}
-			return nil, fmt.Errorf("array index %d out of bounds (length %d)", index, len(v))
+			return nil, fmt.Errorf("array index %d out of bounds (length %d)", idx, len(v))
 		}
-		return v[index], nil
+		return v[idx], nil
 	default:
 		return nil, fmt.Errorf("cannot access array index %d on type %T", index, current)
 	}
@@ -211,7 +249,14 @@ func (p *Processor) cleanupNullValuesWithReconstruction(data any, compactArrays 
 func (p *Processor) cleanupDeletedMarkers(data any) any {
 	switch v := data.(type) {
 	case []any:
-		result := make([]any, 0, len(v))
+		// PERFORMANCE: Count non-deleted elements for precise pre-allocation
+		n := 0
+		for _, item := range v {
+			if item != deletedMarker {
+				n++
+			}
+		}
+		result := make([]any, 0, n)
 		for _, item := range v {
 			if item != deletedMarker {
 				result = append(result, p.cleanupDeletedMarkers(item))
@@ -220,7 +265,7 @@ func (p *Processor) cleanupDeletedMarkers(data any) any {
 		return result
 
 	case map[string]any:
-		result := make(map[string]any)
+		result := make(map[string]any, len(v))
 		for key, value := range v {
 			if value != deletedMarker {
 				result[key] = p.cleanupDeletedMarkers(value)
@@ -248,18 +293,15 @@ func (p *Processor) deleteValueAtPath(data any, path string) error {
 	return p.deleteValueDotNotation(data, path)
 }
 
-func (p *Processor) deleteValueDotNotation(data any, path string) error {
-	// Parse path
-	segments, err := p.parsePath(path)
-	if err != nil {
-		return err
-	}
-
+// navigateToParent navigates through data to the parent container of the final segment.
+// Returns the parent container and the final segment key/index.
+// Shared by deleteValueDotNotation and deleteValueJSONPointer to avoid duplicating
+// the map[string]any/map[any]any/[]any switch logic.
+func (p *Processor) navigateToParent(data any, segments []string) (any, string, error) {
 	if len(segments) == 0 {
-		return fmt.Errorf("empty path")
+		return nil, "", fmt.Errorf("empty path")
 	}
 
-	// Navigate to parent
 	current := data
 	for i := 0; i < len(segments)-1; i++ {
 		segment := segments[i]
@@ -269,29 +311,39 @@ func (p *Processor) deleteValueDotNotation(data any, path string) error {
 			if next, exists := v[segment]; exists {
 				current = next
 			} else {
-				return fmt.Errorf("path not found: %s", segment)
+				return nil, "", fmt.Errorf("path not found: %s", segment)
 			}
 		case map[any]any:
-			// Handle map[any]any for robustness with non-JSON map types
 			if next, exists := v[segment]; exists {
 				current = next
 			} else {
-				return fmt.Errorf("path not found: %s", segment)
+				return nil, "", fmt.Errorf("path not found: %s", segment)
 			}
 		case []any:
 			if index, ok := internal.ParseAndValidateArrayIndex(segment, len(v)); ok {
 				current = v[index]
 			} else {
-				return fmt.Errorf("invalid array index: %s", segment)
+				return nil, "", fmt.Errorf("invalid array index: %s", segment)
 			}
 		default:
-			return fmt.Errorf("cannot navigate through %T at segment %s", current, segment)
+			return nil, "", fmt.Errorf("cannot navigate through %T at segment %s", current, segment)
 		}
 	}
 
-	// Delete final property
-	finalSegment := segments[len(segments)-1]
-	return p.deletePropertyValue(current, finalSegment)
+	return current, segments[len(segments)-1], nil
+}
+
+func (p *Processor) deleteValueDotNotation(data any, path string) error {
+	segments, err := p.parsePath(path)
+	if err != nil {
+		return err
+	}
+
+	parent, finalSegment, err := p.navigateToParent(data, segments)
+	if err != nil {
+		return err
+	}
+	return p.deletePropertyValue(parent, finalSegment)
 }
 
 func (p *Processor) deleteValueJSONPointer(data any, path string) error {
@@ -299,78 +351,30 @@ func (p *Processor) deleteValueJSONPointer(data any, path string) error {
 		return fmt.Errorf("cannot delete root")
 	}
 
-	// Remove leading slash and split
-	pathWithoutSlash := path[1:]
-	segments := strings.Split(pathWithoutSlash, "/")
-
-	// Navigate to parent
-	current := data
-	for i := 0; i < len(segments)-1; i++ {
-		segment := segments[i]
-
-		// Unescape JSON Pointer characters
-		if strings.Contains(segment, "~") {
-			segment = p.unescapeJSONPointer(segment)
-		}
-
-		switch v := current.(type) {
-		case map[string]any:
-			if next, exists := v[segment]; exists {
-				current = next
-			} else {
-				return fmt.Errorf("path not found: %s", segment)
-			}
-		case map[any]any:
-			// Handle map[any]any for robustness with non-JSON map types
-			if next, exists := v[segment]; exists {
-				current = next
-			} else {
-				return fmt.Errorf("path not found: %s", segment)
-			}
-		case []any:
-			if index, ok := internal.ParseAndValidateArrayIndex(segment, len(v)); ok {
-				current = v[index]
-			} else {
-				return fmt.Errorf("invalid array index: %s", segment)
-			}
-		default:
-			return fmt.Errorf("cannot navigate through %T at segment %s", current, segment)
+	// Split and unescape JSON Pointer segments upfront
+	segments := strings.Split(path[1:], "/")
+	for i := range segments {
+		if strings.Contains(segments[i], "~") {
+			segments[i] = internal.UnescapeJSONPointer(segments[i])
 		}
 	}
 
-	// Delete final property
-	finalSegment := segments[len(segments)-1]
-	if strings.Contains(finalSegment, "~") {
-		finalSegment = p.unescapeJSONPointer(finalSegment)
+	parent, finalSegment, err := p.navigateToParent(data, segments)
+	if err != nil {
+		return err
 	}
-
-	return p.deletePropertyValue(current, finalSegment)
+	return p.deletePropertyValue(parent, finalSegment)
 }
 
 func (p *Processor) deletePropertyValue(current any, property string) error {
-	switch v := current.(type) {
-	case map[string]any:
-		if _, exists := v[property]; exists {
-			delete(v, property)
-			return nil
-		}
-		return fmt.Errorf("property not found: %s", property)
-
-	case map[any]any:
-		if _, exists := v[property]; exists {
-			delete(v, property)
-			return nil
-		}
-		return fmt.Errorf("property not found: %s", property)
-
+	switch current.(type) {
 	case []any:
 		if _, err := strconv.Atoi(property); err == nil {
 			return p.deleteArrayElement(current, property)
 		}
 		return fmt.Errorf("invalid array index: %s", property)
-
 	default:
-		return fmt.Errorf("cannot delete property '%s' from type %T", property, current)
+		return p.deletePropertyFromContainer(current, property)
 	}
 }
 
@@ -415,19 +419,19 @@ func (p *Processor) deleteValueWithInternalSegments(data any, segments []interna
 }
 
 func (p *Processor) navigateSegmentForDeletion(current any, segment internal.PathSegment) (any, error) {
-	switch segment.TypeString() {
-	case "property":
+	switch segment.Type {
+	case internal.PropertySegment:
 		return p.navigatePropertyForDeletion(current, segment.Key)
-	case "array":
+	case internal.ArrayIndexSegment:
 		return p.navigateArrayIndexForDeletion(current, segment.String())
-	case "slice":
+	case internal.ArraySliceSegment:
 		// For slices, return the current container
 		return current, nil
-	case "extract":
+	case internal.ExtractSegment:
 		// For extractions, return the current container
 		return current, nil
 	default:
-		return nil, fmt.Errorf("unsupported segment type for deletion: %v", segment.TypeString())
+		return nil, fmt.Errorf("unsupported segment type for deletion: %v", segment.Type.String())
 	}
 }
 
@@ -459,30 +463,26 @@ func (p *Processor) navigateArrayIndexForDeletion(current any, indexStr string) 
 		return nil, fmt.Errorf("invalid array index: %s", indexStr)
 	}
 
-	// Handle negative indices
-	if index < 0 {
-		index = len(arr) + index
-	}
-
-	if index < 0 || index >= len(arr) {
-		return nil, fmt.Errorf("array index %d out of bounds", index)
+	index, err = normalizeNegativeIndex(index, len(arr))
+	if err != nil {
+		return nil, err
 	}
 
 	return arr[index], nil
 }
 
 func (p *Processor) deleteValueForSegment(current any, segment internal.PathSegment) error {
-	switch segment.TypeString() {
-	case "property":
+	switch segment.Type {
+	case internal.PropertySegment:
 		return p.deletePropertyFromContainer(current, segment.Key)
-	case "array":
+	case internal.ArrayIndexSegment:
 		return p.deleteArrayElementByIndex(current, segment.Index)
-	case "slice":
+	case internal.ArraySliceSegment:
 		return p.deleteArraySlice(current, segment)
-	case "extract":
+	case internal.ExtractSegment:
 		return p.deleteExtractedValues(current, segment)
 	default:
-		return fmt.Errorf("unsupported segment type for deletion: %v", segment.TypeString())
+		return fmt.Errorf("unsupported segment type for deletion: %v", segment.Type.String())
 	}
 }
 
@@ -506,28 +506,11 @@ func (p *Processor) deletePropertyFromContainer(current any, property string) er
 }
 
 func (p *Processor) deleteArrayElement(current any, indexStr string) error {
-	arr, ok := current.([]any)
-	if !ok {
-		return fmt.Errorf("cannot delete array element from type %T", current)
-	}
-
 	index, err := strconv.Atoi(indexStr)
 	if err != nil {
 		return fmt.Errorf("invalid array index: %s", indexStr)
 	}
-
-	// Handle negative indices
-	if index < 0 {
-		index = len(arr) + index
-	}
-
-	if index < 0 || index >= len(arr) {
-		return fmt.Errorf("array index %d out of bounds", index)
-	}
-
-	// Mark element for deletion (set to special marker)
-	arr[index] = deletedMarker
-	return nil
+	return p.deleteArrayElementByIndex(current, index)
 }
 
 func (p *Processor) deleteArrayElementByIndex(current any, index int) error {
@@ -536,13 +519,9 @@ func (p *Processor) deleteArrayElementByIndex(current any, index int) error {
 		return fmt.Errorf("cannot delete array element from type %T", current)
 	}
 
-	// Handle negative indices
-	if index < 0 {
-		index = len(arr) + index
-	}
-
-	if index < 0 || index >= len(arr) {
-		return fmt.Errorf("array index %d out of bounds", index)
+	index, err := normalizeNegativeIndex(index, len(arr))
+	if err != nil {
+		return err
 	}
 
 	// Mark element for deletion (set to special marker)
@@ -562,17 +541,10 @@ func (p *Processor) deleteArraySlice(current any, segment internal.PathSegment) 
 		return err
 	}
 
-	// Handle negative indices
-	if start < 0 {
-		start = len(arr) + start
-	}
-	if end < 0 {
-		end = len(arr) + end
-	}
-
-	// Bounds checking
-	if start < 0 || start >= len(arr) || end < 0 || end > len(arr) || start >= end {
-		return fmt.Errorf("slice range [%d:%d] out of bounds for array length %d", start, end, len(arr))
+	// Normalize negative indices and validate bounds
+	start, end, err = normalizeNegativeSliceBounds(start, end, len(arr))
+	if err != nil {
+		return err
 	}
 
 	// Mark elements for deletion
@@ -615,17 +587,17 @@ func (p *Processor) deleteValueComplexSegments(data any, segments []internal.Pat
 
 	segment := segments[segmentIndex]
 
-	switch segment.TypeString() {
-	case "property":
+	switch segment.Type {
+	case internal.PropertySegment:
 		return p.deleteComplexProperty(data, segment, segments, segmentIndex)
-	case "array":
+	case internal.ArrayIndexSegment:
 		return p.deleteComplexArray(data, segment, segments, segmentIndex)
-	case "slice":
+	case internal.ArraySliceSegment:
 		return p.deleteComplexSlice(data, segment, segments, segmentIndex)
-	case "extract":
+	case internal.ExtractSegment:
 		return p.deleteComplexExtract(data, segment, segments, segmentIndex)
 	default:
-		return fmt.Errorf("unsupported complex segment type: %v", segment.TypeString())
+		return fmt.Errorf("unsupported complex segment type: %v", segment.Type.String())
 	}
 }
 
@@ -658,15 +630,9 @@ func (p *Processor) deleteComplexArray(data any, segment internal.PathSegment, s
 		return fmt.Errorf("cannot access array on type %T", data)
 	}
 
-	index := segment.Index
-
-	// Handle negative indices
-	if index < 0 {
-		index = len(arr) + index
-	}
-
-	if index < 0 || index >= len(arr) {
-		return fmt.Errorf("array index %d out of bounds", index)
+	index, err := normalizeNegativeIndex(segment.Index, len(arr))
+	if err != nil {
+		return err
 	}
 
 	if segmentIndex == len(segments)-1 {
@@ -696,23 +662,26 @@ func (p *Processor) deleteComplexSlice(data any, segment internal.PathSegment, s
 		return err
 	}
 
-	// Handle negative indices
-	if start < 0 {
-		start = len(arr) + start
-	}
-	if end < 0 {
-		end = len(arr) + end
+	// Normalize negative indices and validate bounds
+	start, end, err = normalizeNegativeSliceBounds(start, end, len(arr))
+	if err != nil {
+		return err
 	}
 
 	// Apply deletion to each element in the slice
-	for i := start; i < end && i < len(arr); i += step {
+	var firstErr error
+	for i := start; i < end; i += step {
 		if err := p.deleteValueComplexSegments(arr[i], segments, segmentIndex+1); err != nil {
-			// Continue with other elements even if one fails
-			continue
+			if firstErr == nil {
+				firstErr = err
+			}
+			if !p.config.ContinueOnError {
+				return firstErr
+			}
 		}
 	}
 
-	return nil
+	return firstErr
 }
 
 func (p *Processor) deleteComplexExtract(data any, segment internal.PathSegment, segments []internal.PathSegment, segmentIndex int) error {
@@ -762,15 +731,15 @@ func (p *Processor) hasConsecutiveExtractions(segments []internal.PathSegment, s
 		return false
 	}
 
-	return segments[startIndex].TypeString() == "extract" &&
-		segments[startIndex+1].TypeString() == "extract"
+	return segments[startIndex].Type == internal.ExtractSegment &&
+		segments[startIndex+1].Type == internal.ExtractSegment
 }
 
 func (p *Processor) deleteConsecutiveExtractions(data any, segments []internal.PathSegment, segmentIndex int) error {
 	// Find all consecutive extraction segments
 	var extractionSegments []internal.PathSegment
 	i := segmentIndex
-	for i < len(segments) && segments[i].TypeString() == "extract" {
+	for i < len(segments) && segments[i].Type == internal.ExtractSegment {
 		extractionSegments = append(extractionSegments, segments[i])
 		i++
 	}
@@ -798,11 +767,15 @@ func (p *Processor) processConsecutiveExtractionsForDeletion(data any, extractio
 						if len(remainingSegments) == 0 {
 							delete(obj, field)
 						} else {
-							p.deleteValueComplexSegments(extractedValue, remainingSegments, 0)
+							if err := p.deleteValueComplexSegments(extractedValue, remainingSegments, 0); err != nil {
+							return err
+						}
 						}
 					} else {
 						// More extractions to process
-						p.processConsecutiveExtractionsForDeletion(extractedValue, extractionSegments[1:], remainingSegments)
+						if err := p.processConsecutiveExtractionsForDeletion(extractedValue, extractionSegments[1:], remainingSegments); err != nil {
+						return err
+					}
 					}
 				}
 			}
@@ -816,6 +789,11 @@ func (p *Processor) handleExtraction(data any, segment internal.PathSegment) (an
 	field := segment.Key
 	if field == "" {
 		return nil, fmt.Errorf("invalid extraction syntax: %s", segment.String())
+	}
+
+	// Check for multi-field extraction (comma-separated fields)
+	if strings.Contains(field, ",") {
+		return p.handleMultiFieldExtraction(data, field, segment.IsFlatExtract())
 	}
 
 	// Handle array extraction with pre-allocated results slice and flattening
@@ -847,6 +825,57 @@ func (p *Processor) handleExtraction(data any, segment internal.PathSegment) (an
 	// For non-extractable types (strings, numbers, etc.), return nil without error
 	// This matches the expected behavior in tests
 	return nil, nil
+}
+
+// handleMultiFieldExtraction handles extraction of multiple fields from an object or array
+// Returns a new object (or array of objects) containing only the specified fields
+func (p *Processor) handleMultiFieldExtraction(data any, fieldsStr string, isFlat bool) (any, error) {
+	fields := strings.Split(fieldsStr, ",")
+
+	// Handle array extraction
+	if arr, ok := data.([]any); ok {
+		results := make([]any, 0, len(arr))
+		for _, item := range arr {
+			extracted := p.extractFieldsFromObject(item, fields)
+			if extracted != nil {
+				if isFlat {
+					// For flat extraction, flatten nested arrays
+					p.flattenValue(extracted, &results)
+				} else {
+					results = append(results, extracted)
+				}
+			}
+		}
+		return results, nil
+	}
+
+	// Handle single object extraction
+	return p.extractFieldsFromObject(data, fields), nil
+}
+
+// extractFieldsFromObject extracts specified fields from a single object
+// Returns a new map containing only the specified fields that exist in the source
+func (p *Processor) extractFieldsFromObject(data any, fields []string) map[string]any {
+	obj, ok := data.(map[string]any)
+	if !ok {
+		return nil
+	}
+
+	result := make(map[string]any, len(fields))
+	for _, field := range fields {
+		field = strings.TrimSpace(field)
+		if field == "" {
+			continue
+		}
+		if value, exists := obj[field]; exists {
+			result[field] = value
+		}
+	}
+
+	if len(result) == 0 {
+		return nil
+	}
+	return result
 }
 
 func (p *Processor) flattenValue(value any, results *[]any) {
@@ -909,11 +938,11 @@ func (p *Processor) getValueWithDistributedOperation(data any, path string) (any
 	// Find the extraction segment that triggers distributed operation
 	extractionIndex := -1
 	for i, segment := range segments {
-		if segment.TypeString() == "extract" {
+		if segment.Type == internal.ExtractSegment {
 			// Check if this is followed by array operations
 			if i+1 < len(segments) {
 				nextSegment := segments[i+1]
-				if nextSegment.TypeString() == "array" || nextSegment.TypeString() == "slice" {
+				if nextSegment.Type == internal.ArrayIndexSegment || nextSegment.Type == internal.ArraySliceSegment {
 					extractionIndex = i
 					break
 				}
@@ -934,14 +963,14 @@ func (p *Processor) getValueWithDistributedOperation(data any, path string) (any
 	// Navigate to the extraction point
 	current := data
 	for _, segment := range preSegments {
-		switch segment.TypeString() {
-		case "property":
+		switch segment.Type {
+		case internal.PropertySegment:
 			result := p.handlePropertyAccess(current, segment.Key)
 			if !result.exists {
 				return nil, ErrPathNotFound
 			}
 			current = result.value
-		case "array":
+		case internal.ArrayIndexSegment:
 			result := p.handleArrayAccess(current, segment)
 			if !result.exists {
 				return nil, ErrPathNotFound
@@ -962,10 +991,10 @@ func (p *Processor) getValueWithDistributedOperation(data any, path string) (any
 		// Apply post-extraction segments
 		result := arr
 		for _, segment := range postSegments {
-			switch segment.TypeString() {
-			case "array":
+			switch segment.Type {
+			case internal.ArrayIndexSegment:
 				result = p.applySingleArrayOperation(result, segment)
-			case "slice":
+			case internal.ArraySliceSegment:
 				result = p.applySingleArraySlice(result, segment)
 			}
 		}
@@ -1185,7 +1214,7 @@ func (p *Processor) setValueWithSegments(data any, segments []internal.PathSegme
 
 	// Check if the last segment is an append operation
 	finalSegment := segments[len(segments)-1]
-	if finalSegment.TypeString() == "append" {
+	if finalSegment.Type == internal.AppendSegment {
 		return p.handleAppendOperation(data, segments, value, createPaths)
 	}
 
@@ -1200,14 +1229,14 @@ func (p *Processor) setValueWithSegments(data any, segments []internal.PathSegme
 	}
 
 	// Special handling for array index or slice access that might need extension
-	if createPaths && (finalSegment.TypeString() == "array" || finalSegment.TypeString() == "slice") {
+	if createPaths && (finalSegment.Type == internal.ArrayIndexSegment || finalSegment.Type == internal.ArraySliceSegment) {
 		return p.setValueForArrayIndexWithExtension(current, finalSegment, value, data, segments)
 	}
 
 	err := p.setValueForSegment(current, finalSegment, value, createPaths)
 
 	// Handle array extension error
-	if arrayExtErr, ok := err.(*arrayExtensionNeededError); ok && createPaths {
+	if arrayExtErr, ok := err.(*arrayExtensionSignal); ok && createPaths {
 		// We need to extend the array and then set the values
 		return p.handleArrayExtensionAndSet(data, segments, arrayExtErr)
 	}
@@ -1312,9 +1341,11 @@ func (p *Processor) isComplexPath(path string) bool {
 	return internal.IsComplexPath(path)
 }
 
+// PERFORMANCE: Compares segment.Type directly instead of TypeString() to avoid
+// string allocation on every comparison in hot loops.
 func (p *Processor) hasComplexSegments(segments []internal.PathSegment) bool {
 	for _, seg := range segments {
-		if seg.TypeString() == "extract" || seg.TypeString() == "slice" {
+		if seg.Type == internal.ExtractSegment || seg.Type == internal.ArraySliceSegment {
 			return true
 		}
 	}
@@ -1322,18 +1353,18 @@ func (p *Processor) hasComplexSegments(segments []internal.PathSegment) bool {
 }
 
 func (p *Processor) setValueForSegment(current any, segment internal.PathSegment, value any, createPaths bool) error {
-	switch segment.TypeString() {
-	case "property":
+	switch segment.Type {
+	case internal.PropertySegment:
 		return p.setValueForProperty(current, segment.Key, value, createPaths)
-	case "array":
+	case internal.ArrayIndexSegment:
 		index := segment.Index
 		return p.setValueForArrayIndex(current, index, value, createPaths)
-	case "slice":
+	case internal.ArraySliceSegment:
 		return p.setValueForArraySlice(current, segment, value, createPaths)
-	case "extract":
+	case internal.ExtractSegment:
 		return p.setValueForExtract(current, segment, value, createPaths)
 	default:
-		return fmt.Errorf("unsupported segment type for set: %v", segment.TypeString())
+		return fmt.Errorf("unsupported segment type for set: %v", segment.Type.String())
 	}
 }
 
@@ -1357,7 +1388,7 @@ func (p *Processor) setValueForProperty(current any, property string, value any,
 
 // Array extension and index/slice operations
 
-func (p *Processor) handleArrayExtensionAndSet(data any, segments []internal.PathSegment, arrayExtErr *arrayExtensionNeededError) error {
+func (p *Processor) handleArrayExtensionAndSet(data any, segments []internal.PathSegment, arrayExtErr *arrayExtensionSignal) error {
 	if len(segments) == 0 {
 		return fmt.Errorf("no segments provided for array extension")
 	}
@@ -1375,37 +1406,27 @@ func (p *Processor) handleArrayExtensionAndSet(data any, segments []internal.Pat
 	// Get the final segment (can be array or slice)
 	finalSegment := segments[len(segments)-1]
 
-	switch finalSegment.TypeString() {
-	case "array":
+	switch finalSegment.Type {
+	case internal.ArrayIndexSegment:
 		// Handle simple array index extension
 		return p.handleArrayIndexExtension(current, finalSegment, arrayExtErr)
-	case "slice":
+	case internal.ArraySliceSegment:
 		// Handle array slice extension
 		return p.handleArraySliceExtension(current, finalSegment, arrayExtErr)
 	default:
-		return fmt.Errorf("expected array or slice segment for array extension, got %s", finalSegment.TypeString())
+		return fmt.Errorf("expected array or slice segment for array extension, got %s", finalSegment.Type.String())
 	}
 }
 
-func (p *Processor) handleArrayIndexExtension(current any, segment internal.PathSegment, arrayExtErr *arrayExtensionNeededError) error {
+func (p *Processor) handleArrayIndexExtension(current any, _ internal.PathSegment, arrayExtErr *arrayExtensionSignal) error {
 	// For array index access, current should be the array that needs extension
 	arr, ok := current.([]any)
 	if !ok {
 		return fmt.Errorf("expected array for index extension, got %T", current)
 	}
 
-	// Create extended array
-	extendedArr := make([]any, arrayExtErr.requiredLength)
-	copy(extendedArr, arr)
-
-	// Set the value at target index
-	extendedArr[arrayExtErr.start] = arrayExtErr.value
-
-	// The problem is we can't replace the array reference from here
-	// We need to handle this at a higher level
-	// For now, try to extend in place if possible
+	// Try to extend the slice in place if there is enough capacity
 	if cap(arr) >= arrayExtErr.requiredLength {
-		// Extend the slice in place
 		for len(arr) < arrayExtErr.requiredLength {
 			arr = append(arr, nil)
 		}
@@ -1418,7 +1439,7 @@ func (p *Processor) handleArrayIndexExtension(current any, segment internal.Path
 	return fmt.Errorf("cannot extend array in place for index %d", arrayExtErr.start)
 }
 
-func (p *Processor) handleArraySliceExtension(parent any, segment internal.PathSegment, arrayExtErr *arrayExtensionNeededError) error {
+func (p *Processor) handleArraySliceExtension(parent any, _ internal.PathSegment, arrayExtErr *arrayExtensionSignal) error {
 	// Get the array that needs extension
 	arr, ok := parent.([]any)
 	if !ok {
@@ -1442,13 +1463,13 @@ func (p *Processor) handleArraySliceExtension(parent any, segment internal.PathS
 }
 
 func (p *Processor) setValueForArrayIndexWithExtension(current any, segment internal.PathSegment, value any, rootData any, segments []internal.PathSegment) error {
-	switch segment.TypeString() {
-	case "array":
+	switch segment.Type {
+	case internal.ArrayIndexSegment:
 		return p.setValueForArrayIndexWithAutoExtension(current, segment, value, rootData, segments)
-	case "slice":
+	case internal.ArraySliceSegment:
 		return p.setValueForArraySliceWithAutoExtension(current, segment, value, rootData, segments)
 	default:
-		return fmt.Errorf("unsupported segment type for array extension: %s", segment.TypeString())
+		return fmt.Errorf("unsupported segment type for array extension: %s", segment.Type.String())
 	}
 }
 
@@ -1458,22 +1479,18 @@ func (p *Processor) setValueForArrayIndexWithAutoExtension(current any, segment 
 
 	switch v := current.(type) {
 	case []any:
-		// Handle negative indices
-		if index < 0 {
-			index = len(v) + index
+		idx, err := normalizeNegativeIndexAllowExtend(index, len(v))
+		if err != nil {
+			return err
 		}
 
-		if index < 0 {
-			return fmt.Errorf("array index %d out of bounds after negative conversion", index)
-		}
-
-		if index >= len(v) {
+		if idx >= len(v) {
 			// Need to extend the array - find the parent and replace the array
-			return p.extendArrayAndSetValue(rootData, segments, index, value)
+			return p.extendArrayAndSetValue(rootData, segments, idx, value)
 		}
 
 		// Set value within bounds
-		v[index] = value
+		v[idx] = value
 		return nil
 
 	default:
@@ -1719,31 +1736,27 @@ func (p *Processor) extendArrayAndSetValue(rootData any, segments []internal.Pat
 func (p *Processor) setValueForArrayIndex(current any, index int, value any, createPaths bool) error {
 	switch v := current.(type) {
 	case []any:
-		// Handle negative indices
-		if index < 0 {
-			index = len(v) + index
+		idx, err := normalizeNegativeIndexAllowExtend(index, len(v))
+		if err != nil {
+			return err
 		}
 
-		if index < 0 {
-			return fmt.Errorf("array index %d out of bounds after negative conversion", index)
-		}
-
-		if index >= len(v) {
+		if idx >= len(v) {
 			if createPaths {
-				// Return arrayExtensionNeededError to signal parent needs to handle extension
-				return &arrayExtensionNeededError{
-					requiredLength: index + 1,
+				// Return arrayExtensionSignal to signal parent needs to handle extension
+				return &arrayExtensionSignal{
+					requiredLength: idx + 1,
 					currentLength:  len(v),
-					start:          index,
-					end:            index + 1,
+					start:          idx,
+					end:            idx + 1,
 					step:           1,
 					value:          value,
 				}
 			}
-			return fmt.Errorf("array index %d out of bounds (length %d)", index, len(v))
+			return fmt.Errorf("array index %d out of bounds (length %d)", idx, len(v))
 		}
 
-		v[index] = value
+		v[idx] = value
 		return nil
 	default:
 		return fmt.Errorf("cannot set array index %d on type %T", index, current)
@@ -1794,7 +1807,7 @@ func (p *Processor) setValueForArraySlice(current any, segment internal.PathSegm
 			return fmt.Errorf("slice end %d out of bounds for array length %d", end, len(arr))
 		}
 		// For array extension, we need to signal that the parent needs to handle this
-		return &arrayExtensionNeededError{
+		return &arrayExtensionSignal{
 			requiredLength: end,
 			currentLength:  len(arr),
 			start:          start,
@@ -1815,26 +1828,26 @@ func (p *Processor) setValueForArraySlice(current any, segment internal.PathSegm
 // Navigation methods for path traversal
 
 func (p *Processor) navigateToSegment(current any, segment internal.PathSegment, createPaths bool, allSegments []internal.PathSegment, currentIndex int) (any, error) {
-	switch segment.TypeString() {
-	case "property":
+	switch segment.Type {
+	case internal.PropertySegment:
 		return p.navigateToProperty(current, segment.Key, createPaths, allSegments, currentIndex)
-	case "array":
+	case internal.ArrayIndexSegment:
 		// Get array index from segment
 		index := segment.Index
 		return p.navigateToArrayIndexWithNegative(current, index, createPaths)
-	case "slice":
+	case internal.ArraySliceSegment:
 		// Check if this is the last segment before an extract operation
-		if currentIndex+1 < len(allSegments) && allSegments[currentIndex+1].TypeString() == "extract" {
+		if currentIndex+1 < len(allSegments) && allSegments[currentIndex+1].Type == internal.ExtractSegment {
 			// This is a slice followed by extract - return the current array for slice processing
 			return current, nil
 		}
 		// For other cases, array slices are not supported as intermediate paths
 		return nil, fmt.Errorf("array slice not supported as intermediate path segment")
-	case "extract":
+	case internal.ExtractSegment:
 		// Handle extract operations as intermediate path segments
 		return p.navigateToExtraction(current, segment, createPaths, allSegments, currentIndex)
 	default:
-		return nil, fmt.Errorf("unsupported segment type: %v", segment.TypeString())
+		return nil, fmt.Errorf("unsupported segment type: %v", segment.Type.String())
 	}
 }
 
@@ -1912,13 +1925,13 @@ func (p *Processor) createContainerForNextSegment(allSegments []internal.PathSeg
 	}
 
 	nextSegment := allSegments[currentIndex+1]
-	switch nextSegment.TypeString() {
-	case "property", "extract":
+	switch nextSegment.Type {
+	case internal.PropertySegment, internal.ExtractSegment:
 		return make(map[string]any), nil
-	case "array":
+	case internal.ArrayIndexSegment:
 		// For array access, create an empty array that can be extended
 		return make([]any, 0), nil
-	case "slice":
+	case internal.ArraySliceSegment:
 		// For slice access, we need to create an array large enough for the slice
 		end := 0
 		if nextSegment.HasEnd() {
@@ -1935,7 +1948,7 @@ func (p *Processor) createContainerForNextSegment(allSegments []internal.PathSeg
 
 // Extraction-related set operations
 
-func (p *Processor) setValueForExtract(current any, segment internal.PathSegment, value any, createPaths bool) error {
+func (p *Processor) setValueForExtract(current any, segment internal.PathSegment, value any, _ bool) error {
 	field := segment.Key
 	if field == "" {
 		return fmt.Errorf("invalid extraction syntax: %s", segment.String())
@@ -2064,7 +2077,7 @@ func (p *Processor) setValueJSONPointerWithArrayExtension(data any, segments []s
 	// Set final value
 	finalSegment := segments[len(segments)-1]
 	if strings.Contains(finalSegment, "~") {
-		finalSegment = p.unescapeJSONPointer(finalSegment)
+		finalSegment = internal.UnescapeJSONPointer(finalSegment)
 	}
 
 	return p.setJSONPointerFinalValue(current, finalSegment, value)
@@ -2154,9 +2167,13 @@ func (p *Processor) setJSONPointerFinalValue(current any, segment string, value 
 					return nil
 				}
 
-				// Cannot extend in place - this is a limitation of the current approach
-				// The parent reference won't be updated
-				return fmt.Errorf("cannot extend array in place for index %d", index)
+				// Cannot extend in place — return error to prevent silent data loss
+				return &JsonsError{
+					Op:      "array_extension",
+					Path:    segment,
+					Message: fmt.Sprintf("cannot extend array in place for index %d", index),
+					Err:     errOperationFailed,
+				}
 			}
 		}
 		return fmt.Errorf("invalid array index: %s", segment)
@@ -2165,7 +2182,7 @@ func (p *Processor) setJSONPointerFinalValue(current any, segment string, value 
 	}
 }
 
-func (p *Processor) replaceArrayInJSONPointerParent(parent any, oldArray, newArray []any, index int, newContainer any) (any, error) {
+func (p *Processor) replaceArrayInJSONPointerParent(_ any, oldArray, newArray []any, index int, newContainer any) (any, error) {
 	// This is a complex operation that would require tracking parent references
 	// For now, we'll try to extend in place if possible
 	if cap(oldArray) >= len(newArray) {
@@ -2176,8 +2193,12 @@ func (p *Processor) replaceArrayInJSONPointerParent(parent any, oldArray, newArr
 		return newContainer, nil
 	}
 
-	// Cannot extend in place
-	return newContainer, nil
+	// Cannot extend in place — return error to prevent silent data loss
+	return nil, &JsonsError{
+		Op:      "array_extension",
+		Message: fmt.Sprintf("cannot extend array in place: need cap %d, have %d", len(newArray), cap(oldArray)),
+		Err:     errOperationFailed,
+	}
 }
 
 // ============================================================================
@@ -2193,23 +2214,23 @@ var resultBufferPool = sync.Pool{
 	},
 }
 
-// GetResultBuffer gets a buffer for result marshaling
-func GetResultBuffer() *[]byte {
+// getResultBuffer gets a buffer for result marshaling
+func getResultBuffer() *[]byte {
 	buf := resultBufferPool.Get().(*[]byte)
 	*buf = (*buf)[:0]
 	return buf
 }
 
-// PutResultBuffer returns a buffer to the pool
-func PutResultBuffer(buf *[]byte) {
+// putResultBuffer returns a buffer to the pool
+func putResultBuffer(buf *[]byte) {
 	if cap(*buf) <= 16*1024 {
 		resultBufferPool.Put(buf)
 	}
 }
 
-// FastSet is an optimized Set operation for simple paths
+// fastSet is an optimized Set operation for simple paths
 // Uses pooled resources and optimized marshaling
-func (p *Processor) FastSet(jsonStr, path string, value any) (string, error) {
+func (p *Processor) fastSet(jsonStr, path string, value any) (string, error) {
 	if err := p.checkClosed(); err != nil {
 		return jsonStr, err
 	}
@@ -2224,6 +2245,7 @@ func (p *Processor) FastSet(jsonStr, path string, value any) (string, error) {
 }
 
 // fastSetSimple handles simple single-level property access
+// PERFORMANCE: Uses FastMarshalToString to reduce allocations
 func (p *Processor) fastSetSimple(jsonStr, key string, value any) (string, error) {
 	// Quick validation
 	if err := p.validateInput(jsonStr); err != nil {
@@ -2245,17 +2267,17 @@ func (p *Processor) fastSetSimple(jsonStr, key string, value any) (string, error
 	// Direct set
 	obj[key] = value
 
-	// Marshal result
-	result, err := json.Marshal(obj)
+	// PERFORMANCE: Use FastMarshalToString to avoid double allocation
+	result, err := internal.FastMarshalToString(obj)
 	if err != nil {
 		return jsonStr, err
 	}
 
-	return string(result), nil
+	return result, nil
 }
 
-// FastDelete is an optimized Delete operation for simple paths
-func (p *Processor) FastDelete(jsonStr, path string) (string, error) {
+// fastDelete is an optimized Delete operation for simple paths
+func (p *Processor) fastDelete(jsonStr, path string) (string, error) {
 	if err := p.checkClosed(); err != nil {
 		return jsonStr, err
 	}
@@ -2270,6 +2292,7 @@ func (p *Processor) FastDelete(jsonStr, path string) (string, error) {
 }
 
 // fastDeleteSimple handles simple single-level property deletion
+// PERFORMANCE: Uses FastMarshalToString to reduce allocations
 func (p *Processor) fastDeleteSimple(jsonStr, key string) (string, error) {
 	// Quick validation
 	if err := p.validateInput(jsonStr); err != nil {
@@ -2291,17 +2314,18 @@ func (p *Processor) fastDeleteSimple(jsonStr, key string) (string, error) {
 	// Direct delete
 	delete(obj, key)
 
-	// Marshal result
-	result, err := json.Marshal(obj)
+	// PERFORMANCE: Use FastMarshalToString to avoid double allocation
+	result, err := internal.FastMarshalToString(obj)
 	if err != nil {
 		return jsonStr, err
 	}
 
-	return string(result), nil
+	return result, nil
 }
 
-// BatchSetOptimized performs multiple Set operations efficiently
-func (p *Processor) BatchSetOptimized(jsonStr string, updates map[string]any) (string, error) {
+// batchSetOptimized performs multiple Set operations efficiently
+// PERFORMANCE: Uses pooled encoder and single-parse optimization
+func (p *Processor) batchSetOptimized(jsonStr string, updates map[string]any) (string, error) {
 	if err := p.checkClosed(); err != nil {
 		return jsonStr, err
 	}
@@ -2331,17 +2355,18 @@ func (p *Processor) BatchSetOptimized(jsonStr string, updates map[string]any) (s
 		}
 	}
 
-	// PERFORMANCE: Use FastMarshal for encoding to reduce allocations
-	result, err := internal.FastMarshal(data)
+	// PERFORMANCE: Use FastMarshalToString to avoid double allocation (bytes -> string)
+	result, err := internal.FastMarshalToString(data)
 	if err != nil {
 		return jsonStr, err
 	}
 
-	return string(result), nil
+	return result, nil
 }
 
-// BatchDeleteOptimized performs multiple Delete operations efficiently
-func (p *Processor) BatchDeleteOptimized(jsonStr string, paths []string) (string, error) {
+// batchDeleteOptimized performs multiple Delete operations efficiently
+// PERFORMANCE: Uses pooled encoder and single-parse optimization
+func (p *Processor) batchDeleteOptimized(jsonStr string, paths []string) (string, error) {
 	if err := p.checkClosed(); err != nil {
 		return jsonStr, err
 	}
@@ -2367,26 +2392,30 @@ func (p *Processor) BatchDeleteOptimized(jsonStr string, paths []string) (string
 
 		// Use standard delete for complex paths
 		if err := p.deleteValueAtPath(data, path); err != nil {
-			// Continue with other deletions even if one fails
+			if !p.config.ContinueOnError {
+				return jsonStr, err
+			}
+			// ContinueOnError: record error and proceed
 			continue
 		}
 	}
 
-	// PERFORMANCE: Use FastMarshal for encoding to reduce allocations
-	result, err := internal.FastMarshal(data)
+	// PERFORMANCE: Use FastMarshalToString to avoid double allocation (bytes -> string)
+	result, err := internal.FastMarshalToString(data)
 	if err != nil {
 		return jsonStr, err
 	}
 
-	return string(result), nil
+	return result, nil
 }
 
 // ============================================================================
 // BULK GET OPERATIONS
 // ============================================================================
 
-// FastGetMultiple performs multiple Get operations with single parse
-func (p *Processor) FastGetMultiple(jsonStr string, paths []string) (map[string]any, error) {
+// fastGetMultiple performs multiple Get operations with single parse
+// PERFORMANCE v3: Direct allocation with pre-sized map — avoids pool overhead and double-copy
+func (p *Processor) fastGetMultiple(jsonStr string, paths []string) (map[string]any, error) {
 	if err := p.checkClosed(); err != nil {
 		return nil, err
 	}
@@ -2401,6 +2430,7 @@ func (p *Processor) FastGetMultiple(jsonStr string, paths []string) (map[string]
 		return nil, err
 	}
 
+	// Pre-allocate result map to exact size — single allocation, no pool overhead
 	results := make(map[string]any, len(paths))
 
 	for _, path := range paths {

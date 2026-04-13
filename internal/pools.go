@@ -218,65 +218,6 @@ func PutPathSegmentSlice(s *[]PathSegment) {
 	}
 }
 
-// ----------------------------------------------------------------------------
-// ANY SLICE POOL - For flattened results
-// ----------------------------------------------------------------------------
-
-var flattenedSlicePool = sync.Pool{
-	New: func() any {
-		s := make([]any, 0, mediumSliceSize)
-		return &s
-	},
-}
-
-// GetFlattenedSlice retrieves a pooled slice for flattening operations
-func GetFlattenedSlice() *[]any {
-	s := flattenedSlicePool.Get().(*[]any)
-	*s = (*s)[:0]
-	return s
-}
-
-// PutFlattenedSlice returns a slice used for flattening
-func PutFlattenedSlice(s *[]any) {
-	if s == nil || cap(*s) > maxSliceCap {
-		return
-	}
-	*s = (*s)[:0]
-	flattenedSlicePool.Put(s)
-}
-
-// ----------------------------------------------------------------------------
-// STREAMING SLICE POOL - For streaming JSON operations
-// PERFORMANCE: Reduces allocations in streaming scenarios
-// ----------------------------------------------------------------------------
-
-var streamingSlicePool = sync.Pool{
-	New: func() any {
-		s := make([]any, 0, mediumSliceSize)
-		return &s
-	},
-}
-
-// GetStreamingSlice retrieves a pooled []any slice for streaming
-func GetStreamingSlice(hint int) *[]any {
-	if hint <= mediumSliceSize {
-		s := streamingSlicePool.Get().(*[]any)
-		*s = (*s)[:0]
-		return s
-	}
-	// For large hints, allocate directly
-	newSlice := make([]any, 0, hint)
-	return &newSlice
-}
-
-// PutStreamingSlice returns a []any slice to the streaming pool
-func PutStreamingSlice(s *[]any) {
-	if s == nil || cap(*s) > maxSliceCap {
-		return
-	}
-	*s = (*s)[:0]
-	streamingSlicePool.Put(s)
-}
 
 // ----------------------------------------------------------------------------
 // MAP POOL - For JSON object decoding
@@ -307,26 +248,20 @@ var (
 )
 
 // GetStreamingMap retrieves a pooled map[string]any
+// PERFORMANCE: Uses Go 1.21+ clear() for O(1) map clearing instead of O(n) loop
 func GetStreamingMap(hint int) map[string]any {
 	switch {
 	case hint <= smallSliceSize:
 		m := smallMapPool.Get().(map[string]any)
-		// Clear the map
-		for k := range m {
-			delete(m, k)
-		}
+		clear(m) // O(1) instead of O(n) loop
 		return m
 	case hint <= mediumSliceSize:
 		m := mediumMapPool.Get().(map[string]any)
-		for k := range m {
-			delete(m, k)
-		}
+		clear(m)
 		return m
 	case hint <= largeSliceSize:
 		m := largeMapPool.Get().(map[string]any)
-		for k := range m {
-			delete(m, k)
-		}
+		clear(m)
 		return m
 	default:
 		return make(map[string]any, hint)
@@ -334,26 +269,84 @@ func GetStreamingMap(hint int) map[string]any {
 }
 
 // PutStreamingMap returns a map[string]any to the pool
-// Note: Uses len() as approximation since maps don't have capacity
+// PERFORMANCE: Uses Go 1.21+ clear() for O(1) clearing
+// NOTE: Go maps do not expose capacity, so we use len() for pool bucketing.
+// This means maps may occasionally be placed in smaller buckets, but the
+// cost of occasional resizing is lower than the cost of over-pooling.
 func PutStreamingMap(m map[string]any) {
 	if m == nil {
 		return
 	}
-	// Clear the map
-	for k := range m {
-		delete(m, k)
-	}
-	// Use len as approximation for which pool to use
-	// Maps don't have capacity, so we use len to categorize
+	originalSize := len(m)
+
+	// Clear using Go 1.21+ clear() for O(1) performance
+	clear(m)
+
+	// Use original size for pool selection
 	switch {
-	case len(m) == 0:
-		// Empty map - pool based on typical size pattern
+	case originalSize <= smallSliceSize:
 		smallMapPool.Put(m)
-	case len(m) <= smallSliceSize:
-		smallMapPool.Put(m)
-	case len(m) <= mediumSliceSize:
+	case originalSize <= mediumSliceSize:
 		mediumMapPool.Put(m)
-	default:
+	case originalSize <= largeSliceSize:
 		largeMapPool.Put(m)
+	}
+}
+
+// ----------------------------------------------------------------------------
+// BATCH OPERATION POOLS - For BatchSet, FastGetMultiple operations
+// PERFORMANCE: Reduces allocations in batch processing scenarios
+// ----------------------------------------------------------------------------
+
+var (
+	// smallBatchResultsPool pools map[string]any for small batch results (up to 8 entries)
+	smallBatchResultsPool = sync.Pool{
+		New: func() any {
+			return make(map[string]any, 8)
+		},
+	}
+	// mediumBatchResultsPool pools map[string]any for medium batch results (up to 16 entries)
+	mediumBatchResultsPool = sync.Pool{
+		New: func() any {
+			return make(map[string]any, 16)
+		},
+	}
+)
+
+// GetBatchResultsMap retrieves a map for batch operation results
+// PERFORMANCE: Uses tiered pools to match actual capacity needs
+func GetBatchResultsMap(hint int) map[string]any {
+	switch {
+	case hint <= 8:
+		m := smallBatchResultsPool.Get().(map[string]any)
+		clear(m)
+		return m
+	case hint <= 16:
+		m := mediumBatchResultsPool.Get().(map[string]any)
+		clear(m)
+		return m
+	default:
+		return make(map[string]any, hint)
+	}
+}
+
+// PutBatchResultsMap returns a map to the batch results pool
+func PutBatchResultsMap(m map[string]any) {
+	if m == nil {
+		return
+	}
+	// For maps, we use length as a proxy for capacity
+	l := len(m)
+	// Don't pool maps that grew too large (conservative estimate)
+	if l > 32 {
+		return
+	}
+	clear(m)
+	// Return to appropriate pool based on likely capacity
+	// Small pool for maps that likely have <= 8 capacity
+	if l <= 8 {
+		smallBatchResultsPool.Put(m)
+	} else {
+		mediumBatchResultsPool.Put(m)
 	}
 }

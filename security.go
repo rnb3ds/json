@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
@@ -75,15 +76,12 @@ var dangerousPatterns = []dangerousPattern{
 	// Protocol patterns
 	{"javascript:", "javascript protocol"},
 	{"vbscript:", "vbscript protocol"},
-	{"data:", "data protocol"},
 	// Code execution patterns
 	{"eval(", "dynamic code execution"},
-	{"function(", "function expression"},
 	{"setTimeout(", "timer manipulation"},
 	{"setInterval(", "interval manipulation"},
 	{"require(", "code injection"},
 	{"new function(", "dynamic function creation"},
-	{"import(", "dynamic import"},
 	// DOM access patterns
 	{"document.cookie", "cookie access"},
 	{"window.location", "redirect manipulation"},
@@ -92,49 +90,15 @@ var dangerousPatterns = []dangerousPattern{
 	{"fromcharcode(", "character encoding bypass"},
 	{"atob(", "base64 decoding"},
 	{"expression(", "CSS expression injection"},
-	// Event handlers (comprehensive list)
+	// Event handlers (common injection vectors)
 	{"onerror", "event handler injection"},
 	{"onload", "event handler injection"},
 	{"onclick", "event handler injection"},
 	{"onmouseover", "event handler injection"},
 	{"onfocus", "event handler injection"},
-	{"onblur", "event handler injection"},
-	{"onkeyup", "event handler injection"},
-	{"onchange", "event handler injection"},
-	{"onsubmit", "event handler injection"},
-	{"ondblclick", "event handler injection"},
-	{"onmousedown", "event handler injection"},
-	{"onmouseup", "event handler injection"},
-	{"onmousemove", "event handler injection"},
-	{"onkeydown", "event handler injection"},
-	{"onkeypress", "event handler injection"},
-	{"onreset", "event handler injection"},
-	{"onselect", "event handler injection"},
-	{"onunload", "event handler injection"},
-	{"onabort", "event handler injection"},
-	{"ondrag", "event handler injection"},
-	{"ondragend", "event handler injection"},
-	{"ondragenter", "event handler injection"},
-	{"ondragleave", "event handler injection"},
-	{"ondragover", "event handler injection"},
-	{"ondragstart", "event handler injection"},
-	{"ondrop", "event handler injection"},
-	{"onscroll", "event handler injection"},
-	{"onwheel", "event handler injection"},
-	{"oncopy", "event handler injection"},
-	{"oncut", "event handler injection"},
-	{"onpaste", "event handler injection"},
-	// JavaScript dangerous functions
-	{"alert(", "alert function"},
-	{"confirm(", "confirm function"},
-	{"prompt(", "prompt function"},
 	// Prototype pollution patterns
 	{"__defineGetter__", "getter definition"},
 	{"__defineSetter__", "setter definition"},
-	{"Object.assign", "object assignment"},
-	{"Reflect.", "reflection API"},
-	{"Proxy(", "proxy creation"},
-	{"Symbol(", "symbol creation"},
 }
 
 // criticalPatterns are always fully scanned regardless of JSON size
@@ -218,11 +182,13 @@ func (r *patternRegistry) Clear() {
 //	})
 func RegisterDangerousPattern(pattern DangerousPattern) {
 	globalPatternRegistry.Add(pattern)
+	atomic.StoreInt64(&cachedMaxPatternLen, 0) // Invalidate cache
 }
 
 // UnregisterDangerousPattern removes a pattern from the global registry.
 func UnregisterDangerousPattern(pattern string) {
 	globalPatternRegistry.Remove(pattern)
+	atomic.StoreInt64(&cachedMaxPatternLen, 0) // Invalidate cache
 }
 
 // ListDangerousPatterns returns all registered custom patterns.
@@ -230,15 +196,17 @@ func ListDangerousPatterns() []DangerousPattern {
 	return globalPatternRegistry.List()
 }
 
-// ClearDangerousPatterns removes all custom patterns from the global registry.
+// clearDangerousPatterns removes all custom patterns from the global registry.
 // Use with caution - this does not affect built-in patterns.
-func ClearDangerousPatterns() {
+func clearDangerousPatterns() {
 	globalPatternRegistry.Clear()
+	atomic.StoreInt64(&cachedMaxPatternLen, 0) // Invalidate cache
 }
 
-// GetDefaultPatterns returns the built-in dangerous patterns as DangerousPattern values.
+// getDefaultPatterns returns the built-in dangerous patterns as DangerousPattern values.
 // All default patterns are considered Critical level.
-func GetDefaultPatterns() []DangerousPattern {
+// PERFORMANCE: Cached to avoid repeated allocation — the result is immutable.
+var getDefaultPatterns = sync.OnceValue(func() []DangerousPattern {
 	result := make([]DangerousPattern, len(dangerousPatterns))
 	for i, p := range dangerousPatterns {
 		result[i] = DangerousPattern{
@@ -248,10 +216,11 @@ func GetDefaultPatterns() []DangerousPattern {
 		}
 	}
 	return result
-}
+})
 
-// GetCriticalPatterns returns patterns that are always fully scanned.
-func GetCriticalPatterns() []DangerousPattern {
+// getCriticalPatterns returns patterns that are always fully scanned.
+// PERFORMANCE: Cached to avoid repeated allocation — the result is immutable.
+var getCriticalPatterns = sync.OnceValue(func() []DangerousPattern {
 	result := make([]DangerousPattern, len(criticalPatterns))
 	for i, p := range criticalPatterns {
 		result[i] = DangerousPattern{
@@ -261,29 +230,45 @@ func GetCriticalPatterns() []DangerousPattern {
 		}
 	}
 	return result
+})
+
+// indicatorChars is a pre-computed lookup table for indicator characters.
+// PERFORMANCE: O(1) lookup per character during security scanning.
+var indicatorChars = [256]bool{
+	'<': true, '(': true, ':': true, '.': true, '_': true,
+	'O': true, 'R': true, 'P': true, 'S': true,
+	'a': true, 'b': true, 'c': true, 'd': true, 'e': true, 'f': true,
+	'i': true, 'j': true, 'n': true, 'o': true, 'p': true, 'r': true,
+	's': true, 'v': true, 'w': true,
 }
 
-// indicatorChars contains characters that indicate potential dangerous patterns
-// If none of these exist, we can skip pattern matching entirely
-var indicatorChars = map[byte]bool{
-	'<': true, '(': true, ':': true, '.': true,
-	'_': true, 'O': true, 'R': true, 'P': true, 'S': true,
-	'a': true, 'b': true, 'c': true, 'd': true, 'e': true,
-	'f': true, 'i': true, 'j': true, 'n': true, 'o': true,
-	'p': true, 'r': true, 's': true, 'v': true, 'w': true,
+// maxDangerousPatternLen returns the length of the longest dangerous pattern.
+// PERFORMANCE: Cached with atomic for lock-free reads; invalidated on pattern registration.
+func maxDangerousPatternLen() int {
+	cached := atomic.LoadInt64(&cachedMaxPatternLen)
+	if cached > 0 {
+		return int(cached)
+	}
+	return recomputeMaxPatternLen()
 }
 
-// maxDangerousPatternLen is the length of the longest dangerous pattern
-// PERFORMANCE: Pre-computed at package initialization to avoid calculation on each validation
-var maxDangerousPatternLen = computeMaxPatternLen()
+// cachedMaxPatternLen caches the result of maxDangerousPatternLen
+var cachedMaxPatternLen int64
 
-func computeMaxPatternLen() int {
+// recomputeMaxPatternLen recalculates and caches the max pattern length
+func recomputeMaxPatternLen() int {
 	maxLen := 0
 	for _, dp := range dangerousPatterns {
 		if len(dp.pattern) > maxLen {
 			maxLen = len(dp.pattern)
 		}
 	}
+	for _, p := range globalPatternRegistry.List() {
+		if len(p.Pattern) > maxLen {
+			maxLen = len(p.Pattern)
+		}
+	}
+	atomic.StoreInt64(&cachedMaxPatternLen, int64(maxLen))
 	return maxLen
 }
 
@@ -338,245 +323,13 @@ type validationCacheEntry struct {
 	lastAccess int64 // Unix timestamp for LRU eviction
 }
 
-// PatternChecker handles dangerous pattern detection in JSON content.
-// RESPONSIBILITY: Detects and reports dangerous patterns like XSS, prototype pollution, etc.
-type PatternChecker struct {
-	fullSecurityScan bool
-}
-
-// NewPatternChecker creates a new pattern checker.
-func NewPatternChecker(fullSecurityScan bool) *PatternChecker {
-	return &PatternChecker{fullSecurityScan: fullSecurityScan}
-}
-
-// Check performs pattern validation on the JSON string.
-// Returns error if dangerous patterns are detected.
-func (pc *PatternChecker) Check(jsonStr string) error {
-	if len(jsonStr) < securitySmallJSONThreshold {
-		return pc.checkFull(jsonStr)
-	}
-	return pc.checkOptimized(jsonStr)
-}
-
-// checkFull performs full pattern validation for small JSON strings
-func (pc *PatternChecker) checkFull(jsonStr string) error {
-	// SECURITY: Always scan critical patterns in full
-	for _, cp := range criticalPatterns {
-		if strings.Contains(jsonStr, cp.pattern) {
-			return newSecurityError("pattern_check", fmt.Sprintf("dangerous pattern: %s", cp.name))
-		}
-	}
-
-	// Pre-check: if no HTML/XML tags or function calls exist, skip expensive pattern matching
-	hasAngleBracket := strings.IndexByte(jsonStr, '<') != -1
-	hasFunctionCall := strings.IndexByte(jsonStr, '(') != -1
-
-	if !hasAngleBracket && !hasFunctionCall {
-		if strings.Contains(jsonStr, "javascript:") ||
-			strings.Contains(jsonStr, "vbscript:") ||
-			strings.Contains(jsonStr, "data:") {
-			return newSecurityError("pattern_check", "dangerous protocol pattern detected")
-		}
-		return nil
-	}
-
-	// Check HTML/XSS related patterns
-	if hasAngleBracket {
-		htmlPatterns := []string{"<script", "<iframe", "<object", "<embed", "<svg", "onerror", "onload", "onclick"}
-		for _, pattern := range htmlPatterns {
-			if strings.Contains(jsonStr, pattern) {
-				return newSecurityError("pattern_check", fmt.Sprintf("dangerous HTML pattern: %s", pattern))
-			}
-		}
-	}
-
-	// Check function-related patterns
-	if hasFunctionCall {
-		funcPatterns := []string{"eval(", "function(", "setTimeout(", "setInterval(", "new Function("}
-		for _, pattern := range funcPatterns {
-			if strings.Contains(jsonStr, pattern) {
-				return newSecurityError("pattern_check", fmt.Sprintf("dangerous function pattern: %s", pattern))
-			}
-		}
-	}
-
-	return nil
-}
-
-// checkOptimized performs optimized pattern validation for large JSON strings
-func (pc *PatternChecker) checkOptimized(jsonStr string) error {
-	if pc.fullSecurityScan {
-		return pc.checkFull(jsonStr)
-	}
-
-	// Always scan critical patterns
-	for _, cp := range criticalPatterns {
-		if strings.Contains(jsonStr, cp.pattern) {
-			return newSecurityError("pattern_check", fmt.Sprintf("dangerous pattern: %s", cp.name))
-		}
-	}
-
-	// Check for indicator characters
-	hasIndicators := false
-	for i := 0; i < len(jsonStr); i++ {
-		if indicatorChars[jsonStr[i]] {
-			hasIndicators = true
-			break
-		}
-	}
-	if !hasIndicators {
-		return nil
-	}
-
-	// Check suspicious character density
-	if pc.hasSuspiciousDensity(jsonStr) {
-		return pc.checkFull(jsonStr)
-	}
-
-	// Rolling window scan
-	return pc.scanRollingWindow(jsonStr)
-}
-
-// hasSuspiciousDensity checks if the JSON has high density of suspicious characters
-func (pc *PatternChecker) hasSuspiciousDensity(jsonStr string) bool {
-	sampleSize := min(len(jsonStr), securitySampleSize)
-	suspiciousCount := 0
-	for i := 0; i < sampleSize; i++ {
-		if indicatorChars[jsonStr[i]] {
-			suspiciousCount++
-		}
-	}
-	density := float64(suspiciousCount) / float64(sampleSize)
-	return density > securityLocalDensityThreshold
-}
-
-// scanRollingWindow performs rolling window scan for large JSON
-func (pc *PatternChecker) scanRollingWindow(jsonStr string) error {
-	windowSize := securityScanWindowSize
-	overlap := maxDangerousPatternLen
-
-	for offset := 0; offset < len(jsonStr); offset += windowSize - overlap {
-		end := min(offset+windowSize, len(jsonStr))
-		window := jsonStr[offset:end]
-
-		if err := pc.checkFull(window); err != nil {
-			return err
-		}
-
-		if end >= len(jsonStr) {
-			break
-		}
-	}
-	return nil
-}
-
-// StructureValidator handles JSON structure and nesting validation.
-// RESPONSIBILITY: Validates JSON syntax, structure, and depth limits.
-type StructureValidator struct {
-	maxNestingDepth int64
-}
-
-// NewStructureValidator creates a new structure validator.
-func NewStructureValidator(maxNestingDepth int64) *StructureValidator {
-	return &StructureValidator{maxNestingDepth: maxNestingDepth}
-}
-
-// ValidateStructure checks the JSON structure for validity.
-func (sv *StructureValidator) ValidateStructure(jsonStr string) error {
-	if len(jsonStr) == 0 {
-		return newOperationError("validate_structure", "JSON string cannot be empty", ErrInvalidJSON)
-	}
-
-	// Check UTF-8 validity
-	if !utf8.ValidString(jsonStr) {
-		return newOperationError("validate_structure", "JSON contains invalid UTF-8 sequences", ErrInvalidJSON)
-	}
-
-	// Check for BOM
-	if strings.HasPrefix(jsonStr, validationBOMPrefix) {
-		return newOperationError("validate_structure", "JSON contains BOM which is not allowed", ErrInvalidJSON)
-	}
-
-	return nil
-}
-
-// ValidateNesting checks the nesting depth of the JSON.
-func (sv *StructureValidator) ValidateNesting(jsonStr string) error {
-	if sv.maxNestingDepth <= 0 {
-		return nil // Skip if depth limit not set
-	}
-
-	depth := 0
-	maxDepth := 0
-	inString := false
-	escape := false
-
-	for _, c := range jsonStr {
-		if escape {
-			escape = false
-			continue
-		}
-		if c == '\\' && inString {
-			escape = true
-			continue
-		}
-		if c == '"' {
-			inString = !inString
-			continue
-		}
-		if inString {
-			continue
-		}
-		if c == '{' || c == '[' {
-			depth++
-			if depth > maxDepth {
-				maxDepth = depth
-			}
-		} else if c == '}' || c == ']' {
-			depth--
-		}
-	}
-
-	if int64(maxDepth) > sv.maxNestingDepth {
-		return newSecurityError("validate_nesting", fmt.Sprintf("nesting depth %d exceeds maximum %d", maxDepth, sv.maxNestingDepth))
-	}
-
-	return nil
-}
-
-// PathSecurityChecker handles path security validation.
-// RESPONSIBILITY: Validates JSON path syntax and security.
-type PathSecurityChecker struct {
-	maxPathLength int
-}
-
-// NewPathSecurityChecker creates a new path security checker.
-func NewPathSecurityChecker(maxPathLength int) *PathSecurityChecker {
-	return &PathSecurityChecker{maxPathLength: maxPathLength}
-}
-
-// Validate checks the path for security issues.
-func (pc *PathSecurityChecker) Validate(path string) error {
-	if len(path) > pc.maxPathLength {
-		return newPathError(path, fmt.Sprintf("path length %d exceeds maximum %d", len(path), pc.maxPathLength), ErrInvalidPath)
-	}
-	if path == "" || path == "." {
-		return nil
-	}
-	return internal.ValidatePath(path)
-}
-
 // securityValidator provides comprehensive security validation for JSON processing.
-// It composes PatternChecker, StructureValidator, and PathSecurityChecker for separation of concerns.
 type securityValidator struct {
 	maxJSONSize      int64
 	maxPathLength    int
 	maxNestingDepth  int
 	fullSecurityScan bool
 	// Composed validators for separation of concerns
-	patternChecker   *PatternChecker
-	structureChecker *StructureValidator
-	pathChecker      *PathSecurityChecker
 	// Cache for validation results
 	validationCache map[string]*validationCacheEntry
 	cacheMutex      sync.RWMutex
@@ -591,12 +344,40 @@ func newSecurityValidator(maxJSONSize int64, maxPathLength, maxNestingDepth int,
 		fullSecurityScan: fullSecurityScan,
 		validationCache:  make(map[string]*validationCacheEntry, 256),
 	}
-	// Initialize composed validators
-	sv.patternChecker = NewPatternChecker(fullSecurityScan)
-	sv.structureChecker = NewStructureValidator(int64(maxNestingDepth))
-	sv.pathChecker = NewPathSecurityChecker(maxPathLength)
 	return sv
 }
+
+// Close releases resources held by the security validator.
+// This should be called when the validator is no longer needed to prevent memory leaks.
+func (sv *securityValidator) Close() {
+	sv.cacheMutex.Lock()
+	defer sv.cacheMutex.Unlock()
+
+	// Clear validation cache to release memory
+	sv.validationCache = nil
+}
+
+// ValidateJSONInputEssential performs only essential safety checks that must
+// always be enforced, even when SkipValidation is true.
+// SECURITY: Size limits and nesting depth protect the process itself from DoS.
+func (sv *securityValidator) ValidateJSONInputEssential(jsonStr string) error {
+	// Always enforce size limit — prevents memory exhaustion
+	if int64(len(jsonStr)) > sv.maxJSONSize {
+		return newSizeLimitError("validate_json_input", int64(len(jsonStr)), sv.maxJSONSize)
+	}
+
+	if len(jsonStr) == 0 {
+		return newOperationError("validate_json_input", "JSON string cannot be empty", ErrInvalidJSON)
+	}
+
+	// Always enforce nesting depth — prevents stack overflow during parsing
+	if err := sv.validateNestingDepth(jsonStr); err != nil {
+		return err
+	}
+
+	return nil
+}
+
 // ValidateJSONInput performs comprehensive JSON input validation with enhanced security.
 // PERFORMANCE: Uses caching to avoid repeated validation of the same JSON string.
 func (sv *securityValidator) ValidateJSONInput(jsonStr string) error {
@@ -689,7 +470,8 @@ func (sv *securityValidator) getValidationCacheKey(jsonStr string) string {
 	// Use FULL 32 bytes (64 hex chars) of SHA-256 to prevent birthday attacks
 	// A 128-bit truncation would only require 2^64 operations for collision
 	// Full 256-bit requires 2^128 operations which is computationally infeasible
-	hash := sha256.Sum256([]byte(jsonStr))
+	// PERFORMANCE: Use internal.StringToBytes to avoid heap allocation for string->[]byte conversion
+	hash := sha256.Sum256(internal.StringToBytes(jsonStr))
 
 	// Build key manually: "len:hash" format
 	// Need up to ~80 bytes: "9999999999:" (11) + 64 hex chars = 75 bytes max
@@ -717,6 +499,11 @@ func (sv *securityValidator) isValidationCached(jsonStr string) (string, bool) {
 
 	// Use read lock for fast lookup
 	sv.cacheMutex.RLock()
+	// SAFETY: Check for nil cache (can happen after Close())
+	if sv.validationCache == nil {
+		sv.cacheMutex.RUnlock()
+		return cacheKey, false
+	}
 	entry, cached := sv.validationCache[cacheKey]
 	// RACE-FIX: Do NOT update entry.lastAccess here with read lock
 	// The access time will be updated when the entry is re-validated or during eviction
@@ -731,6 +518,11 @@ func (sv *securityValidator) isValidationCached(jsonStr string) (string, bool) {
 func (sv *securityValidator) cacheValidationWithKey(cacheKey string) {
 	sv.cacheMutex.Lock()
 	defer sv.cacheMutex.Unlock()
+
+	// SAFETY: Skip caching after Close()
+	if sv.validationCache == nil {
+		return
+	}
 
 	// SECURITY FIX: Proactive cleanup at 80% capacity instead of 100%
 	const cacheHighWatermark = securityCacheHighWatermark
@@ -884,21 +676,24 @@ func (sv *securityValidator) validateJSONSecurityFull(jsonStr string) error {
 	// Most legitimate JSON with these characters is still safe
 	// We only need to scan for actual dangerous patterns,
 	// Check HTML/XSS related patterns (require '<')
+	// SECURITY: Use case-insensitive matching to prevent bypass via mixed case (e.g., <Script>)
 	if hasAngleBracket {
+		lower := strings.ToLower(jsonStr)
 		htmlPatterns := []string{"<script", "<iframe", "<object", "<embed", "<svg", "onerror", "onload", "onclick"}
 		for _, pattern := range htmlPatterns {
-			if strings.Contains(jsonStr, pattern) {
+			if strings.Contains(lower, pattern) {
 				return newSecurityError("validate_json_security", fmt.Sprintf("dangerous HTML pattern: %s", pattern))
 			}
 		}
 	}
 
 	// Check function-related patterns (require '(')
+	// SECURITY: Case-insensitive to prevent bypass via mixed case
 	if hasFunctionCall {
-		// Only check the most common dangerous function patterns
-		funcPatterns := []string{"eval(", "function(", "setTimeout(", "setInterval(", "new Function("}
+		lower := strings.ToLower(jsonStr)
+		funcPatterns := []string{"eval(", "function(", "settimeout(", "setinterval(", "new function("}
 		for _, pattern := range funcPatterns {
-			if strings.Contains(jsonStr, pattern) {
+			if strings.Contains(lower, pattern) {
 				return newSecurityError("validate_json_security", fmt.Sprintf("dangerous function pattern: %s", pattern))
 			}
 		}
@@ -979,7 +774,7 @@ func (sv *securityValidator) scanWithRollingWindow(jsonStr string) error {
 	jsonLen := len(jsonStr)
 
 	// Add safety margin to the pre-computed max pattern length
-	overlapSize := maxDangerousPatternLen + 8
+	overlapSize := maxDangerousPatternLen() + 8
 
 	// Window size tuned for cache efficiency
 	windowSize := securityScanWindowSize
@@ -1173,7 +968,11 @@ func (sv *securityValidator) isDangerousContextIgnoreCase(s string, idx, pattern
 func (sv *securityValidator) validatePathSecurity(path string) error {
 	// Normalize the path using Unicode NFC to detect homograph attacks
 	// This ensures that visually similar characters are normalized
-	normalizedPath := norm.NFC.String(path)
+	// PERFORMANCE: Skip NFC normalization for pure ASCII paths (common case)
+	normalizedPath := path
+	if !isAllASCII(path) {
+		normalizedPath = norm.NFC.String(path)
+	}
 
 	if strings.IndexByte(normalizedPath, 0) != -1 {
 		return newPathError(path, "null byte injection detected", ErrSecurityViolation)
@@ -1189,13 +988,15 @@ func (sv *securityValidator) validatePathSecurity(path string) error {
 		return newPathError(path, "path traversal detected", ErrSecurityViolation)
 	}
 
-	// Check URL encoding bypass (including double encoding) - case-insensitive without allocation
-	if containsAnyIgnoreCase(normalizedPath, "%2e", "%2f", "%5c", "%00", "%252e", "%252f") {
+	// Check URL encoding bypass (including double encoding) - case-insensitive
+	// PERFORMANCE: Use strings.Contains with case folding for short percent-encoded patterns
+	// instead of the generic containsAnyIgnoreCase loop
+	if containsPercentEncodingBypass(normalizedPath) {
 		return newPathError(path, "path traversal via URL encoding detected", ErrSecurityViolation)
 	}
 
-	// Check UTF-8 overlong encoding - case-insensitive without allocation
-	if containsAnyIgnoreCase(normalizedPath, "%c0%af", "%c1%9c") {
+	// Check UTF-8 overlong encoding - case-insensitive
+	if containsOverlongEncoding(normalizedPath) {
 		return newPathError(path, "path traversal via UTF-8 overlong encoding detected", ErrSecurityViolation)
 	}
 
@@ -1205,6 +1006,111 @@ func (sv *securityValidator) validatePathSecurity(path string) error {
 	}
 
 	return nil
+}
+
+// isAllASCII checks if a string contains only ASCII characters (< 0x80)
+// PERFORMANCE: Used to skip expensive Unicode normalization for common ASCII-only paths
+func isAllASCII(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] >= 0x80 {
+			return false
+		}
+	}
+	return true
+}
+
+// containsPercentEncodingBypass checks for URL-encoded path traversal patterns
+// PERFORMANCE: Uses direct string search with case folding instead of generic
+// containsAnyIgnoreCase loop, avoiding function call overhead per pattern.
+func containsPercentEncodingBypass(s string) bool {
+	// Percent-encoded patterns: %2e, %2f, %5c, %00, %252e, %252f
+	// Check for '%' presence first as a fast rejection
+	idx := strings.IndexByte(s, '%')
+	if idx == -1 {
+		return false
+	}
+	// Now check each pattern using case-insensitive comparison
+	// Use the single-pass approach: scan for '%' and check following bytes
+	remaining := s[idx:]
+	for {
+		i := strings.IndexByte(remaining, '%')
+		if i == -1 {
+			return false
+		}
+		after := remaining[i+1:]
+		// Check each pattern against the bytes following '%'
+		if len(after) >= 2 {
+			twoBytes := after[:2]
+			// %2e (%2E) — dot
+			if twoBytes[0] == '2' && (twoBytes[1] == 'e' || twoBytes[1] == 'E') {
+				return true
+			}
+			// %2f (%2F) — slash
+			if twoBytes[0] == '2' && (twoBytes[1] == 'f' || twoBytes[1] == 'F') {
+				return true
+			}
+			// %5c (%5C) — backslash
+			if twoBytes[0] == '5' && (twoBytes[1] == 'c' || twoBytes[1] == 'C') {
+				return true
+			}
+			// %00 — null byte
+			if twoBytes[0] == '0' && twoBytes[1] == '0' {
+				return true
+			}
+			// %25 — double encoding start (%252e, %252f)
+			if twoBytes[0] == '2' && twoBytes[1] == '5' && len(after) >= 4 {
+				fourBytes := after[:4]
+				// %252e or %252E
+				if (fourBytes[2] == '2') && (fourBytes[3] == 'e' || fourBytes[3] == 'E') {
+					return true
+				}
+				// %252f or %252F
+				if (fourBytes[2] == '2') && (fourBytes[3] == 'f' || fourBytes[3] == 'F') {
+					return true
+				}
+			}
+		}
+		remaining = after
+	}
+}
+
+// containsOverlongEncoding checks for UTF-8 overlong encoding patterns
+// PERFORMANCE: Single-pass scan for %c0/%c1 patterns
+func containsOverlongEncoding(s string) bool {
+	idx := strings.IndexByte(s, '%')
+	if idx == -1 {
+		return false
+	}
+	remaining := s[idx:]
+	for {
+		i := strings.IndexByte(remaining, '%')
+		if i == -1 {
+			return false
+		}
+		after := remaining[i+1:]
+		if len(after) >= 5 {
+			// %c0%af or %C0%AF
+			a, b := after[0], after[1]
+			if (a == 'c' || a == 'C') && (b == '0') {
+				if after[2] == '%' && len(after) >= 5 {
+					c, d := after[3], after[4]
+					if (c == 'a' || c == 'A') && (d == 'f' || d == 'F') {
+						return true
+					}
+				}
+			}
+			// %c1%9c or %C1%9C
+			if (a == 'c' || a == 'C') && (b == '1') {
+				if after[2] == '%' && len(after) >= 5 {
+					c, d := after[3], after[4]
+					if (c == '9') && (d == 'c' || d == 'C') {
+						return true
+					}
+				}
+			}
+		}
+		remaining = after
+	}
 }
 
 // containsZeroWidthChars checks for zero-width and other invisible Unicode characters
@@ -1247,16 +1153,6 @@ func containsZeroWidthChars(s string) bool {
 	return false
 }
 
-// containsAnyIgnoreCase checks if s contains any of the patterns case-insensitively
-func containsAnyIgnoreCase(s string, patterns ...string) bool {
-	for _, pattern := range patterns {
-		if fastIndexIgnoreCase(s, pattern) != -1 {
-			return true
-		}
-	}
-	return false
-}
-
 func (sv *securityValidator) validateJSONStructure(jsonStr string) error {
 	// Fast path: trim whitespace without allocation
 	start := 0
@@ -1292,10 +1188,49 @@ func isWhitespace(c byte) bool {
 }
 
 func (sv *securityValidator) validateNestingDepth(jsonStr string) error {
-	// PERFORMANCE: For small JSON (< 64KB), skip detailed nesting validation
-	// The standard library json.Unmarshal already handles this efficiently
-	// Only do detailed scan for large JSON where DoS attacks are more likely
+	// SECURITY: Validate nesting depth for all inputs regardless of size.
+	// Use a faster scan for small JSON (< 64KB) by only checking depth,
+	// and full scan for larger inputs that also track total brackets.
+	// Small but deeply nested JSON can still cause stack overflow during processing.
 	if len(jsonStr) < securityNestingValidationThreshold {
+		// Fast path for small JSON: only check max depth, no bracket counting
+		depth := 0
+		inString := false
+		escaped := false
+		maxCheckDepth := sv.maxNestingDepth
+		if maxCheckDepth <= 0 {
+			maxCheckDepth = 100
+		}
+		for i := 0; i < len(jsonStr); i++ {
+			c := jsonStr[i]
+			if escaped {
+				escaped = false
+				continue
+			}
+			if inString {
+				if c == byte(0x5c) {
+					escaped = true
+				} else if c == '"' {
+					inString = false
+				}
+				continue
+			}
+			switch c {
+			case '"':
+				inString = true
+			case '{', '[':
+				depth++
+				if depth > maxCheckDepth {
+					return fmt.Errorf("nesting depth %d exceeds maximum %d", depth, maxCheckDepth)
+				}
+			case '}', ']':
+				depth--
+			case byte(0x5c):
+				if inString {
+					escaped = true
+				}
+			}
+		}
 		return nil
 	}
 
@@ -1432,11 +1367,36 @@ func (sv *securityValidator) containsSensitiveDataRecursive(data any, depth, max
 		return false
 	}
 
-	// For slices, recursively check elements with limit
+	// For slices, recursively check elements using head/tail/sampling strategy.
+	// SECURITY: Checks first 100, last 50, and uniform samples in between.
+	// Full scan for arrays up to 500 elements to minimize blind spots.
+	// Performance is bounded: arrays > 500 sample at most 100 + 20 + 50 = 170 elements.
 	if arr, ok := data.([]any); ok {
-		// Only check first 50 elements to avoid performance hit on large arrays
-		checkLimit := min(len(arr), 50)
-		for i := range checkLimit {
+		n := len(arr)
+		if n <= 500 {
+			// Small/medium array: check all elements
+			for i := 0; i < n; i++ {
+				if sv.containsSensitiveDataRecursive(arr[i], depth+1, maxDepth) {
+					return true
+				}
+			}
+			return false
+		}
+		// Large array: check head (first 100), tail (last 50), and sample middle
+		for i := 0; i < 100; i++ {
+			if sv.containsSensitiveDataRecursive(arr[i], depth+1, maxDepth) {
+				return true
+			}
+		}
+		// Check tail (last 50)
+		for i := n - 50; i < n; i++ {
+			if sv.containsSensitiveDataRecursive(arr[i], depth+1, maxDepth) {
+				return true
+			}
+		}
+		// Sample up to 20 elements uniformly from the middle
+		step := max(1, (n-150)/20)
+		for i := 100; i < n-50; i += step {
 			if sv.containsSensitiveDataRecursive(arr[i], depth+1, maxDepth) {
 				return true
 			}

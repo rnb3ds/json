@@ -1,7 +1,6 @@
 package json
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -75,7 +74,7 @@ func BenchmarkIterableValueGet(b *testing.B) {
 			"email": "alice@example.com",
 		},
 	}
-	iv := NewIterableValue(data)
+	iv := newIterableValue(data)
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -92,27 +91,27 @@ func BenchmarkSafeTypeAssert(b *testing.B) {
 	}
 }
 
-// TestBulkProcessor tests BulkProcessor functionality
+// TestBulkProcessor tests bulkProcessor functionality
 func TestBulkProcessor(t *testing.T) {
 	processor, _ := New()
 	defer processor.Close()
 
-	bp := NewBulkProcessor(processor, 10)
+	bp := newBulkProcessor(processor, 10)
 
 	jsonStr := `{"a":1,"b":2,"c":3}`
 	paths := []string{"a", "b", "c"}
 
-	results, err := bp.BulkGet(jsonStr, paths)
+	results, err := bp.bulkGet(jsonStr, paths)
 	if err != nil {
-		t.Fatalf("BulkGet error: %v", err)
+		t.Fatalf("bulkGet error: %v", err)
 	}
 
 	if len(results) != 3 {
-		t.Errorf("BulkGet returned %d results, want 3", len(results))
+		t.Errorf("bulkGet returned %d results, want 3", len(results))
 	}
 
 	if results["a"].(float64) != 1 {
-		t.Errorf("BulkGet a = %v, want 1", results["a"])
+		t.Errorf("bulkGet a = %v, want 1", results["a"])
 	}
 }
 
@@ -123,7 +122,7 @@ func TestDefaultValues(t *testing.T) {
 		"age":  30,
 	}
 
-	iv := NewIterableValue(data)
+	iv := newIterableValue(data)
 
 	t.Run("GetStringWithDefault", func(t *testing.T) {
 		result := iv.GetStringWithDefault("name", "Unknown")
@@ -181,33 +180,6 @@ func TestDefaultValues(t *testing.T) {
 	})
 }
 
-// TestEncodeBuffer tests encode buffer pooling
-func TestEncodeBuffer(t *testing.T) {
-	buf := getEncodeBuffer()
-	if buf == nil {
-		t.Fatal("getEncodeBuffer returned nil")
-	}
-
-	// Use the buffer
-	buf = append(buf, "test data"...)
-
-	// Return to pool
-	putEncodeBuffer(buf)
-
-	// Get another buffer
-	buf2 := getEncodeBuffer()
-	if buf2 == nil {
-		t.Fatal("getEncodeBuffer returned nil on second call")
-	}
-
-	// Buffer should be reset
-	if len(buf2) != 0 {
-		t.Errorf("Buffer length = %d, want 0", len(buf2))
-	}
-
-	putEncodeBuffer(buf2)
-}
-
 // TestIsSimplePropertyAccess tests simple property access detection
 func TestIsSimplePropertyAccess(t *testing.T) {
 	tests := []struct {
@@ -247,7 +219,7 @@ func TestIterableValueExists(t *testing.T) {
 		},
 	}
 
-	iv := NewIterableValue(data)
+	iv := newIterableValue(data)
 
 	tests := []struct {
 		name     string
@@ -301,7 +273,7 @@ func TestIterableValueGet(t *testing.T) {
 		"items": []any{"a", "b", "c"},
 	}
 
-	iv := NewIterableValue(data)
+	iv := newIterableValue(data)
 
 	tests := []struct {
 		name     string
@@ -360,7 +332,7 @@ func TestIterableValueGetArray(t *testing.T) {
 		},
 	}
 
-	iv := NewIterableValue(data)
+	iv := newIterableValue(data)
 
 	tests := []struct {
 		name        string
@@ -417,7 +389,7 @@ func TestIterableValueGetBool(t *testing.T) {
 		},
 	}
 
-	iv := NewIterableValue(data)
+	iv := newIterableValue(data)
 
 	tests := []struct {
 		name     string
@@ -472,7 +444,7 @@ func TestIterableValueGetFloat64(t *testing.T) {
 		},
 	}
 
-	iv := NewIterableValue(data)
+	iv := newIterableValue(data)
 
 	tests := []struct {
 		name     string
@@ -528,7 +500,7 @@ func TestIterableValueGetInt(t *testing.T) {
 		},
 	}
 
-	iv := NewIterableValue(data)
+	iv := newIterableValue(data)
 
 	tests := []struct {
 		name     string
@@ -589,7 +561,7 @@ func TestIterableValueGetObject(t *testing.T) {
 		},
 	}
 
-	iv := NewIterableValue(data)
+	iv := newIterableValue(data)
 
 	tests := []struct {
 		name        string
@@ -643,7 +615,7 @@ func TestIterableValueGetString(t *testing.T) {
 		},
 	}
 
-	iv := NewIterableValue(data)
+	iv := newIterableValue(data)
 
 	tests := []struct {
 		name     string
@@ -704,7 +676,7 @@ func TestIterableValueIsEmpty(t *testing.T) {
 		},
 	}
 
-	iv := NewIterableValue(data)
+	iv := newIterableValue(data)
 
 	tests := []struct {
 		name     string
@@ -763,7 +735,7 @@ func TestIterableValueIsNull(t *testing.T) {
 		},
 	}
 
-	iv := NewIterableValue(data)
+	iv := newIterableValue(data)
 
 	tests := []struct {
 		name     string
@@ -1393,133 +1365,7 @@ func TestIteratorNext(t *testing.T) {
 	})
 }
 
-// TestLargeBuffer tests large buffer pooling
-func TestLargeBuffer(t *testing.T) {
-	buf := getLargeBuffer()
-	if buf == nil {
-		t.Fatal("getLargeBuffer returned nil")
-	}
-
-	// Use the buffer
-	*buf = append(*buf, "test data"...)
-
-	// Return to pool
-	putLargeBuffer(buf)
-
-	// Get another buffer
-	buf2 := getLargeBuffer()
-	if buf2 == nil {
-		t.Fatal("getLargeBuffer returned nil on second call")
-	}
-
-	// Buffer should be reset
-	if len(*buf2) != 0 {
-		t.Errorf("Buffer length = %d, want 0", len(*buf2))
-	}
-
-	putLargeBuffer(buf2)
-}
-
-// TestLazyParserFunctionality tests LazyParser functionality
-func TestLazyParserFunctionality(t *testing.T) {
-	t.Run("lazy parsing", func(t *testing.T) {
-		data := []byte(`{"name":"test","value":42}`)
-		lp := NewLazyParser(data)
-
-		// Should not be parsed yet
-		if lp.IsParsed() {
-			t.Error("LazyParser should not be parsed yet")
-		}
-
-		// Get triggers parsing
-		result, err := lp.Get("name")
-		if err != nil {
-			t.Fatalf("LazyParser.Get error: %v", err)
-		}
-
-		if result != "test" {
-			t.Errorf("LazyParser.Get = %v, want test", result)
-		}
-
-		// Should be parsed now
-		if !lp.IsParsed() {
-			t.Error("LazyParser should be parsed now")
-		}
-	})
-
-	t.Run("parse method", func(t *testing.T) {
-		data := []byte(`{"key":"value"}`)
-		lp := NewLazyParser(data)
-
-		parsed, err := lp.Parse()
-		if err != nil {
-			t.Fatalf("LazyParser.Parse error: %v", err)
-		}
-
-		obj, ok := parsed.(map[string]any)
-		if !ok {
-			t.Fatalf("Expected map[string]any, got %T", parsed)
-		}
-
-		if obj["key"] != "value" {
-			t.Errorf("Parsed key = %v, want value", obj["key"])
-		}
-	})
-
-	t.Run("raw method", func(t *testing.T) {
-		data := []byte(`{"test":"data"}`)
-		lp := NewLazyParser(data)
-
-		raw := lp.Raw()
-		if !bytes.Equal(raw, data) {
-			t.Errorf("LazyParser.Raw = %s, want %s", raw, data)
-		}
-	})
-
-	t.Run("parsed method", func(t *testing.T) {
-		data := []byte(`{"test":"data"}`)
-		lp := NewLazyParser(data)
-
-		// Before parsing
-		if lp.Parsed() != nil {
-			t.Error("LazyParser.Parsed should be nil before parsing")
-		}
-
-		// Trigger parsing
-		_, _ = lp.Get("test")
-
-		// After parsing
-		if lp.Parsed() == nil {
-			t.Error("LazyParser.Parsed should not be nil after parsing")
-		}
-	})
-
-	t.Run("error method", func(t *testing.T) {
-		data := []byte(`{invalid json}`)
-		lp := NewLazyParser(data)
-
-		err := lp.Error()
-		if err == nil {
-			t.Error("LazyParser.Error should return error for invalid JSON")
-		}
-	})
-
-	t.Run("nested path", func(t *testing.T) {
-		data := []byte(`{"nested":{"key":"value"}}`)
-		lp := NewLazyParser(data)
-
-		result, err := lp.Get("nested.key")
-		if err != nil {
-			t.Fatalf("LazyParser.Get nested error: %v", err)
-		}
-
-		if result != "value" {
-			t.Errorf("LazyParser.Get nested = %v, want value", result)
-		}
-	})
-}
-
-// TestNewIterableValue tests creating IterableValue from different data types
+// TestNewIterableValue tests creating IterableValue from different data types (internal)
 func TestNewIterableValue(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -1555,7 +1401,7 @@ func TestNewIterableValue(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			iv := NewIterableValue(tt.data)
+			iv := newIterableValue(tt.data)
 			if iv == nil {
 				t.Error("Expected non-nil IterableValue")
 			}
@@ -1674,332 +1520,6 @@ func TestSafeTypeAssert(t *testing.T) {
 	}
 }
 
-// TestStreamArrayCount tests StreamArrayCount function
-func TestStreamArrayCount(t *testing.T) {
-	jsonArray := `[1,2,3,4,5,6,7,8,9,10]`
-	reader := strings.NewReader(jsonArray)
-
-	count, err := StreamArrayCount(reader)
-
-	if err != nil {
-		t.Fatalf("StreamArrayCount error: %v", err)
-	}
-
-	if count != 10 {
-		t.Errorf("StreamArrayCount = %d, want 10", count)
-	}
-}
-
-// TestStreamArrayFilter tests StreamArrayFilter function
-func TestStreamArrayFilter(t *testing.T) {
-	jsonArray := `[1,2,3,4,5,6,7,8,9,10]`
-	reader := strings.NewReader(jsonArray)
-
-	result, err := StreamArrayFilter(reader, func(item any) bool {
-		// Filter even numbers
-		if num, ok := item.(float64); ok {
-			return int(num)%2 == 0
-		}
-		return false
-	})
-
-	if err != nil {
-		t.Fatalf("StreamArrayFilter error: %v", err)
-	}
-
-	if len(result) != 5 {
-		t.Errorf("StreamArrayFilter returned %d items, want 5", len(result))
-	}
-
-	// Verify all results are even
-	for _, item := range result {
-		if num, ok := item.(float64); ok {
-			if int(num)%2 != 0 {
-				t.Errorf("StreamArrayFilter returned odd number: %v", item)
-			}
-		}
-	}
-}
-
-// TestStreamArrayFirst tests StreamArrayFirst function
-func TestStreamArrayFirst(t *testing.T) {
-	t.Run("find match", func(t *testing.T) {
-		jsonArray := `[1,2,3,4,5]`
-		reader := strings.NewReader(jsonArray)
-
-		result, found, err := StreamArrayFirst(reader, func(item any) bool {
-			if num, ok := item.(float64); ok {
-				return int(num) > 3
-			}
-			return false
-		})
-
-		if err != nil {
-			t.Fatalf("StreamArrayFirst error: %v", err)
-		}
-
-		if !found {
-			t.Error("StreamArrayFirst should have found a match")
-		}
-
-		if result.(float64) != 4 {
-			t.Errorf("StreamArrayFirst = %v, want 4", result)
-		}
-	})
-
-	t.Run("no match", func(t *testing.T) {
-		jsonArray := `[1,2,3]`
-		reader := strings.NewReader(jsonArray)
-
-		result, found, err := StreamArrayFirst(reader, func(item any) bool {
-			if num, ok := item.(float64); ok {
-				return int(num) > 10
-			}
-			return false
-		})
-
-		if err != nil {
-			t.Fatalf("StreamArrayFirst error: %v", err)
-		}
-
-		if found {
-			t.Error("StreamArrayFirst should not have found a match")
-		}
-
-		if result != nil {
-			t.Errorf("StreamArrayFirst = %v, want nil", result)
-		}
-	})
-}
-
-// TestStreamArrayForEach tests StreamArrayForEach function
-func TestStreamArrayForEach(t *testing.T) {
-	jsonArray := `[1,2,3]`
-	reader := strings.NewReader(jsonArray)
-
-	sum := 0
-	err := StreamArrayForEach(reader, func(index int, item any) error {
-		if num, ok := item.(float64); ok {
-			sum += int(num)
-		}
-		return nil
-	})
-
-	if err != nil {
-		t.Fatalf("StreamArrayForEach error: %v", err)
-	}
-
-	if sum != 6 {
-		t.Errorf("StreamArrayForEach sum = %d, want 6", sum)
-	}
-}
-
-// TestStreamArrayMap tests StreamArrayMap function
-func TestStreamArrayMap(t *testing.T) {
-	jsonArray := `[1,2,3]`
-	reader := strings.NewReader(jsonArray)
-
-	result, err := StreamArrayMap(reader, func(item any) any {
-		if num, ok := item.(float64); ok {
-			return int(num) * 2
-		}
-		return item
-	})
-
-	if err != nil {
-		t.Fatalf("StreamArrayMap error: %v", err)
-	}
-
-	if len(result) != 3 {
-		t.Errorf("StreamArrayMap returned %d items, want 3", len(result))
-	}
-
-	expected := []int{2, 4, 6}
-	for i, item := range result {
-		if item != expected[i] {
-			t.Errorf("StreamArrayMap[%d] = %v, want %v", i, item, expected[i])
-		}
-	}
-}
-
-// TestStreamArrayReduce tests StreamArrayReduce function
-func TestStreamArrayReduce(t *testing.T) {
-	jsonArray := `[1,2,3,4,5]`
-	reader := strings.NewReader(jsonArray)
-
-	result, err := StreamArrayReduce(reader, 0, func(acc, item any) any {
-		if accNum, ok := acc.(int); ok {
-			if itemNum, ok := item.(float64); ok {
-				return accNum + int(itemNum)
-			}
-		}
-		return acc
-	})
-
-	if err != nil {
-		t.Fatalf("StreamArrayReduce error: %v", err)
-	}
-
-	if result != 15 {
-		t.Errorf("StreamArrayReduce = %v, want 15", result)
-	}
-}
-
-// TestStreamArraySkip tests StreamArraySkip function
-func TestStreamArraySkip(t *testing.T) {
-	jsonArray := `[1,2,3,4,5]`
-	reader := strings.NewReader(jsonArray)
-
-	result, err := StreamArraySkip(reader, 2)
-
-	if err != nil {
-		t.Fatalf("StreamArraySkip error: %v", err)
-	}
-
-	if len(result) != 3 {
-		t.Errorf("StreamArraySkip returned %d items, want 3", len(result))
-	}
-
-	expected := []float64{3, 4, 5}
-	for i, item := range result {
-		if item != expected[i] {
-			t.Errorf("StreamArraySkip[%d] = %v, want %v", i, item, expected[i])
-		}
-	}
-}
-
-// TestStreamArrayTake tests StreamArrayTake function
-func TestStreamArrayTake(t *testing.T) {
-	jsonArray := `[1,2,3,4,5,6,7,8,9,10]`
-	reader := strings.NewReader(jsonArray)
-
-	result, err := StreamArrayTake(reader, 3)
-
-	if err != nil {
-		t.Fatalf("StreamArrayTake error: %v", err)
-	}
-
-	if len(result) != 3 {
-		t.Errorf("StreamArrayTake returned %d items, want 3", len(result))
-	}
-
-	expected := []float64{1, 2, 3}
-	for i, item := range result {
-		if item != expected[i] {
-			t.Errorf("StreamArrayTake[%d] = %v, want %v", i, item, expected[i])
-		}
-	}
-}
-
-// TestStreamingProcessor tests StreamingProcessor functionality
-func TestStreamingProcessor(t *testing.T) {
-	t.Run("StreamArray", func(t *testing.T) {
-		jsonArray := `[1,2,3,4,5]`
-		reader := strings.NewReader(jsonArray)
-
-		sp := NewStreamingProcessor(reader, 0)
-
-		count := 0
-		err := sp.StreamArray(func(index int, item any) bool {
-			count++
-			return true
-		})
-
-		if err != nil {
-			t.Fatalf("StreamArray error: %v", err)
-		}
-
-		if count != 5 {
-			t.Errorf("StreamArray processed %d items, want 5", count)
-		}
-	})
-
-	t.Run("StreamObject", func(t *testing.T) {
-		jsonObj := `{"a":1,"b":2,"c":3}`
-		reader := strings.NewReader(jsonObj)
-
-		sp := NewStreamingProcessor(reader, 0)
-
-		count := 0
-		err := sp.StreamObject(func(key string, value any) bool {
-			count++
-			return true
-		})
-
-		if err != nil {
-			t.Fatalf("StreamObject error: %v", err)
-		}
-
-		if count != 3 {
-			t.Errorf("StreamObject processed %d items, want 3", count)
-		}
-	})
-
-	t.Run("StreamArrayChunked", func(t *testing.T) {
-		jsonArray := `[1,2,3,4,5,6,7,8,9,10]`
-		reader := strings.NewReader(jsonArray)
-
-		sp := NewStreamingProcessor(reader, 0)
-
-		chunks := 0
-		totalItems := 0
-		err := sp.StreamArrayChunked(3, func(chunk []any) error {
-			chunks++
-			totalItems += len(chunk)
-			return nil
-		})
-
-		if err != nil {
-			t.Fatalf("StreamArrayChunked error: %v", err)
-		}
-
-		if chunks < 3 {
-			t.Errorf("StreamArrayChunked processed %d chunks, want at least 3", chunks)
-		}
-
-		if totalItems != 10 {
-			t.Errorf("StreamArrayChunked total items = %d, want 10", totalItems)
-		}
-	})
-
-	t.Run("StreamObjectChunked", func(t *testing.T) {
-		jsonObj := `{"a":1,"b":2,"c":3,"d":4,"e":5}`
-		reader := strings.NewReader(jsonObj)
-
-		sp := NewStreamingProcessor(reader, 0)
-
-		chunks := 0
-		err := sp.StreamObjectChunked(2, func(chunk map[string]any) error {
-			chunks++
-			return nil
-		})
-
-		if err != nil {
-			t.Fatalf("StreamObjectChunked error: %v", err)
-		}
-
-		if chunks < 2 {
-			t.Errorf("StreamObjectChunked processed %d chunks, want at least 2", chunks)
-		}
-	})
-
-	t.Run("GetStats", func(t *testing.T) {
-		jsonArray := `[1,2,3]`
-		reader := strings.NewReader(jsonArray)
-
-		sp := NewStreamingProcessor(reader, 0)
-
-		_ = sp.StreamArray(func(index int, item any) bool {
-			return true
-		})
-
-		stats := sp.GetStats()
-		if stats.ItemsProcessed != 3 {
-			t.Errorf("ItemsProcessed = %d, want 3", stats.ItemsProcessed)
-		}
-	})
-}
-
 // TestWarmupPathCache tests path cache warmup
 func TestWarmupPathCache(t *testing.T) {
 	paths := []string{
@@ -2009,9 +1529,9 @@ func TestWarmupPathCache(t *testing.T) {
 	}
 
 	// Should not panic
-	WarmupPathCache(paths)
-	WarmupPathCache(nil)        // nil paths
-	WarmupPathCache([]string{}) // empty paths
+	warmupPathCache(paths)
+	warmupPathCache(nil)        // nil paths
+	warmupPathCache([]string{}) // empty paths
 }
 
 // TestWarmupPathCacheWithProcessor tests path cache warmup with processor
@@ -2025,7 +1545,667 @@ func TestWarmupPathCacheWithProcessor(t *testing.T) {
 	}
 
 	// Should not panic
-	WarmupPathCacheWithProcessor(processor, paths)
-	WarmupPathCacheWithProcessor(nil, paths)     // nil processor
-	WarmupPathCacheWithProcessor(processor, nil) // nil paths
+	warmupPathCacheWith(processor, paths)
+	warmupPathCacheWith(nil, paths)     // nil processor
+	warmupPathCacheWith(processor, nil) // nil paths
+}
+
+// TestIterableValueIsNullAndEmptyData tests IsNullData and IsEmptyData (companion methods)
+func TestIterableValueIsNullAndEmptyData(t *testing.T) {
+	t.Run("IsNullData", func(t *testing.T) {
+		if !newIterableValue(nil).IsNullData() {
+			t.Error("IsNullData should return true for nil data")
+		}
+		if newIterableValue(map[string]any{"a": 1}).IsNullData() {
+			t.Error("IsNullData should return false for non-nil data")
+		}
+	})
+
+	t.Run("IsEmptyData", func(t *testing.T) {
+		tests := []struct {
+			data any
+			want bool
+		}{
+			{nil, true},
+			{[]any{}, true},
+			{map[string]any{}, true},
+			{"", true},
+			{[]any{1}, false},
+			{map[string]any{"a": 1}, false},
+			{"x", false},
+			{42, false},
+		}
+		for _, tt := range tests {
+			iv := newIterableValue(tt.data)
+			if got := iv.IsEmptyData(); got != tt.want {
+				t.Errorf("IsEmptyData(%v) = %v, want %v", tt.data, got, tt.want)
+			}
+		}
+	})
+}
+
+// TestIterableValueForeachNested tests ForeachNested iteration
+func TestIterableValueForeachNested(t *testing.T) {
+	t.Run("iterate array", func(t *testing.T) {
+		data := map[string]any{
+			"items": []any{1, 2, 3},
+		}
+		iv := newIterableValue(data)
+
+		var count int
+		iv.ForeachNested("items", func(key any, item *IterableValue) {
+			count++
+		})
+		if count != 3 {
+			t.Fatalf("expected 3 iterations, got %d", count)
+		}
+	})
+
+	t.Run("iterate root", func(t *testing.T) {
+		data := map[string]any{"x": 1}
+		iv := newIterableValue(data)
+
+		count := 0
+		iv.ForeachNested("", func(key any, item *IterableValue) {
+			count++
+		})
+		if count != 1 {
+			t.Fatalf("expected 1 iteration, got %d", count)
+		}
+	})
+
+	t.Run("invalid path", func(t *testing.T) {
+		data := map[string]any{"a": 1}
+		iv := newIterableValue(data)
+
+		count := 0
+		iv.ForeachNested("missing.path", func(key any, item *IterableValue) {
+			count++
+		})
+		if count != 0 {
+			t.Fatalf("expected 0 iterations for invalid path, got %d", count)
+		}
+	})
+}
+
+// TestIterableValueWithDefaultComplexPath tests *WithDefault methods with complex paths
+func TestIterableValueWithDefaultComplexPath(t *testing.T) {
+	data := map[string]any{
+		"user": map[string]any{
+			"name":   "Alice",
+			"age":    float64(30),
+			"active": true,
+			"score":  float64(95.5),
+		},
+	}
+	iv := newIterableValue(data)
+
+	t.Run("GetStringWithDefault complex", func(t *testing.T) {
+		if got := iv.GetStringWithDefault("user.name", "N/A"); got != "Alice" {
+			t.Errorf("got %q, want Alice", got)
+		}
+		if got := iv.GetStringWithDefault("user.missing", "N/A"); got != "N/A" {
+			t.Errorf("got %q, want N/A", got)
+		}
+	})
+
+	t.Run("GetIntWithDefault complex", func(t *testing.T) {
+		if got := iv.GetIntWithDefault("user.age", 0); got != 30 {
+			t.Errorf("got %d, want 30", got)
+		}
+		if got := iv.GetIntWithDefault("user.missing", -1); got != -1 {
+			t.Errorf("got %d, want -1", got)
+		}
+	})
+
+	t.Run("GetFloat64WithDefault complex", func(t *testing.T) {
+		if got := iv.GetFloat64WithDefault("user.score", 0); got != 95.5 {
+			t.Errorf("got %f, want 95.5", got)
+		}
+		if got := iv.GetFloat64WithDefault("user.missing", -1.0); got != -1.0 {
+			t.Errorf("got %f, want -1", got)
+		}
+	})
+
+	t.Run("GetBoolWithDefault complex", func(t *testing.T) {
+		if got := iv.GetBoolWithDefault("user.active", false); got != true {
+			t.Errorf("got %v, want true", got)
+		}
+		if got := iv.GetBoolWithDefault("user.missing", true); got != true {
+			t.Errorf("got %v, want true (default)", got)
+		}
+	})
+
+	t.Run("GetWithDefault complex nil data", func(t *testing.T) {
+		iv := newIterableValue("string data")
+		if got := iv.GetWithDefault("any.key", "fallback"); got != "fallback" {
+			t.Errorf("got %v, want fallback", got)
+		}
+	})
+}
+
+// ============================================================================
+// Additional coverage tests for low-coverage functions
+// ============================================================================
+
+// TestForeachWithError tests the package-level ForeachWithError function.
+func TestForeachWithError(t *testing.T) {
+	tests := []struct {
+		name        string
+		jsonStr     string
+		path        string
+		expectErr   bool
+		callbackErr bool
+	}{
+		{
+			name:      "successful iteration over array",
+			jsonStr:   `{"items":[1,2,3]}`,
+			path:      "items",
+			expectErr: false,
+		},
+		{
+			name:        "error propagation from callback",
+			jsonStr:     `{"items":[10,20,30]}`,
+			path:        "items",
+			expectErr:   true,
+			callbackErr: true,
+		},
+		{
+			name:      "invalid JSON returns error",
+			jsonStr:   "{invalid}",
+			path:      ".",
+			expectErr: true,
+		},
+		{
+			name:      "invalid path returns error",
+			jsonStr:   `{"items":[1,2,3]}`,
+			path:      "nonexistent",
+			expectErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var collected []any
+			callCount := 0
+			err := ForeachWithError(tt.jsonStr, tt.path, func(key any, item *IterableValue) error {
+				callCount++
+				if tt.callbackErr && callCount > 1 {
+					return fmt.Errorf("callback error at item %d", callCount)
+				}
+				collected = append(collected, item.GetData())
+				return nil
+			})
+
+			if tt.expectErr {
+				if err == nil {
+					t.Error("expected error, got nil")
+				}
+			} else {
+				if err != nil {
+					t.Errorf("unexpected error: %v", err)
+				}
+				if len(collected) != 3 {
+					t.Errorf("collected %d items, want 3", len(collected))
+				}
+			}
+		})
+	}
+}
+
+// TestForeachNestedWithErrorCoverage tests the package-level ForeachNestedWithError function.
+func TestForeachNestedWithErrorCoverage(t *testing.T) {
+	tests := []struct {
+		name        string
+		jsonStr     string
+		expectCount int
+		expectErr   bool
+		callbackErr bool
+	}{
+		{
+			name:        "successful nested iteration",
+			jsonStr:     `{"a":1,"b":{"c":2}}`,
+			expectCount: 3,
+			expectErr:   false,
+		},
+		{
+			name:        "error propagation from callback",
+			jsonStr:     `{"items":[1,2,3]}`,
+			expectCount: 1,
+			expectErr:   true,
+			callbackErr: true,
+		},
+		{
+			name:        "flat object iteration",
+			jsonStr:     `{"x":10,"y":20}`,
+			expectCount: 2,
+			expectErr:   false,
+		},
+		{
+			name:      "invalid JSON returns error",
+			jsonStr:   "bad json",
+			expectErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			count := 0
+			err := ForeachNestedWithError(tt.jsonStr, func(key any, item *IterableValue) error {
+				count++
+				if tt.callbackErr {
+					return fmt.Errorf("nested callback error")
+				}
+				return nil
+			})
+
+			if tt.expectErr {
+				if err == nil {
+					t.Error("expected error, got nil")
+				}
+			} else {
+				if err != nil {
+					t.Errorf("unexpected error: %v", err)
+				}
+				if tt.expectCount > 0 && count != tt.expectCount {
+					t.Errorf("callback called %d times, want %d", count, tt.expectCount)
+				}
+			}
+		})
+	}
+}
+
+// TestForeachWithPathAndIterator tests the package-level ForeachWithPathAndIterator function.
+func TestForeachWithPathAndIterator(t *testing.T) {
+	tests := []struct {
+		name        string
+		jsonStr     string
+		path        string
+		expectPaths []string
+		breakEarly  bool
+	}{
+		{
+			name:        "path tracking over array",
+			jsonStr:     `{"items":[{"id":1},{"id":2},{"id":3}]}`,
+			path:        "items",
+			expectPaths: []string{"[0]", "[1]", "[2]"},
+		},
+		{
+			name:        "break control stops iteration",
+			jsonStr:     `{"items":[10,20,30,40,50]}`,
+			path:        "items",
+			expectPaths: []string{"[0]"},
+			breakEarly:  true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var paths []string
+			err := ForeachWithPathAndIterator(tt.jsonStr, tt.path, func(key any, item *IterableValue, currentPath string) IteratorControl {
+				paths = append(paths, currentPath)
+				if tt.breakEarly {
+					return IteratorBreak
+				}
+				return IteratorNormal
+			})
+
+			if err != nil {
+				t.Errorf("unexpected error: %v", err)
+			}
+
+			if len(paths) != len(tt.expectPaths) {
+				t.Errorf("got %d paths %v, want %d paths %v", len(paths), paths, len(tt.expectPaths), tt.expectPaths)
+			}
+		})
+	}
+}
+
+// TestBatchIteratorTotalBatches tests TotalBatches with edge cases including zero batch size.
+func TestBatchIteratorTotalBatches(t *testing.T) {
+	tests := []struct {
+		name      string
+		dataLen   int
+		batchSize int
+		expected  int
+	}{
+		{
+			name:      "normal division with remainder",
+			dataLen:   5,
+			batchSize: 2,
+			expected:  3,
+		},
+		{
+			name:      "exact division",
+			dataLen:   6,
+			batchSize: 3,
+			expected:  2,
+		},
+		{
+			name:      "single element",
+			dataLen:   1,
+			batchSize: 5,
+			expected:  1,
+		},
+		{
+			name:      "empty data",
+			dataLen:   0,
+			batchSize: 5,
+			expected:  0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			data := make([]any, tt.dataLen)
+			for i := range data {
+				data[i] = i + 1
+			}
+			cfg := DefaultConfig()
+			cfg.MaxBatchSize = tt.batchSize
+			it := NewBatchIterator(data, cfg)
+
+			total := it.TotalBatches()
+			if total != tt.expected {
+				t.Errorf("TotalBatches() = %d, want %d", total, tt.expected)
+			}
+		})
+	}
+
+	t.Run("batch size zero returns zero", func(t *testing.T) {
+		data := []any{1, 2, 3}
+		it := &BatchIterator{
+			data:      data,
+			batchSize: 0,
+			current:   0,
+		}
+		total := it.TotalBatches()
+		if total != 0 {
+			t.Errorf("TotalBatches() with batchSize=0 = %d, want 0", total)
+		}
+	})
+
+	t.Run("negative batch size returns zero", func(t *testing.T) {
+		data := []any{1, 2, 3}
+		it := &BatchIterator{
+			data:      data,
+			batchSize: -1,
+			current:   0,
+		}
+		total := it.TotalBatches()
+		if total != 0 {
+			t.Errorf("TotalBatches() with batchSize=-1 = %d, want 0", total)
+		}
+	})
+}
+
+// TestParallelIteratorCloseCoverage verifies Close does not panic in various states.
+func TestParallelIteratorCloseCoverage(t *testing.T) {
+	t.Run("close without processing", func(t *testing.T) {
+		data := []any{1, 2, 3}
+		it := NewParallelIterator(data)
+		it.Close()
+	})
+
+	t.Run("close after processing", func(t *testing.T) {
+		data := []any{1, 2, 3}
+		it := NewParallelIterator(data)
+		err := it.ForEach(func(i int, v any) error {
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("ForEach error: %v", err)
+		}
+		it.Close()
+	})
+
+	t.Run("double close does not panic", func(t *testing.T) {
+		data := []any{1, 2}
+		it := NewParallelIterator(data)
+		it.Close()
+		it.Close()
+	})
+}
+
+// TestStreamIteratorSingleValue tests StreamIterator.Next with non-array input.
+func TestStreamIteratorSingleValue(t *testing.T) {
+	tests := []struct {
+		name      string
+		input     string
+		expectVal any
+	}{
+		{
+			name:      "single string value",
+			input:     `"hello"`,
+			expectVal: "hello",
+		},
+		{
+			name:      "single number value",
+			input:     "42",
+			expectVal: float64(42),
+		},
+		{
+			name:      "single boolean false",
+			input:     "false",
+			expectVal: false,
+		},
+		{
+			name:      "single boolean true",
+			input:     "true",
+			expectVal: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			it := NewStreamIterator(strings.NewReader(tt.input))
+
+			if !it.Next() {
+				t.Fatalf("first Next() returned false, want true")
+			}
+
+			val := it.Value()
+			if !compareValues(val, tt.expectVal) {
+				t.Errorf("Value() = %v (%T), want %v (%T)", val, val, tt.expectVal, tt.expectVal)
+			}
+
+			if it.Next() {
+				t.Error("second Next() returned true, want false")
+			}
+		})
+	}
+}
+
+// TestGetBoolWithDefault tests GetBoolWithDefault through Foreach iteration and direct usage.
+func TestGetBoolWithDefault(t *testing.T) {
+	tests := []struct {
+		name       string
+		jsonStr    string
+		key        string
+		defaultVal bool
+		expected   []bool
+	}{
+		{
+			name:       "bool values in array items",
+			jsonStr:    `{"items":[{"active":true},{"active":false}]}`,
+			key:        "active",
+			defaultVal: false,
+			expected:   []bool{true, false},
+		},
+		{
+			name:       "missing key returns default true",
+			jsonStr:    `{"items":[{"name":"a"},{"name":"b"}]}`,
+			key:        "active",
+			defaultVal: true,
+			expected:   []bool{true, true},
+		},
+		{
+			name:       "coerced string yes returns true",
+			jsonStr:    `{"items":[{"active":"yes"},{"active":"no"}]}`,
+			key:        "active",
+			defaultVal: false,
+			expected:   []bool{true, false},
+		},
+		{
+			name:       "non-zero number coerced to true",
+			jsonStr:    `{"items":[{"active":42}]}`,
+			key:        "active",
+			defaultVal: false,
+			expected:   []bool{true},
+		},
+		{
+			name:       "non-coercible string returns default",
+			jsonStr:    `{"items":[{"active":"maybe"}]}`,
+			key:        "active",
+			defaultVal: false,
+			expected:   []bool{false},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var results []bool
+			ForeachWithPath(tt.jsonStr, "items", func(key any, item *IterableValue) {
+				got := item.GetBoolWithDefault(tt.key, tt.defaultVal)
+				results = append(results, got)
+			})
+
+			if len(results) != len(tt.expected) {
+				t.Fatalf("got %d results, want %d", len(results), len(tt.expected))
+			}
+			for i, got := range results {
+				if got != tt.expected[i] {
+					t.Errorf("result[%d] = %v, want %v", i, got, tt.expected[i])
+				}
+			}
+		})
+	}
+
+	t.Run("complex path missing key returns default", func(t *testing.T) {
+		data := map[string]any{
+			"user": map[string]any{
+				"name": "Alice",
+			},
+		}
+		iv := newIterableValue(data)
+		if got := iv.GetBoolWithDefault("user.active", false); got != false {
+			t.Errorf("got %v, want false (default for missing nested key)", got)
+		}
+	})
+
+	t.Run("complex path existing key returns value", func(t *testing.T) {
+		data := map[string]any{
+			"user": map[string]any{
+				"active": true,
+			},
+		}
+		iv := newIterableValue(data)
+		if got := iv.GetBoolWithDefault("user.active", false); got != true {
+			t.Errorf("got %v, want true", got)
+		}
+	})
+}
+
+// TestForeachWithPathAndControl tests break and continue control flow.
+func TestForeachWithPathAndControl(t *testing.T) {
+	tests := []struct {
+		name       string
+		jsonStr    string
+		path       string
+		breakAfter int
+		expectErr  bool
+	}{
+		{
+			name:       "break after first item",
+			jsonStr:    `{"items":[1,2,3,4,5]}`,
+			path:       "items",
+			breakAfter: 1,
+		},
+		{
+			name:       "iterate all without break",
+			jsonStr:    `{"items":[1,2,3]}`,
+			path:       "items",
+			breakAfter: 0,
+		},
+		{
+			name:      "invalid path returns error",
+			jsonStr:   `{"items":[1,2]}`,
+			path:      "nonexistent",
+			expectErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			count := 0
+			err := ForeachWithPathAndControl(tt.jsonStr, tt.path, func(key any, value any) IteratorControl {
+				count++
+				if tt.breakAfter > 0 && count >= tt.breakAfter {
+					return IteratorBreak
+				}
+				return IteratorNormal
+			})
+
+			if tt.expectErr {
+				if err == nil {
+					t.Error("expected error, got nil")
+				}
+				return
+			}
+
+			if err != nil {
+				t.Errorf("unexpected error: %v", err)
+			}
+
+			if tt.breakAfter > 0 && count != tt.breakAfter {
+				t.Errorf("callback called %d times, want %d (break after)", count, tt.breakAfter)
+			}
+		})
+	}
+
+	t.Run("break returns nil error", func(t *testing.T) {
+		err := ForeachWithPathAndControl(`{"items":[1,2,3]}`, "items", func(key any, value any) IteratorControl {
+			return IteratorBreak
+		})
+		if err != nil {
+			t.Errorf("IteratorBreak should return nil error, got: %v", err)
+		}
+	})
+
+	t.Run("IteratorContinue does not stop iteration", func(t *testing.T) {
+		count := 0
+		err := ForeachWithPathAndControl(`{"items":[10,20,30]}`, "items", func(key any, value any) IteratorControl {
+			count++
+			return IteratorContinue
+		})
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+		if count != 3 {
+			t.Errorf("IteratorContinue: callback called %d times, want 3", count)
+		}
+	})
+
+	t.Run("non-iterable value returns error", func(t *testing.T) {
+		err := ForeachWithPathAndControl(`{"value":42}`, "value", func(key any, value any) IteratorControl {
+			return IteratorNormal
+		})
+		if err == nil {
+			t.Error("expected error for non-iterable value, got nil")
+		}
+	})
+
+	t.Run("iterate over object keys", func(t *testing.T) {
+		var keys []string
+		err := ForeachWithPathAndControl(`{"data":{"a":1,"b":2,"c":3}}`, "data", func(key any, value any) IteratorControl {
+			keys = append(keys, key.(string))
+			return IteratorNormal
+		})
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+		if len(keys) != 3 {
+			t.Errorf("got %d keys, want 3", len(keys))
+		}
+	})
 }

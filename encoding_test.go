@@ -980,77 +980,267 @@ func TestProcessorValidateSchema(t *testing.T) {
 	})
 }
 
-// TestSchemaHasMethods tests Schema Has* methods for constraint tracking
-func TestSchemaHasMethods(t *testing.T) {
-	schema := &Schema{
-		MinLength:        5,
-		MaxLength:        100,
-		Minimum:          0.0,
-		Maximum:          100.0,
-		MinItems:         1,
-		MaxItems:         10,
-		ExclusiveMinimum: true,
-		ExclusiveMaximum: true,
-	}
-	schema.hasMinLength = true
-	schema.hasMaxLength = true
-	schema.hasMinimum = true
-	schema.hasMaximum = true
-	schema.hasMinItems = true
-	schema.hasMaxItems = true
+// ============================================================================
+// Additional encoding coverage tests
+// ============================================================================
 
-	t.Run("HasMinLength", func(t *testing.T) {
-		if !schema.HasMinLength() {
-			t.Error("HasMinLength should be true")
+// TestEncoding_ParseBooleanAndNull tests Decoder parseBoolean/parseNull paths
+func TestEncoding_ParseBooleanAndNull(t *testing.T) {
+	t.Run("boolean true", func(t *testing.T) {
+		dec := NewDecoder(strings.NewReader("true"))
+		tok, err := dec.Token()
+		if err != nil {
+			t.Fatalf("Token() error: %v", err)
+		}
+		if tok != true {
+			t.Errorf("Token() = %v, want true", tok)
 		}
 	})
 
-	t.Run("HasMaxLength", func(t *testing.T) {
-		if !schema.HasMaxLength() {
-			t.Error("HasMaxLength should be true")
+	t.Run("boolean false", func(t *testing.T) {
+		dec := NewDecoder(strings.NewReader("false"))
+		tok, err := dec.Token()
+		if err != nil {
+			t.Fatalf("Token() error: %v", err)
+		}
+		if tok != false {
+			t.Errorf("Token() = %v, want false", tok)
 		}
 	})
 
-	t.Run("HasMinimum", func(t *testing.T) {
-		if !schema.HasMinimum() {
-			t.Error("HasMinimum should be true")
+	t.Run("null", func(t *testing.T) {
+		dec := NewDecoder(strings.NewReader("null"))
+		tok, err := dec.Token()
+		if err != nil {
+			t.Fatalf("Token() error: %v", err)
+		}
+		if tok != nil {
+			t.Errorf("Token() = %v, want nil", tok)
 		}
 	})
 
-	t.Run("HasMaximum", func(t *testing.T) {
-		if !schema.HasMaximum() {
-			t.Error("HasMaximum should be true")
+	t.Run("invalid boolean", func(t *testing.T) {
+		dec := NewDecoder(strings.NewReader("trx"))
+		_, err := dec.Token()
+		if err == nil {
+			t.Error("expected error for invalid boolean")
 		}
 	})
 
-	t.Run("HasMinItems", func(t *testing.T) {
-		if !schema.HasMinItems() {
-			t.Error("HasMinItems should be true")
-		}
-	})
-
-	t.Run("HasMaxItems", func(t *testing.T) {
-		if !schema.HasMaxItems() {
-			t.Error("HasMaxItems should be true")
+	t.Run("invalid null", func(t *testing.T) {
+		dec := NewDecoder(strings.NewReader("nulx"))
+		_, err := dec.Token()
+		if err == nil {
+			t.Error("expected error for invalid null")
 		}
 	})
 }
 
-// TestDefaultSchema tests DefaultSchema function
-func TestDefaultSchema(t *testing.T) {
-	schema := DefaultSchema()
-
-	if schema == nil {
-		t.Fatal("DefaultSchema returned nil")
+// TestEncoding_ParseStringEscapes tests parseString escape sequence handling
+func TestEncoding_ParseStringEscapes(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{"backspace", `"a\bc"`, "a\bc"},
+		{"formfeed", `"a\fc"`, "a\fc"},
+		{"newline", `"a\nc"`, "a\nc"},
+		{"carriage return", `"a\rc"`, "a\rc"},
+		{"tab", `"a\tc"`, "a\tc"},
+		{"escaped quote", `"a\"c"`, "a\"c"},
+		{"escaped backslash", `"a\\c"`, "a\\c"},
+		{"escaped slash", `"a\/c"`, "a/c"},
+		{"unicode escape", `"a\u0041c"`, "aAc"},
 	}
 
-	// Should have empty type by default
-	if schema.Type != "" {
-		t.Errorf("Default type = %q, want empty string", schema.Type)
-	}
-
-	// Should allow additional properties by default
-	if !schema.AdditionalProperties {
-		t.Error("AdditionalProperties should be true by default")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dec := NewDecoder(strings.NewReader(tt.input))
+			var result string
+			err := dec.Decode(&result)
+			if err != nil {
+				t.Fatalf("Decode() error: %v", err)
+			}
+			if result != tt.want {
+				t.Errorf("Decode(%q) = %q, want %q", tt.input, result, tt.want)
+			}
+		})
 	}
 }
+
+// TestEncoding_ParseStringErrors tests parseString error paths
+func TestEncoding_ParseStringErrors(t *testing.T) {
+	t.Run("invalid escape", func(t *testing.T) {
+		dec := NewDecoder(strings.NewReader(`"a\x"`))
+		var s string
+		err := dec.Decode(&s)
+		if err == nil {
+			t.Error("expected error for invalid escape sequence")
+		}
+	})
+
+	t.Run("truncated string", func(t *testing.T) {
+		dec := NewDecoder(strings.NewReader(`"unclosed`))
+		var s string
+		err := dec.Decode(&s)
+		if err == nil {
+			t.Error("expected error for truncated string")
+		}
+	})
+
+	t.Run("truncated unicode escape", func(t *testing.T) {
+		dec := NewDecoder(strings.NewReader(`"\u00"`))
+		var s string
+		err := dec.Decode(&s)
+		if err == nil {
+			t.Error("expected error for truncated unicode escape")
+		}
+	})
+}
+
+// TestEncoding_NewEncoder tests NewEncoder with various configs
+func TestEncoding_NewEncoder(t *testing.T) {
+	t.Run("default config", func(t *testing.T) {
+		var buf bytes.Buffer
+		enc := NewEncoder(&buf)
+		if enc == nil {
+			t.Fatal("NewEncoder returned nil")
+		}
+	})
+
+	t.Run("pretty config", func(t *testing.T) {
+		var buf bytes.Buffer
+		cfg := DefaultConfig()
+		cfg.Pretty = true
+		enc := NewEncoder(&buf, cfg)
+		err := enc.Encode(map[string]any{"a": 1})
+		if err != nil {
+			t.Fatalf("Encode error: %v", err)
+		}
+		if !bytes.Contains(buf.Bytes(), []byte("\n")) {
+			t.Error("pretty output should contain newlines")
+		}
+	})
+
+	t.Run("no escape HTML", func(t *testing.T) {
+		var buf bytes.Buffer
+		cfg := DefaultConfig()
+		cfg.EscapeHTML = false
+		enc := NewEncoder(&buf, cfg)
+		err := enc.Encode(map[string]any{"html": "<script>"})
+		if err != nil {
+			t.Fatalf("Encode error: %v", err)
+		}
+		if bytes.Contains(buf.Bytes(), []byte(`\u003c`)) {
+			t.Error("should not escape HTML when EscapeHTML=false")
+		}
+	})
+}
+
+// TestEncoding_EncodeStruct tests encodeStruct code paths
+func TestEncoding_EncodeStruct(t *testing.T) {
+	type testStruct struct {
+		Name   string `json:"name"`
+		Value  int    `json:"value"`
+		NilVal any    `json:"nil_val,omitempty"`
+	}
+
+	t.Run("default config", func(t *testing.T) {
+		p, _ := New()
+		defer p.Close()
+		result, err := p.EncodeWithConfig(testStruct{Name: "test", Value: 42}, DefaultConfig())
+		if err != nil {
+			t.Fatalf("EncodeWithConfig error: %v", err)
+		}
+		if result == "" {
+			t.Error("result should not be empty")
+		}
+	})
+
+	t.Run("include nulls false", func(t *testing.T) {
+		p, _ := New()
+		defer p.Close()
+		cfg := DefaultConfig()
+		cfg.IncludeNulls = false
+		result, err := p.EncodeWithConfig(testStruct{Name: "test", Value: 42}, cfg)
+		if err != nil {
+			t.Fatalf("EncodeWithConfig error: %v", err)
+		}
+		if result == "" {
+			t.Error("result should not be empty")
+		}
+	})
+
+	t.Run("sort keys", func(t *testing.T) {
+		p, _ := New()
+		defer p.Close()
+		cfg := DefaultConfig()
+		cfg.SortKeys = true
+		result, err := p.EncodeWithConfig(map[string]any{"z": 1, "a": 2}, cfg)
+		if err != nil {
+			t.Fatalf("EncodeWithConfig error: %v", err)
+		}
+		if result == "" {
+			t.Error("result should not be empty")
+		}
+	})
+
+	t.Run("pretty", func(t *testing.T) {
+		p, _ := New()
+		defer p.Close()
+		cfg := DefaultConfig()
+		cfg.Pretty = true
+		result, err := p.EncodeWithConfig(testStruct{Name: "test", Value: 42}, cfg)
+		if err != nil {
+			t.Fatalf("EncodeWithConfig error: %v", err)
+		}
+		if result == "" {
+			t.Error("result should not be empty")
+		}
+	})
+}
+
+// TestEncoding_EncodeJSONNumber tests encodeJSONNumber paths
+func TestEncoding_EncodeJSONNumber(t *testing.T) {
+	p, _ := New()
+	defer p.Close()
+
+	t.Run("preserve numbers", func(t *testing.T) {
+		cfg := DefaultConfig()
+		cfg.PreserveNumbers = true
+		input := map[string]any{"num": json.Number("3.14159")}
+		result, err := p.EncodeWithConfig(input, cfg)
+		if err != nil {
+			t.Fatalf("EncodeWithConfig error: %v", err)
+		}
+		if !strings.Contains(result, "3.14159") {
+			t.Errorf("result %q should contain 3.14159", result)
+		}
+	})
+
+	t.Run("integer number", func(t *testing.T) {
+		cfg := DefaultConfig()
+		input := map[string]any{"num": json.Number("42")}
+		result, err := p.EncodeWithConfig(input, cfg)
+		if err != nil {
+			t.Fatalf("EncodeWithConfig error: %v", err)
+		}
+		if !strings.Contains(result, "42") {
+			t.Errorf("result %q should contain 42", result)
+		}
+	})
+
+	t.Run("float number", func(t *testing.T) {
+		cfg := DefaultConfig()
+		input := map[string]any{"num": json.Number("3.14")}
+		result, err := p.EncodeWithConfig(input, cfg)
+		if err != nil {
+			t.Fatalf("EncodeWithConfig error: %v", err)
+		}
+		if !strings.Contains(result, "3.14") {
+			t.Errorf("result %q should contain 3.14", result)
+		}
+	})
+}
+

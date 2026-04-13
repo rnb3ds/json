@@ -23,7 +23,7 @@ import (
 // - Path cache warmup
 // - Performance optimization techniques
 //
-// Run: go run -tags=example examples/14_batch_operations.go
+// Run: go run -tags=example examples/13_batch_operations.go
 
 func main() {
 	fmt.Println("⚡ JSON Library - Batch Operations")
@@ -64,14 +64,15 @@ func demonstrateProcessBatch() {
 		"version": 1
 	}`
 
-	// Define batch operations with JSONStr for each operation
+	// Define batch operations with JSONStr for each operation.
+	// Each operation is independent — a "set" does not affect subsequent "get"s
+	// because each BatchOperation carries its own JSONStr.
 	operations := []json.BatchOperation{
 		{Type: "get", JSONStr: jsonStr, Path: "user.name", ID: "op1"},
 		{Type: "get", JSONStr: jsonStr, Path: "user.age", ID: "op2"},
 		{Type: "get", JSONStr: jsonStr, Path: "settings.theme", ID: "op3"},
 		{Type: "set", JSONStr: jsonStr, Path: "user.age", Value: 31, ID: "op4"},
-		{Type: "get", JSONStr: jsonStr, Path: "user.age", ID: "op5"},
-		{Type: "get", JSONStr: jsonStr, Path: "nonexistent", ID: "op6"},
+		{Type: "get", JSONStr: jsonStr, Path: "nonexistent", ID: "op5"},
 	}
 
 	// Execute batch
@@ -91,7 +92,11 @@ func demonstrateProcessBatch() {
 	}
 
 	// Using with processor for more control
-	processor, _ := json.New(json.DefaultConfig())
+	processor, err := json.New(json.DefaultConfig())
+	if err != nil {
+		fmt.Printf("   New error: %v\n", err)
+		return
+	}
 	defer processor.Close()
 
 	// Note: BatchOperation also supports JSONStr field for different JSON inputs
@@ -155,15 +160,11 @@ func demonstrateCacheWarmup() {
 
 	// Now access the warmed paths - should be faster
 	fmt.Println("\n   Accessing warmed paths:")
-	name, _ := json.GetString(jsonStr, "users[0].name")
+	name := json.GetString(jsonStr, "users[0].name", "")
 	fmt.Printf("   - users[0].name: %s\n", name)
 
-	version, _ := json.GetString(jsonStr, "config.version")
+	version := json.GetString(jsonStr, "config.version", "")
 	fmt.Printf("   - config.version: %s\n", version)
-
-	// Path cache warmup (for repeated path parsing)
-	json.WarmupPathCache(commonPaths)
-	fmt.Println("\n   Path cache warmed for common paths")
 
 	// Clear cache when done with this data
 	json.ClearCache()
@@ -171,14 +172,15 @@ func demonstrateCacheWarmup() {
 }
 
 func demonstrateBulkProcessor() {
-	fmt.Println("\n3. Bulk Processor")
-	fmt.Println("------------------")
+	fmt.Println("\n3. Bulk Operations with GetMultiple")
+	fmt.Println("------------------------------------")
 
-	processor, _ := json.New(json.DefaultConfig())
+	processor, err := json.New(json.DefaultConfig())
+	if err != nil {
+		fmt.Printf("   New error: %v\n", err)
+		return
+	}
 	defer processor.Close()
-
-	// Create bulk processor with batch size
-	bulkProcessor := json.NewBulkProcessor(processor, 100)
 
 	jsonStr := `{
 		"items": [
@@ -189,7 +191,7 @@ func demonstrateBulkProcessor() {
 		"metadata": {"count": 3}
 	}`
 
-	// Bulk get multiple paths efficiently
+	// Use GetMultiple for efficient bulk retrieval
 	paths := []string{
 		"items[0].id",
 		"items[0].value",
@@ -198,19 +200,29 @@ func demonstrateBulkProcessor() {
 		"metadata.count",
 	}
 
-	results, err := bulkProcessor.BulkGet(jsonStr, paths)
+	// GetMultiple is optimized for batch operations
+	results, err := json.GetMultiple(jsonStr, paths)
 	if err != nil {
-		fmt.Printf("   Bulk get error: %v\n", err)
+		fmt.Printf("   GetMultiple error: %v\n", err)
 		return
 	}
 
-	fmt.Println("   Bulk get results:")
+	fmt.Println("   GetMultiple results:")
 	for path, value := range results {
 		fmt.Printf("   - %s: %v\n", path, value)
 	}
 
-	// BulkProcessor parses JSON once and reuses for all lookups
-	fmt.Printf("\n   BulkProcessor batch size: 100\n")
+	// Processor-level batch operations
+	fmt.Println("\n   Using Processor.GetMultiple:")
+	procResults, err := processor.GetMultiple(jsonStr, paths)
+	if err != nil {
+		fmt.Printf("   Processor GetMultiple error: %v\n", err)
+		return
+	}
+
+	for path, value := range procResults {
+		fmt.Printf("   - %s: %v\n", path, value)
+	}
 }
 
 func demonstrateEncodeFunctions() {
@@ -299,15 +311,13 @@ func demonstrateBatchPerformance() {
 	}`
 
 	// Performance comparison: with and without cache
+	// Note: benchmark loops discard errors to avoid skewing measurements.
 	fmt.Println("   Performance comparison (1000 operations):")
 
 	// Without cache optimization
-	configNoCache := json.Config{
-		EnableCache:  false,
-		MaxJSONSize:  10 * 1024 * 1024,
-		MaxBatchSize: 1000,
-	}
-	procNoCache, _ := json.New(configNoCache)
+	configNoCache := json.DefaultConfig()
+	configNoCache.EnableCache = false
+	procNoCache, _ := json.New(configNoCache) // OK: config validated above
 	defer procNoCache.Close()
 
 	start := time.Now()
@@ -317,14 +327,11 @@ func demonstrateBatchPerformance() {
 	noCacheDuration := time.Since(start)
 
 	// With cache optimization
-	configCache := json.Config{
-		EnableCache:  true,
-		MaxCacheSize: 1000,
-		CacheTTL:     10 * time.Minute,
-		MaxJSONSize:  10 * 1024 * 1024,
-		MaxBatchSize: 1000,
-	}
-	procCache, _ := json.New(configCache)
+	configCache := json.DefaultConfig()
+	configCache.EnableCache = true
+	configCache.MaxCacheSize = 1000
+	configCache.CacheTTL = 10 * time.Minute
+	procCache, _ := json.New(configCache) // OK: config validated above
 	defer procCache.Close()
 
 	start = time.Now()

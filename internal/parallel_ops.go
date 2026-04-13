@@ -69,15 +69,32 @@ func NewParallelProcessor(config ParallelConfig) *ParallelProcessor {
 // DefaultParallelProcessor is the default parallel processor
 var DefaultParallelProcessor = NewParallelProcessor(DefaultParallelConfig())
 
+// Stop cleanly shuts down the ParallelProcessor, releasing its semaphore.
+// After Stop, the processor should not be used for new operations.
+// Safe to call multiple times.
+func (pp *ParallelProcessor) Stop() {
+	if pp == nil || pp.pool == nil {
+		return
+	}
+	// Drain the semaphore channel to unblock any waiting goroutines
+	for {
+		select {
+		case <-pp.pool:
+			// Drained one slot
+		default:
+			return
+		}
+	}
+}
+
 // ============================================================================
 // PARALLEL MAP OPERATIONS
 // ============================================================================
 
-// ParallelMapResult represents a result from parallel map processing
-type ParallelMapResult struct {
+// mapKV is a key-value pair used for local collection in ParallelMap.
+type mapKV struct {
 	Key   string
 	Value any
-	Index int
 }
 
 // ParallelMap processes map entries in parallel
@@ -95,10 +112,11 @@ func (pp *ParallelProcessor) ParallelMap(m map[string]any, fn func(key string, v
 		return result, nil
 	}
 
-	// Process in parallel
-	result := make(map[string]any, len(m))
-	var mu sync.Mutex
+	// Process in parallel using local slices per goroutine to avoid
+	// concurrent map writes (Go maps are NOT safe for concurrent writes,
+	// even to distinct keys — it causes "concurrent map writes" fatal error).
 	var firstErr error
+	var firstErrMu sync.Mutex
 
 	// Collect keys for batching
 	keys := make([]string, 0, len(m))
@@ -106,22 +124,29 @@ func (pp *ParallelProcessor) ParallelMap(m map[string]any, fn func(key string, v
 		keys = append(keys, k)
 	}
 
+	numBatches := (len(keys) + pp.config.BatchSize - 1) / pp.config.BatchSize
+	localResults := make([][]mapKV, numBatches)
+
 	var wg sync.WaitGroup
 	var errCount int32
+	batchIdx := 0
 
 	// Process in batches
 	for i := 0; i < len(keys); i += pp.config.BatchSize {
 		end := min(i+pp.config.BatchSize, len(keys))
 		batch := keys[i:end]
+		idx := batchIdx
+		batchIdx++
 
 		wg.Add(1)
-		go func(batchKeys []string) {
+		go func(batchKeys []string, localIdx int) {
 			defer wg.Done()
 
 			// Acquire semaphore
 			pp.pool <- struct{}{}
 			defer func() { <-pp.pool }()
 
+			local := make([]mapKV, 0, len(batchKeys))
 			for _, k := range batchKeys {
 				// Check if we should stop
 				if atomic.LoadInt32(&errCount) > 0 {
@@ -131,31 +156,35 @@ func (pp *ParallelProcessor) ParallelMap(m map[string]any, fn func(key string, v
 				val, err := fn(k, m[k])
 				if err != nil {
 					if atomic.CompareAndSwapInt32(&errCount, 0, 1) {
+						firstErrMu.Lock()
 						firstErr = err
+						firstErrMu.Unlock()
 					}
 					return
 				}
 
-				mu.Lock()
-				result[k] = val
-				mu.Unlock()
+				local = append(local, mapKV{Key: k, Value: val})
 			}
-		}(batch)
+			localResults[localIdx] = local
+		}(batch, idx)
 	}
 
 	wg.Wait()
+
+	// Merge local results into final map
+	result := make(map[string]any, len(m))
+	for _, local := range localResults {
+		for _, kv := range local {
+			result[kv.Key] = kv.Value
+		}
+	}
+
 	return result, firstErr
 }
 
 // ============================================================================
 // PARALLEL SLICE OPERATIONS
 // ============================================================================
-
-// ParallelSliceResult represents a result from parallel slice processing
-type ParallelSliceResult struct {
-	Index int
-	Value any
-}
 
 // ParallelSlice processes slice elements in parallel
 func (pp *ParallelProcessor) ParallelSlice(arr []any, fn func(index int, value any) (any, error)) ([]any, error) {
@@ -175,6 +204,7 @@ func (pp *ParallelProcessor) ParallelSlice(arr []any, fn func(index int, value a
 	// Process in parallel
 	result := make([]any, len(arr))
 	var firstErr error
+	var firstErrMu sync.Mutex // protects firstErr from concurrent writes
 	var wg sync.WaitGroup
 	var errCount int32
 
@@ -200,7 +230,9 @@ func (pp *ParallelProcessor) ParallelSlice(arr []any, fn func(index int, value a
 				val, err := fn(j, arr[j])
 				if err != nil {
 					if atomic.CompareAndSwapInt32(&errCount, 0, 1) {
+						firstErrMu.Lock()
 						firstErr = err
+						firstErrMu.Unlock()
 					}
 					return
 				}
@@ -231,6 +263,7 @@ func (pp *ParallelProcessor) ParallelForEach(arr []any, fn func(index int, value
 
 	var wg sync.WaitGroup
 	var firstErr error
+	var firstErrMu sync.Mutex // protects firstErr from concurrent writes
 	var errCount int32
 
 	for i := 0; i < len(arr); i += pp.config.BatchSize {
@@ -251,7 +284,9 @@ func (pp *ParallelProcessor) ParallelForEach(arr []any, fn func(index int, value
 
 				if err := fn(j, arr[j]); err != nil {
 					if atomic.CompareAndSwapInt32(&errCount, 0, 1) {
+						firstErrMu.Lock()
 						firstErr = err
+						firstErrMu.Unlock()
 					}
 					return
 				}
@@ -281,6 +316,7 @@ func (pp *ParallelProcessor) ParallelForEachMap(m map[string]any, fn func(key st
 
 	var wg sync.WaitGroup
 	var firstErr error
+	var firstErrMu sync.Mutex // protects firstErr from concurrent writes
 	var errCount int32
 
 	for i := 0; i < len(keys); i += pp.config.BatchSize {
@@ -301,7 +337,9 @@ func (pp *ParallelProcessor) ParallelForEachMap(m map[string]any, fn func(key st
 
 				if err := fn(k, m[k]); err != nil {
 					if atomic.CompareAndSwapInt32(&errCount, 0, 1) {
+						firstErrMu.Lock()
 						firstErr = err
+						firstErrMu.Unlock()
 					}
 					return
 				}
@@ -437,14 +475,29 @@ func (wp *WorkerPool) SubmitWait(task func()) error {
 		return errors.New("worker pool is stopped")
 	}
 
-	// Block until task is queued
-	wp.tasks <- task
-	return nil
+	// Block until task is queued, but bail out if pool is stopped
+	// SECURITY FIX: select on stopChan to prevent indefinite blocking if pool
+	// is stopped after the atomic checks above pass but before the send completes.
+	select {
+	case wp.tasks <- task:
+		return nil
+	case <-wp.stopChan:
+		// Pool stopped while waiting to submit - restore task count
+		if atomic.AddInt32(&wp.taskCount, -1) == 0 {
+			wp.doneCond.Broadcast()
+		}
+		return errors.New("worker pool is stopped")
+	}
 }
 
 // Stop stops the worker pool
+// SECURITY: Safe to call multiple times - uses atomic check to prevent double close panic
 func (wp *WorkerPool) Stop() {
-	wp.stopped.Store(true)
+	// SECURITY FIX: Use CompareAndSwap to ensure we only close once
+	// This prevents panic from closing an already-closed channel
+	if !wp.stopped.CompareAndSwap(false, true) {
+		return // Already stopped
+	}
 	close(wp.stopChan)
 	wp.wg.Wait()
 }
@@ -559,6 +612,11 @@ func (pp *ParallelProcessor) ParallelFilter(arr []any, predicate func(value any)
 		wg.Add(1)
 		go func(workerID, startIdx, endIdx int) {
 			defer wg.Done()
+
+			// Acquire semaphore to respect worker limit
+			pp.pool <- struct{}{}
+			defer func() { <-pp.pool }()
+
 			for i := startIdx; i < endIdx; i++ {
 				if predicate(arr[i]) {
 					results[workerID].values = append(results[workerID].values, arr[i])
@@ -608,6 +666,11 @@ func (pp *ParallelProcessor) ParallelTransform(arr []any, transform func(value a
 		wg.Add(1)
 		go func(startIdx, endIdx int) {
 			defer wg.Done()
+
+			// Acquire semaphore to respect worker limit
+			pp.pool <- struct{}{}
+			defer func() { <-pp.pool }()
+
 			for i := startIdx; i < endIdx; i++ {
 				result[i] = transform(arr[i])
 			}

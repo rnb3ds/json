@@ -11,13 +11,39 @@ import (
 // ============================================================================
 
 var (
-	// ErrPathNotFound indicates the requested path does not exist
-	ErrPathNotFound = errors.New("path not found")
-	// ErrTypeMismatch indicates a type mismatch during path navigation
-	ErrTypeMismatch = errors.New("type mismatch")
-	// ErrInvalidPath indicates an invalid path format
-	ErrInvalidPath = errors.New("invalid path")
+	// ErrPathNotFound indicates the requested path does not exist.
+	// Initialized to match root package sentinel via SetErrorSentinels.
+	ErrPathNotFound error = errors.New("path not found")
+	// ErrTypeMismatch indicates a type mismatch during path navigation.
+	// Initialized to match root package sentinel via SetErrorSentinels.
+	ErrTypeMismatch error = errors.New("type mismatch")
+	// ErrInvalidPath indicates an invalid path format.
+	// Initialized to match root package sentinel via SetErrorSentinels.
+	ErrInvalidPath error = errors.New("invalid path format")
 )
+
+// errorSentinelsOnce ensures SetErrorSentinels writes values exactly once,
+// preventing data races if called concurrently after init.
+var errorSentinelsOnce sync.Once
+
+// SetErrorSentinels sets the error sentinel values used by compiled path operations.
+// The root package calls this during initialization to ensure errors.Is() works
+// correctly across package boundaries. Without this, users cannot match internal
+// errors against the public json.ErrPathNotFound, json.ErrTypeMismatch, etc.
+// Safe for concurrent use — only the first call takes effect.
+func SetErrorSentinels(pathNotFound, typeMismatch, invalidPath error) {
+	errorSentinelsOnce.Do(func() {
+		if pathNotFound != nil {
+			ErrPathNotFound = pathNotFound
+		}
+		if typeMismatch != nil {
+			ErrTypeMismatch = typeMismatch
+		}
+		if invalidPath != nil {
+			ErrInvalidPath = invalidPath
+		}
+	})
+}
 
 // ============================================================================
 // COMPILED PATH
@@ -40,14 +66,28 @@ var compiledPathPool = sync.Pool{
 	},
 }
 
-// CompilePath parses and compiles a JSON path string into a CompiledPath
-// The returned CompiledPath can be reused for multiple operations
+// CompilePath parses and compiles a JSON path string into a CompiledPath.
+// The returned CompiledPath can be reused for multiple operations.
 func CompilePath(path string) (*CompiledPath, error) {
 	// Validate path first
 	if err := ValidatePath(path); err != nil {
 		return nil, err
 	}
+	return compilePathUnchecked(path)
+}
 
+// CompilePathUnsafe compiles a path without validation.
+//
+// SECURITY WARNING: This bypasses all security checks including null byte detection,
+// path traversal prevention, and zero-width character detection. Only use when the
+// path string is provably safe (e.g., a hardcoded constant or a path produced by
+// the library itself). Never use with user-supplied input.
+func CompilePathUnsafe(path string) (*CompiledPath, error) {
+	return compilePathUnchecked(path)
+}
+
+// compilePathUnchecked is the shared implementation for CompilePath and CompilePathUnsafe.
+func compilePathUnchecked(path string) (*CompiledPath, error) {
 	segments, err := ParsePath(path)
 	if err != nil {
 		return nil, err
@@ -66,30 +106,6 @@ func CompilePath(path string) (*CompiledPath, error) {
 	copy(cp.segments, segments)
 
 	// Compute hash for caching
-	cp.hash = HashStringFNV1a(path)
-
-	return cp, nil
-}
-
-// CompilePathUnsafe compiles a path without validation
-// Use only when the path is known to be safe
-func CompilePathUnsafe(path string) (*CompiledPath, error) {
-	segments, err := ParsePath(path)
-	if err != nil {
-		return nil, err
-	}
-
-	cp := compiledPathPool.Get().(*CompiledPath)
-	cp.segments = cp.segments[:0]
-	cp.path = path
-
-	if cap(cp.segments) < len(segments) {
-		cp.segments = make([]PathSegment, len(segments))
-	} else {
-		cp.segments = cp.segments[:len(segments)]
-	}
-	copy(cp.segments, segments)
-
 	cp.hash = HashStringFNV1a(path)
 
 	return cp, nil
@@ -264,6 +280,35 @@ func applySlice(arr []any, segment *PathSegment) ([]any, error) {
 		}
 	}
 
+	// Handle negative step: Python-style slicing semantics
+	// For step < 0, start should be >= end (iterating downward)
+	if step < 0 {
+		// Clamp bounds
+		if start < 0 {
+			start = -1
+		}
+		if start >= n {
+			start = n - 1
+		}
+		if end < -1 {
+			end = -1
+		}
+		if end > n {
+			end = n
+		}
+		// Empty result if start <= end (nothing to iterate downward through)
+		if start <= end {
+			return []any{}, nil
+		}
+		// Build result with negative step
+		result := make([]any, 0, (start-end-1)/(-step)+1)
+		for i := start; i > end; i += step {
+			result = append(result, arr[i])
+		}
+		return result, nil
+	}
+
+	// Positive step: standard forward slicing
 	// Clamp bounds
 	if start < 0 {
 		start = 0
@@ -276,17 +321,9 @@ func applySlice(arr []any, segment *PathSegment) ([]any, error) {
 	}
 
 	// Build result
-	var result []any
-	if step > 0 {
-		result = make([]any, 0, (end-start+step-1)/step)
-		for i := start; i < end; i += step {
-			result = append(result, arr[i])
-		}
-	} else {
-		result = make([]any, 0, (start-end-step-1)/(-step))
-		for i := start; i > end; i += step {
-			result = append(result, arr[i])
-		}
+	result := make([]any, 0, (end-start+step-1)/step)
+	for i := start; i < end; i += step {
+		result = append(result, arr[i])
 	}
 
 	return result, nil
@@ -321,6 +358,14 @@ func (e *CompiledPathError) Unwrap() error {
 	return e.Err
 }
 
+// Is supports errors.Is matching against the underlying sentinel error.
+// This enables users to check errors from compiled path operations with:
+//
+//	errors.Is(err, json.ErrPathNotFound)
+func (e *CompiledPathError) Is(target error) bool {
+	return errors.Is(e.Err, target)
+}
+
 // ============================================================================
 // COMPILED PATH CACHE
 // PERFORMANCE: Cache frequently used compiled paths
@@ -351,16 +396,17 @@ func NewCompiledPathCache(max int) *CompiledPathCache {
 // when done to return it to the pool. Eviction of a cached entry does not affect
 // previously returned copies.
 func (c *CompiledPathCache) Get(path string) (*CompiledPath, error) {
-	c.mu.Lock()
+	// PERFORMANCE: Use RLock for initial read-only cache lookup
+	c.mu.RLock()
 
 	// Check cache first
 	if cp, ok := c.paths[path]; ok {
 		result := cloneCompiledPathLocked(cp)
-		c.mu.Unlock()
+		c.mu.RUnlock()
 		return result, nil
 	}
 
-	c.mu.Unlock()
+	c.mu.RUnlock()
 
 	// Compile the path outside the lock (parsing is expensive)
 	cp, err := CompilePath(path)
@@ -370,11 +416,9 @@ func (c *CompiledPathCache) Get(path string) (*CompiledPath, error) {
 
 	c.mu.Lock()
 	// Check if another goroutine already cached it
+	// Clone within the same lock scope to prevent TOCTOU race with concurrent eviction
 	if existing, ok := c.paths[path]; ok {
-		c.mu.Unlock()
 		cp.Release()
-		// Re-acquire lock for safe clone to prevent TOCTOU race with concurrent eviction
-		c.mu.Lock()
 		result := cloneCompiledPathLocked(existing)
 		c.mu.Unlock()
 		return result, nil
@@ -423,9 +467,12 @@ func GetGlobalCompiledPathCache() *CompiledPathCache {
 	return globalCompiledPathCache
 }
 
-// Clear clears the cache
+// Clear clears the cache and releases all cached CompiledPath objects to the pool.
 func (c *CompiledPathCache) Clear() {
 	c.mu.Lock()
+	for _, cp := range c.paths {
+		cp.Release()
+	}
 	c.paths = make(map[string]*CompiledPath, c.max)
 	c.order = c.order[:0]
 	c.mu.Unlock()

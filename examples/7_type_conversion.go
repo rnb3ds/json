@@ -10,96 +10,79 @@ import (
 
 // Type Conversion Example
 //
-// This example demonstrates comprehensive type conversion capabilities in the cybergodev/json library.
-// Learn about safe type conversion, generic type operations, and automatic conversions.
+// This example demonstrates type conversion capabilities in the cybergodev/json library.
+// Learn about type-safe generic operations, automatic conversions, and deep copy.
 //
 // Topics covered:
-// - Safe type conversion functions
-// - Type-safe generic operations
-// - Automatic type conversion
-// - JSON Number handling
-// - Custom type conversions
+// - Type-safe generic operations (GetTyped[T])
+// - Automatic type conversion from JSON
+// - Default values with GetTyped[T]
+// - Deep copy via marshal/unmarshal cycle
 //
 // Run: go run -tags=example examples/7_type_conversion.go
 
 func main() {
-	fmt.Println("🔄 JSON Library - Type Conversion")
-	fmt.Println("=================================\n ")
+	fmt.Println("JSON Library - Type Conversion")
+	fmt.Println("===============================\n ")
 
-	// 1. SAFE TYPE CONVERSION
-	demonstrateSafeConversion()
+	// 1. TYPE-SAFE GENERICS
+	demonstrateTypeSafeGenerics()
 
 	// 2. AUTOMATIC CONVERSION
 	demonstrateAutomaticConversion()
 
-	// 3. NUMBER HANDLING
+	// 3. DEFAULT VALUES
+	demonstrateDefaultValues()
+
+	// 4. NUMBER HANDLING
 	demonstrateNumberHandling()
 
-	// 4. STRING CONVERSION
-	demonstrateStringConversion()
-
-	// 5. BOOL CONVERSION
-	demonstrateBoolConversion()
-
-	// 6. TYPE-SAFE GENERICS
-	demonstrateGenerics()
-
-	// 7. DEEP COPY
+	// 5. DEEP COPY
 	demonstrateDeepCopy()
 
-	fmt.Println("\n✅ Type conversion examples complete!")
+	fmt.Println("\nType conversion examples complete!")
 }
 
-func demonstrateSafeConversion() {
-	fmt.Println("1️⃣  Safe Type Conversion")
-	fmt.Println("─────────────────────────")
+func demonstrateTypeSafeGenerics() {
+	fmt.Println("1. Type-Safe Generic Operations (GetTyped[T])")
+	fmt.Println("------------------------------------------------")
 
-	values := []interface{}{
-		42,                        // int
-		3.14,                      // float64
-		"123",                     // string
-		true,                      // bool
-		json.Number("9876543210"), // json.Number
-		int8(10),                  // int8
-		int16(20),                 // int16
-		int32(30),                 // int32
-		int64(40),                 // int64
-		uint(50),                  // uint
-		uint8(60),                 // uint8
-		uint16(70),                // uint16
-		uint32(80),                // uint32
-		uint64(90),                // uint64
-		float32(2.5),              // float32
-	}
+	testJSON := `{
+		"name": "Alice",
+		"age": 30,
+		"score": 95.5,
+		"active": true,
+		"tags": ["go", "json", "developer"]
+	}`
 
-	fmt.Println("   Converting various types to int:")
-	for _, v := range values {
-		if result, ok := json.ConvertToInt(v); ok {
-			fmt.Printf("   %25v -> %d\n", v, result)
-		}
-	}
+	// Get as string
+	name := json.GetTyped[string](testJSON, "name", "")
+	fmt.Printf("   Name (string): %s\n", name)
 
-	fmt.Println("\n   Converting various types to float64:")
-	for _, v := range values {
-		if result, ok := json.ConvertToFloat64(v); ok {
-			fmt.Printf("   %25v -> %.2f\n", v, result)
-		}
-	}
+	// Get as int
+	age := json.GetTyped[int](testJSON, "age", 0)
+	fmt.Printf("   Age (int): %d\n", age)
 
-	fmt.Println("\n   Converting various types to bool:")
-	boolValues := []interface{}{
-		true, false, 1, 0, "true", "false", "TRUE", "FALSE", "1", "0", "T", "F", "yes", "no", "on", "off", 2, 0.0, 0.1,
-	}
-	for _, v := range boolValues {
-		if result, ok := json.ConvertToBool(v); ok {
-			fmt.Printf("   %25v -> %t\n", v, result)
-		}
-	}
+	// Get as float64
+	score := json.GetTyped[float64](testJSON, "score", 0.0)
+	fmt.Printf("   Score (float64): %.1f\n", score)
+
+	// Get as bool
+	active := json.GetTyped[bool](testJSON, "active", false)
+	fmt.Printf("   Active (bool): %t\n", active)
+
+	// Get as array
+	tags := json.GetTyped[[]any](testJSON, "tags", nil)
+	fmt.Printf("   Tags ([]any): %v\n", tags)
+
+	// Get as object
+	user := json.GetTyped[map[string]any](testJSON, "", nil)
+	fmt.Printf("   Full user (map): %v\n", user)
 }
 
 func demonstrateAutomaticConversion() {
-	fmt.Println("\n2️⃣  Automatic Type Conversion")
-	fmt.Println("───────────────────────────")
+	fmt.Println("\n2. Automatic Type Conversion")
+	fmt.Println("-------------------------------")
 
 	testJSON := `{
 		"intString": "42",
@@ -110,35 +93,60 @@ func demonstrateAutomaticConversion() {
 		"actualBool": false
 	}`
 
-	// Automatic conversion from JSON GetTyped functions
-	fmt.Println("   Automatic type conversion with GetTyped:")
-
-	// String to int
-	intVal, _ := json.GetInt(testJSON, "intString")
+	// String to int (automatic conversion)
+	intVal := json.GetInt(testJSON, "intString", 0)
 	fmt.Printf("   String '42' -> int: %d\n", intVal)
 
 	// String to float64
-	floatVal, _ := json.GetFloat(testJSON, "floatString")
+	floatVal := json.GetFloat(testJSON, "floatString", 0.0)
 	fmt.Printf("   String '3.14' -> float64: %.2f\n", floatVal)
 
 	// String to bool
-	boolVal, _ := json.GetBool(testJSON, "boolString")
+	boolVal := json.GetBool(testJSON, "boolString", false)
 	fmt.Printf("   String 'true' -> bool: %t\n", boolVal)
 
 	// Type-preserving retrieval
 	fmt.Println("\n   Type-preserving retrieval:")
-	intVal2, _ := json.GetInt(testJSON, "actualInt")
-	fmt.Printf("   int 100 -> int: %d (type: %T)\n", intVal2, intVal2)
+	intVal2 := json.GetInt(testJSON, "actualInt", 0)
+	fmt.Printf("   int 100 -> int: %d\n", intVal2)
 
-	floatVal2, _ := json.GetFloat(testJSON, "actualFloat")
-	fmt.Printf("   float64 2.718 -> float64: %.3f (type: %T)\n", floatVal2, floatVal2)
+	floatVal2 := json.GetFloat(testJSON, "actualFloat", 0.0)
+	fmt.Printf("   float64 2.718 -> float64: %.3f\n", floatVal2)
+}
+
+func demonstrateDefaultValues() {
+	fmt.Println("\n3. Default Values (GetTyped[T])")
+	fmt.Println("-----------------------------------")
+
+	partialData := `{
+		"user": {
+			"name": "Alice",
+			"email": "alice@example.com"
+		}
+	}`
+
+	// Existing field returns actual value
+	email := json.GetTyped(partialData, "user.email", "no-email@example.com")
+	fmt.Printf("   user.email: %s\n", email)
+
+	// Missing field returns default
+	phone := json.GetTyped(partialData, "user.phone", "N/A")
+	fmt.Printf("   user.phone (missing): %s\n", phone)
+
+	age := json.GetTyped(partialData, "user.age", 0)
+	fmt.Printf("   user.age (missing): %d\n", age)
+
+	score := json.GetTyped(partialData, "user.score", 100.0)
+	fmt.Printf("   user.score (missing): %.1f\n", score)
+
+	tags := json.GetTyped[[]any](partialData, "user.tags", []any{})
+	fmt.Printf("   user.tags (missing): %v (length: %d)\n", tags, len(tags))
 }
 
 func demonstrateNumberHandling() {
-	fmt.Println("\n3️⃣  JSON Number Handling")
-	fmt.Println("────────────────────────")
+	fmt.Println("\n4. JSON Number Handling")
+	fmt.Println("-------------------------")
 
-	// JSON with number in various formats
 	numberJSON := `{
 		"integer": 42,
 		"largeInteger": 9007199254740992,
@@ -148,162 +156,64 @@ func demonstrateNumberHandling() {
 		"zero": 0
 	}`
 
-	fmt.Println("   Number handling:")
-
 	// Get as int64 for large integers
-	largeInt, _ := json.GetInt(numberJSON, "largeInteger")
+	largeInt := json.GetInt(numberJSON, "largeInteger", 0)
 	fmt.Printf("   Large integer: %d\n", largeInt)
 
 	// Get as float64 for decimals
-	floatVal, _ := json.GetFloat(numberJSON, "float")
+	floatVal := json.GetFloat(numberJSON, "float", 0.0)
 	fmt.Printf("   Float value: %.5f\n", floatVal)
 
-	// Get as uint64 for unsigned numbers
-	uintVal, _ := json.Get(numberJSON, "integer")
-	fmt.Printf("   As any: %v (type: %T)\n", uintVal, uintVal)
+	// Get as any for generic handling
+	anyVal, _ := json.Get(numberJSON, "integer")
+	fmt.Printf("   As any: %v (type: %T)\n", anyVal, anyVal)
 
-	// Convert to string representation
-	fmt.Println("\n   Number to string conversion:")
-	numbers := map[string]interface{}{
-		"int":      42,
-		"float":    3.14159,
-		"negative": -123,
-		"jsonNum":  json.Number("12345"),
+	// Number type for precise numeric handling
+	fmt.Println("\n   Number type (json.Number):")
+	num := json.Number("3.14159")
+	fmt.Printf("   Number.String():  %s\n", num.String())
+	if f, err := num.Float64(); err == nil {
+		fmt.Printf("   Number.Float64(): %.5f\n", f)
 	}
-	for name, val := range numbers {
-		str := json.FormatNumber(val)
-		fmt.Printf("   %10s: %v -> '%s'\n", name, val, str)
-	}
-}
-
-func demonstrateStringConversion() {
-	fmt.Println("\n4️⃣  String Conversion")
-	fmt.Println("──────────────────────")
-
-	values := []interface{}{
-		42,
-		3.14,
-		true,
-		false,
-		json.Number("12345"),
+	if i, err := num.Int64(); err != nil {
+		fmt.Printf("   Number.Int64():   (truncates, error: %v)\n", err)
+	} else {
+		fmt.Printf("   Number.Int64():   %d\n", i)
 	}
 
-	fmt.Println("   Convert to string:")
-	for _, v := range values {
-		str := json.ConvertToString(v)
-		fmt.Printf("   %15v -> '%s'\n", v, str)
-	}
-}
-
-func demonstrateBoolConversion() {
-	fmt.Println("\n5️⃣  Boolean Conversion")
-	fmt.Println("───────────────────────")
-
-	fmt.Println("   Boolean conversion truth table:")
-
-	testCases := []struct {
-		value interface{}
-	}{
-		{true},
-		{false},
-		{1},
-		{0},
-		{-1},
-		{1.0},
-		{0.0},
-		{"true"},
-		{"false"},
-		{"TRUE"},
-		{"FALSE"},
-		{"1"},
-		{"0"},
-		{"T"},
-		{"F"},
-		{"yes"},
-		{"no"},
-		{"on"},
-		{"off"},
-	}
-
-	for _, tc := range testCases {
-		if result, ok := json.ConvertToBool(tc.value); ok {
-			fmt.Printf("   %15v -> %t\n", tc.value, result)
-		}
-	}
-}
-
-func demonstrateGenerics() {
-	fmt.Println("\n6️⃣  Type-Safe Generic Operations")
-	fmt.Println("────────────────────────────────")
-
-	testJSON := `{
-		"name": "Alice",
-		"age": 30,
-		"score": 95.5,
-		"active": true,
-		"tags": ["go", "json", "developer"]
-	}`
-
-	// Type-safe generic operations
-	fmt.Println("   Type-safe generic retrieval with GetAs[T]:")
-
-	// Get as string
-	name, err := json.GetTyped[string](testJSON, "name")
-	if err == nil {
-		fmt.Printf("   Name (string): %s\n", name)
-	}
-
-	// Get as int
-	age, err := json.GetTyped[int](testJSON, "age")
-	if err == nil {
-		fmt.Printf("   Age (int): %d\n", age)
-	}
-
-	// Get as float64
-	score, err := json.GetTyped[float64](testJSON, "score")
-	if err == nil {
-		fmt.Printf("   Score (float64): %.1f\n", score)
-	}
-
-	// Get as bool
-	active, err := json.GetTyped[bool](testJSON, "active")
-	if err == nil {
-		fmt.Printf("   Active (bool): %t\n", active)
-	}
-
-	// Get as array
-	tags, err := json.GetTyped[[]interface{}](testJSON, "tags")
-	if err == nil {
-		fmt.Printf("   Tags ([]interface{}): %v\n", tags)
-	}
-
-	// Get as object
-	user, err := json.GetTyped[map[string]interface{}](testJSON, "")
-	if err == nil {
-		fmt.Printf("   Full user (map): %v\n", user)
+	intNum := json.Number("42")
+	if i, err := intNum.Int64(); err == nil {
+		fmt.Printf("   Number('42').Int64(): %d\n", i)
 	}
 }
 
 func demonstrateDeepCopy() {
-	fmt.Println("\n7️⃣  Deep Copy with Type Preservation")
-	fmt.Println("──────────────────────────────────")
+	fmt.Println("\n5. Deep Copy via Marshal/Unmarshal Cycle")
+	fmt.Println("-------------------------------------")
 
-	original := map[string]interface{}{
+	original := map[string]any{
 		"name": "Bob",
 		"age":  25,
-		"address": map[string]interface{}{
+		"address": map[string]any{
 			"street": "123 Main St",
 			"city":   "Springfield",
 		},
-		"hobbies": []interface{}{"reading", "coding"},
+		"hobbies": []any{"reading", "coding"},
 	}
 
-	fmt.Println("   Deep copy demonstration:")
+	fmt.Println("   Deep copy using marshal/unmarshal cycle:")
 
-	// Create deep copy
-	copied, err := json.DeepCopy(original)
+	// Marshal original to JSON
+	jsonBytes, err := json.Marshal(original)
 	if err != nil {
-		fmt.Printf("   Error: %v\n", err)
+		fmt.Printf("   Error marshaling: %v\n", err)
+		return
+	}
+
+	// Unmarshal into new variable to create deep copy
+	var copied map[string]any
+	if err := json.Unmarshal(jsonBytes, &copied); err != nil {
+		fmt.Printf("   Error unmarshaling: %v\n", err)
 		return
 	}
 
@@ -311,18 +221,16 @@ func demonstrateDeepCopy() {
 	fmt.Printf("   Copy:     %v\n", copied)
 
 	// Modify copy to prove it's deep
-	if copiedMap, ok := copied.(map[string]interface{}); ok {
-		if addr, ok := copiedMap["address"].(map[string]interface{}); ok {
-			addr["city"] = "New City"
-		}
-		if hobbies, ok := copiedMap["hobbies"].([]interface{}); ok {
-			hobbies[0] = "writing"
-		}
+	if addr, ok := copied["address"].(map[string]any); ok {
+		addr["city"] = "New City"
+	}
+	if hobbies, ok := copied["hobbies"].([]any); ok {
+		hobbies[0] = "writing"
 	}
 
 	fmt.Println("\n   After modifying copy:")
-	fmt.Printf("   Original address city: %v\n", original["address"].(map[string]interface{})["city"])
-	fmt.Printf("   Copy address city:     %v\n", copied.(map[string]interface{})["address"].(map[string]interface{})["city"])
+	fmt.Printf("   Original address city: %v\n", original["address"].(map[string]any)["city"])
+	fmt.Printf("   Copy address city:     %v\n", copied["address"].(map[string]any)["city"])
 
-	fmt.Println("\n   ✓ Original is unchanged (deep copy successful)")
+	fmt.Println("\n   Original is unchanged (deep copy successful)")
 }

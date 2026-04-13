@@ -153,7 +153,7 @@ func ParsePathSegment(part string, segments []PathSegment) []PathSegment {
 		}
 
 		segments = append(segments, PathSegment{
-			Key:  part,
+			Key:  UnescapePathSegment(part),
 			Type: PropertySegment,
 		})
 		return segments
@@ -296,12 +296,55 @@ func ParseExtractionSegment(part string, segments []PathSegment) []PathSegment {
 }
 
 // SplitPathIntoSegments splits a path into segments by dots
+// ESCAPE: Handles \. \\ \[ \] \{ \} escape sequences
 func SplitPathIntoSegments(path string, segments []PathSegment) []PathSegment {
-	for part := range strings.SplitSeq(path, ".") {
-		if part == "" {
+	// Check for escape sequences
+	hasEscape := HasEscapeSequence(path)
+
+	// Fast path: no escape sequences
+	if !hasEscape {
+		for part := range strings.SplitSeq(path, ".") {
+			if part == "" {
+				continue
+			}
+			segments = ParsePathSegment(part, segments)
+		}
+		return segments
+	}
+
+	// Slow path: handle escape sequences
+	pathLen := len(path)
+	start := 0
+
+	for i := 0; i <= pathLen; i++ {
+		if i == pathLen {
+			// End of path - add remaining segment
+			if start < pathLen {
+				part := path[start:]
+				if part != "" {
+					segments = ParsePathSegment(part, segments)
+				}
+			}
+			break
+		}
+
+		c := path[i]
+		if c == '\\' && i+1 < pathLen {
+			// Skip escaped character
+			i++
 			continue
 		}
-		segments = ParsePathSegment(part, segments)
+
+		if c == '.' {
+			// Unescaped dot - split here
+			if i > start {
+				part := path[start:i]
+				if part != "" {
+					segments = ParsePathSegment(part, segments)
+				}
+			}
+			start = i + 1
+		}
 	}
 
 	return segments

@@ -30,47 +30,47 @@ type CustomEncoder interface {
 	Encode(value any) (string, error)
 }
 
-// EncoderConfig provides configuration access for custom encoders.
-// Implemented by Config struct.
-type EncoderConfig interface {
+// encoderConfig provides configuration access for encoders.
+// Implemented by Config struct. Internal interface — not for external use.
+type encoderConfig interface {
 	// HTML escaping
-	IsHTMLEscapeEnabled() bool
+	isHTMLEscapeEnabled() bool
 
 	// Pretty printing
-	IsPrettyEnabled() bool
-	GetIndent() string
-	GetPrefix() string
+	isPrettyEnabled() bool
+	getIndent() string
+	getPrefix() string
 
 	// Key handling
-	IsSortKeysEnabled() bool
+	isSortKeysEnabled() bool
 
 	// Float handling
-	GetFloatPrecision() int
-	IsTruncateFloatEnabled() bool
+	getFloatPrecision() int
+	isTruncateFloatEnabled() bool
 
 	// Depth control
-	GetMaxDepth() int
+	getMaxDepth() int
 
 	// Null handling
-	ShouldIncludeNulls() bool
+	shouldIncludeNulls() bool
 
 	// UTF-8 validation
-	ShouldValidateUTF8() bool
+	shouldValidateUTF8() bool
 
 	// Unknown field handling
-	IsDisallowUnknownEnabled() bool
+	isDisallowUnknownEnabled() bool
 
 	// Unicode escaping
-	ShouldEscapeUnicode() bool
+	shouldEscapeUnicode() bool
 
 	// Slash escaping
-	ShouldEscapeSlash() bool
+	shouldEscapeSlash() bool
 
 	// Newline escaping
-	ShouldEscapeNewlines() bool
+	shouldEscapeNewlines() bool
 
 	// Tab escaping
-	ShouldEscapeTabs() bool
+	shouldEscapeTabs() bool
 }
 
 // TypeEncoder handles encoding for specific reflect.Types.
@@ -116,27 +116,12 @@ type Validator interface {
 	Validate(jsonStr string) error
 }
 
-// PathValidator validates path syntax before navigation.
-// Implement to add custom path validation rules.
-type PathValidator interface {
-	ValidatePath(path string) error
-}
-
-// SecurityValidator checks for dangerous patterns in content.
-// Extends Validator with content-specific security checks.
-type SecurityValidator interface {
-	Validator
-	// ValidateContent checks raw content for security issues.
-	// This is called on the raw input before JSON parsing.
-	ValidateContent(content string) error
-}
-
-// ValidationChain runs multiple validators in sequence.
+// validationChain runs multiple validators in sequence.
 // Stops at the first error encountered.
-type ValidationChain []Validator
+type validationChain []Validator
 
 // Validate executes all validators in order, stopping at first error.
-func (vc ValidationChain) Validate(jsonStr string) error {
+func (vc validationChain) Validate(jsonStr string) error {
 	for _, v := range vc {
 		if err := v.Validate(jsonStr); err != nil {
 			return err
@@ -192,88 +177,12 @@ type DangerousPattern struct {
 	Level PatternLevel
 }
 
-// PatternRegistry manages dangerous patterns with thread-safe operations.
-type PatternRegistry interface {
-	// Add registers a new dangerous pattern.
-	Add(pattern DangerousPattern)
-
-	// Remove unregisters a pattern by its pattern string.
-	Remove(pattern string)
-
-	// List returns all registered patterns.
-	List() []DangerousPattern
-
-	// ListByLevel returns patterns filtered by severity level.
-	ListByLevel(level PatternLevel) []DangerousPattern
-
-	// Clear removes all registered patterns.
-	Clear()
-}
-
 // =============================================================================
-// 4. Path Segment Types (Public API)
-// These are type aliases to internal types to avoid duplication.
+// 4. Path Segment Type
 // =============================================================================
-
-// PathSegmentType identifies the type of a path segment.
-// This is an alias to internal.PathSegmentType.
-type PathSegmentType = internal.PathSegmentType
-
-// Path segment type constants - aliases to internal package
-const (
-	// PathSegmentProperty represents object property access (e.g., "user.name").
-	PathSegmentProperty PathSegmentType = internal.PropertySegment
-
-	// PathSegmentArrayIndex represents array index access (e.g., "items[0]").
-	PathSegmentArrayIndex PathSegmentType = internal.ArrayIndexSegment
-
-	// PathSegmentArraySlice represents array slice (e.g., "items[1:5:2]").
-	PathSegmentArraySlice PathSegmentType = internal.ArraySliceSegment
-
-	// PathSegmentWildcard represents wildcard access (e.g., "items[*]").
-	PathSegmentWildcard PathSegmentType = internal.WildcardSegment
-
-	// PathSegmentRecursive represents recursive descent (e.g., "**.name").
-	PathSegmentRecursive PathSegmentType = internal.RecursiveSegment
-
-	// PathSegmentFilter represents filter expression (e.g., "items[?(@.active)]").
-	PathSegmentFilter PathSegmentType = internal.FilterSegment
-
-	// PathSegmentExtract represents field extraction (e.g., "{name,email}").
-	PathSegmentExtract PathSegmentType = internal.ExtractSegment
-
-	// PathSegmentAppend represents append operation (e.g., "items[+]").
-	PathSegmentAppend PathSegmentType = internal.AppendSegment
-)
-
-// PathSegmentFlags are bit flags for path segment options.
-// This is an alias to internal.PathSegmentFlags.
-type PathSegmentFlags = internal.PathSegmentFlags
-
-// Path flag constants - aliases to internal package
-const (
-	// PathFlagNegative indicates a negative array index.
-	PathFlagNegative PathSegmentFlags = internal.PathFlagNegative
-
-	// PathFlagWildcard indicates a wildcard segment.
-	PathFlagWildcard PathSegmentFlags = internal.PathFlagWildcard
-
-	// PathFlagFlat indicates flat extraction mode.
-	PathFlagFlat PathSegmentFlags = internal.PathFlagFlat
-
-	// PathFlagHasStart indicates slice has start value.
-	PathFlagHasStart PathSegmentFlags = internal.PathFlagHasStart
-
-	// PathFlagHasEnd indicates slice has end value.
-	PathFlagHasEnd PathSegmentFlags = internal.PathFlagHasEnd
-
-	// PathFlagHasStep indicates slice has step value.
-	PathFlagHasStep PathSegmentFlags = internal.PathFlagHasStep
-)
 
 // PathSegment represents a parsed path segment.
 // This is an alias to internal.PathSegment.
-// Methods like HasStart(), HasEnd(), etc. are available through the internal type.
 type PathSegment = internal.PathSegment
 
 // =============================================================================
@@ -287,6 +196,10 @@ type HookContext struct {
 	Operation string
 
 	// JSONStr is the input JSON string (may be empty for marshal).
+	//
+	// SECURITY WARNING: This field may contain sensitive data (passwords,
+	// tokens, API keys, PII). Do NOT log this value. Only inspect specific
+	// paths if needed. Use Operation and Path for logging purposes.
 	JSONStr string
 
 	// Path is the target path (may be empty for marshal/unmarshal).
@@ -445,11 +358,11 @@ func ErrorHook(handler func(ctx HookContext, err error) error) Hook {
 	}
 }
 
-// HookChain manages multiple hooks for sequential execution.
-type HookChain []Hook
+// hookChain manages multiple hooks for sequential execution.
+type hookChain []Hook
 
-// ExecuteBefore runs all Before hooks in order, stopping at first error.
-func (hc HookChain) ExecuteBefore(ctx HookContext) error {
+// executeBefore runs all Before hooks in order, stopping at first error.
+func (hc hookChain) executeBefore(ctx HookContext) error {
 	for _, h := range hc {
 		if err := h.Before(ctx); err != nil {
 			return err
@@ -458,8 +371,8 @@ func (hc HookChain) ExecuteBefore(ctx HookContext) error {
 	return nil
 }
 
-// ExecuteAfter runs all After hooks in reverse order.
-func (hc HookChain) ExecuteAfter(ctx HookContext, result any, err error) (any, error) {
+// executeAfter runs all After hooks in reverse order.
+func (hc hookChain) executeAfter(ctx HookContext, result any, err error) (any, error) {
 	for i := len(hc) - 1; i >= 0; i-- {
 		result, err = hc[i].After(ctx, result, err)
 	}
@@ -477,8 +390,8 @@ type PathParser interface {
 	ParsePath(path string) ([]PathSegment, error)
 }
 
-// CachedPathParser provides path parsing with caching.
-type CachedPathParser interface {
+// cachedPathParser provides path parsing with caching.
+type cachedPathParser interface {
 	PathParser
 	// ParsePathCached parses with caching for repeated paths.
 	ParsePathCached(path string) ([]PathSegment, error)
@@ -491,39 +404,34 @@ type CachedPathParser interface {
 // These delegate to internal package constructors.
 // =============================================================================
 
-// NewPropertySegment creates a property access segment.
-func NewPropertySegment(key string) PathSegment {
+// newPropertySegment creates a property access segment.
+func newPropertySegment(key string) PathSegment {
 	return internal.NewPropertySegment(key)
 }
 
-// NewArrayIndexSegment creates an array index access segment.
-func NewArrayIndexSegment(index int) PathSegment {
+// newArrayIndexSegment creates an array index access segment.
+func newArrayIndexSegment(index int) PathSegment {
 	return internal.NewArrayIndexSegment(index)
 }
 
-// NewArraySliceSegment creates an array slice segment.
-func NewArraySliceSegment(start, end, step int, hasStart, hasEnd, hasStep bool) PathSegment {
+// newArraySliceSegment creates an array slice segment.
+func newArraySliceSegment(start, end, step int, hasStart, hasEnd, hasStep bool) PathSegment {
 	return internal.NewArraySliceSegment(start, end, step, hasStart, hasEnd, hasStep)
 }
 
-// NewWildcardSegment creates a wildcard segment.
-func NewWildcardSegment() PathSegment {
+// newWildcardSegment creates a wildcard segment.
+func newWildcardSegment() PathSegment {
 	return internal.NewWildcardSegment()
 }
 
-// NewRecursiveSegment creates a recursive descent segment.
-func NewRecursiveSegment() PathSegment {
-	return internal.NewRecursiveSegment()
-}
-
-// NewExtractSegment creates an extraction segment.
-func NewExtractSegment(key string, flat bool) PathSegment {
+// newExtractSegment creates an extraction segment.
+func newExtractSegment(key string, flat bool) PathSegment {
 	return internal.NewExtractSegmentWithFlat(key, flat)
 }
 
-// NewAppendSegment creates an append segment.
-func NewAppendSegment() PathSegment {
-	return PathSegment{
-		Type: PathSegmentAppend,
+// newAppendSegment creates an append segment.
+func newAppendSegment() PathSegment {
+	return internal.PathSegment{
+		Type: internal.AppendSegment,
 	}
 }

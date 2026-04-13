@@ -218,3 +218,38 @@ func BenchmarkConcurrentMetrics(b *testing.B) {
 		}
 	})
 }
+
+// ============================================================================
+// Additional metrics coverage tests
+// ============================================================================
+
+// TestMetricsCollector_Reset tests the Reset method
+func TestMetricsCollector_Reset(t *testing.T) {
+	mc := NewMetricsCollector()
+
+	// Record some data
+	mc.RecordOperation(10*time.Millisecond, true, 1024)
+	mc.RecordCacheHit()
+	mc.RecordCacheMiss()
+
+	mc.Reset()
+
+	metrics := mc.GetMetrics()
+	if metrics.TotalOperations != 0 {
+		t.Errorf("TotalOperations after reset = %d, want 0", metrics.TotalOperations)
+	}
+}
+
+// TestMetricsCollector_GetSummary tests the GetSummary method
+func TestMetricsCollector_GetSummary(t *testing.T) {
+	mc := NewMetricsCollector()
+	mc.RecordOperation(5*time.Millisecond, true, 512)
+	mc.RecordCacheHit()
+	mc.RecordCacheHit()
+	mc.RecordCacheMiss()
+
+	summary := mc.GetSummary()
+	if summary == "" {
+		t.Error("GetSummary should return non-empty string")
+	}
+}

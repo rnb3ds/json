@@ -30,48 +30,48 @@ import "github.com/cybergodev/json"
 // Get any type
 value, err := json.Get(data, "path")
 
-// Get string
-str, err := json.GetString(data, "user.name")
+// Get string (with default value)
+str := json.GetString(data, "user.name", "unknown")
 
-// Get integer
-num, err := json.GetAsInt(data, "user.age")
+// Get integer (with default value)
+num := json.GetInt(data, "user.age", 0)
 
-// Get boolean
-flag, err := json.GetAsBool(data, "user.active")
+// Get boolean (with default value)
+flag := json.GetBool(data, "user.active", false)
 
-// Get float
-price, err := json.GetAsFloat(data, "product.price")
+// Get float (with default value)
+price := json.GetFloat(data, "product.price", 0.0)
 
-// Get array
-arr, err := json.GetAsArray(data, "items")
+// Get array (with default value)
+arr := json.GetArray(data, "items", nil)
 
 // Get object
-obj, err := json.GetAsObject(data, "user.profile")
+obj := json.GetObject(data, "user.profile")
 ```
 
 ### Retrieval with Default Values
 
 ```go
-// Recommended: Use GetTypedOr[T] for type-safe defaults
-name := json.GetTypedOr[string](data, "user.name", "Anonymous")
-age := json.GetTypedOr[int](data, "user.age", 0)
-active := json.GetTypedOr[bool](data, "user.active", false)
-price := json.GetTypedOr[float64](data, "product.price", 0.0)
-tags := json.GetTypedOr[[]any](data, "user.tags", []any{})
-settings := json.GetTypedOr[map[string]any](data, "settings", map[string]any{})
+// Recommended: Use GetTyped[T] for type-safe defaults
+name := json.GetTyped[string](data, "user.name", "Anonymous")
+age := json.GetTyped[int](data, "user.age", 0)
+active := json.GetTyped[bool](data, "user.active", false)
+price := json.GetTyped[float64](data, "product.price", 0.0)
+tags := json.GetTyped[[]any](data, "user.tags", []any{})
+settings := json.GetTyped[map[string]any](data, "settings", map[string]any{})
 ```
 
 ### Type-Safe Retrieval (Generics)
 
 ```go
-// Get string
-name, err := json.GetTyped[string](data, "user.name")
+// Get string (with optional default)
+name := json.GetTyped[string](data, "user.name")
 
 // Get integer slice
-numbers, err := json.GetTyped[[]int](data, "scores")
+numbers := json.GetTyped[[]int](data, "scores")
 
-// Get custom type
-users, err := json.GetTyped[[]User](data, "users")
+// Get custom type (with default)
+users := json.GetTyped[[]User](data, "users", []User{})
 ```
 
 ### Batch Retrieval
@@ -186,38 +186,37 @@ json.ForeachNested(data, func(key any, item *json.IterableValue) {
 ### Iteration with Flow Control
 
 ```go
-// Iterate with early termination support
-json.ForeachWithPathAndControl(data, "users", func(key any, value any) json.IteratorControl {
-    // Process each item
-    if shouldStop {
-        return json.IteratorBreak  // Stop iteration
+// For early termination, use file-based iteration with IterableValue.Break()
+processor, err := json.New()
+if err != nil {
+    log.Fatal(err)
+}
+defer processor.Close()
+
+err = processor.ForeachFile("data.json", func(key any, item *json.IterableValue) error {
+    if item.GetInt("id") == targetId {
+        return item.Break() // Stop iteration
     }
-    return json.IteratorContinue  // Continue to next item
+    return nil // Continue
 })
 ```
 
 ### Iteration with Path Tracking
 
 ```go
-// Manual path tracking during iteration
-// Note: ForeachWithPathAndIterator is not available; use manual tracking instead
+// Use ForeachWithPathAndIterator for automatic path tracking
+json.ForeachWithPathAndIterator(data, "users", func(key any, item *json.IterableValue, currentPath string) json.IteratorControl {
+    name := item.GetString("name")
+    fmt.Printf("User at %s: %s\n", currentPath, name)
+    return json.IteratorNormal
+})
+
+// Or use manual path tracking with ForeachWithPath
 basePath := "data.users"
 json.ForeachWithPath(data, basePath, func(key any, item *json.IterableValue) {
-    // Build current path manually
     currentPath := fmt.Sprintf("%s[%v]", basePath, key)
     name := item.GetString("name")
     fmt.Printf("User at %s: %s\n", currentPath, name)
-})
-```
-
-### Streaming Iteration
-
-```go
-// Stream array elements without loading entire JSON
-processor := json.NewStreamingProcessor(reader, 64*1024)
-err := processor.StreamArray(func(index int, item any) bool {
-    fmt.Printf("Item %d: %v\n", index, item)
-    return true  // continue
 })
 ```
 
@@ -229,7 +228,15 @@ err := processor.StreamArray(func(index int, item any) bool {
 | `ForeachNested(data, callback)` | Recursive iteration | All nested levels |
 | `ForeachWithPath(data, path, callback)` | Path-specific iteration | Specific JSON subset |
 | `ForeachWithPathAndControl(data, path, callback)` | With flow control | Early termination |
+| `ForeachWithPathAndIterator(data, path, callback)` | With path tracking | Path-aware iteration |
 | `ForeachReturn(data, callback)` | Read-only, returns original JSON | Iteration with error handling |
+| `ForeachWithError(data, path, callback)` | Error-returning callback | Error-aware iteration |
+| `ForeachNestedWithError(data, callback)` | Recursive with errors | Nested error-aware iteration |
+| `ForeachFile(path, callback)` | File-based iteration | Large file processing |
+| `ForeachFileWithPath(path, jsonPath, callback)` | File + path iteration | File subset processing |
+| `ForeachFileChunked(path, chunkSize, callback)` | Chunked file iteration | Memory-efficient file processing |
+| `ForeachFileNested(path, callback)` | Nested file iteration | Nested file traversal |
+| `ForeachJSONL(reader, callback)` | JSONL stream iteration | JSONL/NDJSON processing |
 
 **Note:** ForeachReturn is read-only - it returns the original JSON string unchanged. Use `json.Set()` for modifications.
 
@@ -286,13 +293,18 @@ json.Get(data, "users{flat:skills}")
 // Load from file
 data, err := json.LoadFromFile("config.json")
 
-// Load from Reader (requires processor)
-processor := json.New()
-defer processor.Close()
-
+// Load from Reader (package-level function, no processor needed)
 file, _ := os.Open("data.json")
 defer file.Close()
-data, err := processor.LoadFromReader(file)
+data, err := json.LoadFromReader(file)
+
+// Or via Processor
+processor, err := json.New()
+if err != nil {
+    log.Fatal(err)
+}
+defer processor.Close()
+data, err = processor.LoadFromReader(file)
 ```
 
 ### Write Files
@@ -306,13 +318,13 @@ err := json.SaveToFile("output.json", data, cfg)
 // Save to file (compact format)
 err := json.SaveToFile("output.json", data, json.DefaultConfig())
 
-// Save to Writer (requires processor)
-processor := json.New()
-defer processor.Close()
-
+// Save to Writer (package-level function, no processor needed)
 var buffer bytes.Buffer
 cfg := json.DefaultConfig()
 cfg.Pretty = true
+err = json.SaveToWriter(&buffer, data, cfg)
+
+// Or via Processor
 err = processor.SaveToWriter(&buffer, data, cfg)
 ```
 
@@ -324,13 +336,16 @@ err = processor.SaveToWriter(&buffer, data, cfg)
 
 ```go
 // Use default configuration
-processor := json.New()
+processor, err := json.New()
+if err != nil {
+    log.Fatal(err)
+}
 defer processor.Close()
 
 // Use predefined configurations
-processor := json.New(json.DefaultConfig())    // Same as json.New()
-processor := json.New(json.SecurityConfig())   // For untrusted input
-processor := json.New(json.PrettyConfig())     // For pretty output
+processor, err = json.New(json.DefaultConfig())    // Same as json.New()
+processor, err = json.New(json.SecurityConfig())   // For untrusted input
+processor, err = json.New(json.PrettyConfig())     // For pretty output
 ```
 
 ### Custom Configuration
@@ -345,12 +360,16 @@ config.MaxJSONSize = 100 * 1024 * 1024   // 100MB
 config.MaxPathDepth = 50
 config.CreatePaths = true  // For Set operations
 config.CleanupNulls = true // For Delete operations
-processor := json.New(config)
+processor, err := json.New(config)
+if err != nil {
+    log.Fatal(err)
+}
 defer processor.Close()
 
 // Security configuration for untrusted input
 secureCfg := json.SecurityConfig()  // Pre-configured for security
-result, err := json.Parse(untrustedInput, secureCfg)
+var result map[string]any
+err = json.Parse(untrustedInput, &result, secureCfg)
 
 // For operation-specific settings (without creating processor)
 cfg := json.DefaultConfig()
@@ -413,11 +432,16 @@ schema := &json.Schema{
     Required: []string{"name", "age"},
 }
 
-processor := json.New(json.DefaultConfig())
-errors, err := processor.ValidateSchema(data, schema)
+processor, err := json.New(json.DefaultConfig())
+if err != nil {
+    log.Fatal(err)
+}
+defer processor.Close()
+
+validationErrors, err := processor.ValidateSchema(data, schema)
 
 // Check validation errors
-for _, verr := range errors {
+for _, verr := range validationErrors {
     fmt.Printf("Error at %s: %s\n", verr.Path, verr.Message)
 }
 ```
@@ -430,15 +454,9 @@ if json.Valid([]byte(jsonStr)) {
     fmt.Println("Valid JSON")
 }
 
-// Quick validation check
-if json.IsValidJSON(jsonStr) {
-    fmt.Println("Valid JSON")
-}
-
-// Validate path expression
-if json.IsValidPath("user.profile.name") {
-    fmt.Println("Valid path")
-}
+// Note: isValidJSON and isValidPath are unexported (internal).
+// Use json.Valid([]byte(jsonStr)) for public JSON validation.
+// Path operations validate paths internally before execution.
 ```
 
 ---
@@ -448,16 +466,17 @@ if json.IsValidPath("user.profile.name") {
 ### Recommended Patterns
 
 ```go
-// 1. Check errors
-result, err := json.GetString(data, "user.name")
+// 1. Use Get for error handling
+result, err := json.Get(data, "user.name")
 if err != nil {
     log.Printf("Get failed: %v", err)
     return err
 }
+name := result.(string)
 
-// 2. Use default values (recommended: GetTypedOr[T])
-name := json.GetTypedOr[string](data, "user.name", "Anonymous")
-age := json.GetTypedOr[int](data, "user.age", 0)
+// 2. Use default values (recommended: GetTyped[T])
+name := json.GetTyped[string](data, "user.name", "Anonymous")
+age := json.GetTyped[int](data, "user.age", 0)
 
 // 3. Type checking
 if errors.Is(err, json.ErrTypeMismatch) {
@@ -521,12 +540,18 @@ if err != nil {
 
 ### Type Conversion Utilities
 
+> **Note:** These type conversion functions are unexported (internal). Use `GetTyped[T]`, `GetString`, `GetInt`, etc. for type-safe access.
+
 ```go
-// Safe type conversion
-intVal, ok := json.ConvertToInt(value)
-floatVal, ok := json.ConvertToFloat64(value)
-boolVal, ok := json.ConvertToBool(value)
-strVal := json.ConvertToString(value)
+// Use typed Get functions instead:
+str := json.GetString(data, "user.name", "default")
+num := json.GetInt(data, "user.age", 0)
+flag := json.GetBool(data, "user.active", false)
+price := json.GetFloat(data, "product.price", 0.0)
+
+// Or use SafeGet with AccessResult methods:
+result := json.SafeGet(data, "user.age")
+age, err := result.AsInt()
 ```
 
 ---
@@ -539,13 +564,6 @@ jsonlData := `{"name":"Alice","age":25}
 {"name":"Bob","age":30}
 {"name":"Carol","age":28}`
 results, err := json.ParseJSONL([]byte(jsonlData))
-
-// Stream processing for large files
-processor := json.NewJSONLProcessor(reader)
-err := processor.StreamLines(func(lineNum int, data any) bool {
-    fmt.Printf("Line %d: %v\n", lineNum, data)
-    return true  // continue
-})
 
 // Type-safe streaming
 type User struct {
@@ -567,47 +585,6 @@ data := []any{
     map[string]any{"id": 2, "name": "Bob"},
 }
 jsonlBytes, err := json.ToJSONL(data)
-```
-
----
-
-## 🌊 Streaming Processing
-
-```go
-// Create streaming processor for large JSON arrays
-processor := json.NewStreamingProcessor(reader, 64*1024) // 64KB buffer
-
-// Stream array elements
-err := processor.StreamArray(func(index int, item any) bool {
-    fmt.Printf("Item %d: %v\n", index, item)
-    return true  // continue
-})
-
-// Stream object key-value pairs
-err := processor.StreamObject(func(key string, value any) bool {
-    fmt.Printf("Key: %s, Value: %v\n", key, value)
-    return true
-})
-
-// Chunked processing for batch operations
-err := processor.StreamArrayChunked(100, func(chunk []any) error {
-    // Process 100 items at a time
-    return nil
-})
-
-// Stream transformations
-filtered, err := json.StreamArrayFilter(reader, func(item any) bool {
-    return item.(map[string]any)["active"] == true
-})
-
-transformed, err := json.StreamArrayMap(reader, func(item any) any {
-    item.(map[string]any)["processed"] = true
-    return item
-})
-
-// Pagination support
-page, err := json.StreamArraySkip(reader, 10)  // Skip first 10
-page, err := json.StreamArrayTake(reader, 10)  // Take first 10
 ```
 
 ---

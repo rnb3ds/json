@@ -12,22 +12,33 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
 	"github.com/cybergodev/json/internal"
 )
 
-// Pre-compiled regex patterns for schema validation
+// Lazy-initialized regex patterns for schema validation
+// PERFORMANCE: Using sync.OnceValue to defer compilation until first use
+// This avoids init-time overhead when schema validation isn't needed
 var (
 	// emailLocalRegex validates local part of email addresses
-	emailLocalRegex = regexp.MustCompile(`^[a-zA-Z0-9._%+-]+$`)
+	emailLocalRegex = sync.OnceValue(func() *regexp.Regexp {
+		return regexp.MustCompile(`^[a-zA-Z0-9._%+-]+$`)
+	})
 	// emailDomainRegex validates domain part of email addresses
-	emailDomainRegex = regexp.MustCompile(`^[a-zA-Z0-9.-]+$`)
+	emailDomainRegex = sync.OnceValue(func() *regexp.Regexp {
+		return regexp.MustCompile(`^[a-zA-Z0-9.-]+$`)
+	})
 	// uuidRegex validates UUID format (v4 pattern)
-	uuidRegex = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
+	uuidRegex = sync.OnceValue(func() *regexp.Regexp {
+		return regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
+	})
 	// ipv6Regex validates IPv6 address format
-	ipv6Regex = regexp.MustCompile(`^([0-9a-fA-F]{0,4}:){2,7}[0-9a-fA-F]{0,4}$`)
+	ipv6Regex = sync.OnceValue(func() *regexp.Regexp {
+		return regexp.MustCompile(`^([0-9a-fA-F]{0,4}:){2,7}[0-9a-fA-F]{0,4}$`)
+	})
 )
 
 // Token holds a value of one of these types:
@@ -85,7 +96,6 @@ func putEncoderBuffer(buf *bytes.Buffer) {
 // This type is fully compatible with encoding/json.Encoder.
 type Encoder struct {
 	w          io.Writer
-	processor  *Processor
 	escapeHTML bool
 	indent     string
 	prefix     string
@@ -93,51 +103,37 @@ type Encoder struct {
 
 // NewEncoder returns a new encoder that writes to w.
 // This function is fully compatible with encoding/json.NewEncoder.
-func NewEncoder(w io.Writer) *Encoder {
-	p := getDefaultProcessor()
-	if p == nil {
-		// SAFETY: Return encoder with nil processor; Encode will return error
-		return &Encoder{
-			w:          w,
-			processor:  nil,
-			escapeHTML: true,
-		}
-	}
-	return &Encoder{
-		w:          w,
-		processor:  p,
-		escapeHTML: true, // Default behavior matches encoding/json
-	}
-}
-
-// NewEncoderWithOpts returns a new encoder that writes to w with Config configuration.
-// This is the unified API for creating encoders with consistent Config pattern.
+//
+// The optional cfg parameter allows customization of encoding behavior.
+// If no configuration is provided, default settings are used.
 //
 // Example:
 //
+//	// Default encoder
+//	encoder := json.NewEncoder(writer)
+//
+//	// With configuration
 //	cfg := json.DefaultConfig()
 //	cfg.Pretty = true
-//	encoder := json.NewEncoderWithOpts(writer, &cfg)
-//	err := encoder.Encode(data)
-func NewEncoderWithOpts(w io.Writer, opts *Config) *Encoder {
-	p := getDefaultProcessor()
+//	encoder := json.NewEncoder(writer, cfg)
+func NewEncoder(w io.Writer, cfg ...Config) *Encoder {
 	enc := &Encoder{
 		w:          w,
-		processor:  p,
 		escapeHTML: true, // Default behavior matches encoding/json
 	}
-	if opts != nil {
-		// Apply escape HTML setting
-		enc.escapeHTML = opts.EscapeHTML
-		// Apply pretty print settings
-		if opts.Pretty {
-			enc.prefix = opts.Prefix
-			enc.indent = opts.Indent
+
+	// Apply configuration if provided
+	if len(cfg) > 0 {
+		enc.escapeHTML = cfg[0].EscapeHTML
+		if cfg[0].Pretty {
+			enc.prefix = cfg[0].Prefix
+			enc.indent = cfg[0].Indent
 			if enc.indent == "" {
 				enc.indent = "  " // Default indent
 			}
 		}
 	}
+
 	return enc
 }
 
@@ -146,15 +142,51 @@ func NewEncoderWithOpts(w io.Writer, opts *Config) *Encoder {
 //
 // See the documentation for Marshal for details about the
 // conversion of Go values to JSON.
+// newline is a pre-allocated byte slice to avoid per-Encode allocation
+var newline = []byte{'\n'}
+
 func (enc *Encoder) Encode(v any) error {
-	// SAFETY: Check for nil processor
-	if enc.processor == nil {
-		return ErrInternalError
+	// Get the current processor on each Encode call to avoid stale references
+	// after SetGlobalProcessor or ShutdownGlobalProcessor.
+	processor := getDefaultProcessor()
+	if processor == nil {
+		return errInternalError
 	}
 
-	// Create encoding config based on encoder settings
-	config := DefaultConfig()
-	config.EscapeHTML = enc.escapeHTML
+	// PERFORMANCE: Fast path for simple types with no custom encoding
+	// Avoids Config creation and EncodeWithConfig overhead for common cases
+	if enc.indent == "" && enc.prefix == "" {
+		// Try fast encoder directly
+		encoder := internal.GetEncoder()
+		err := encoder.EncodeValue(v)
+		if err == nil {
+			data := encoder.Bytes()
+			// Apply HTML escaping if needed
+			if enc.escapeHTML && internal.NeedsHTMLEscapeBytes(data) {
+				escaped := internal.HTMLEscapeBytes(data)
+				_, err = enc.w.Write(escaped)
+				internal.PutHTMLEscapeBytes(escaped)
+			} else {
+				_, err = enc.w.Write(data)
+			}
+			if err == nil {
+				_, err = enc.w.Write(newline)
+			}
+			internal.PutEncoder(encoder)
+			return err
+		}
+		// Fast path failed, fall through to full encoding
+		internal.PutEncoder(encoder)
+	}
+
+	// Full encoding path for complex cases with indentation or config
+	// Use processor's config as base to inherit settings like PreserveNumbers,
+	// FloatPrecision, etc. Only override EscapeHTML when Encoder was explicitly
+	// set to false via SetEscapeHTML(false).
+	config := processor.GetConfig()
+	if !enc.escapeHTML {
+		config.EscapeHTML = false
+	}
 
 	if enc.indent != "" || enc.prefix != "" {
 		config.Pretty = true
@@ -162,14 +194,17 @@ func (enc *Encoder) Encode(v any) error {
 		config.Prefix = enc.prefix
 	}
 
-	// Encode the value
-	jsonStr, err := enc.processor.EncodeWithConfig(v, config)
+	// Encode the value using internal method that accepts pre-built config
+	jsonStr, err := processor.EncodeWithConfig(v, config)
 	if err != nil {
 		return err
 	}
 
 	// Write to the output stream with a newline
-	_, err = enc.w.Write([]byte(jsonStr + "\n"))
+	if _, err := enc.w.Write(internal.StringToBytes(jsonStr)); err != nil {
+		return err
+	}
+	_, err = enc.w.Write(newline)
 	return err
 }
 
@@ -197,29 +232,50 @@ func (enc *Encoder) SetIndent(prefix, indent string) {
 type Decoder struct {
 	r                     io.Reader
 	buf                   *bufio.Reader
-	processor             *Processor
 	useNumber             bool
 	disallowUnknownFields bool
-	offset                int64
-	scanp                 int64 // start of unread data in buf
+	offset                int64 // total bytes read from input
+	maxNestingDepth       int   // maximum allowed nesting depth for containers
 }
 
 // NewDecoder returns a new decoder that reads from r.
 // This function is fully compatible with encoding/json.NewDecoder.
-func NewDecoder(r io.Reader) *Decoder {
-	p := getDefaultProcessor()
-	return &Decoder{
-		r:         r,
-		buf:       bufio.NewReader(r),
-		processor: p,
+//
+// The optional cfg parameter allows customization of decoding behavior.
+// If no configuration is provided, default settings are used.
+//
+// Example:
+//
+//	// Default decoder
+//	decoder := json.NewDecoder(reader)
+//
+//	// With custom configuration
+//	cfg := json.DefaultConfig()
+//	cfg.DisallowUnknown = true
+//	decoder := json.NewDecoder(reader, cfg)
+func NewDecoder(r io.Reader, cfg ...Config) *Decoder {
+	maxDepth := DefaultMaxNestingDepth
+	dec := &Decoder{
+		r:               r,
+		buf:             bufio.NewReader(r),
+		maxNestingDepth: maxDepth,
 	}
+	// Apply config if provided
+	if len(cfg) > 0 {
+		dec.disallowUnknownFields = cfg[0].DisallowUnknown
+		if cfg[0].MaxNestingDepthSecurity > 0 {
+			dec.maxNestingDepth = cfg[0].MaxNestingDepthSecurity
+		}
+	}
+	return dec
 }
 
 // Decode reads the next JSON-encoded value from its input and stores it in v.
 func (dec *Decoder) Decode(v any) error {
-	// SAFETY: Check for nil processor
-	if dec.processor == nil {
-		return ErrInternalError
+	// Get the current processor on each Decode call to avoid stale references.
+	processor := getDefaultProcessor()
+	if processor == nil {
+		return errInternalError
 	}
 
 	if v == nil {
@@ -261,7 +317,7 @@ func (dec *Decoder) Decode(v any) error {
 	}
 
 	// Use the processor's Unmarshal method for normal cases
-	return dec.processor.Unmarshal(data, v)
+	return processor.Unmarshal(data, v)
 }
 
 func (dec *Decoder) UseNumber() {
@@ -388,9 +444,15 @@ func (dec *Decoder) readStringValue(buf *bytes.Buffer) ([]byte, error) {
 	}
 }
 
-// readContainerValue reads a complete JSON object or array
-func (dec *Decoder) readContainerValue(buf *bytes.Buffer, _ byte) ([]byte, error) {
+// readContainerValue reads a complete JSON object or array.
+// openChar is the opening delimiter ('{' or '[') used to validate matching close delimiters.
+// Enforces maxNestingDepth to prevent stack exhaustion from deeply nested input.
+func (dec *Decoder) readContainerValue(buf *bytes.Buffer, openChar byte) ([]byte, error) {
 	depth := 1
+	maxDepth := dec.maxNestingDepth
+	if maxDepth <= 0 {
+		maxDepth = DefaultMaxNestingDepth
+	}
 	inString := false
 	escaped := false
 
@@ -398,7 +460,7 @@ func (dec *Decoder) readContainerValue(buf *bytes.Buffer, _ byte) ([]byte, error
 		b, err := dec.buf.ReadByte()
 		if err != nil {
 			if err == io.EOF && buf.Len() > 0 {
-				break
+				return nil, fmt.Errorf("unexpected EOF in JSON container")
 			}
 			return nil, err
 		}
@@ -412,7 +474,7 @@ func (dec *Decoder) readContainerValue(buf *bytes.Buffer, _ byte) ([]byte, error
 
 		if inString {
 			switch b {
-			case '\\':
+			case byte(0x5c):
 				escaped = true
 			case '"':
 				inString = false
@@ -425,7 +487,19 @@ func (dec *Decoder) readContainerValue(buf *bytes.Buffer, _ byte) ([]byte, error
 			inString = true
 		case '{', '[':
 			depth++
+			if depth > maxDepth {
+				return nil, fmt.Errorf("JSON nesting depth %d exceeds maximum allowed depth %d", depth, maxDepth)
+			}
 		case '}', ']':
+			if depth == 1 {
+				expectedClose := byte('}')
+				if openChar == '[' {
+					expectedClose = ']'
+				}
+				if b != expectedClose {
+					return nil, fmt.Errorf("mismatched JSON delimiters: expected '%c' but got '%c'", expectedClose, b)
+				}
+			}
 			depth--
 			if depth == 0 {
 				result := make([]byte, buf.Len())
@@ -434,10 +508,6 @@ func (dec *Decoder) readContainerValue(buf *bytes.Buffer, _ byte) ([]byte, error
 			}
 		}
 	}
-
-	result := make([]byte, buf.Len())
-	copy(result, buf.Bytes())
-	return result, nil
 }
 
 // readPrimitiveValue reads a JSON primitive (number, boolean, null)
@@ -631,7 +701,11 @@ func (dec *Decoder) parseNumber(first byte) (any, error) {
 			break
 		}
 
-		actual, _ := dec.buf.ReadByte()
+		// FIX: Check error from ReadByte to prevent data corruption
+		actual, readErr := dec.buf.ReadByte()
+		if readErr != nil {
+			return nil, fmt.Errorf("failed to read number character: %w", readErr)
+		}
 		dec.offset++
 		buf.WriteByte(actual)
 	}
@@ -642,7 +716,7 @@ func (dec *Decoder) parseNumber(first byte) (any, error) {
 		return Number(numStr), nil
 	}
 
-	if !strings.Contains(numStr, ".") && !strings.Contains(numStr, "e") && !strings.Contains(numStr, "E") {
+	if strings.IndexByte(numStr, '.') < 0 && strings.IndexByte(numStr, 'e') < 0 && strings.IndexByte(numStr, 'E') < 0 {
 		if val, err := strconv.ParseInt(numStr, 10, 64); err == nil {
 			return val, nil
 		}
@@ -663,7 +737,11 @@ func (dec *Decoder) parseNumber(first byte) (any, error) {
 // marshalJSON marshals a value to JSON string with optional pretty printing
 // This helper function consolidates duplicate marshaling logic
 func marshalJSON(value any, pretty bool, prefix, indent string) (string, error) {
-	return internal.MarshalJSON(value, pretty, prefix, indent)
+	resultBytes, err := internal.MarshalJSONToBytes(value, pretty, prefix, indent)
+	if err != nil {
+		return "", err
+	}
+	return string(resultBytes), nil
 }
 
 // validateDepth checks if the data structure exceeds maximum depth
@@ -672,7 +750,7 @@ func (p *Processor) validateDepth(value any, maxDepth, currentDepth int) error {
 		return &JsonsError{
 			Op:      "validate_depth",
 			Message: fmt.Sprintf("data structure depth %d exceeds maximum %d", currentDepth, maxDepth),
-			Err:     ErrOperationFailed,
+			Err:     errOperationFailed,
 		}
 	}
 
@@ -716,58 +794,27 @@ func needsCustomEncodingOpts(cfg Config) bool {
 		!cfg.IncludeNulls
 }
 
-// ToJsonString converts any Go value to JSON string with HTML escaping (safe for web)
-func (p *Processor) ToJsonString(value any, cfg ...Config) (string, error) {
-	config := DefaultConfig()
-	if len(cfg) > 0 {
-		config = cfg[0]
-	}
-	config.Pretty = false
-	config.EscapeHTML = true
-	return p.EncodeWithConfig(value, config)
-}
-
-// ToJsonStringPretty converts any Go value to pretty JSON string with HTML escaping
-func (p *Processor) ToJsonStringPretty(value any, cfg ...Config) (string, error) {
-	config := DefaultConfig()
-	if len(cfg) > 0 {
-		config = cfg[0]
-	}
-	config.Pretty = true
-	config.EscapeHTML = true
-	return p.EncodeWithConfig(value, config)
-}
-
-// ToJsonStringStandard converts any Go value to compact JSON string without HTML escaping
-func (p *Processor) ToJsonStringStandard(value any, cfg ...Config) (string, error) {
-	config := DefaultConfig()
-	if len(cfg) > 0 {
-		config = cfg[0]
-	}
-	return p.EncodeWithConfig(value, config)
-}
-
 // Marshal converts any Go value to JSON bytes (similar to json.Marshal)
-// PERFORMANCE: Uses FastEncoder for simple types to avoid reflection overhead
-func (p *Processor) Marshal(value any, opts ...Config) ([]byte, error) {
+// PERFORMANCE: Uses FastEncoder for simple types to avoid reflection overhead.
+// Uses encodeWithConfigToBytes for complex types to avoid string round-trip.
+func (p *Processor) Marshal(value any, cfg ...Config) ([]byte, error) {
 	if err := p.checkClosed(); err != nil {
 		return nil, err
 	}
 
 	// PERFORMANCE: Fast path for simple types - avoid config processing overhead
 	// Uses HTML escaping to match encoding/json behavior
-	if len(opts) == 0 {
-		if result, ok := fastEncodeSimpleWithHTMLEscape(value); ok {
-			return []byte(result), nil
+	// Encodes directly to []byte to avoid string round-trip
+	if len(cfg) == 0 {
+		if result, ok := fastEncodeSimpleToBytes(value); ok {
+			return result, nil
 		}
 	}
 
-	// Fallback to full encoding path for complex types or custom options
-	jsonStr, err := p.ToJsonString(value, opts...)
-	if err != nil {
-		return nil, err
-	}
-	return []byte(jsonStr), nil
+	// Fallback: encode directly to []byte, avoiding []byte->string->[]byte round-trip
+	config := getConfigOrDefault(cfg...)
+	config.EscapeHTML = true
+	return p.encodeWithConfigToBytes(value, config)
 }
 
 // MarshalIndent converts any Go value to indented JSON bytes (similar to json.MarshalIndent)
@@ -780,36 +827,33 @@ func (p *Processor) MarshalIndent(value any, prefix, indent string, cfg ...Confi
 	encOpts.Prefix = prefix
 	encOpts.Indent = indent
 
-	jsonStr, err := p.EncodeWithConfig(value, encOpts)
-	if err != nil {
-		return nil, err
-	}
-	return []byte(jsonStr), nil
+	// PERFORMANCE: Encode directly to []byte, avoiding []byte->string->[]byte round-trip
+	return p.encodeWithConfigToBytes(value, encOpts)
 }
 
 // Unmarshal parses the JSON-encoded data and stores the result in the value pointed to by v.
 // This method is fully compatible with encoding/json.Unmarshal.
 // PERFORMANCE: Fast path for simple cases to avoid string conversion overhead.
-func (p *Processor) Unmarshal(data []byte, v any, opts ...Config) error {
+func (p *Processor) Unmarshal(data []byte, value any, cfg ...Config) error {
 	if err := p.checkClosed(); err != nil {
 		return err
 	}
 
-	if v == nil {
+	if value == nil {
 		return &InvalidUnmarshalError{Type: nil}
 	}
 
 	// PERFORMANCE: Fast path when no options are provided
 	// Use encoding/json directly to avoid string conversion overhead
-	if len(opts) == 0 {
-		return json.Unmarshal(data, v)
+	if len(cfg) == 0 {
+		return json.Unmarshal(data, value)
 	}
 
 	// Slow path for options: convert to string for internal processing
 	jsonStr := string(data)
 
 	// Use the existing Parse method which handles all the validation and parsing logic
-	return p.Parse(jsonStr, v, opts...)
+	return p.Parse(jsonStr, value, cfg...)
 }
 
 // EncodeStream encodes multiple values as a JSON array stream.
@@ -822,10 +866,7 @@ func (p *Processor) EncodeStream(values any, cfg ...Config) (string, error) {
 	if err := p.checkClosed(); err != nil {
 		return "", err
 	}
-	config := DefaultConfig()
-	if len(cfg) > 0 {
-		config = cfg[0]
-	}
+	config := getConfigOrDefault(cfg...)
 	return p.EncodeWithConfig(values, config)
 }
 
@@ -836,10 +877,10 @@ func (p *Processor) EncodeStream(values any, cfg ...Config) (string, error) {
 //
 //	result, err := processor.EncodeBatch(pairs, json.PrettyConfig())
 func (p *Processor) EncodeBatch(pairs map[string]any, cfg ...Config) (string, error) {
-	config := DefaultConfig()
-	if len(cfg) > 0 {
-		config = cfg[0]
+	if err := p.checkClosed(); err != nil {
+		return "", err
 	}
+	config := getConfigOrDefault(cfg...)
 	return p.EncodeWithConfig(pairs, config)
 }
 
@@ -850,6 +891,9 @@ func (p *Processor) EncodeBatch(pairs map[string]any, cfg ...Config) (string, er
 //
 //	result, err := processor.EncodeFields(value, []string{"name", "email"}, json.PrettyConfig())
 func (p *Processor) EncodeFields(value any, fields []string, cfg ...Config) (string, error) {
+	if err := p.checkClosed(); err != nil {
+		return "", err
+	}
 	processor := p
 
 	// First convert to JSON and parse back to get map representation
@@ -913,9 +957,12 @@ func (p *Processor) EncodeWithConfig(value any, cfg ...Config) (string, error) {
 	}
 
 	// Get config from variadic parameter
-	config := DefaultConfig()
+	// PERFORMANCE: Only allocate DefaultConfig when no config is provided
+	var config Config
 	if len(cfg) > 0 {
 		config = cfg[0]
+	} else {
+		config = DefaultConfig()
 	}
 
 	// PERFORMANCE: Fast path for simple types without special encoding needs
@@ -968,14 +1015,91 @@ func (p *Processor) EncodeWithConfig(value any, cfg ...Config) (string, error) {
 	if err != nil {
 		return "", &JsonsError{
 			Op:      "encode_with_config",
-			Message: fmt.Sprintf("failed to encode value: %v", err),
-			Err:     ErrOperationFailed,
+			Message: "failed to encode value",
+			Err:     err,
 		}
 	}
 
 	// Check size limit
 	if int64(len(result)) > p.config.MaxJSONSize {
 		return "", &JsonsError{
+			Op:      "encode_with_config",
+			Message: fmt.Sprintf("encoded JSON size %d exceeds maximum %d", len(result), p.config.MaxJSONSize),
+			Err:     ErrSizeLimit,
+		}
+	}
+
+	return result, nil
+}
+
+// encodeWithConfigToBytes encodes value to []byte directly, avoiding string round-trip.
+// PERFORMANCE: Used by Marshal/MarshalIndent to eliminate []byte->string->[]byte conversion.
+func (p *Processor) encodeWithConfigToBytes(value any, cfg ...Config) ([]byte, error) {
+	if err := p.checkClosed(); err != nil {
+		return nil, err
+	}
+
+	var config Config
+	if len(cfg) > 0 {
+		config = cfg[0]
+	} else {
+		config = DefaultConfig()
+	}
+
+	// Fast path for simple types
+	if !config.Pretty && !needsCustomEncodingOpts(config) {
+		if config.EscapeHTML {
+			if result, ok := fastEncodeSimpleWithHTMLEscape(value); ok {
+				if int64(len(result)) > p.config.MaxJSONSize {
+					return nil, &JsonsError{
+						Op:      "encode_with_config",
+						Message: fmt.Sprintf("encoded JSON size %d exceeds maximum %d", len(result), p.config.MaxJSONSize),
+						Err:     ErrSizeLimit,
+					}
+				}
+				return []byte(result), nil
+			}
+		} else {
+			if result, ok := fastEncodeSimple(value); ok {
+				if int64(len(result)) > p.config.MaxJSONSize {
+					return nil, &JsonsError{
+						Op:      "encode_with_config",
+						Message: fmt.Sprintf("encoded JSON size %d exceeds maximum %d", len(result), p.config.MaxJSONSize),
+						Err:     ErrSizeLimit,
+					}
+				}
+				return []byte(result), nil
+			}
+		}
+	}
+
+	if config.MaxDepth > 0 {
+		if err := p.validateDepth(value, config.MaxDepth, 0); err != nil {
+			return nil, err
+		}
+	}
+
+	var result []byte
+	var err error
+
+	if needsCustomEncodingOpts(config) {
+		encoder := newCustomEncoder(config)
+		defer encoder.Close()
+		result, err = encoder.EncodeToBytes(value)
+	} else {
+		result, err = internal.MarshalJSONToBytes(value, config.Pretty, config.Prefix, config.Indent)
+	}
+
+	if err != nil {
+		return nil, &JsonsError{
+			Op:      "encode_with_config",
+			Message: "failed to encode value",
+			Err:     err,
+		}
+	}
+
+	if int64(len(result)) > p.config.MaxJSONSize {
+		return nil, &JsonsError{
 			Op:      "encode_with_config",
 			Message: fmt.Sprintf("encoded JSON size %d exceeds maximum %d", len(result), p.config.MaxJSONSize),
 			Err:     ErrSizeLimit,
@@ -1003,7 +1127,7 @@ func fastEncodeSimple(value any) (string, bool) {
 
 // fastEncodeSimpleWithHTMLEscape encodes simple types with HTML escaping
 // Returns (result, true) if successful, ("", false) if type not supported
-// PERFORMANCE v2: Uses FastEncoder with direct HTML escaping to reduce allocations
+// PERFORMANCE v3: Direct byte-level HTML escaping to minimize allocations
 func fastEncodeSimpleWithHTMLEscape(value any) (string, bool) {
 	encoder := internal.GetEncoder()
 	defer internal.PutEncoder(encoder)
@@ -1013,13 +1137,41 @@ func fastEncodeSimpleWithHTMLEscape(value any) (string, bool) {
 		return "", false
 	}
 
-	// PERFORMANCE v2: Directly escape bytes without intermediate string conversion
+	// PERFORMANCE: Work directly with bytes to avoid string conversions
 	data := encoder.Bytes()
-	if internal.NeedsHTMLEscape(string(data)) {
-		return internal.HTMLEscape(string(data)), true
+	if internal.NeedsHTMLEscapeBytes(data) {
+		escaped := internal.HTMLEscapeBytes(data)
+		result := string(escaped)
+		internal.PutHTMLEscapeBytes(escaped)
+		return result, true
 	}
 
 	return string(data), true
+}
+
+// fastEncodeSimpleToBytes encodes directly to []byte, avoiding the
+// []byte -> string -> []byte round-trip when Marshal needs bytes.
+// PERFORMANCE v2: Uses append(nil, data...) which is optimized by the compiler
+// into a single allocation (runtime.memmove) without the explicit make+copy.
+func fastEncodeSimpleToBytes(value any) ([]byte, bool) {
+	encoder := internal.GetEncoder()
+	defer internal.PutEncoder(encoder)
+
+	err := encoder.EncodeValue(value)
+	if err != nil {
+		return nil, false
+	}
+
+	data := encoder.Bytes()
+	if internal.NeedsHTMLEscapeBytes(data) {
+		escaped := internal.HTMLEscapeBytes(data)
+		// escaped is already a fresh []byte, return directly
+		return escaped, true
+	}
+
+	// Use append to clone — compiler optimizes append(nil, data...) to a
+	// single alloc+copy without the separate make call overhead.
+	return append([]byte(nil), data...), true
 }
 
 // Encode converts any Go value to JSON string
@@ -1082,6 +1234,22 @@ func (e *customEncoder) Encode(value any) (string, error) {
 	return e.buffer.String(), nil
 }
 
+// EncodeToBytes encodes the given value to JSON bytes using custom options.
+// PERFORMANCE: Returns []byte directly to avoid string round-trip when caller needs bytes.
+func (e *customEncoder) EncodeToBytes(value any) ([]byte, error) {
+	e.buffer.Reset()
+	e.depth = 0
+
+	if err := e.encodeValue(value); err != nil {
+		return nil, err
+	}
+
+	// Copy buffer contents to avoid aliasing with pooled buffer
+	result := make([]byte, e.buffer.Len())
+	copy(result, e.buffer.Bytes())
+	return result, nil
+}
+
 // encodeValue encodes any value recursively
 func (e *customEncoder) encodeValue(value any) error {
 	if e.depth > e.config.MaxDepth {
@@ -1109,7 +1277,7 @@ func (e *customEncoder) encodeValue(value any) error {
 	}
 
 	// Check if the value implements json.Marshaler interface first
-	if marshaler, ok := value.(Marshaler); ok {
+	if marshaler, ok := value.(marshaler); ok {
 		data, err := marshaler.MarshalJSON()
 		if err != nil {
 			return &MarshalerError{
@@ -1303,6 +1471,22 @@ func (e *customEncoder) encodeString(s string) error {
 	return nil
 }
 
+// hexDigits is used for fast Unicode escape encoding without fmt.Fprintf
+var hexDigits = [16]byte{'0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f'}
+
+// writeUnicodeEscape writes \uXXXX directly to buffer, avoiding fmt.Fprintf overhead.
+// PERFORMANCE: ~10-50x faster than fmt.Fprintf for Unicode escapes.
+func (e *customEncoder) writeUnicodeEscape(r rune) {
+	var buf [6]byte
+	buf[0] = '\\'
+	buf[1] = 'u'
+	buf[2] = hexDigits[(r>>12)&0xF]
+	buf[3] = hexDigits[(r>>8)&0xF]
+	buf[4] = hexDigits[(r>>4)&0xF]
+	buf[5] = hexDigits[r&0xF]
+	e.buffer.Write(buf[:])
+}
+
 func (e *customEncoder) escapeRune(r rune) error {
 	if e.config.CustomEscapes != nil {
 		if escape, exists := e.config.CustomEscapes[r]; exists {
@@ -1342,16 +1526,16 @@ func (e *customEncoder) escapeRune(r rune) error {
 		}
 	default:
 		if r < 0x20 {
-			fmt.Fprintf(e.buffer, `\u%04x`, r)
+			e.writeUnicodeEscape(r)
 		} else if e.config.EscapeHTML && (r == '<' || r == '>' || r == '&') {
-			fmt.Fprintf(e.buffer, `\u%04x`, r)
+			e.writeUnicodeEscape(r)
 		} else if e.config.EscapeUnicode && r > 0x7F {
-			fmt.Fprintf(e.buffer, `\u%04x`, r)
+			e.writeUnicodeEscape(r)
 		} else if !utf8.ValidRune(r) && e.config.ValidateUTF8 {
 			return &JsonsError{
 				Op:      "escape_rune",
 				Message: fmt.Sprintf("invalid UTF-8 rune: %U", r),
-				Err:     ErrOperationFailed,
+				Err:     errOperationFailed,
 			}
 		} else {
 			e.buffer.WriteRune(r)
@@ -1618,15 +1802,16 @@ func (e *customEncoder) isEmpty(v reflect.Value) bool {
 }
 
 // ValidateSchema validates JSON data against a schema
-func (p *Processor) ValidateSchema(jsonStr string, schema *Schema, opts ...Config) ([]ValidationError, error) {
+func (p *Processor) ValidateSchema(jsonStr string, schema *Schema, cfg ...Config) ([]ValidationError, error) {
 	if err := p.checkClosed(); err != nil {
 		return nil, err
 	}
 
-	_, err := p.prepareOptions(opts...)
+	options, err := p.prepareOptions(cfg...)
 	if err != nil {
 		return nil, err
 	}
+	defer releaseConfig(options)
 
 	if err := p.validateInput(jsonStr); err != nil {
 		return nil, err
@@ -1636,14 +1821,14 @@ func (p *Processor) ValidateSchema(jsonStr string, schema *Schema, opts ...Confi
 		return nil, &JsonsError{
 			Op:      "validate_schema",
 			Message: "schema cannot be nil",
-			Err:     ErrOperationFailed,
+			Err:     errOperationFailed,
 		}
 	}
 
 	// Parse JSON
 
 	var data any
-	err = p.Parse(jsonStr, &data, opts...)
+	err = p.Parse(jsonStr, &data, cfg...)
 	if err != nil {
 		return nil, err
 	}
@@ -1734,7 +1919,9 @@ func (p *Processor) validateType(value any, expectedType string) bool {
 		return ok
 	case "number":
 		switch value.(type) {
-		case int, int32, int64, float32, float64:
+		case int, int8, int16, int32, int64,
+			uint, uint8, uint16, uint32, uint64,
+			float32, float64:
 			return true
 		}
 		return false
@@ -1777,14 +1964,14 @@ func (p *Processor) validateArray(arr []any, schema *Schema, path string, errors
 	arrLen := len(arr)
 
 	// Array length validation
-	if schema.HasMinItems() && arrLen < schema.MinItems {
+	if schema.hasMinItems && arrLen < schema.MinItems {
 		*errors = append(*errors, ValidationError{
 			Path:    path,
 			Message: fmt.Sprintf("array length %d is less than minimum %d", arrLen, schema.MinItems),
 		})
 	}
 
-	if schema.HasMaxItems() && arrLen > schema.MaxItems {
+	if schema.hasMaxItems && arrLen > schema.MaxItems {
 		*errors = append(*errors, ValidationError{
 			Path:    path,
 			Message: fmt.Sprintf("array length %d exceeds maximum %d", arrLen, schema.MaxItems),
@@ -1818,15 +2005,15 @@ func (p *Processor) validateArray(arr []any, schema *Schema, path string, errors
 // validateString validates a string against a schema with type safety
 func (p *Processor) validateString(str string, schema *Schema, path string, errors *[]ValidationError) {
 	// Length validation
-	strLen := len(str)
-	if schema.HasMinLength() && strLen < schema.MinLength {
+	strLen := utf8.RuneCountInString(str)
+	if schema.hasMinLength && strLen < schema.MinLength {
 		*errors = append(*errors, ValidationError{
 			Path:    path,
 			Message: fmt.Sprintf("string length %d is less than minimum %d", strLen, schema.MinLength),
 		})
 	}
 
-	if schema.HasMaxLength() && strLen > schema.MaxLength {
+	if schema.hasMaxLength && strLen > schema.MaxLength {
 		*errors = append(*errors, ValidationError{
 			Path:    path,
 			Message: fmt.Sprintf("string length %d exceeds maximum %d", strLen, schema.MaxLength),
@@ -1879,7 +2066,7 @@ func (p *Processor) validateNumber(value any, schema *Schema, path string, error
 	}
 
 	// Range validation - only validate if constraints are explicitly set
-	if schema.HasMinimum() {
+	if schema.hasMinimum {
 		if schema.ExclusiveMinimum {
 			if num <= schema.Minimum {
 				*errors = append(*errors, ValidationError{
@@ -1897,7 +2084,7 @@ func (p *Processor) validateNumber(value any, schema *Schema, path string, error
 		}
 	}
 
-	if schema.HasMaximum() {
+	if schema.hasMaximum {
 		if schema.ExclusiveMaximum {
 			if num >= schema.Maximum {
 				*errors = append(*errors, ValidationError{
@@ -1917,7 +2104,12 @@ func (p *Processor) validateNumber(value any, schema *Schema, path string, error
 
 	// Multiple of validation
 	if schema.MultipleOf > 0 {
-		if remainder := num / schema.MultipleOf; remainder != float64(int(remainder)) {
+		// Use tolerance-based comparison to handle IEEE 754 floating-point imprecision
+		quotient := num / schema.MultipleOf
+		roundedQuotient := float64(int(quotient + 0.5))
+		remainder := num - schema.MultipleOf*roundedQuotient
+		const epsilon = 1e-9
+		if remainder < -epsilon || remainder > epsilon {
 			*errors = append(*errors, ValidationError{
 				Path:    path,
 				Message: fmt.Sprintf("number %g is not a multiple of %g", num, schema.MultipleOf),
@@ -2036,7 +2228,7 @@ func (p *Processor) validateEmailFormat(email, path string, errors *[]Validation
 	}
 
 	// Basic character validation for local and domain parts
-	if !emailLocalRegex.MatchString(localPart) || !emailDomainRegex.MatchString(domainPart) {
+	if !emailLocalRegex().MatchString(localPart) || !emailDomainRegex().MatchString(domainPart) {
 		*errors = append(*errors, ValidationError{
 			Path:    path,
 			Message: fmt.Sprintf("'%s' contains invalid characters in email address", email),
@@ -2097,7 +2289,7 @@ func (p *Processor) validateURIFormat(uri, path string, errors *[]ValidationErro
 
 // validateUUIDFormat validates UUID format
 func (p *Processor) validateUUIDFormat(uuid, path string, errors *[]ValidationError) error {
-	if !uuidRegex.MatchString(uuid) {
+	if !uuidRegex().MatchString(uuid) {
 		*errors = append(*errors, ValidationError{
 			Path:    path,
 			Message: fmt.Sprintf("'%s' is not a valid UUID format", uuid),
@@ -2141,8 +2333,8 @@ func (p *Processor) validateIPv6Format(ip, path string, errors *[]ValidationErro
 		return nil
 	}
 
-	// Use pre-compiled regex for validation
-	if !ipv6Regex.MatchString(ip) {
+	// Use lazy-initialized regex for validation
+	if !ipv6Regex().MatchString(ip) {
 		*errors = append(*errors, ValidationError{
 			Path:    path,
 			Message: fmt.Sprintf("'%s' is not a valid IPv6 format", ip),

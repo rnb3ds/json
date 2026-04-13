@@ -589,3 +589,109 @@ func TestParseAndValidateArrayIndex(t *testing.T) {
 		})
 	}
 }
+
+// ============================================================================
+// Additional path coverage tests
+// ============================================================================
+
+// TestParseComplexSegment tests ParseComplexSegment function
+func TestParseComplexSegment(t *testing.T) {
+	t.Run("array index", func(t *testing.T) {
+		segs, err := ParseComplexSegment("[0]")
+		if err != nil {
+			t.Fatalf("ParseComplexSegment error: %v", err)
+		}
+		if len(segs) == 0 || segs[0].Type != ArrayIndexSegment {
+			t.Errorf("first segment type = %v, want ArrayIndexSegment", segs[0].Type)
+		}
+	})
+
+	t.Run("array slice", func(t *testing.T) {
+		segs, err := ParseComplexSegment("[1:3]")
+		if err != nil {
+			t.Fatalf("ParseComplexSegment error: %v", err)
+		}
+		if len(segs) == 0 || segs[0].Type != ArraySliceSegment {
+			t.Errorf("first segment type = %v, want ArraySliceSegment", segs[0].Type)
+		}
+	})
+
+	t.Run("wildcard", func(t *testing.T) {
+		segs, err := ParseComplexSegment("[*]")
+		if err != nil {
+			t.Fatalf("ParseComplexSegment error: %v", err)
+		}
+		if len(segs) == 0 || segs[0].Type != WildcardSegment {
+			t.Errorf("first segment type = %v, want WildcardSegment", segs[0].Type)
+		}
+	})
+
+	t.Run("extract", func(t *testing.T) {
+		segs, err := ParseComplexSegment("{name}")
+		if err != nil {
+			t.Fatalf("ParseComplexSegment error: %v", err)
+		}
+		if len(segs) == 0 || segs[0].Type != ExtractSegment {
+			t.Errorf("first segment type = %v, want ExtractSegment", segs[0].Type)
+		}
+	})
+
+	t.Run("slice with step", func(t *testing.T) {
+		segs, err := ParseComplexSegment("[::2]")
+		if err != nil {
+			t.Fatalf("ParseComplexSegment error: %v", err)
+		}
+		if len(segs) == 0 || segs[0].Type != ArraySliceSegment {
+			t.Errorf("first segment type = %v, want ArraySliceSegment", segs[0].Type)
+		}
+	})
+
+	t.Run("negative slice", func(t *testing.T) {
+		segs, err := ParseComplexSegment("[-2:]")
+		if err != nil {
+			t.Fatalf("ParseComplexSegment error: %v", err)
+		}
+		if len(segs) == 0 || segs[0].Type != ArraySliceSegment {
+			t.Errorf("first segment type = %v, want ArraySliceSegment", segs[0].Type)
+		}
+	})
+}
+
+// TestNewExtractSegmentWithFlat tests NewExtractSegmentWithFlat
+func TestNewExtractSegmentWithFlat(t *testing.T) {
+	seg := NewExtractSegmentWithFlat("field", true)
+	if seg.Type != ExtractSegment {
+		t.Errorf("type = %v, want ExtractSegment", seg.Type)
+	}
+	if seg.Key != "field" {
+		t.Errorf("key = %q, want 'field'", seg.Key)
+	}
+	if seg.Flags&FlagIsFlat == 0 {
+		t.Error("expected FlagIsFlat to be set")
+	}
+}
+
+// TestIsValidFieldName tests the isValidFieldName function
+func TestIsValidFieldName(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  bool
+	}{
+		{"valid simple", "name", true},
+		{"valid with underscore", "field_name", true},
+		{"valid with dash", "field-name", true},
+		{"valid with numbers", "field123", true},
+		{"empty string", "", false},
+		{"dash first char", "-name", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := isValidFieldName(tt.input)
+			if got != tt.want {
+				t.Errorf("isValidFieldName(%q) = %v, want %v", tt.input, got, tt.want)
+			}
+		})
+	}
+}
