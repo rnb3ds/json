@@ -26,13 +26,13 @@
 | 内存池 | - | 热路径使用 `sync.Pool` |
 | 路径缓存 | - | 智能 TTL 路径缓存 |
 | 批量操作 | - | `ProcessBatch()` 批量处理 |
-| 100% 兼容性 | 原生 | 直接替换 |
+| 100% 兼容性 | 原生 | 直接替换（签名扩展了可选配置参数） |
 
 ---
 
 ## 特性
 
-- **100% 兼容** - 直接替换 `encoding/json`，零学习成本
+- **100% 兼容** - 直接替换 `encoding/json`，所有标准函数签名支持，并可选扩展配置参数
 - **强大路径** - 点号语法、数组切片、字段提取、JSON Pointer (RFC 6901)
 - **高性能** - 智能缓存、内存池、优化的热路径
 - **类型安全** - 泛型支持 `GetTyped[T]`、内置默认值、`AccessResult` 类型转换
@@ -198,13 +198,12 @@ json.Unmarshal(bytes, &target)
 bytes, _ := json.MarshalIndent(data, "", "  ")
 
 // 快速格式化
-pretty, _  := json.Prettify(jsonStr)      // 美化输出
-compact, _ := json.Compact(jsonStr)       // 压缩字符串
+pretty, _ := json.Prettify(jsonStr)       // 美化输出
 
-// 使用 encoding/json 兼容的 Buffer API
+// 使用 encoding/json 兼容的 Buffer API 压缩
 var buf bytes.Buffer
 json.Compact(&buf, []byte(jsonStr))
-result := buf.String()
+compact := buf.String()
 
 // 带配置编码
 cfg := json.DefaultConfig()
@@ -277,16 +276,13 @@ merged, _ = json.MergeMany([]string{json1, json2, json3})
 ### 自定义配置
 
 ```go
-cfg := json.Config{
-    EnableCache:      true,
-    MaxCacheSize:     256,
-    CacheTTL:         5 * time.Minute,
-    MaxJSONSize:      100 * 1024 * 1024, // 100MB
-    MaxConcurrency:   50,
-    EnableValidation: true,
-    CreatePaths:      true,  // Set 操作自动创建路径
-    CleanupNulls:     true,  // Delete 后清理 null
-}
+cfg := json.DefaultConfig()     // 从安全默认值开始
+cfg.EnableCache = true
+cfg.MaxCacheSize = 256
+cfg.CacheTTL = 5 * time.Minute
+cfg.MaxConcurrency = 50
+cfg.CreatePaths = true          // Set 操作自动创建路径
+cfg.CleanupNulls = true         // Delete 后清理 null
 
 processor, err := json.New(cfg)
 if err != nil {
@@ -335,25 +331,24 @@ json.ForeachNested(data, func(key any, item *json.IterableValue) {
     })
 })
 
-// 带错误返回的迭代
-err := json.ForeachWithPath(data, "users", func(key any, item *json.IterableValue) error {
+// 带路径迭代（使用 ForeachFile 可支持返回 error 的回调）
+err := json.ForeachWithPath(data, "users", func(key any, item *json.IterableValue) {
     if item.IsNull("id") {
-        return fmt.Errorf("键 %v 缺少 id", key)
+        log.Printf("警告: 键 %v 缺少 id", key)
     }
-    return nil
 })
 
 // 迭代器控制（break / continue）
-json.ForeachWithPathAndControl(data, "users", func(key any, value any) json.IteratorControl {
+_ = json.ForeachWithPathAndControl(data, "users", func(key any, value any) json.IteratorControl {
     if key.(int) > 5 {
         return json.IteratorBreak
     }
     return json.IteratorNormal
 })
 
-// 转换并返回修改后的 JSON
+// 迭代并返回原始 JSON 字符串
 result, err := json.ForeachReturn(data, func(key any, item *json.IterableValue) {
-    // 修改被收集并作为新 JSON 返回
+    // 遍历所有元素；返回的 result 为原始 JSON 字符串（不变）
 })
 ```
 
@@ -363,7 +358,7 @@ result, err := json.ForeachReturn(data, func(key any, item *json.IterableValue) 
 data := `{"user": {"name": "Alice", "age": 28, "temp": "value"}}`
 
 operations := []json.BatchOperation{
-    {Type: "get", JSONStr: data, Path: "user.name"},
+    {Type: "get", JSONStr: data, Path: "user.name", ID: "op1"},
     {Type: "set", JSONStr: data, Path: "user.age", Value: 25},
     {Type: "delete", JSONStr: data, Path: "user.temp"},
 }
@@ -383,7 +378,7 @@ schema := &json.Schema{
     },
 }
 
-errors, err := json.ValidateSchema(jsonStr, schema)
+validationErrors, err := json.ValidateSchema(jsonStr, schema)
 ```
 
 `Schema` 类型支持 JSON Schema Draft 7 子集字段：`Type`、`Properties`、`Required`、`Items`、`Pattern`、`AdditionalProperties`、`Enum`、`Const`、`Format`、`MinLength`、`MaxLength`、`Minimum`、`Maximum`、`ExclusiveMinimum`、`ExclusiveMaximum`、`MultipleOf`、`MinItems`、`MaxItems`、`UniqueItems`、`Title`、`Description`、`Default`。
@@ -439,7 +434,7 @@ writer := json.NewJSONLWriter(bufWriter)
 writer.Write(record1)
 writer.Write(record2)
 writer.WriteAll(records)
-stats := writer.Stats() // LinesWritten, BytesWritten, Errors
+stats := writer.Stats() // LinesProcessed, BytesWritten
 
 // NDJSON 文件处理器
 ndjson := json.NewNDJSONProcessor(json.DefaultConfig())
@@ -456,7 +451,7 @@ mapped, _   := processor.MapJSONL(reader, func(lineNum int, item *json.IterableV
     return map[string]any{"id": item.GetString("id")}, nil
 })
 result, _   := processor.ReduceJSONL(reader, 0, func(acc any, item *json.IterableValue) any {
-    count, _ := item.GetInt("count")
+    count := item.GetInt("count")
     return acc.(int) + count
 })
 ```
@@ -669,6 +664,8 @@ import "github.com/cybergodev/json"
 - `json.Compact()` / `json.Indent()` / `json.HTMLEscape()`
 
 兼容类型：`Encoder`、`Decoder`、`Number`、`Token`、`Delim`、`SyntaxError`、`UnmarshalTypeError`、`InvalidUnmarshalError`、`UnsupportedTypeError`、`UnsupportedValueError`、`MarshalerError`。
+
+**注意**：`RawMessage` 目前未重新导出。如需使用，请直接使用 `encoding/json.RawMessage`。
 
 详见 [兼容性指南](docs/COMPATIBILITY.md)。
 

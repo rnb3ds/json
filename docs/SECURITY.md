@@ -72,7 +72,7 @@ Automatic sanitization of JSON paths to prevent injection attacks:
 ```go
 // Paths are validated for:
 // - Null bytes (\x00)
-// - Excessive length (>10,000 characters)
+// - Excessive length (>5,000 characters)
 // - Suspicious patterns (script tags, eval, etc.)
 // - Path traversal attempts (../, ..\)
 ```
@@ -304,10 +304,10 @@ For large JSON (>4KB), the library uses an optimized security scanning approach:
 
 ```go
 // Default mode (FullSecurityScan: false) - Optimized for performance:
-// - 4KB beginning section + 4KB end section scan
-// - 4KB middle region sample
+// - Rolling window scan (32KB windows) over the entire JSON content
+// - Suspicious character density sampling (4KB beginning, middle, and end regions)
 // - Critical patterns (__proto__, constructor, prototype) always fully scanned
-// - Suspicious character density triggers automatic full scan
+// - High suspicious density triggers automatic full scan
 // - Pattern fragment detection for targeted scanning
 
 // Full scan mode (FullSecurityScan: true) - Maximum security:
@@ -541,9 +541,17 @@ defer processor.Close()
 
 _, err := processor.Get(jsonString, "user.password")
 if err != nil {
-    // Error messages sanitize sensitive paths
+    // Default Error() includes full path - do NOT expose to clients
     fmt.Printf("Error: %v\n", err)
-    // Output: "JSON get failed at path '[REDACTED_PATH]': ..."
+    // Output: "JSON get failed at path 'user.password': ..."
+
+    // Use SafeError() for client-safe messages (redacts path details)
+    fmt.Printf("Safe: %s\n", json.SafeError(err))
+    // Output: "path not found"
+
+    // Or use RedactedPath() for safe logging
+    fmt.Printf("Safe path: %s\n", json.RedactedPath("user.password"))
+    // Output: "***"
 }
 ```
 
@@ -1347,8 +1355,8 @@ hash := sha256.Sum256([]byte(json))
 key := fmt.Sprintf("%d:%x", len(json), hash[:]) // Full 32 bytes (64 hex chars)
 
 // Cache management:
-// - Maximum entries: 10,000
-// - LRU eviction at 80% capacity (8,000 entries)
+// - Maximum entries: configurable via MaxCacheSize (default: 128, max: 2,000)
+// - LRU eviction at 80% capacity
 // - Entry includes last access timestamp
 ```
 
@@ -1440,11 +1448,11 @@ The library detects all zero-width and invisible Unicode characters:
 '\u200B', '\u200C', '\u200D', // Zero-width characters
 '\u200E', '\u200F',           // Directional marks
 '\uFEFF',                     // BOM
-'\u2060' - '\u2064',          // Format characters
-'\u206A' - '\u206F',          // Deprecated format chars
+'\u2060', '\u2061', '\u2062', '\u2063', '\u2064', // Format characters
+'\u206A', '\u206B', '\u206C', '\u206D', '\u206E', '\u206F', // Deprecated format chars
 '\u00AD', '\u034F', '\u061C', // Other invisible
 '\u115F', '\u1160', '\u180E', // Jamo fillers
-'\u2066' - '\u2069',          // Isolate controls
+'\u2066', '\u2067', '\u2068', '\u2069', // Isolate controls
 '\uFFFD'                      // Replacement character
 ```
 
@@ -1548,7 +1556,7 @@ func (r AccessResult) AsInt() (int, error) {
 #### Worker Pool Protection
 ```go
 // Parallel processing limits:
-maxWorkers: 16                 // Cap at 16 workers
+maxWorkers: 64                 // Cap at 64 workers
 semaphorePool: chan struct{}   // Limit concurrent goroutines
 taskTracking: atomic.Int32     // Track pending tasks
 conditionVariable: sync.Cond   // Efficient waiting
@@ -1560,7 +1568,11 @@ atomic.CompareAndSwapInt32()   // First error wins
 #### Cache Sharding
 ```go
 // Sharded cache for reduced lock contention:
-shardCount: 32 (or CPU*4)      // Based on cache size
+shardCount: dynamic             // Based on cache size and CPU count:
+                                //   Large (>10000): max(CPU*4, 32)
+                                //   Medium (>1000): max(CPU*2, 16)
+                                //   Small (>100): max(CPU, 8)
+                                //   Tiny: max(CPU/2, 4)
 shardMask: shardCount - 1      // Fast modulo via AND
 perShardMutex: sync.RWMutex    // Fine-grained locking
 ```
@@ -1648,7 +1660,7 @@ func (sv *securityValidator) getValidationCacheKey(jsonStr string) string {
 // - Removes oldest 25% of entries
 // - Prevents memory spikes
 
-const cacheHighWatermark = 8000  // 80% of 10,000 max entries
+const cacheHighWatermark = 80  // 80% of MaxCacheSize (configurable, max 2,000)
 
 func evictLRUEntries() {
     // Sort by lastAccess time

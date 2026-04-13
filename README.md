@@ -26,13 +26,13 @@
 | Memory pooling | - | `sync.Pool` for hot paths |
 | Path caching | - | Smart cache with TTL |
 | Batch operations | - | `ProcessBatch()` for bulk work |
-| 100% Compatibility | Native | Drop-in replacement |
+| 100% Compatibility | Native | Drop-in replacement (signatures extended with optional config) |
 
 ---
 
 ## Features
 
-- **100% Compatible** - Drop-in replacement for `encoding/json`, zero learning curve
+- **100% Compatible** - Drop-in replacement for `encoding/json`, all standard function signatures supported with optional config extension
 - **Powerful Paths** - Dot notation, array slicing, field extraction, JSON Pointer (RFC 6901)
 - **High Performance** - Smart caching, memory pooling, optimized hot paths
 - **Type Safe** - Generics support with `GetTyped[T]`, built-in defaults, `AccessResult` type conversion
@@ -198,13 +198,12 @@ json.Unmarshal(bytes, &target)
 bytes, _ := json.MarshalIndent(data, "", "  ")
 
 // Quick formatting
-pretty, _  := json.Prettify(jsonStr)      // pretty print
-compact, _ := json.Compact(jsonStr)       // minify string
+pretty, _ := json.Prettify(jsonStr)       // pretty print
 
-// Using encoding/json compatible buffer API
+// Compact/minify using encoding/json compatible buffer API
 var buf bytes.Buffer
 json.Compact(&buf, []byte(jsonStr))
-result := buf.String()
+compact := buf.String()
 
 // Encoding with config
 cfg := json.DefaultConfig()
@@ -277,16 +276,13 @@ merged, _ = json.MergeMany([]string{json1, json2, json3})
 ### Custom Configuration
 
 ```go
-cfg := json.Config{
-    EnableCache:      true,
-    MaxCacheSize:     256,
-    CacheTTL:         5 * time.Minute,
-    MaxJSONSize:      100 * 1024 * 1024, // 100MB
-    MaxConcurrency:   50,
-    EnableValidation: true,
-    CreatePaths:      true,  // auto-create paths on Set
-    CleanupNulls:     true,  // cleanup nulls after Delete
-}
+cfg := json.DefaultConfig()     // start from safe defaults
+cfg.EnableCache = true
+cfg.MaxCacheSize = 256
+cfg.CacheTTL = 5 * time.Minute
+cfg.MaxConcurrency = 50
+cfg.CreatePaths = true          // auto-create paths on Set
+cfg.CleanupNulls = true         // cleanup nulls after Delete
 
 processor, err := json.New(cfg)
 if err != nil {
@@ -335,25 +331,24 @@ json.ForeachNested(data, func(key any, item *json.IterableValue) {
     })
 })
 
-// Error-returning iteration
-err := json.ForeachWithPath(data, "users", func(key any, item *json.IterableValue) error {
+// Error-returning iteration (use ForeachFile for file-based error callbacks)
+err := json.ForeachWithPath(data, "users", func(key any, item *json.IterableValue) {
     if item.IsNull("id") {
-        return fmt.Errorf("missing id at key %v", key)
+        log.Printf("warning: missing id at key %v", key)
     }
-    return nil
 })
 
 // Iterator control (break / continue)
-json.ForeachWithPathAndControl(data, "users", func(key any, value any) json.IteratorControl {
+_ = json.ForeachWithPathAndControl(data, "users", func(key any, value any) json.IteratorControl {
     if key.(int) > 5 {
         return json.IteratorBreak
     }
     return json.IteratorNormal
 })
 
-// Transform and return modified JSON
+// Iterate and return original JSON string
 result, err := json.ForeachReturn(data, func(key any, item *json.IterableValue) {
-    // modifications are collected and returned as new JSON
+    // iterate over all elements; original JSON string is returned unchanged
 })
 ```
 
@@ -363,7 +358,7 @@ result, err := json.ForeachReturn(data, func(key any, item *json.IterableValue) 
 data := `{"user": {"name": "Alice", "age": 28, "temp": "value"}}`
 
 operations := []json.BatchOperation{
-    {Type: "get", JSONStr: data, Path: "user.name"},
+    {Type: "get", JSONStr: data, Path: "user.name", ID: "op1"},
     {Type: "set", JSONStr: data, Path: "user.age", Value: 25},
     {Type: "delete", JSONStr: data, Path: "user.temp"},
 }
@@ -383,7 +378,7 @@ schema := &json.Schema{
     },
 }
 
-errors, err := json.ValidateSchema(jsonStr, schema)
+validationErrors, err := json.ValidateSchema(jsonStr, schema)
 ```
 
 The `Schema` type supports JSON Schema Draft 7 subset fields: `Type`, `Properties`, `Required`, `Items`, `Pattern`, `AdditionalProperties`, `Enum`, `Const`, `Format`, `MinLength`, `MaxLength`, `Minimum`, `Maximum`, `ExclusiveMinimum`, `ExclusiveMaximum`, `MultipleOf`, `MinItems`, `MaxItems`, `UniqueItems`, `Title`, `Description`, `Default`.
@@ -439,7 +434,7 @@ writer := json.NewJSONLWriter(bufWriter)
 writer.Write(record1)
 writer.Write(record2)
 writer.WriteAll(records)
-stats := writer.Stats() // LinesWritten, BytesWritten, Errors
+stats := writer.Stats() // LinesProcessed, BytesWritten
 
 // NDJSON file processor
 ndjson := json.NewNDJSONProcessor(json.DefaultConfig())
@@ -456,7 +451,7 @@ mapped, _   := processor.MapJSONL(reader, func(lineNum int, item *json.IterableV
     return map[string]any{"id": item.GetString("id")}, nil
 })
 result, _   := processor.ReduceJSONL(reader, 0, func(acc any, item *json.IterableValue) any {
-    count, _ := item.GetInt("count")
+    count := item.GetInt("count")
     return acc.(int) + count
 })
 ```
@@ -669,6 +664,8 @@ All standard functions are fully compatible:
 - `json.Compact()` / `json.Indent()` / `json.HTMLEscape()`
 
 Compatible types: `Encoder`, `Decoder`, `Number`, `Token`, `Delim`, `SyntaxError`, `UnmarshalTypeError`, `InvalidUnmarshalError`, `UnsupportedTypeError`, `UnsupportedValueError`, `MarshalerError`.
+
+**Note**: `RawMessage` is not currently re-exported. Use `encoding/json.RawMessage` if needed.
 
 See [Compatibility Guide](docs/COMPATIBILITY.md) for full details.
 

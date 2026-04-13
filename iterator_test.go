@@ -1683,3 +1683,529 @@ func TestIterableValueWithDefaultComplexPath(t *testing.T) {
 		}
 	})
 }
+
+// ============================================================================
+// Additional coverage tests for low-coverage functions
+// ============================================================================
+
+// TestForeachWithError tests the package-level ForeachWithError function.
+func TestForeachWithError(t *testing.T) {
+	tests := []struct {
+		name        string
+		jsonStr     string
+		path        string
+		expectErr   bool
+		callbackErr bool
+	}{
+		{
+			name:      "successful iteration over array",
+			jsonStr:   `{"items":[1,2,3]}`,
+			path:      "items",
+			expectErr: false,
+		},
+		{
+			name:        "error propagation from callback",
+			jsonStr:     `{"items":[10,20,30]}`,
+			path:        "items",
+			expectErr:   true,
+			callbackErr: true,
+		},
+		{
+			name:      "invalid JSON returns error",
+			jsonStr:   "{invalid}",
+			path:      ".",
+			expectErr: true,
+		},
+		{
+			name:      "invalid path returns error",
+			jsonStr:   `{"items":[1,2,3]}`,
+			path:      "nonexistent",
+			expectErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var collected []any
+			callCount := 0
+			err := ForeachWithError(tt.jsonStr, tt.path, func(key any, item *IterableValue) error {
+				callCount++
+				if tt.callbackErr && callCount > 1 {
+					return fmt.Errorf("callback error at item %d", callCount)
+				}
+				collected = append(collected, item.GetData())
+				return nil
+			})
+
+			if tt.expectErr {
+				if err == nil {
+					t.Error("expected error, got nil")
+				}
+			} else {
+				if err != nil {
+					t.Errorf("unexpected error: %v", err)
+				}
+				if len(collected) != 3 {
+					t.Errorf("collected %d items, want 3", len(collected))
+				}
+			}
+		})
+	}
+}
+
+// TestForeachNestedWithErrorCoverage tests the package-level ForeachNestedWithError function.
+func TestForeachNestedWithErrorCoverage(t *testing.T) {
+	tests := []struct {
+		name        string
+		jsonStr     string
+		expectCount int
+		expectErr   bool
+		callbackErr bool
+	}{
+		{
+			name:        "successful nested iteration",
+			jsonStr:     `{"a":1,"b":{"c":2}}`,
+			expectCount: 3,
+			expectErr:   false,
+		},
+		{
+			name:        "error propagation from callback",
+			jsonStr:     `{"items":[1,2,3]}`,
+			expectCount: 1,
+			expectErr:   true,
+			callbackErr: true,
+		},
+		{
+			name:        "flat object iteration",
+			jsonStr:     `{"x":10,"y":20}`,
+			expectCount: 2,
+			expectErr:   false,
+		},
+		{
+			name:      "invalid JSON returns error",
+			jsonStr:   "bad json",
+			expectErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			count := 0
+			err := ForeachNestedWithError(tt.jsonStr, func(key any, item *IterableValue) error {
+				count++
+				if tt.callbackErr {
+					return fmt.Errorf("nested callback error")
+				}
+				return nil
+			})
+
+			if tt.expectErr {
+				if err == nil {
+					t.Error("expected error, got nil")
+				}
+			} else {
+				if err != nil {
+					t.Errorf("unexpected error: %v", err)
+				}
+				if tt.expectCount > 0 && count != tt.expectCount {
+					t.Errorf("callback called %d times, want %d", count, tt.expectCount)
+				}
+			}
+		})
+	}
+}
+
+// TestForeachWithPathAndIterator tests the package-level ForeachWithPathAndIterator function.
+func TestForeachWithPathAndIterator(t *testing.T) {
+	tests := []struct {
+		name        string
+		jsonStr     string
+		path        string
+		expectPaths []string
+		breakEarly  bool
+	}{
+		{
+			name:        "path tracking over array",
+			jsonStr:     `{"items":[{"id":1},{"id":2},{"id":3}]}`,
+			path:        "items",
+			expectPaths: []string{"[0]", "[1]", "[2]"},
+		},
+		{
+			name:        "break control stops iteration",
+			jsonStr:     `{"items":[10,20,30,40,50]}`,
+			path:        "items",
+			expectPaths: []string{"[0]"},
+			breakEarly:  true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var paths []string
+			err := ForeachWithPathAndIterator(tt.jsonStr, tt.path, func(key any, item *IterableValue, currentPath string) IteratorControl {
+				paths = append(paths, currentPath)
+				if tt.breakEarly {
+					return IteratorBreak
+				}
+				return IteratorNormal
+			})
+
+			if err != nil {
+				t.Errorf("unexpected error: %v", err)
+			}
+
+			if len(paths) != len(tt.expectPaths) {
+				t.Errorf("got %d paths %v, want %d paths %v", len(paths), paths, len(tt.expectPaths), tt.expectPaths)
+			}
+		})
+	}
+}
+
+// TestBatchIteratorTotalBatches tests TotalBatches with edge cases including zero batch size.
+func TestBatchIteratorTotalBatches(t *testing.T) {
+	tests := []struct {
+		name      string
+		dataLen   int
+		batchSize int
+		expected  int
+	}{
+		{
+			name:      "normal division with remainder",
+			dataLen:   5,
+			batchSize: 2,
+			expected:  3,
+		},
+		{
+			name:      "exact division",
+			dataLen:   6,
+			batchSize: 3,
+			expected:  2,
+		},
+		{
+			name:      "single element",
+			dataLen:   1,
+			batchSize: 5,
+			expected:  1,
+		},
+		{
+			name:      "empty data",
+			dataLen:   0,
+			batchSize: 5,
+			expected:  0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			data := make([]any, tt.dataLen)
+			for i := range data {
+				data[i] = i + 1
+			}
+			cfg := DefaultConfig()
+			cfg.MaxBatchSize = tt.batchSize
+			it := NewBatchIterator(data, cfg)
+
+			total := it.TotalBatches()
+			if total != tt.expected {
+				t.Errorf("TotalBatches() = %d, want %d", total, tt.expected)
+			}
+		})
+	}
+
+	t.Run("batch size zero returns zero", func(t *testing.T) {
+		data := []any{1, 2, 3}
+		it := &BatchIterator{
+			data:      data,
+			batchSize: 0,
+			current:   0,
+		}
+		total := it.TotalBatches()
+		if total != 0 {
+			t.Errorf("TotalBatches() with batchSize=0 = %d, want 0", total)
+		}
+	})
+
+	t.Run("negative batch size returns zero", func(t *testing.T) {
+		data := []any{1, 2, 3}
+		it := &BatchIterator{
+			data:      data,
+			batchSize: -1,
+			current:   0,
+		}
+		total := it.TotalBatches()
+		if total != 0 {
+			t.Errorf("TotalBatches() with batchSize=-1 = %d, want 0", total)
+		}
+	})
+}
+
+// TestParallelIteratorCloseCoverage verifies Close does not panic in various states.
+func TestParallelIteratorCloseCoverage(t *testing.T) {
+	t.Run("close without processing", func(t *testing.T) {
+		data := []any{1, 2, 3}
+		it := NewParallelIterator(data)
+		it.Close()
+	})
+
+	t.Run("close after processing", func(t *testing.T) {
+		data := []any{1, 2, 3}
+		it := NewParallelIterator(data)
+		err := it.ForEach(func(i int, v any) error {
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("ForEach error: %v", err)
+		}
+		it.Close()
+	})
+
+	t.Run("double close does not panic", func(t *testing.T) {
+		data := []any{1, 2}
+		it := NewParallelIterator(data)
+		it.Close()
+		it.Close()
+	})
+}
+
+// TestStreamIteratorSingleValue tests StreamIterator.Next with non-array input.
+func TestStreamIteratorSingleValue(t *testing.T) {
+	tests := []struct {
+		name      string
+		input     string
+		expectVal any
+	}{
+		{
+			name:      "single string value",
+			input:     `"hello"`,
+			expectVal: "hello",
+		},
+		{
+			name:      "single number value",
+			input:     "42",
+			expectVal: float64(42),
+		},
+		{
+			name:      "single boolean false",
+			input:     "false",
+			expectVal: false,
+		},
+		{
+			name:      "single boolean true",
+			input:     "true",
+			expectVal: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			it := NewStreamIterator(strings.NewReader(tt.input))
+
+			if !it.Next() {
+				t.Fatalf("first Next() returned false, want true")
+			}
+
+			val := it.Value()
+			if !compareValues(val, tt.expectVal) {
+				t.Errorf("Value() = %v (%T), want %v (%T)", val, val, tt.expectVal, tt.expectVal)
+			}
+
+			if it.Next() {
+				t.Error("second Next() returned true, want false")
+			}
+		})
+	}
+}
+
+// TestGetBoolWithDefault tests GetBoolWithDefault through Foreach iteration and direct usage.
+func TestGetBoolWithDefault(t *testing.T) {
+	tests := []struct {
+		name       string
+		jsonStr    string
+		key        string
+		defaultVal bool
+		expected   []bool
+	}{
+		{
+			name:       "bool values in array items",
+			jsonStr:    `{"items":[{"active":true},{"active":false}]}`,
+			key:        "active",
+			defaultVal: false,
+			expected:   []bool{true, false},
+		},
+		{
+			name:       "missing key returns default true",
+			jsonStr:    `{"items":[{"name":"a"},{"name":"b"}]}`,
+			key:        "active",
+			defaultVal: true,
+			expected:   []bool{true, true},
+		},
+		{
+			name:       "coerced string yes returns true",
+			jsonStr:    `{"items":[{"active":"yes"},{"active":"no"}]}`,
+			key:        "active",
+			defaultVal: false,
+			expected:   []bool{true, false},
+		},
+		{
+			name:       "non-zero number coerced to true",
+			jsonStr:    `{"items":[{"active":42}]}`,
+			key:        "active",
+			defaultVal: false,
+			expected:   []bool{true},
+		},
+		{
+			name:       "non-coercible string returns default",
+			jsonStr:    `{"items":[{"active":"maybe"}]}`,
+			key:        "active",
+			defaultVal: false,
+			expected:   []bool{false},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var results []bool
+			ForeachWithPath(tt.jsonStr, "items", func(key any, item *IterableValue) {
+				got := item.GetBoolWithDefault(tt.key, tt.defaultVal)
+				results = append(results, got)
+			})
+
+			if len(results) != len(tt.expected) {
+				t.Fatalf("got %d results, want %d", len(results), len(tt.expected))
+			}
+			for i, got := range results {
+				if got != tt.expected[i] {
+					t.Errorf("result[%d] = %v, want %v", i, got, tt.expected[i])
+				}
+			}
+		})
+	}
+
+	t.Run("complex path missing key returns default", func(t *testing.T) {
+		data := map[string]any{
+			"user": map[string]any{
+				"name": "Alice",
+			},
+		}
+		iv := newIterableValue(data)
+		if got := iv.GetBoolWithDefault("user.active", false); got != false {
+			t.Errorf("got %v, want false (default for missing nested key)", got)
+		}
+	})
+
+	t.Run("complex path existing key returns value", func(t *testing.T) {
+		data := map[string]any{
+			"user": map[string]any{
+				"active": true,
+			},
+		}
+		iv := newIterableValue(data)
+		if got := iv.GetBoolWithDefault("user.active", false); got != true {
+			t.Errorf("got %v, want true", got)
+		}
+	})
+}
+
+// TestForeachWithPathAndControl tests break and continue control flow.
+func TestForeachWithPathAndControl(t *testing.T) {
+	tests := []struct {
+		name       string
+		jsonStr    string
+		path       string
+		breakAfter int
+		expectErr  bool
+	}{
+		{
+			name:       "break after first item",
+			jsonStr:    `{"items":[1,2,3,4,5]}`,
+			path:       "items",
+			breakAfter: 1,
+		},
+		{
+			name:       "iterate all without break",
+			jsonStr:    `{"items":[1,2,3]}`,
+			path:       "items",
+			breakAfter: 0,
+		},
+		{
+			name:      "invalid path returns error",
+			jsonStr:   `{"items":[1,2]}`,
+			path:      "nonexistent",
+			expectErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			count := 0
+			err := ForeachWithPathAndControl(tt.jsonStr, tt.path, func(key any, value any) IteratorControl {
+				count++
+				if tt.breakAfter > 0 && count >= tt.breakAfter {
+					return IteratorBreak
+				}
+				return IteratorNormal
+			})
+
+			if tt.expectErr {
+				if err == nil {
+					t.Error("expected error, got nil")
+				}
+				return
+			}
+
+			if err != nil {
+				t.Errorf("unexpected error: %v", err)
+			}
+
+			if tt.breakAfter > 0 && count != tt.breakAfter {
+				t.Errorf("callback called %d times, want %d (break after)", count, tt.breakAfter)
+			}
+		})
+	}
+
+	t.Run("break returns nil error", func(t *testing.T) {
+		err := ForeachWithPathAndControl(`{"items":[1,2,3]}`, "items", func(key any, value any) IteratorControl {
+			return IteratorBreak
+		})
+		if err != nil {
+			t.Errorf("IteratorBreak should return nil error, got: %v", err)
+		}
+	})
+
+	t.Run("IteratorContinue does not stop iteration", func(t *testing.T) {
+		count := 0
+		err := ForeachWithPathAndControl(`{"items":[10,20,30]}`, "items", func(key any, value any) IteratorControl {
+			count++
+			return IteratorContinue
+		})
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+		if count != 3 {
+			t.Errorf("IteratorContinue: callback called %d times, want 3", count)
+		}
+	})
+
+	t.Run("non-iterable value returns error", func(t *testing.T) {
+		err := ForeachWithPathAndControl(`{"value":42}`, "value", func(key any, value any) IteratorControl {
+			return IteratorNormal
+		})
+		if err == nil {
+			t.Error("expected error for non-iterable value, got nil")
+		}
+	})
+
+	t.Run("iterate over object keys", func(t *testing.T) {
+		var keys []string
+		err := ForeachWithPathAndControl(`{"data":{"a":1,"b":2,"c":3}}`, "data", func(key any, value any) IteratorControl {
+			keys = append(keys, key.(string))
+			return IteratorNormal
+		})
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+		if len(keys) != 3 {
+			t.Errorf("got %d keys, want 3", len(keys))
+		}
+	})
+}

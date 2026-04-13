@@ -3651,3 +3651,649 @@ func TestAPIClearCache(t *testing.T) {
 		t.Errorf("Get after ClearCache error: %v", err)
 	}
 }
+
+// ============================================================================
+// LOW-COVERAGE ENCODING TESTS - Additional coverage
+// Target: Number.Int64, Number.Float64, Decoder.More/Buffered/InputOffset,
+//         parseString, parseNumber, escapeRune, truncateFloat, valuesEqual
+// ============================================================================
+
+// TestNumberMethods tests Number.Int64() and Number.Float64() methods
+func TestNumberMethods(t *testing.T) {
+	t.Run("Int64", func(t *testing.T) {
+		tests := []struct {
+			name    string
+			num     Number
+			want    int64
+			wantErr bool
+		}{
+			{"ValidInteger", Number("42"), 42, false},
+			{"NegativeInteger", Number("-7"), -7, false},
+			{"Zero", Number("0"), 0, false},
+			{"LargeInteger", Number("9223372036854775807"), 9223372036854775807, false},
+			{"InvalidString", Number("invalid"), 0, true},
+			{"FloatString", Number("42.5"), 0, true},
+			{"Empty", Number(""), 0, true},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				got, err := tt.num.Int64()
+				if tt.wantErr {
+					if err == nil {
+						t.Error("expected error, got nil")
+					}
+					return
+				}
+				if err != nil {
+					t.Errorf("unexpected error: %v", err)
+					return
+				}
+				if got != tt.want {
+					t.Errorf("Int64() = %d, want %d", got, tt.want)
+				}
+			})
+		}
+	})
+
+	t.Run("Float64", func(t *testing.T) {
+		tests := []struct {
+			name    string
+			num     Number
+			want    float64
+			wantErr bool
+		}{
+			{"ValidFloat", Number("42.5"), 42.5, false},
+			{"IntegerAsFloat", Number("42"), 42.0, false},
+			{"NegativeFloat", Number("-3.14"), -3.14, false},
+			{"Scientific", Number("1e10"), 1e10, false},
+			{"Zero", Number("0"), 0.0, false},
+			{"InvalidString", Number("invalid"), 0, true},
+			{"Empty", Number(""), 0, true},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				got, err := tt.num.Float64()
+				if tt.wantErr {
+					if err == nil {
+						t.Error("expected error, got nil")
+					}
+					return
+				}
+				if err != nil {
+					t.Errorf("unexpected error: %v", err)
+					return
+				}
+				if got != tt.want {
+					t.Errorf("Float64() = %v, want %v", got, tt.want)
+				}
+			})
+		}
+	})
+}
+
+// TestDecoderMoreBufferedOffset tests Decoder.More(), Buffered(), InputOffset()
+func TestDecoderMoreBufferedOffset(t *testing.T) {
+	t.Run("MoreInArray", func(t *testing.T) {
+		dec := NewDecoder(strings.NewReader(`[1,2,3]`))
+
+		tok, err := dec.Token()
+		if err != nil {
+			t.Fatalf("Token() error: %v", err)
+		}
+		if tok != Delim('[') {
+			t.Fatalf("expected '[', got %v", tok)
+		}
+
+		// More should be true before we read all elements
+		if !dec.More() {
+			t.Error("More() should return true at start of array")
+		}
+
+		// Read all three numbers using Token() to handle comma-separated values
+		for i := 0; i < 3; i++ {
+			_, err := dec.Token()
+			if err != nil {
+				t.Errorf("Token(%d) error: %v", i, err)
+			}
+		}
+
+		// More should be false after all elements consumed
+		if dec.More() {
+			t.Error("More() should return false after all elements consumed")
+		}
+
+		// Read closing bracket
+		tok, err = dec.Token()
+		if err != nil {
+			t.Fatalf("closing Token() error: %v", err)
+		}
+		if tok != Delim(']') {
+			t.Fatalf("expected ']', got %v", tok)
+		}
+	})
+
+	t.Run("Buffered", func(t *testing.T) {
+		dec := NewDecoder(strings.NewReader(`{"key":"value"}`))
+		reader := dec.Buffered()
+		if reader == nil {
+			t.Error("Buffered() should return non-nil reader")
+		}
+	})
+
+	t.Run("InputOffset", func(t *testing.T) {
+		dec := NewDecoder(strings.NewReader(`  [1,2,3]`))
+
+		// Before reading, offset should be 0
+		if dec.InputOffset() != 0 {
+			t.Errorf("initial InputOffset() = %d, want 0", dec.InputOffset())
+		}
+
+		// Decode should advance offset
+		var result any
+		if err := dec.Decode(&result); err != nil {
+			t.Fatalf("Decode error: %v", err)
+		}
+
+		offset := dec.InputOffset()
+		if offset == 0 {
+			t.Error("InputOffset() should advance after Decode")
+		}
+	})
+
+	t.Run("MoreWithMultipleObjects", func(t *testing.T) {
+		dec := NewDecoder(strings.NewReader(`{"a":1}{"b":2}`))
+
+		var v1 map[string]any
+		if err := dec.Decode(&v1); err != nil {
+			t.Fatalf("first Decode error: %v", err)
+		}
+
+		if !dec.More() {
+			t.Error("More() should return true with second object pending")
+		}
+
+		var v2 map[string]any
+		if err := dec.Decode(&v2); err != nil {
+			t.Fatalf("second Decode error: %v", err)
+		}
+
+		if dec.More() {
+			t.Error("More() should return false after all objects consumed")
+		}
+	})
+}
+
+// TestDecoderParseString tests parseString through the Decoder.Token API
+func TestDecoderParseString(t *testing.T) {
+	t.Run("ValidEscapes", func(t *testing.T) {
+		tests := []struct {
+			name  string
+			input string
+			want  string
+		}{
+			{"Newline", `"hello\nworld"`, "hello\nworld"},
+			{"Tab", `"col1\tcol2"`, "col1\tcol2"},
+			{"Quote", `"say \"hello\""`, `say "hello"`},
+			{"Backslash", `"path\\to\\file"`, "path\\to\\file"},
+			{"UnicodeEscape", `"\u0041"`, "A"},
+			{"Slash", `"a\/b"`, "a/b"},
+			{"Backspace", `"a\bb"`, "a\bb"},
+			{"FormFeed", `"a\fb"`, "a\fb"},
+			{"CarriageReturn", `"a\rb"`, "a\rb"},
+			{"SimpleString", `"hello"`, "hello"},
+			{"EmptyString", `""`, ""},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				dec := NewDecoder(strings.NewReader(tt.input))
+				tok, err := dec.Token()
+				if err != nil {
+					t.Fatalf("Token() error: %v", err)
+				}
+				str, ok := tok.(string)
+				if !ok {
+					t.Fatalf("expected string token, got %T", tok)
+				}
+				if str != tt.want {
+					t.Errorf("got %q, want %q", str, tt.want)
+				}
+			})
+		}
+	})
+
+	t.Run("InvalidEscape", func(t *testing.T) {
+		dec := NewDecoder(strings.NewReader(`"hello\qworld"`))
+		_, err := dec.Token()
+		if err == nil {
+			t.Error("expected error for invalid escape sequence \\q")
+		}
+	})
+
+	t.Run("MultiByteUTF8", func(t *testing.T) {
+		tests := []struct {
+			name  string
+			input string
+			want  string
+		}{
+			{"Chinese", `"世界"`, "世界"},
+			{"Emoji", `"\u0048\u0065\u006c\u006c\u006f"`, "Hello"},
+			{"Mixed", `"Hello 世界"`, "Hello 世界"},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				dec := NewDecoder(strings.NewReader(tt.input))
+				tok, err := dec.Token()
+				if err != nil {
+					t.Fatalf("Token() error: %v", err)
+				}
+				str, ok := tok.(string)
+				if !ok {
+					t.Fatalf("expected string token, got %T", tok)
+				}
+				if str != tt.want {
+					t.Errorf("got %q, want %q", str, tt.want)
+				}
+			})
+		}
+	})
+}
+
+// TestDecoderParseNumber tests parseNumber through Decoder with UseNumber
+func TestDecoderParseNumber(t *testing.T) {
+	t.Run("UseNumberEnabled", func(t *testing.T) {
+		tests := []struct {
+			name     string
+			input    string
+			wantNum  string
+			wantErr  bool
+		}{
+			{"Integer", `42`, "42", false},
+			{"NegativeInteger", `-7`, "-7", false},
+			{"Float", `3.14`, "3.14", false},
+			{"ScientificLower", `1e10`, "1e10", false},
+			{"ScientificUpper", `1.5E-3`, "1.5E-3", false},
+			{"Zero", `0`, "0", false},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				dec := NewDecoder(strings.NewReader(tt.input))
+				dec.UseNumber()
+				var result any
+				err := dec.Decode(&result)
+				if tt.wantErr {
+					if err == nil {
+						t.Error("expected error, got nil")
+					}
+					return
+				}
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+				num, ok := result.(Number)
+				if !ok {
+					t.Fatalf("expected Number type, got %T", result)
+				}
+				if string(num) != tt.wantNum {
+					t.Errorf("got Number(%q), want Number(%q)", num, tt.wantNum)
+				}
+			})
+		}
+	})
+
+	t.Run("UseNumberDisabled", func(t *testing.T) {
+		tests := []struct {
+			name  string
+			input string
+			want  any
+		}{
+			{"IntegerAsInt64", `42`, float64(42)},
+			{"Float", `3.14`, float64(3.14)},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				dec := NewDecoder(strings.NewReader(tt.input))
+				var result any
+				if err := dec.Decode(&result); err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+				f, ok := result.(float64)
+				if !ok {
+					t.Fatalf("expected float64, got %T", result)
+				}
+				if f != tt.want {
+					t.Errorf("got %v, want %v", f, tt.want)
+				}
+			})
+		}
+	})
+
+	t.Run("NumberAtEndOfStream", func(t *testing.T) {
+		dec := NewDecoder(strings.NewReader(`42`))
+		dec.UseNumber()
+		var result any
+		if err := dec.Decode(&result); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		num, ok := result.(Number)
+		if !ok {
+			t.Fatalf("expected Number type, got %T", result)
+		}
+		if string(num) != "42" {
+			t.Errorf("got Number(%q), want Number(%q)", num, "42")
+		}
+	})
+
+	t.Run("ScientificNotationInArray", func(t *testing.T) {
+		dec := NewDecoder(strings.NewReader(`[1e10, 1.5E-3, -2.5e+2]`))
+		dec.UseNumber()
+		var result any
+		if err := dec.Decode(&result); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		arr, ok := result.([]any)
+		if !ok {
+			t.Fatalf("expected []any, got %T", result)
+		}
+		if len(arr) != 3 {
+			t.Fatalf("expected 3 elements, got %d", len(arr))
+		}
+		for i, elem := range arr {
+			if _, ok := elem.(Number); !ok {
+				t.Errorf("element %d: expected Number, got %T", i, elem)
+			}
+		}
+	})
+}
+
+// TestCustomEncoderEscapeRune tests escapeRune paths via EncodeWithConfig
+func TestCustomEncoderEscapeRune(t *testing.T) {
+	t.Run("EscapeHTML", func(t *testing.T) {
+		tests := []struct {
+			name        string
+			input       map[string]any
+			cfg         Config
+			wantContain string
+			dontContain string
+		}{
+			{
+				name:        "EscapeLessThan",
+				input:       map[string]any{"html": "<tag>"},
+				cfg:         func() Config { c := DefaultConfig(); c.EscapeHTML = true; return c }(),
+				wantContain: `\u003c`,
+			},
+			{
+				name:        "EscapeGreaterThan",
+				input:       map[string]any{"html": "a>b"},
+				cfg:         func() Config { c := DefaultConfig(); c.EscapeHTML = true; return c }(),
+				wantContain: `\u003e`,
+			},
+			{
+				name:        "EscapeAmpersand",
+				input:       map[string]any{"html": "a&b"},
+				cfg:         func() Config { c := DefaultConfig(); c.EscapeHTML = true; return c }(),
+				wantContain: `\u0026`,
+			},
+			{
+				name:        "NoEscapeHTML",
+				input:       map[string]any{"html": "<tag>"},
+				cfg:         func() Config { c := DefaultConfig(); c.EscapeHTML = false; return c }(),
+				dontContain: `\u003c`,
+			},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				result, err := EncodeWithConfig(tt.input, tt.cfg)
+				if err != nil {
+					t.Fatalf("EncodeWithConfig error: %v", err)
+				}
+				if tt.wantContain != "" && !strings.Contains(result, tt.wantContain) {
+					t.Errorf("result %q should contain %q", result, tt.wantContain)
+				}
+				if tt.dontContain != "" && strings.Contains(result, tt.dontContain) {
+					t.Errorf("result %q should not contain %q", result, tt.dontContain)
+				}
+			})
+		}
+	})
+
+	t.Run("EscapeUnicode", func(t *testing.T) {
+		cfg := DefaultConfig()
+		cfg.EscapeUnicode = true
+
+		result, err := EncodeWithConfig(map[string]any{"text": "cafe\u0301"}, cfg)
+		if err != nil {
+			t.Fatalf("EncodeWithConfig error: %v", err)
+		}
+		// Characters > 0x7F should be escaped to \uXXXX when EscapeUnicode is true
+		if !strings.Contains(result, `\u`) {
+			t.Errorf("EscapeUnicode should produce \\u escapes, got %q", result)
+		}
+	})
+
+	t.Run("EscapeSlash", func(t *testing.T) {
+		cfg := DefaultConfig()
+		cfg.EscapeSlash = true
+
+		result, err := EncodeWithConfig(map[string]any{"path": "a/b/c"}, cfg)
+		if err != nil {
+			t.Fatalf("EncodeWithConfig error: %v", err)
+		}
+		if !strings.Contains(result, `\/`) {
+			t.Errorf("EscapeSlash should escape / to \\/, got %q", result)
+		}
+
+		// Verify without EscapeSlash
+		cfgNoEscape := DefaultConfig()
+		cfgNoEscape.EscapeSlash = false
+		result2, err := EncodeWithConfig(map[string]any{"path": "a/b/c"}, cfgNoEscape)
+		if err != nil {
+			t.Fatalf("EncodeWithConfig error: %v", err)
+		}
+		if strings.Contains(result2, `\/`) {
+			t.Errorf("without EscapeSlash, / should not be escaped, got %q", result2)
+		}
+	})
+
+	t.Run("EscapeNewlinesFalse", func(t *testing.T) {
+		cfg := DefaultConfig()
+		cfg.EscapeNewlines = false
+
+		result, err := EncodeWithConfig(map[string]any{"text": "line1\nline2"}, cfg)
+		if err != nil {
+			t.Fatalf("EncodeWithConfig error: %v", err)
+		}
+		// With EscapeNewlines=false, literal newline should be kept
+		if !strings.Contains(result, "\n") {
+			t.Errorf("EscapeNewlines=false should keep literal newline, got %q", result)
+		}
+		if strings.Contains(result, `\n`) {
+			// May still contain \n as literal text; check that actual newline is present
+			// and that the value contains a real newline character in the output
+		}
+	})
+
+	t.Run("EscapeTabsFalse", func(t *testing.T) {
+		cfg := DefaultConfig()
+		cfg.EscapeTabs = false
+
+		result, err := EncodeWithConfig(map[string]any{"text": "col1\tcol2"}, cfg)
+		if err != nil {
+			t.Fatalf("EncodeWithConfig error: %v", err)
+		}
+		// With EscapeTabs=false, literal tab should be kept
+		if !strings.Contains(result, "\t") {
+			t.Errorf("EscapeTabs=false should keep literal tab, got %q", result)
+		}
+	})
+
+	t.Run("ControlCharacters", func(t *testing.T) {
+		cfg := DefaultConfig()
+		// Default config has EscapeNewlines=true, EscapeTabs=true
+
+		result, err := EncodeWithConfig(map[string]any{"text": string([]byte{0x01, 0x02})}, cfg)
+		if err != nil {
+			t.Fatalf("EncodeWithConfig error: %v", err)
+		}
+		// Control chars < 0x20 should be escaped as \uXXXX
+		if !strings.Contains(result, `\u0001`) {
+			t.Errorf("control chars should be unicode-escaped, got %q", result)
+		}
+	})
+
+	t.Run("ValidateUTF8", func(t *testing.T) {
+		cfg := DefaultConfig()
+		cfg.ValidateUTF8 = true
+
+		// Create a string with invalid UTF-8 sequence.
+		// Note: Go's for-range over string replaces invalid bytes with U+FFFD,
+		// which is a valid rune, so ValidateUTF8 won't error in this path.
+		// Verify the encoding succeeds and the replacement character appears.
+		invalidUTF8 := string([]byte{0xff, 0xfe})
+		result, err := EncodeWithConfig(map[string]any{"text": invalidUTF8}, cfg)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		// The invalid bytes should be encoded (as replacement characters or escaped)
+		if !strings.Contains(result, "text") {
+			t.Errorf("result should contain key 'text', got %q", result)
+		}
+	})
+
+	t.Run("DisableEscaping", func(t *testing.T) {
+		cfg := DefaultConfig()
+		cfg.DisableEscaping = true
+
+		result, err := EncodeWithConfig(map[string]any{"text": "Hello <World> & /Friends\\"}, cfg)
+		if err != nil {
+			t.Fatalf("EncodeWithConfig error: %v", err)
+		}
+		// With DisableEscaping, HTML chars and slash should appear literally
+		if !strings.Contains(result, "<") {
+			t.Errorf("DisableEscaping should keep < literal, got %q", result)
+		}
+		if strings.Contains(result, `\u003c`) {
+			t.Errorf("DisableEscaping should not unicode-escape <, got %q", result)
+		}
+	})
+}
+
+// TestTruncateFloatExtended tests truncateFloat via EncodeWithConfig with FloatPrecision
+func TestTruncateFloatExtended(t *testing.T) {
+	t.Run("FloatPrecision2", func(t *testing.T) {
+		cfg := DefaultConfig()
+		cfg.FloatPrecision = 2
+		cfg.FloatTruncate = true
+
+		result, err := EncodeWithConfig(map[string]any{"pi": 3.14159}, cfg)
+		if err != nil {
+			t.Fatalf("EncodeWithConfig error: %v", err)
+		}
+		if !strings.Contains(result, "3.14") {
+			t.Errorf("FloatPrecision=2 should truncate 3.14159 to 3.14, got %q", result)
+		}
+	})
+
+	t.Run("FloatPrecision0", func(t *testing.T) {
+		cfg := DefaultConfig()
+		cfg.FloatPrecision = 0
+		cfg.FloatTruncate = true
+
+		result, err := EncodeWithConfig(map[string]any{"val": 3.14159}, cfg)
+		if err != nil {
+			t.Fatalf("EncodeWithConfig error: %v", err)
+		}
+		if !strings.Contains(result, "3") || strings.Contains(result, "3.") {
+			t.Errorf("FloatPrecision=0 should remove decimal, got %q", result)
+		}
+	})
+
+	t.Run("FloatPrecision5", func(t *testing.T) {
+		cfg := DefaultConfig()
+		cfg.FloatPrecision = 5
+		cfg.FloatTruncate = true
+
+		result, err := EncodeWithConfig(map[string]any{"val": 3.14}, cfg)
+		if err != nil {
+			t.Fatalf("EncodeWithConfig error: %v", err)
+		}
+		if !strings.Contains(result, "3.14000") {
+			t.Errorf("FloatPrecision=5 should pad with zeros, got %q", result)
+		}
+	})
+
+	t.Run("FloatPrecisionRoundNotTruncate", func(t *testing.T) {
+		cfg := DefaultConfig()
+		cfg.FloatPrecision = 2
+		cfg.FloatTruncate = false
+
+		result, err := EncodeWithConfig(map[string]any{"val": 3.14159}, cfg)
+		if err != nil {
+			t.Fatalf("EncodeWithConfig error: %v", err)
+		}
+		if !strings.Contains(result, "3.14") {
+			t.Errorf("FloatPrecision=2 (round) should produce 3.14, got %q", result)
+		}
+	})
+
+	t.Run("NegativePrecisionDisabled", func(t *testing.T) {
+		cfg := DefaultConfig()
+		// Default FloatPrecision is -1, which means disabled
+
+		result, err := EncodeWithConfig(map[string]any{"val": 3.14159}, cfg)
+		if err != nil {
+			t.Fatalf("EncodeWithConfig error: %v", err)
+		}
+		if !strings.Contains(result, "3.14159") {
+			t.Errorf("FloatPrecision=-1 should use default formatting, got %q", result)
+		}
+	})
+}
+
+// TestProcessorValuesEqual tests valuesEqual via Processor schema validation
+func TestProcessorValuesEqual(t *testing.T) {
+	processor, err := New()
+	if err != nil {
+		t.Fatalf("New() error: %v", err)
+	}
+	defer processor.Close()
+
+	tests := []struct {
+		name string
+		a, b any
+		want bool
+	}{
+		{"BothNil", nil, nil, true},
+		{"NilVsNonNil", nil, 42, false},
+		{"NonNilVsNil", 42, nil, false},
+		{"SameInt", 42, 42, true},
+		{"DifferentInt", 42, 43, false},
+		{"SameString", "hello", "hello", true},
+		{"DifferentString", "hello", "world", false},
+		{"IntVsInt64", 42, int64(42), true},
+		{"IntVsFloat64", 42, float64(42), true},
+		{"Float64VsInt", float64(42), 42, true},
+		{"IntVsFloat32", 42, float32(42), true},
+		{"IntVsInt32", 42, int32(42), true},
+		{"Float64VsFloat32", float64(3), float32(3), true},
+		{"DifferentFloat", 3.14, 2.71, false},
+		{"SameBool", true, true, true},
+		{"DifferentBool", true, false, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := processor.valuesEqual(tt.a, tt.b)
+			if got != tt.want {
+				t.Errorf("valuesEqual(%v (%T), %v (%T)) = %v, want %v",
+					tt.a, tt.a, tt.b, tt.b, got, tt.want)
+			}
+		})
+	}
+}

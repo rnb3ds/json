@@ -40,12 +40,11 @@ type Config struct {
 	MaxArrayElements          int   `json:"max_array_elements"`
 	// FullSecurityScan enables full (non-sampling) security validation for all JSON input.
 	//
-	// When false (default): Large JSON (>4KB) uses optimized sampling with:
-	//   - 16KB beginning section scan
-	//   - 8KB end section scan
-	//   - 15-30 distributed middle samples with 512-byte overlap
+	// When false (default): Large JSON (>4KB) uses optimized scanning with:
+	//   - Rolling window scan (32KB windows) over the entire JSON content
+	//   - Suspicious character density sampling (4KB beginning, middle, and end regions)
 	//   - Critical patterns (__proto__, constructor, prototype) always fully scanned
-	//   - Suspicious character density triggers automatic full scan
+	//   - High suspicious density triggers automatic full scan
 	//
 	// When true: All JSON is fully scanned regardless of size.
 	//

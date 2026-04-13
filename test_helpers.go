@@ -50,18 +50,6 @@ func (h *testHelper) AssertEqual(expected, actual any, msgAndArgs ...any) {
 	}
 }
 
-// AssertNotEqual checks if two values are not equal
-func (h *testHelper) AssertNotEqual(expected, actual any, msgAndArgs ...any) {
-	h.t.Helper()
-	if reflect.DeepEqual(expected, actual) {
-		msg := "Values should not be equal"
-		if len(msgAndArgs) > 0 {
-			msg = fmt.Sprintf(msgAndArgs[0].(string), msgAndArgs[1:]...)
-		}
-		h.t.Errorf("%s\nBoth values: %v (%T)", msg, expected, expected)
-	}
-}
-
 // AssertNoError checks that error is nil
 func (h *testHelper) AssertNoError(err error, msgAndArgs ...any) {
 	h.t.Helper()
@@ -86,41 +74,6 @@ func (h *testHelper) AssertError(err error, msgAndArgs ...any) {
 	}
 }
 
-// AssertErrorContains checks that error contains specific text
-func (h *testHelper) AssertErrorContains(err error, contains string, msgAndArgs ...any) {
-	h.t.Helper()
-	if err == nil {
-		msg := "Expected an error"
-		if len(msgAndArgs) > 0 {
-			msg = fmt.Sprintf(msgAndArgs[0].(string), msgAndArgs[1:]...)
-		}
-		h.t.Error(msg + ", but got nil")
-		return
-	}
-	if !strings.Contains(err.Error(), contains) {
-		msg := fmt.Sprintf("Expected error to contain '%s'", contains)
-		if len(msgAndArgs) > 0 {
-			msg = fmt.Sprintf(msgAndArgs[0].(string), msgAndArgs[1:]...)
-		}
-		h.t.Errorf("%s, but got: %v", msg, err)
-	}
-}
-
-// AssertPanic checks that function panics
-func (h *testHelper) AssertPanic(fn func(), msgAndArgs ...any) {
-	h.t.Helper()
-	defer func() {
-		if r := recover(); r == nil {
-			msg := "Expected function to panic"
-			if len(msgAndArgs) > 0 {
-				msg = fmt.Sprintf(msgAndArgs[0].(string), msgAndArgs[1:]...)
-			}
-			h.t.Error(msg + ", but it didn't")
-		}
-	}()
-	fn()
-}
-
 // AssertNoPanic checks that function doesn't panic
 func (h *testHelper) AssertNoPanic(fn func(), msgAndArgs ...any) {
 	h.t.Helper()
@@ -134,6 +87,18 @@ func (h *testHelper) AssertNoPanic(fn func(), msgAndArgs ...any) {
 		}
 	}()
 	fn()
+}
+
+// AssertNotNil checks that value is not nil
+func (h *testHelper) AssertNotNil(value any, msgAndArgs ...any) {
+	h.t.Helper()
+	if value == nil {
+		msg := "Expected value to be not nil"
+		if len(msgAndArgs) > 0 {
+			msg = fmt.Sprintf(msgAndArgs[0].(string), msgAndArgs[1:]...)
+		}
+		h.t.Error(msg)
+	}
 }
 
 // AssertTrue checks that condition is true
@@ -153,18 +118,6 @@ func (h *testHelper) AssertFalse(condition bool, msgAndArgs ...any) {
 	h.t.Helper()
 	if condition {
 		msg := "Expected condition to be false"
-		if len(msgAndArgs) > 0 {
-			msg = fmt.Sprintf(msgAndArgs[0].(string), msgAndArgs[1:]...)
-		}
-		h.t.Error(msg)
-	}
-}
-
-// AssertNotNil checks that value is not nil
-func (h *testHelper) AssertNotNil(value any, msgAndArgs ...any) {
-	h.t.Helper()
-	if value == nil {
-		msg := "Expected value to be not nil"
 		if len(msgAndArgs) > 0 {
 			msg = fmt.Sprintf(msgAndArgs[0].(string), msgAndArgs[1:]...)
 		}

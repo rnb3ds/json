@@ -35,8 +35,8 @@ import "github.com/cybergodev/json"
 |-----------------------------------------------|--------|----------------------------|
 | `Encoder`                                     | ✅      | Complete implementation    |
 | `Decoder`                                     | ✅      | Complete implementation    |
-| `NewEncoder(w io.Writer) *Encoder`            | ✅      | Extended with optional `Config`       |
-| `NewDecoder(r io.Reader) *Decoder`            | ✅      | Extended with optional `Config`       |
+| `NewEncoder(w io.Writer, cfg ...Config) *Encoder` | ✅ | Extended with optional `Config` |
+| `NewDecoder(r io.Reader, cfg ...Config) *Decoder` | ✅  | Extended with optional `Config` |
 | `(*Encoder).Encode(v any) error`              | ✅      | Same encoding behavior     |
 | `(*Encoder).SetEscapeHTML(on bool)`           | ✅      | Same HTML escaping control |
 | `(*Encoder).SetIndent(prefix, indent string)` | ✅      | Same indentation control   |
@@ -106,13 +106,13 @@ In addition to standard library errors, the library provides:
 data := map[string]any{"name": "John", "age": 30}
 jsonBytes, err := json.Marshal(data)
 if err != nil {
-    panic(err)
+    log.Fatal(err)
 }
 
 var result map[string]any
 err = json.Unmarshal(jsonBytes, &result)
 if err != nil {
-    panic(err)
+    log.Fatal(err)
 }
 ```
 

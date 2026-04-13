@@ -966,6 +966,62 @@ Filters JSONL lines by a predicate function.
 
 ---
 
+### StreamJSONLFile
+
+```go
+func StreamJSONLFile(filename string, fn func(lineNum int, item *IterableValue) error) error
+```
+
+Streams JSONL data from a file with callback processing. Convenience wrapper for file-based JSONL processing.
+
+**Example:**
+```go
+err := json.StreamJSONLFile("data.jsonl", func(lineNum int, item *json.IterableValue) error {
+    fmt.Printf("Line %d: %v\n", lineNum, item.GetData())
+    return nil
+})
+```
+
+---
+
+### CollectJSONL
+
+```go
+func CollectJSONL(reader io.Reader) ([]*IterableValue, error)
+```
+
+Collects all JSONL items from a reader into a slice. Useful for loading JSONL data into memory.
+
+**Example:**
+```go
+items, err := json.CollectJSONL(strings.NewReader(jsonlData))
+for _, item := range items {
+    fmt.Println(item.GetString("name"))
+}
+```
+
+---
+
+### FirstJSONL
+
+```go
+func FirstJSONL(reader io.Reader, predicate func(item *IterableValue) bool) (*IterableValue, bool, error)
+```
+
+Returns the first JSONL item that matches the predicate. Stops scanning after the first match for efficiency.
+
+**Example:**
+```go
+item, found, err := json.FirstJSONL(reader, func(item *json.IterableValue) bool {
+    return item.GetInt("score") >= 90
+})
+if found {
+    fmt.Printf("First match: %s\n", item.GetString("name"))
+}
+```
+
+---
+
 ## JSONL Support
 
 ### ParseJSONL
@@ -1309,7 +1365,7 @@ Creates a hook that logs operations.
 ### TimingHook
 
 ```go
-func TimingHook(recorder interface{ RecordDuration(duration time.Duration) }) Hook
+func TimingHook(recorder interface{ Record(op string, duration time.Duration) }) Hook
 ```
 
 Creates a hook that records operation timing.
@@ -1374,15 +1430,22 @@ Returns the default configuration with balanced settings.
 | MaxJSONSize | 100MB |
 | MaxPathDepth | 50 |
 | MaxNestingDepthSecurity | 200 |
+| MaxSecurityValidationSize | 10MB |
 | MaxObjectKeys | 100,000 |
 | MaxArrayElements | 100,000 |
 | MaxConcurrency | 50 |
 | MaxBatchSize | 2,000 |
+| MaxCacheSize | 128 |
 | ParallelThreshold | 10 |
 | EnableValidation | true |
 | EnableCache | true |
 | CacheResults | true |
 | CacheTTL | 5 minutes |
+| StrictMode | false |
+| ValidateInput | true |
+| ValidateFilePath | true |
+| CreatePaths | true |
+| IncludeNulls | true |
 | EscapeHTML | true |
 | ValidateUTF8 | true |
 | MaxDepth | 100 |
@@ -1405,8 +1468,13 @@ Returns a configuration with enhanced security settings for untrusted input.
 | MaxJSONSize | 10MB |
 | MaxPathDepth | 30 |
 | MaxNestingDepthSecurity | 30 |
+| MaxSecurityValidationSize | 10MB |
 | MaxObjectKeys | 5,000 |
 | MaxArrayElements | 5,000 |
+| MaxCacheSize | 256 |
+| CacheTTL | 3 minutes |
+| EnableCache | true |
+| EnableValidation | true |
 | FullSecurityScan | true |
 | StrictMode | true |
 
@@ -1487,6 +1555,7 @@ func (p *Processor) SafeGet(jsonStr, path string, cfg ...Config) AccessResult
 func (p *Processor) GetFromParsed(parsed *ParsedJSON, path string, cfg ...Config) (any, error)
 func (p *Processor) GetCompiled(jsonStr string, cp *CompiledPath) (any, error)
 func (p *Processor) CompilePath(path string) (*CompiledPath, error)
+func (p *Processor) PreParse(jsonStr string, cfg ...Config) (*ParsedJSON, error)
 
 func (p *Processor) Set(jsonStr, path string, value any, cfg ...Config) (string, error)
 func (p *Processor) SetMultiple(jsonStr string, updates map[string]any, cfg ...Config) (string, error)
@@ -1501,6 +1570,7 @@ func (p *Processor) DeleteClean(jsonStr, path string, cfg ...Config) (string, er
 func (p *Processor) Marshal(v any, cfg ...Config) ([]byte, error)
 func (p *Processor) Unmarshal(data []byte, v any, cfg ...Config) error
 func (p *Processor) MarshalIndent(v any, prefix, indent string, cfg ...Config) ([]byte, error)
+func (p *Processor) Encode(value any, cfg ...Config) (string, error)
 func (p *Processor) EncodeWithConfig(value any, cfg ...Config) (string, error)
 func (p *Processor) EncodePretty(value any, cfg ...Config) (string, error)
 func (p *Processor) Prettify(jsonStr string, cfg ...Config) (string, error)
@@ -1556,6 +1626,9 @@ func (p *Processor) ForeachJSONL(reader io.Reader, fn func(lineNum int, item *It
 func (p *Processor) MapJSONL(reader io.Reader, fn func(lineNum int, item *IterableValue) (any, error)) ([]any, error)
 func (p *Processor) ReduceJSONL(reader io.Reader, initial any, fn func(acc any, item *IterableValue) any) (any, error)
 func (p *Processor) FilterJSONL(reader io.Reader, predicate func(item *IterableValue) bool) ([]*IterableValue, error)
+func (p *Processor) StreamJSONLFile(filename string, fn func(lineNum int, item *IterableValue) error) error
+func (p *Processor) CollectJSONL(reader io.Reader) ([]*IterableValue, error)
+func (p *Processor) FirstJSONL(reader io.Reader, predicate func(item *IterableValue) bool) (*IterableValue, bool, error)
 
 // Lifecycle
 func (p *Processor) Close() error
@@ -1831,7 +1904,20 @@ type ParsedJSON struct { /* unexported fields */ }
 func (p *ParsedJSON) Data() any
 ```
 
-A pre-parsed JSON document for reuse across multiple operations. Use `Processor.GetFromParsed` and `Processor.SetFromParsed` for efficient repeated access.
+A pre-parsed JSON document for reuse across multiple operations. Create with `Processor.PreParse`, then use `Processor.GetFromParsed` and `Processor.SetFromParsed` for efficient repeated access.
+
+**PreParse Example:**
+```go
+// Pre-parse once, query many times
+parsed, err := processor.PreParse(largeJSON)
+if err != nil {
+    log.Fatal(err)
+}
+
+// Multiple fast queries on the same parsed document
+name, _ := processor.GetFromParsed(parsed, "user.name")
+age, _ := processor.GetFromParsed(parsed, "user.age")
+```
 
 ---
 
@@ -1866,8 +1952,8 @@ A streaming JSONL writer with buffered output and optional pretty printing.
 
 ```go
 type JSONLStats struct {
-    LinesWritten int
-    BytesWritten int64
+    LinesProcessed int64
+    BytesWritten   int64
 }
 ```
 
@@ -1998,16 +2084,17 @@ A segment of a parsed JSON path. Used with custom `PathParser` implementations.
 
 ## Path Expression Syntax
 
-| Syntax | Description | Example |
-|--------|-------------|---------|
-| `.` | Property access | `user.name` |
-| `[n]` | Array index | `items[0]` |
-| `[-n]` | Negative index | `items[-1]` |
-| `[start:end]` | Array slice | `items[1:3]` |
-| `[::step]` | Step slice | `numbers[::2]` |
-| `{field}` | Batch extract | `users{name}` |
-| `{flat:field}` | Flatten extract | `users{flat:skills}` |
-| `$` | Root reference | `$` |
+| Syntax | Description | Example | Result |
+|--------|-------------|---------|--------|
+| `.` | Property access | `user.name` | Get user's name |
+| `[n]` | Array index | `items[0]` | First element |
+| `[-n]` | Negative index | `items[-1]` | Last element |
+| `[start:end]` | Array slice | `items[1:3]` | Elements at index 1-2 |
+| `[::step]` | Step slice | `numbers[::2]` | Every other element |
+| `{field}` | Batch extract | `users{name}` | All user names |
+| `{flat:field}` | Flatten extract | `users{flat:skills}` | All skills flattened |
+| `[+]` | Array append (Set only) | `items[+]` | Append value to array |
+| `$` | Root reference | `$` | Entire JSON document |
 
 ---
 
