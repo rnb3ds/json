@@ -179,7 +179,10 @@ func TestNegativeArrayIndex(t *testing.T) {
 	})
 	t.Run("get various negative positions", func(t *testing.T) {
 		json := `{"items":[10,20,30,40,50]}`
-		tests := []struct{ path string; want any }{
+		tests := []struct {
+			path string
+			want any
+		}{
 			{"items[-1]", float64(50)},
 			{"items[-2]", float64(40)},
 			{"items[-5]", float64(10)},
@@ -726,7 +729,10 @@ func TestTypedGettersEdgeCases(t *testing.T) {
 		}
 	})
 	t.Run("GetBool string variants", func(t *testing.T) {
-		tests := []struct{ json, path string; want bool }{
+		tests := []struct {
+			json, path string
+			want       bool
+		}{
 			{`{"v":"true"}`, "v", true},
 			{`{"v":"TRUE"}`, "v", true},
 			{`{"v":"1"}`, "v", true},
@@ -864,7 +870,11 @@ func TestDistributedArrayOps(t *testing.T) {
 
 func TestOperationErrors(t *testing.T) {
 	t.Run("Set errors", func(t *testing.T) {
-		tests := []struct{ name, json, path string; value any; wantErr bool }{
+		tests := []struct {
+			name, json, path string
+			value            any
+			wantErr          bool
+		}{
 			{"invalid json", `{invalid}`, "a", 1, true},
 			{"empty path", `{"a":1}`, "", 1, true},
 		}
@@ -878,7 +888,10 @@ func TestOperationErrors(t *testing.T) {
 		}
 	})
 	t.Run("Delete errors", func(t *testing.T) {
-		tests := []struct{ name, json, path string; wantErr bool }{
+		tests := []struct {
+			name, json, path string
+			wantErr          bool
+		}{
 			{"invalid json", `{invalid}`, "a", true},
 			{"empty path", `{"a":1}`, "", true},
 		}
@@ -1131,7 +1144,7 @@ func TestOperationAssignValueToSlice(t *testing.T) {
 	}
 }
 
-// --- deleteArrayElement, navigateArrayIndexForDeletion, deleteComplexArray ---
+// --- Delete on array elements (index, extract, slice) via complex paths ---
 
 func TestOperationDeleteArrayElementComplex(t *testing.T) {
 	tests := []struct {
@@ -1176,7 +1189,7 @@ func TestOperationDeleteArrayElementComplex(t *testing.T) {
 	}
 }
 
-// --- deleteComplexArray: delete from nested position inside an array element ---
+// --- Delete from a nested position inside an array element ---
 
 func TestOperationDeleteComplexArrayNavigation(t *testing.T) {
 	t.Run("delete from array element with negative index", func(t *testing.T) {

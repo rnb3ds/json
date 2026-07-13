@@ -41,7 +41,7 @@ func (p *Processor) Delete(jsonStr, path string, cfg ...Config) (string, error) 
 	}
 
 	// Parse JSON using unified helper
-	data, err := p.parseJSON(jsonStr, "delete", path, options, cfg...)
+	data, err := p.parseJSON(jsonStr, "delete", path, options)
 	if err != nil {
 		return jsonStr, err
 	}

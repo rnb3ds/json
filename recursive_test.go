@@ -257,7 +257,7 @@ func TestRecursiveProcessor_SetOperation_Table(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name:  "set extract field on array elements",
+			name: "set extract field on array elements",
 			data: map[string]any{
 				"items": []any{
 					map[string]any{"name": "a", "val": 1},
@@ -486,6 +486,31 @@ func TestRecursiveProcessor_CreatePaths_Table(t *testing.T) {
 				tt.validate(t, tt.data)
 			}
 		})
+	}
+}
+
+// TestRecursiveProcessor_SliceSet_HonorsStep is a regression test for a bug where
+// the opSet branch of handleArraySliceSegmentUnified iterated with i++ and ignored
+// the slice step, diverging from opDelete (which honored step) and from the
+// dot-notation path. With the fix, arr[0:5:2]=v must mutate only indices 0,2,4.
+func TestRecursiveProcessor_SliceSet_HonorsStep(t *testing.T) {
+	processor, rp := helperRP(t)
+	defer processor.Close()
+
+	data := map[string]any{"arr": []any{1, 2, 3, 4, 5}}
+	if _, err := rp.ProcessRecursivelyWithOptions(data, "arr[0:5:2]", opSet, 0, false); err != nil {
+		t.Fatalf("ProcessRecursivelyWithOptions() unexpected error: %v", err)
+	}
+
+	arr := data["arr"].([]any)
+	want := []any{0, 2, 0, 4, 0}
+	if len(arr) != len(want) {
+		t.Fatalf("arr len = %d, want %d (%v)", len(arr), len(want), arr)
+	}
+	for i, v := range want {
+		if arr[i] != v {
+			t.Errorf("arr[%d] = %v, want %v (full: %v)", i, arr[i], v, arr)
+		}
 	}
 }
 
@@ -842,10 +867,10 @@ func TestRecursiveProcessor_EmptyContainers(t *testing.T) {
 			},
 		},
 		{
-			name: "set on empty map",
-			data: map[string]any{},
-			path: "newkey",
-			op:   opSet,
+			name:  "set on empty map",
+			data:  map[string]any{},
+			path:  "newkey",
+			op:    opSet,
 			value: "val",
 			check: func(t *testing.T, result any) {
 				t.Helper()

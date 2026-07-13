@@ -131,6 +131,33 @@ func TestProcessor_StreamJSONL(t *testing.T) {
 	}
 }
 
+func TestProcessor_StreamJSONL_RejectsDeepNesting(t *testing.T) {
+	processor, err := New()
+	if err != nil {
+		t.Fatalf("Failed to create processor: %v", err)
+	}
+	defer processor.Close()
+
+	// A single JSONL line nested deeper than the default MaxNestingDepthSecurity
+	// (200). Without the per-line nesting guard this would be handed straight to
+	// json.Unmarshal — a stack-overflow / DoS vector. The guard must reject it.
+	depth := 300
+	deep := strings.Repeat("[", depth) + strings.Repeat("]", depth)
+	input := `{"ok":1}` + "\n" + deep
+
+	var count int
+	err = processor.StreamJSONL(strings.NewReader(input), func(lineNum int, item *IterableValue) error {
+		count++
+		return nil
+	})
+	if err == nil {
+		t.Fatal("expected nesting-depth error for deeply nested JSONL line, got nil")
+	}
+	if count != 1 {
+		t.Errorf("expected exactly 1 successful line before the rejected line, got %d", count)
+	}
+}
+
 func TestProcessor_StreamJSONL_EarlyStop(t *testing.T) {
 	processor, err := New()
 	if err != nil {

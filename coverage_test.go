@@ -1052,7 +1052,6 @@ func TestIsSliceType(t *testing.T) {
 // ENCODING TESTS - Coverage for printData branches
 // ============================================================================
 
-
 // TestCompactError tests Compact function error case
 func TestCompactError(t *testing.T) {
 	var dst bytes.Buffer
@@ -2594,7 +2593,6 @@ func TestParseTopLevel(t *testing.T) {
 	})
 }
 
-
 // ============================================================================
 // TOP-LEVEL FILE FUNCTIONS - Missing coverage tests
 // ============================================================================
@@ -2763,7 +2761,6 @@ func TestArrayBoundaryConditions(t *testing.T) {
 			t.Errorf("out-of-range index should return nil or error, got result=%v", result)
 		}
 	})
-
 
 	t.Run("EmptyArray", func(t *testing.T) {
 		result, err := processor.Get(`{"empty": []}`, "empty")
@@ -3336,10 +3333,10 @@ func TestDecoderParseString(t *testing.T) {
 func TestDecoderParseNumber(t *testing.T) {
 	t.Run("UseNumberEnabled", func(t *testing.T) {
 		tests := []struct {
-			name     string
-			input    string
-			wantNum  string
-			wantErr  bool
+			name    string
+			input   string
+			wantNum string
+			wantErr bool
 		}{
 			{"Integer", `42`, "42", false},
 			{"NegativeInteger", `-7`, "-7", false},

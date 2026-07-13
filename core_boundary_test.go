@@ -218,10 +218,10 @@ func TestNewSchemaWithConfig_OptionalFields_Boundary(t *testing.T) {
 	})
 
 	checks := []struct {
-		name   string
-		got    int
-		want   int
-		has    bool
+		name      string
+		got       int
+		want      int
+		has       bool
 		hasWanted bool
 	}{
 		{"MinLength", s.MinLength, 1, s.hasMinLength, true},

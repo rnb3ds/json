@@ -96,14 +96,14 @@ func demonstratePathValidation() {
 	//   - ErrPathNotFound     => valid syntax, but the path is absent here
 	//   - any other error     => invalid path syntax (rejected by the parser)
 	testPaths := []string{
-		".",                 // root
-		"user.name",         // simple property
-		"users[0]",          // array index
-		"data[0].items[1]",  // nested array
-		"users{name}",       // extraction
-		"data[0].missing",   // valid syntax, not present in the sample
-		"user[",             // invalid: missing closing bracket
-		"users[0",           // invalid: missing closing bracket
+		".",                // root
+		"user.name",        // simple property
+		"users[0]",         // array index
+		"data[0].items[1]", // nested array
+		"users{name}",      // extraction
+		"data[0].missing",  // valid syntax, not present in the sample
+		"user[",            // invalid: missing closing bracket
+		"users[0",          // invalid: missing closing bracket
 	}
 
 	fmt.Println("   Classifying each path against sample data:")

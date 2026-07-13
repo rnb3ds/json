@@ -92,6 +92,16 @@ func (p *Processor) isSimpleArraySlicePath(path string) bool {
 		return false
 	}
 
+	// A slice followed by further segments (e.g. "[0:2].name" or "a[0:2].b") is an
+	// intermediate slice. The dot-notation path cannot navigate THROUGH a slice, so
+	// route intermediate slices to the RecursiveProcessor, which distributes the
+	// Set across every element in the range. Only a terminal slice (nothing after
+	// ']', e.g. "arr[0:2]") stays here so that array extension (createPaths past
+	// the current length) keeps working via the dot-notation path.
+	if bracketEnd < len(path)-1 {
+		return false
+	}
+
 	return true
 }
 
@@ -108,6 +118,15 @@ func (p *Processor) isSimpleArrayIndexPath(path string) bool {
 
 	// Must not contain extraction syntax
 	if strings.Contains(path, "{") || strings.Contains(path, "}") {
+		return false
+	}
+
+	// Wildcard segments ([*] or a bare *) must go through the RecursiveProcessor,
+	// which distributes the Set across every matching element. The dot-notation
+	// path's splitPath mis-parses [*] as index 0, so routing a wildcard here would
+	// only mutate the first element. See handleWildcardSegmentUnified for the
+	// correct all-elements behavior.
+	if strings.Contains(path, "*") {
 		return false
 	}
 

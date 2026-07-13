@@ -512,3 +512,59 @@ func TestParsePath(t *testing.T) {
 		})
 	}
 }
+
+// TestParsePathBareNumericAndWildcard verifies that a single-segment numeric
+// path ("0", "-1") parses to ArrayIndexSegment and a bare "*" parses to
+// WildcardSegment — the core of the bare-index feature where "0" == "[0]"
+// and "*" == "[*]".
+func TestParsePathBareNumericAndWildcard(t *testing.T) {
+	tests := []struct {
+		name     string
+		path     string
+		wantType PathSegmentType
+		wantKey  string // for PropertySegment
+		wantIdx  int    // for ArrayIndexSegment
+		wantNeg  bool   // for ArrayIndexSegment negative flag
+	}{
+		{"bare zero", "0", ArrayIndexSegment, "", 0, false},
+		{"bare positive", "42", ArrayIndexSegment, "", 42, false},
+		{"bare negative", "-1", ArrayIndexSegment, "", -1, true},
+		{"bare wildcard", "*", WildcardSegment, "", 0, false},
+		{"property name", "name", PropertySegment, "name", 0, false},
+		{"alphanumeric not int", "a1", PropertySegment, "a1", 0, false},
+		{"underscore key", "_id", PropertySegment, "_id", 0, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			segments, err := ParsePath(tt.path)
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			if len(segments) != 1 {
+				t.Fatalf("Got %d segments, want 1", len(segments))
+			}
+			s := segments[0]
+			if s.Type != tt.wantType {
+				t.Errorf("segment type = %v, want %v", s.Type, tt.wantType)
+			}
+			switch tt.wantType {
+			case ArrayIndexSegment:
+				if s.Index != tt.wantIdx {
+					t.Errorf("index = %d, want %d", s.Index, tt.wantIdx)
+				}
+				if s.IsNegativeIndex() != tt.wantNeg {
+					t.Errorf("negative flag = %v, want %v", s.IsNegativeIndex(), tt.wantNeg)
+				}
+			case WildcardSegment:
+				if !s.IsWildcardSegment() {
+					t.Errorf("expected wildcard flag set")
+				}
+			case PropertySegment:
+				if s.Key != tt.wantKey {
+					t.Errorf("key = %q, want %q", s.Key, tt.wantKey)
+				}
+			}
+		})
+	}
+}

@@ -232,12 +232,7 @@ func (urp *recursiveProcessor) handleArrayIndexSegmentUnified(data any, segment 
 			}
 
 			if op == opGet {
-				// For distributed array ops, flatten the results to match expected behavior
-				// This mimics the behavior of the original getValueWithDistributedOp
-				if isLastSegment && segment.Type != internal.ArraySliceSegment {
-					// Return flattened results for distributed array index ops
-					return results, nil
-				}
+				// Distributed array index ops return the collected results directly.
 				return results, nil
 			}
 			return nil, urp.combineErrors(errs)
@@ -274,12 +269,26 @@ func (urp *recursiveProcessor) handleArrayIndexSegmentUnified(data any, segment 
 		return urp.processRecursivelyAtSegmentsWithOptions(container[index], segments, segmentIndex+1, op, value, createPaths)
 
 	case map[string]any:
+		// Backward-compat fallback: if the map contains a numeric-string key
+		// equal to the segment index, treat the access as a key lookup.
+		// This preserves Get({"0":"x"}, "0") == "x" (previously via
+		// PropertySegment) and makes Get({"0":"x"}, "[0]") also return "x".
+		// opGet-only so Set/Delete distributed semantics are unchanged.
+		if op == opGet {
+			if val, exists := container[internal.IntToStringFast(segment.Index)]; exists {
+				if isLastSegment {
+					return val, nil
+				}
+				return urp.processRecursivelyAtSegmentsWithOptions(val, segments, segmentIndex+1, op, value, createPaths)
+			}
+		}
+
 		// Apply array index to each map value recursively
 		// PERFORMANCE: Pre-allocate slices with capacity hints
 		results := make([]any, 0, len(container))
 		errs := make([]error, 0, 4)
 
-		for key, mapValue := range container {
+		for _, mapValue := range container {
 			result, err := urp.handleArrayIndexSegmentUnified(mapValue, segment, segments, segmentIndex, isLastSegment, op, value, createPaths)
 			if err != nil {
 				errs = append(errs, err)
@@ -288,9 +297,9 @@ func (urp *recursiveProcessor) handleArrayIndexSegmentUnified(data any, segment 
 
 			if op == opGet && result != nil {
 				results = append(results, result)
-			} else if op == opSet {
-				container[key] = mapValue // Value was modified in place
 			}
+			// opSet/opDelete mutate mapValue (a map/slice header) in place through
+			// the shared pointer, so no write-back to container[key] is needed.
 		}
 
 		if op == opGet {
@@ -400,7 +409,7 @@ func (urp *recursiveProcessor) handlePropertySegmentUnified(data any, segment in
 		results := make([]any, 0, len(container))
 		errs := make([]error, 0, 4)
 
-		for i, item := range container {
+		for _, item := range container {
 			result, err := urp.handlePropertySegmentUnified(item, segment, segments, segmentIndex, isLastSegment, op, value, createPaths)
 			if err != nil {
 				errs = append(errs, err)
@@ -409,9 +418,9 @@ func (urp *recursiveProcessor) handlePropertySegmentUnified(data any, segment in
 
 			if op == opGet && result != nil {
 				results = append(results, result)
-			} else if op == opSet {
-				container[i] = item // Item was modified in place
 			}
+			// opSet/opDelete mutate item's nested containers in place via shared
+			// pointers; the range copy already aliases container[i], so no write-back.
 		}
 
 		if op == opGet {
@@ -515,14 +524,15 @@ func (urp *recursiveProcessor) handleArraySliceSegmentUnified(data any, segment 
 				}
 			}
 
-			if len(errs) > 0 {
-				return nil, urp.combineErrors(errs)
-			}
-
+			// Return partial Get results before surfacing per-element errors,
+			// matching the non-distributed branch and the map-value sibling
+			// below: a single failed element must not discard the Get results
+			// that were already collected.
 			if op == opGet {
 				return results, nil
 			}
-			return nil, nil
+
+			return nil, urp.combineErrors(errs)
 		}
 
 		// Non-distributed slice op
@@ -564,14 +574,26 @@ func (urp *recursiveProcessor) handleArraySliceSegmentUnified(data any, segment 
 					return nil, fmt.Errorf("array slice extension required: use legacy handling for path with slice [%d:%d] on array length %d", start, end, len(container))
 				}
 
-				// Set value to all elements in slice
-				for i := start; i < end && i < len(container); i++ {
+				// Set value to all elements in slice, honoring the step
+				// (e.g., [0:5:2] sets indices 0,2,4). Step defaults to 1.
+				// CONSISTENCY FIX: this previously used i++ and ignored step, diverging
+				// from opDelete below (which honors step) and from the dot-notation path.
+				step := 1
+				if segment.HasStep() && segment.Step != 0 {
+					step = segment.Step
+				}
+				for i := start; i < end && i < len(container); i += step {
 					container[i] = value
 				}
 				return value, nil
 			case opDelete:
-				// Mark elements in slice for deletion
-				for i := start; i < end && i < len(container); i++ {
+				// Mark elements in slice for deletion, honoring the step
+				// (e.g., [0:5:2] deletes indices 0,2,4). Step defaults to 1.
+				step := 1
+				if segment.HasStep() && segment.Step != 0 {
+					step = segment.Step
+				}
+				for i := start; i < end && i < len(container); i += step {
 					container[i] = deletedMarker
 				}
 				return nil, nil
@@ -598,7 +620,7 @@ func (urp *recursiveProcessor) handleArraySliceSegmentUnified(data any, segment 
 		results := make([]any, 0, len(slicedContainer))
 		errs := make([]error, 0, 4)
 
-		for i, item := range slicedContainer {
+		for _, item := range slicedContainer {
 			result, err := urp.processRecursivelyAtSegmentsWithOptions(item, segments, segmentIndex+1, op, value, createPaths)
 			if err != nil {
 				errs = append(errs, err)
@@ -607,9 +629,9 @@ func (urp *recursiveProcessor) handleArraySliceSegmentUnified(data any, segment 
 
 			if op == opGet && result != nil {
 				results = append(results, result)
-			} else if op == opSet {
-				slicedContainer[i] = item // Item was modified in place
 			}
+			// slicedContainer shares container's backing array; in-place mutation
+			// via item's pointers is already visible, so no write-back is needed.
 		}
 
 		if op == opGet {
@@ -624,7 +646,7 @@ func (urp *recursiveProcessor) handleArraySliceSegmentUnified(data any, segment 
 		results := make([]any, 0, len(container))
 		errs := make([]error, 0, 4)
 
-		for key, mapValue := range container {
+		for _, mapValue := range container {
 			result, err := urp.handleArraySliceSegmentUnified(mapValue, segment, segments, segmentIndex, isLastSegment, op, value, createPaths)
 			if err != nil {
 				errs = append(errs, err)
@@ -634,9 +656,9 @@ func (urp *recursiveProcessor) handleArraySliceSegmentUnified(data any, segment 
 			if op == opGet && result != nil {
 				// Preserve structure for map values - don't flatten
 				results = append(results, result)
-			} else if op == opSet {
-				container[key] = mapValue // Value was modified in place
 			}
+			// opSet/opDelete mutate mapValue's nested containers in place via
+			// shared pointers; no write-back to container[key] is needed.
 		}
 
 		if op == opGet {
@@ -675,7 +697,7 @@ func (urp *recursiveProcessor) handleExtractSegmentUnified(data any, segment int
 		results := make([]any, 0, len(container))
 		errs := make([]error, 0, 4)
 
-		for i, item := range container {
+		for _, item := range container {
 			if itemMap, ok := item.(map[string]any); ok {
 				if isLastSegment {
 					switch op {
@@ -771,9 +793,8 @@ func (urp *recursiveProcessor) handleExtractSegmentUnified(data any, segment int
 								errs = append(errs, err)
 								continue
 							}
-							if op == opSet {
-								container[i] = item // Item was modified in place
-							}
+							// opSet mutates itemMap (item) in place via the shared
+							// map pointer, so no write-back to container[i] is needed.
 						}
 					}
 				}
@@ -889,6 +910,65 @@ func (urp *recursiveProcessor) handleMultiFieldExtractSegment(data any, fieldsSt
 	// Trim whitespace from field names
 	for i, f := range fields {
 		fields[i] = strings.TrimSpace(f)
+	}
+
+	// Delete branch: remove every listed field from each target object in place.
+	// Unlike the Get path below (which builds new maps via extractMultipleFieldsFromMap),
+	// this mutates the source using Go's delete() builtin. Missing fields are no-ops
+	// (idempotent), consistent with single-field extract delete (recursive.go:763,876).
+	if op == opDelete {
+		switch container := data.(type) {
+		case []any:
+			for _, item := range container {
+				if itemMap, ok := item.(map[string]any); ok {
+					for _, f := range fields {
+						delete(itemMap, f)
+					}
+				}
+			}
+			return nil, nil
+		case map[string]any:
+			for _, f := range fields {
+				delete(container, f)
+			}
+			return nil, nil
+		default:
+			return nil, nil // nothing to delete from a non-object/array
+		}
+	}
+
+	// Set branch: assign values into every listed field of each target object.
+	// value must be a map[string]any keyed by field name; only fields present in
+	// BOTH the extract list and the value map are written, so missing keys are
+	// left unchanged (never nulled out). Mutates in place, mirroring opDelete.
+	// This makes Set([*].{a,b}, map) the inverse of Get([*].{a,b}).
+	if op == opSet {
+		valueMap, ok := value.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("multi-field extract set requires a map[string]any value, got %T", value)
+		}
+		switch container := data.(type) {
+		case []any:
+			for _, item := range container {
+				if itemMap, ok := item.(map[string]any); ok {
+					for _, f := range fields {
+						if v, exists := valueMap[f]; exists {
+							itemMap[f] = v
+						}
+					}
+				}
+			}
+			return nil, nil
+		case map[string]any:
+			for _, f := range fields {
+				if v, exists := valueMap[f]; exists {
+					container[f] = v
+				}
+			}
+			return nil, nil
+		default:
+			return nil, fmt.Errorf("cannot set multi-field extract on type %T", data)
+		}
 	}
 
 	switch container := data.(type) {
@@ -1138,7 +1218,7 @@ func (urp *recursiveProcessor) handleWildcardSegmentUnified(data any, _ internal
 		results := make([]any, 0, len(container))
 		errs := make([]error, 0, 4)
 
-		for i, item := range container {
+		for _, item := range container {
 			result, err := urp.processRecursivelyAtSegmentsWithOptions(item, segments, segmentIndex+1, op, value, createPaths)
 			if err != nil {
 				errs = append(errs, err)
@@ -1148,9 +1228,9 @@ func (urp *recursiveProcessor) handleWildcardSegmentUnified(data any, _ internal
 			if op == opGet && result != nil {
 				// Preserve structure - don't flatten unless explicitly requested
 				results = append(results, result)
-			} else if op == opSet {
-				container[i] = item // Item was modified in place
 			}
+			// opSet/opDelete mutate item's nested containers in place via shared
+			// pointers; the range copy already aliases container[i], so no write-back.
 		}
 
 		if op == opGet {
@@ -1189,7 +1269,7 @@ func (urp *recursiveProcessor) handleWildcardSegmentUnified(data any, _ internal
 		results := make([]any, 0, len(container))
 		errs := make([]error, 0, 4)
 
-		for key, mapValue := range container {
+		for _, mapValue := range container {
 			result, err := urp.processRecursivelyAtSegmentsWithOptions(mapValue, segments, segmentIndex+1, op, value, createPaths)
 			if err != nil {
 				errs = append(errs, err)
@@ -1199,9 +1279,9 @@ func (urp *recursiveProcessor) handleWildcardSegmentUnified(data any, _ internal
 			if op == opGet && result != nil {
 				// Preserve structure - don't flatten unless explicitly requested
 				results = append(results, result)
-			} else if op == opSet {
-				container[key] = mapValue // Value was modified in place
 			}
+			// opSet/opDelete mutate mapValue's nested containers in place via
+			// shared pointers; no write-back to container[key] is needed.
 		}
 
 		if op == opGet {

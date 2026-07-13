@@ -33,21 +33,6 @@ func normalizeNegativeIndexAllowExtend(index, length int) (int, error) {
 	return index, nil
 }
 
-// normalizeNegativeSliceBounds converts negative start/end indices for slice operations.
-// end may equal length (exclusive upper bound). Returns normalized start, end, or an error.
-func normalizeNegativeSliceBounds(start, end, length int) (int, int, error) {
-	if start < 0 {
-		start = length + start
-	}
-	if end < 0 {
-		end = length + end
-	}
-	if start < 0 || start >= length || end < 0 || end > length || start >= end {
-		return 0, 0, fmt.Errorf("slice range [%d:%d] out of bounds for array length %d", start, end, length)
-	}
-	return start, end, nil
-}
-
 func (p *Processor) handleArrayAccess(data any, segment internal.PathSegment) propertyAccessResult {
 	var arrayData any = data
 	if segment.Key != "" {
@@ -102,40 +87,6 @@ func (p *Processor) handleArraySlice(data any, segment internal.PathSegment) pro
 	// Use unified implementation from internal package
 	result := internal.PerformArraySlice(arr, start, end, step)
 	return propertyAccessResult{value: result, exists: true}
-}
-
-func (p *Processor) parseSliceParameters(segmentValue string, arrayLength int) (start, end, step int, err error) {
-	// Remove brackets if present
-	if strings.HasPrefix(segmentValue, "[") && strings.HasSuffix(segmentValue, "]") {
-		segmentValue = segmentValue[1 : len(segmentValue)-1]
-	}
-
-	// Delegate to internal package for parsing
-	s, e, st, parseErr := internal.ParseSliceComponents(segmentValue)
-	if parseErr != nil {
-		return 0, 0, 0, parseErr
-	}
-
-	// Apply defaults for nil pointers
-	start = 0
-	if s != nil {
-		start = *s
-	}
-
-	end = arrayLength
-	if e != nil {
-		end = *e
-	}
-
-	step = 1
-	if st != nil {
-		step = *st
-		if step <= 0 {
-			return 0, 0, 0, fmt.Errorf("step must be positive: %d", step)
-		}
-	}
-
-	return start, end, step, nil
 }
 
 func (p *Processor) isArrayIndex(segment string) bool {
@@ -515,15 +466,4 @@ func (p *Processor) handlePostExtractionArrayAccess(data any, segment internal.P
 
 func (p *Processor) isComplexPath(path string) bool {
 	return internal.IsComplexPath(path)
-}
-
-// PERFORMANCE: Compares segment.Type directly instead of TypeString() to avoid
-// string allocation on every comparison in hot loops.
-func (p *Processor) hasComplexSegments(segments []internal.PathSegment) bool {
-	for _, seg := range segments {
-		if seg.Type == internal.ExtractSegment || seg.Type == internal.ArraySliceSegment {
-			return true
-		}
-	}
-	return false
 }

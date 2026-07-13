@@ -38,9 +38,17 @@ const (
 //		// return item.Break() // to stop iteration
 //	})
 func (p *Processor) StreamJSONL(reader io.Reader, fn func(lineNum int, item *IterableValue) error) error {
-	if err := p.checkClosed(); err != nil {
+	// Concurrency governance for the full stream duration. A StreamJSONL call on a
+	// config-cached processor can run for many seconds, so per-op governance (as
+	// Get/Set provide) would not protect it: between lines activeOps drops to zero and
+	// a concurrent eviction Close() could tear the processor down mid-stream.
+	// Registering once at entry pins the processor until the stream completes. This
+	// method unmarshals each line via the stdlib directly (not p.Unmarshal/p.Parse),
+	// so the acquisition is never nested under another governed op.
+	if err := p.beginGovernedOp(); err != nil {
 		return err
 	}
+	defer p.endGovernedOp()
 
 	// Determine effective memory limit for JSONL processing
 	memLimit := p.config.JSONLMaxMemory
@@ -55,6 +63,12 @@ func (p *Processor) StreamJSONL(reader io.Reader, fn func(lineNum int, item *Ite
 	maxLine := p.config.JSONLMaxLineSize
 	if maxLine <= 0 {
 		maxLine = defaultMaxLineSize
+	}
+	// SECURITY: per-line nesting cap to prevent stack overflow from deeply nested
+	// JSONL payloads (mirrors NDJSONProcessor.ProcessReader in file.go).
+	maxDepth := p.config.MaxNestingDepthSecurity
+	if maxDepth <= 0 {
+		maxDepth = DefaultMaxNestingDepth
 	}
 
 	scanner := bufio.NewScanner(reader)
@@ -79,6 +93,12 @@ func (p *Processor) StreamJSONL(reader io.Reader, fn func(lineNum int, item *Ite
 			if totalBytes > memLimit {
 				return fmt.Errorf("jsonl memory limit exceeded: processed %d bytes (limit %d bytes at line %d)", totalBytes, memLimit, lineNum)
 			}
+		}
+
+		// SECURITY: per-line nesting check before unmarshaling (prevents stack overflow
+		// from deeply nested payloads).
+		if err := checkNestingDepth(line, maxDepth); err != nil {
+			return fmt.Errorf("line %d: %w", lineNum, err)
 		}
 
 		// Parse JSON line
@@ -132,9 +152,15 @@ func (p *Processor) StreamJSONLParallel(reader io.Reader, workers int, fn func(l
 //	    return nil
 //	})
 func (p *Processor) StreamJSONLParallelWithContext(ctx context.Context, reader io.Reader, workers int, fn func(lineNum int, item *IterableValue) error) error {
-	if err := p.checkClosed(); err != nil {
+	// Concurrency governance for the full parallel stream (see StreamJSONL for the
+	// rationale: pinning once at entry beats per-line governance, which leaves the
+	// processor unprotected between lines). The in-flight slot is held by this
+	// (scanner) goroutine for the whole run; worker goroutines do not register
+	// separately. Calls json.Unmarshal directly, so never nested under another op.
+	if err := p.beginGovernedOp(); err != nil {
 		return err
 	}
+	defer p.endGovernedOp()
 
 	if workers <= 0 {
 		workers = 4
@@ -158,6 +184,16 @@ func (p *Processor) StreamJSONLParallelWithContext(ctx context.Context, reader i
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			// SAFETY: a panic inside the user callback (or any unexpected panic) must
+			// not tear down the process; convert it to an error reported to the caller.
+			defer func() {
+				if r := recover(); r != nil {
+					if atomic.CompareAndSwapInt32(&errCount, 0, 1) {
+						e := fmt.Errorf("jsonl worker panicked: %v", r)
+						firstErr.Store(&e)
+					}
+				}
+			}()
 			for job := range jobs {
 				// RESOURCE FIX: Check context cancellation in workers
 				select {
@@ -195,6 +231,13 @@ func (p *Processor) StreamJSONLParallelWithContext(ctx context.Context, reader i
 	if parMaxLine <= 0 {
 		parMaxLine = defaultMaxLineSize
 	}
+	// SECURITY: per-line nesting cap to prevent stack overflow from deeply nested
+	// JSONL payloads. The feed loop parses each line before dispatching to workers,
+	// so the check belongs here (the overflow would happen in this goroutine).
+	maxDepth := p.config.MaxNestingDepthSecurity
+	if maxDepth <= 0 {
+		maxDepth = DefaultMaxNestingDepth
+	}
 	scanner := bufio.NewScanner(reader)
 	scanner.Buffer(make([]byte, parBufSize), parMaxLine)
 
@@ -214,6 +257,14 @@ feedLoop:
 		// Skip lines based on config (empty lines, comments)
 		if shouldSkipJSONLLineFromConfig(line, &p.config) {
 			continue
+		}
+
+		// SECURITY: per-line nesting check before unmarshaling (prevents stack overflow
+		// from deeply nested payloads).
+		if err := checkNestingDepth(line, maxDepth); err != nil {
+			close(jobs)
+			wg.Wait()
+			return fmt.Errorf("line %d: %w", lineNum, err)
 		}
 
 		// Parse JSON line
@@ -269,9 +320,12 @@ feedLoop:
 //		return nil
 //	})
 func (p *Processor) StreamJSONLChunked(reader io.Reader, chunkSize int, fn func(chunk []*IterableValue) error) error {
-	if err := p.checkClosed(); err != nil {
+	// Concurrency governance for the full chunked stream (see StreamJSONL for the
+	// rationale). Calls json.Unmarshal directly, so never nested under another op.
+	if err := p.beginGovernedOp(); err != nil {
 		return err
 	}
+	defer p.endGovernedOp()
 
 	if chunkSize <= 0 {
 		chunkSize = 1000
@@ -292,6 +346,12 @@ func (p *Processor) StreamJSONLChunked(reader io.Reader, chunkSize int, fn func(
 	chunkMaxLine := p.config.JSONLMaxLineSize
 	if chunkMaxLine <= 0 {
 		chunkMaxLine = defaultMaxLineSize
+	}
+	// SECURITY: per-line nesting cap to prevent stack overflow from deeply nested
+	// JSONL payloads (mirrors NDJSONProcessor.ProcessReader in file.go).
+	maxDepth := p.config.MaxNestingDepthSecurity
+	if maxDepth <= 0 {
+		maxDepth = DefaultMaxNestingDepth
 	}
 	scanner := bufio.NewScanner(reader)
 	scanner.Buffer(make([]byte, chunkBufSize), chunkMaxLine)
@@ -315,6 +375,12 @@ func (p *Processor) StreamJSONLChunked(reader io.Reader, chunkSize int, fn func(
 			if totalBytes > memLimit {
 				return fmt.Errorf("jsonl memory limit exceeded: processed %d bytes (limit %d bytes at line %d)", totalBytes, memLimit, lineNum)
 			}
+		}
+
+		// SECURITY: per-line nesting check before unmarshaling (prevents stack overflow
+		// from deeply nested payloads).
+		if err := checkNestingDepth(line, maxDepth); err != nil {
+			return fmt.Errorf("line %d: %w", lineNum, err)
 		}
 
 		// Parse JSON line

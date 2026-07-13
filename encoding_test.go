@@ -3,10 +3,52 @@ package json
 import (
 	"bytes"
 	"encoding/json"
+	"math"
 	"strings"
 	"testing"
 	"time"
 )
+
+// TestFloatEncoding_MatchesStdlib is a golden test for [D-002] C1: this package's
+// float formatting must match encoding/json byte-for-byte, including the 1e21
+// threshold (scientific notation) and the very-small (<1e-6) scientific form.
+// Previously the fast encoder used 'f' unconditionally, emitting a 22-digit
+// decimal for 1e21; the custom encoder used 'g' (uppercase E). Both now route
+// through internal.AppendJSONFloat which mirrors stdlib's floatEncoder.
+func TestFloatEncoding_MatchesStdlib(t *testing.T) {
+	values := []float64{
+		0, 1, -1, 100, -100,
+		0.5, -0.5, 3.141592653589793,
+		1e6, 1e15, 1e18, 1e20, // 'f' range
+		1e21, 1e22, 6.022e23, // 'e' range (>= 1e21)
+		1e-6, 1e-7, 1e-10, 1.5e-300, // 'e' range (< 1e-6)
+		123456789.123456789,
+		math.Copysign(0, -1), // negative zero -> "-0"
+	}
+	for _, v := range values {
+		got, err := Marshal(v)
+		if err != nil {
+			t.Errorf("Marshal(%v) error: %v", v, err)
+			continue
+		}
+		want, _ := json.Marshal(v)
+		if string(got) != string(want) {
+			t.Errorf("Marshal(%v) = %q, stdlib = %q (mismatch)", v, got, want)
+		}
+	}
+	// float32 through the fast path as well.
+	for _, v := range []float32{1e6, 1e21, 1e-7, 3.14} {
+		got, err := Marshal(v)
+		if err != nil {
+			t.Errorf("Marshal(float32 %v) error: %v", v, err)
+			continue
+		}
+		want, _ := json.Marshal(v)
+		if string(got) != string(want) {
+			t.Errorf("Marshal(float32 %v) = %q, stdlib = %q (mismatch)", v, got, want)
+		}
+	}
+}
 
 // TestEncodingAdvanced tests advanced encoding features
 func TestEncodingAdvanced(t *testing.T) {
@@ -1350,4 +1392,3 @@ func TestEncoding_EncodeJSONNumber(t *testing.T) {
 		}
 	})
 }
-

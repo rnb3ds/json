@@ -218,7 +218,6 @@ func PutPathSegmentSlice(s *[]PathSegment) {
 	}
 }
 
-
 // ----------------------------------------------------------------------------
 // MAP POOL - For JSON object decoding
 // PERFORMANCE: Reduces allocations when decoding JSON objects

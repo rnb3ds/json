@@ -2,7 +2,7 @@ package json
 
 import (
 	"encoding/json"
-		"fmt"
+	"fmt"
 	"log/slog"
 	"sync"
 	"sync/atomic"
@@ -98,8 +98,8 @@ func New(cfg ...Config) (*Processor, error) {
 	}
 
 	p := &Processor{
-		config:          config,
-		cache:           internal.NewCacheManager(config.EnableCache, config.MaxCacheSize, config.CacheTTL),
+		config: config,
+		cache:  internal.NewCacheManager(config.EnableCache, config.MaxCacheSize, config.CacheTTL),
 		securityValidator: newSecurityValidator(
 			config.MaxJSONSize,
 			maxPathLength,
@@ -113,9 +113,9 @@ func New(cfg ...Config) (*Processor, error) {
 			memoryPressure:  0,
 		},
 		metrics: &processorMetrics{
-			operationWindow:   0, // Disabled by default for better performance
-			concurrencyLimit:  int64(config.MaxConcurrency),
-			enabled:           config.EnableMetrics,
+			operationWindow:  0, // Disabled by default for better performance
+			concurrencyLimit: int64(config.MaxConcurrency),
+			enabled:          config.EnableMetrics,
 		},
 	}
 
@@ -353,10 +353,15 @@ func (p *Processor) validateOperationInput(jsonStr, path string, options *Config
 }
 
 // parseJSON parses a JSON string into a Go value using the appropriate path.
-// Uses fast json.Unmarshal for default config, falls back to p.Parse for custom options.
-func (p *Processor) parseJSON(jsonStr, op, path string, options *Config, cfg ...Config) (any, error) {
+// The fast json.Unmarshal path keys off pointer-identity with the shared default
+// singleton: when `options == &defaultConfigSingleton` the caller passed no
+// per-call config (prepareOptions/prepareOperation return the singleton exactly
+// when len(cfg)==0), so we can skip the option-aware p.Parse path. The
+// `!p.config.PreserveNumbers` guard keeps number preservation on the p.Parse path
+// where UseNumber is honored.
+func (p *Processor) parseJSON(jsonStr, op, path string, options *Config) (any, error) {
 	var data any
-	if len(cfg) == 0 && !p.config.PreserveNumbers {
+	if options == &defaultConfigSingleton && !p.config.PreserveNumbers {
 		if err := json.Unmarshal(internal.StringToBytes(jsonStr), &data); err != nil {
 			return nil, &JsonsError{
 				Op:      op,
@@ -386,4 +391,3 @@ func unmarshalRootObject(jsonStr string) (m map[string]any, isObject bool, err e
 	m, isObject = data.(map[string]any)
 	return m, isObject, nil
 }
-

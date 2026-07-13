@@ -1089,15 +1089,11 @@ func TestErrorScenarios(t *testing.T) {
 			_ = result // Don't assert value, library may convert
 		})
 
-			t.Run("ObjectAsArray", func(t *testing.T) {
-				// GetArray returns default value on type mismatch
-				result := GetArray(testData, "str", nil)
-				_ = result
-			})
-
-
-
-
+		t.Run("ObjectAsArray", func(t *testing.T) {
+			// GetArray returns default value on type mismatch
+			result := GetArray(testData, "str", nil)
+			_ = result
+		})
 
 	})
 
@@ -2040,15 +2036,15 @@ func TestRootDataTypeConversionError(t *testing.T) {
 func TestSchemaComprehensive(t *testing.T) {
 	t.Run("constraint fields", func(t *testing.T) {
 		tests := []struct {
-			name            string
-			minLen          int
-			maxLen          int
-			minimum         float64
-			maximum         float64
-			minItems        int
-			maxItems        int
-			exclusiveMin    bool
-			exclusiveMax    bool
+			name         string
+			minLen       int
+			maxLen       int
+			minimum      float64
+			maximum      float64
+			minItems     int
+			maxItems     int
+			exclusiveMin bool
+			exclusiveMax bool
 		}{
 			{"all set positive", 5, 100, 0, 1000, 1, 10, true, true},
 			{"all set negative range", 5, 50, -100, 100, 1, 10, false, false},

@@ -256,4 +256,3 @@ func (p *Processor) HTMLEscape(dst *bytes.Buffer, src []byte, cfg ...Config) {
 	_ = cfg // Config not used; character-level escaping requires no re-encoding
 	internal.HTMLEscapeTo(dst, string(src))
 }
-

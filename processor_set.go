@@ -20,7 +20,7 @@ func (p *Processor) Set(jsonStr, path string, value any, cfg ...Config) (string,
 	defer p.endGovernedOp()
 	defer releaseConfig(options)
 
-	data, err := p.parseJSON(jsonStr, "set", path, options, cfg...)
+	data, err := p.parseJSON(jsonStr, "set", path, options)
 	if err != nil {
 		return jsonStr, err
 	}

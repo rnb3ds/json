@@ -8,10 +8,10 @@ import (
 // TestJsonsErrorIs verifies the Is method including nil receiver.
 func TestJsonsErrorIs(t *testing.T) {
 	tests := []struct {
-		name   string
+		name     string
 		receiver *JsonsError
-		target error
-		want    bool
+		target   error
+		want     bool
 	}{
 		{
 			name:     "nil receiver with nil target",

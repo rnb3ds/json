@@ -198,12 +198,12 @@ type Config struct {
 // SecurityLimits holds a summary of the security-related limits from Config.
 // Returned by Config.getSecurityLimits for structured access to limit values.
 type SecurityLimits struct {
-	MaxNestingDepth            int   `json:"max_nesting_depth"`
-	MaxSecurityValidationSize  int64 `json:"max_security_validation_size"`
-	MaxObjectKeys              int   `json:"max_object_keys"`
-	MaxArrayElements           int   `json:"max_array_elements"`
-	MaxJSONSize                int64 `json:"max_json_size"`
-	MaxPathDepth               int   `json:"max_path_depth"`
+	MaxNestingDepth           int   `json:"max_nesting_depth"`
+	MaxSecurityValidationSize int64 `json:"max_security_validation_size"`
+	MaxObjectKeys             int   `json:"max_object_keys"`
+	MaxArrayElements          int   `json:"max_array_elements"`
+	MaxJSONSize               int64 `json:"max_json_size"`
+	MaxPathDepth              int   `json:"max_path_depth"`
 }
 
 // getSecurityLimits returns a summary of current security limits

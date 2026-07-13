@@ -128,7 +128,7 @@ func (p *Processor) Get(jsonStr, path string, cfg ...Config) (result any, err er
 
 	// PERFORMANCE: Skip hash and cache operations when cache is disabled
 	if !p.config.EnableCache {
-		data, parseErr := p.parseJSON(jsonStr, "get", path, options, cfg...)
+		data, parseErr := p.parseJSON(jsonStr, "get", path, options)
 		if parseErr != nil {
 			p.incrementErrorCount()
 			return nil, parseErr

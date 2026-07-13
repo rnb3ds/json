@@ -58,7 +58,7 @@ func convertToInt64Core(value any) int64Result {
 	case uint32:
 		return int64Result{int64(v), true}
 	case uint64:
-		if v <= 9223372036854775807 {
+		if v <= uint64(math.MaxInt64) {
 			return int64Result{int64(v), true}
 		}
 		return int64Result{0, false}
@@ -771,6 +771,7 @@ func deepCopySliceWithDepth(s []any, depth int) ([]any, error) {
 //   - Tier 1: JSON primitives (bool, float64, string, json.Number) → zero allocation
 //   - Tier 2: map[string]any / []any → specialized inline copy without error wrapping
 //   - Tier 3: Fallback for non-JSON types
+//
 // safeCopyResult returns a safe copy of result for JSON primitives or a deep copy for containers.
 // Prevents callers from corrupting cached data.
 func safeCopyResult(result any) any {

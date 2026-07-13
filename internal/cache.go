@@ -4,7 +4,7 @@ import (
 	"container/list"
 	"context"
 	"runtime"
-		"strings"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -488,7 +488,6 @@ func (cm *CacheManager) Delete(key string) {
 		}
 	}
 }
-
 
 // DeleteByPrefix removes all cache entries whose keys contain the given prefix.
 // Used for invalidating all entries related to a specific JSON input hash.

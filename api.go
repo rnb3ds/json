@@ -1109,9 +1109,22 @@ var asyncCloseSem = make(chan struct{}, maxConcurrentCloses)
 // every pressure event). Collapsing to a single synchronous Close() removes the
 // leak and the redundant double-timeout.
 func asyncCloseProcessor(p *Processor) {
-	asyncCloseSem <- struct{}{}
 	go func() {
-		defer func() { <-asyncCloseSem }()
+		// Non-blocking acquire: never stall the eviction caller. getProcessorWithConfig
+		// (and thus maybeEvictConfigCache) runs on the user's goroutine, so a blocking
+		// send here — under cache-churn eviction with maxConcurrentCloses already in
+		// flight, each held for up to closeOperationTimeout — would block a user calling
+		// a package-level function with a fresh config. When the close-concurrency budget
+		// is full we run Close() without a slot rather than block: Close() is internally
+		// bounded by closeOperationTimeout, so this goroutine still cannot hang. The
+		// stale processor is already detached from the cache, so the worst case under
+		// extreme churn is a few extra transient goroutines, each terminating within the
+		// close timeout.
+		select {
+		case asyncCloseSem <- struct{}{}:
+			defer func() { <-asyncCloseSem }()
+		default:
+		}
 		_ = p.Close() // best-effort; bounded internally by closeOperationTimeout
 	}()
 }
@@ -1122,22 +1135,19 @@ func getProcessorWithConfig(cfg Config) (*Processor, error) {
 	// Compute cache key from config
 	cacheKey := hashConfig(cfg)
 
-	// Fast path: check cache first with validation loop
-	for range 3 {
-		if cached, ok := configProcessorCache.Load(cacheKey); ok {
-			if p, ok := cached.(*Processor); ok && !p.IsClosed() {
-				return p, nil
-			}
-			// Stale entry found - try to delete it atomically
-			// Use CAS-like pattern: delete only if it's still the stale value
-			if current, stillThere := configProcessorCache.Load(cacheKey); stillThere {
-				if current == cached {
-					configProcessorCache.Delete(cacheKey)
-				}
-			}
+	// Fast path: return a live cached processor if present. A stale entry (closed
+	// or wrong type) is best-effort removed via CompareAndDelete, which deletes the
+	// slot only if it still holds that same stale value — so we never drop a valid
+	// processor another goroutine just stored, and the load-check-delete is atomic
+	// (no TOCTOU window between Load and Delete). On a miss — including the rare
+	// race where a concurrent store lands right after our delete — we fall through
+	// to the slow path, whose LoadOrStore resolves the winner correctly (closing
+	// the loser).
+	if cached, ok := configProcessorCache.Load(cacheKey); ok {
+		if p, ok := cached.(*Processor); ok && !p.IsClosed() {
+			return p, nil
 		}
-		// If we found and processed a stale entry, retry the load
-		// This handles the race where another goroutine stores a valid processor
+		configProcessorCache.CompareAndDelete(cacheKey, cached)
 	}
 
 	// Slow path: create new processor

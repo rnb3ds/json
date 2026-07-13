@@ -858,7 +858,7 @@ func (p *Processor) validateDepth(value any, maxDepth, currentDepth int) error {
 }
 
 // needsCustomEncodingOpts checks if the encoding options require custom encoding logic
-// Note: Go std lib json.Marshal escapes HTML by default since Go 1.13,
+// Note: Go std lib json.Marshal escapes HTML by default (this behavior predates Go 1.0),
 // so we only need custom encoding when EscapeHTML is explicitly set to false.
 func needsCustomEncodingOpts(cfg Config) bool {
 	return cfg.DisableEscaping ||
@@ -1084,9 +1084,17 @@ func (p *Processor) EncodeWithConfig(value any, cfg ...Config) (string, error) {
 // encodeWithConfigToBytes encodes value to []byte directly, avoiding string round-trip.
 // PERFORMANCE: Used by Marshal/MarshalIndent to eliminate []byte->string->[]byte conversion.
 func (p *Processor) encodeWithConfigToBytes(value any, cfg ...Config) ([]byte, error) {
-	if err := p.checkClosed(); err != nil {
+	// Concurrency governance: register as an in-flight op so a concurrent Close()
+	// (e.g. cache eviction of a config-cached processor) drains via waitForActiveOps
+	// rather than tearing down resources mid-encode. This is the single funnel for all
+	// encode entry points (Marshal/MarshalIndent/EncodeWithConfig, and via those
+	// EncodeStream/EncodeBatch), none of which are reached from within an already-
+	// governed op, so acquiring here is never nested. In unlimited-concurrency mode
+	// (the default) acquireSemaphore is a no-op, so the cost is two atomic ops.
+	if err := p.beginGovernedOp(); err != nil {
 		return nil, err
 	}
+	defer p.endGovernedOp()
 
 	var config Config
 	if len(cfg) > 0 {
@@ -1452,8 +1460,11 @@ func (e *customEncoder) encodeFloat(f float64, bits int) error {
 		formatted := strconv.FormatFloat(f, 'f', -1, bits)
 		e.buffer.WriteString(formatted)
 	} else {
-		formatted := strconv.FormatFloat(f, 'g', -1, bits)
-		e.buffer.WriteString(formatted)
+		// Match encoding/json's floatEncoder for large/small magnitudes (the 'g'
+		// format used previously emitted uppercase 'E' and diverged from stdlib).
+		// internal.AppendJSONFloat is the same path used by the fast encoder.
+		b := internal.AppendJSONFloat(nil, f, bits)
+		e.buffer.Write(b)
 	}
 
 	return nil

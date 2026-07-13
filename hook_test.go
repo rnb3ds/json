@@ -15,8 +15,8 @@ import (
 
 // mockLogger records log calls for verification.
 type mockLogger struct {
-	mu     sync.Mutex
-	calls  []mockLogEntry
+	mu    sync.Mutex
+	calls []mockLogEntry
 }
 
 type mockLogEntry struct {
@@ -73,7 +73,7 @@ func (m *mockRecorder) last() (mockTimingRecord, bool) {
 
 // orderRecord tracks hook execution order.
 type orderRecord struct {
-	name string
+	name  string
 	phase string // "before" or "after"
 }
 

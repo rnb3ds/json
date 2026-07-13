@@ -149,7 +149,6 @@ func newTestDataGenerator() *testDataGenerator {
 	}
 }
 
-
 // generateComplexJSON generates complex nested JSON structures
 func (g *testDataGenerator) generateComplexJSON() string {
 	return `{
@@ -220,7 +219,6 @@ func (g *testDataGenerator) generateComplexJSON() string {
 		}
 	}`
 }
-
 
 // concurrencyTester helps test concurrent operations
 type concurrencyTester struct {
@@ -378,4 +376,3 @@ func genItemFragments(count int) string {
 	}
 	return strings.Join(items, ",")
 }
-
