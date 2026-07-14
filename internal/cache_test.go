@@ -1,6 +1,7 @@
 package internal
 
 import (
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -213,6 +214,102 @@ func TestCacheEntry(t *testing.T) {
 			t.Errorf("Expected 5 hits, got %d", hitCount)
 		}
 	})
+}
+
+// TestCacheEntryCountAccuracy verifies the atomic entryCount maintained in
+// CacheManager stays in lock-step with the authoritative per-shard size sum
+// (GetStats().Entries) across every mutation path. entryCount drives the
+// empty-cache fast-exit in DeleteByPrefix, so a drift here would either miss
+// the optimization (over-count) or, worse, skip invalidation of live entries
+// (under-count → stale reads). Cross-checking against GetStats().Entries, which
+// sums shard.size under read locks, catches any missed ++/-- site.
+func TestCacheEntryCountAccuracy(t *testing.T) {
+	// A small maxSize forces eviction, exercising the evictLRU decrement path.
+	cm := NewCacheManager(true, 8, 0)
+
+	assertCount := func(label string) {
+		t.Helper()
+		got := cm.EntryCount()
+		want := cm.GetStats().Entries
+		if got != want {
+			t.Errorf("%s: EntryCount=%d but GetStats().Entries=%d", label, got, want)
+		}
+	}
+
+	if cm.EntryCount() != 0 {
+		t.Fatalf("fresh cache EntryCount=%d, want 0", cm.EntryCount())
+	}
+
+	// Set new entries.
+	for i := 0; i < 5; i++ {
+		cm.Set(fmt.Sprintf("k%d", i), i)
+	}
+	assertCount("after 5 inserts")
+
+	// Updating an existing key must NOT change the count.
+	cm.Set("k0", "updated")
+	assertCount("after in-place update")
+
+	// Inserting past maxSize triggers LRU eviction — count must still match.
+	for i := 5; i < 20; i++ {
+		cm.Set(fmt.Sprintf("k%d", i), i)
+	}
+	assertCount("after eviction-inducing inserts")
+
+	// DeleteByPrefix on a populated cache removes matching entries.
+	cm.Set("get:deadbeef:user", 1)
+	cm.Set("parse:deadbeef:", 2)
+	before := cm.EntryCount()
+	cm.DeleteByPrefix("deadbeef")
+	if cm.EntryCount() >= before {
+		t.Errorf("DeleteByPrefix did not reduce count: before=%d after=%d", before, cm.EntryCount())
+	}
+	assertCount("after DeleteByPrefix (populated)")
+
+	// Explicit Delete.
+	cm.Delete("k0")
+	assertCount("after Delete")
+
+	// Clear resets to zero.
+	cm.Clear()
+	if cm.EntryCount() != 0 {
+		t.Errorf("after Clear EntryCount=%d, want 0", cm.EntryCount())
+	}
+
+	// DeleteByPrefix on an empty cache must be a no-op (the fast-exit path)
+	// and must not panic or alter the count.
+	cm.DeleteByPrefix("deadbeef")
+	if cm.EntryCount() != 0 {
+		t.Errorf("DeleteByPrefix on empty cache changed count to %d", cm.EntryCount())
+	}
+}
+
+// TestCacheEntryCountConcurrent hammers Set/Delete from many goroutines and
+// confirms entryCount never drifts below zero and converges to the shard sum.
+func TestCacheEntryCountConcurrent(t *testing.T) {
+	cm := NewCacheManager(true, 10000, 0)
+	var wg sync.WaitGroup
+	for g := 0; g < 8; g++ {
+		wg.Add(1)
+		go func(g int) {
+			defer wg.Done()
+			for i := 0; i < 500; i++ {
+				key := fmt.Sprintf("g%d-k%d", g, i)
+				cm.Set(key, i)
+				if i%3 == 0 {
+					cm.Delete(key)
+				}
+			}
+		}(g)
+	}
+	wg.Wait()
+
+	if cm.EntryCount() < 0 {
+		t.Fatalf("EntryCount went negative: %d", cm.EntryCount())
+	}
+	if got, want := cm.EntryCount(), cm.GetStats().Entries; got != want {
+		t.Errorf("EntryCount=%d != GetStats().Entries=%d after concurrent ops", got, want)
+	}
 }
 
 func BenchmarkCacheGet(b *testing.B) {

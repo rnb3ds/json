@@ -1,11 +1,13 @@
 package json
 
 import (
+	"time"
+
 	"github.com/cybergodev/json/internal"
 )
 
 // Delete removes a value from JSON at the specified path
-func (p *Processor) Delete(jsonStr, path string, cfg ...Config) (string, error) {
+func (p *Processor) Delete(jsonStr, path string, cfg ...Config) (result string, err error) {
 	options, err := p.prepareOperation(jsonStr, path, cfg...)
 	if err != nil {
 		// Return the original input on failure, matching every other error path
@@ -15,6 +17,27 @@ func (p *Processor) Delete(jsonStr, path string, cfg ...Config) (string, error) 
 	// Release in reverse-acquire order: options first, then governance slot.
 	defer p.endGovernedOp()
 	defer releaseConfig(options)
+
+	// Run registered hooks around the operation. A Before hook may abort; an
+	// After hook may observe or transform the result/error. Registered last so
+	// it unwinds first (hooks see the raw result). snapshotHooks is nil in the
+	// common no-hook case, so the whole block is skipped.
+	hc := p.snapshotHooks()
+	if len(hc) > 0 {
+		hookCtx := HookContext{
+			Operation: "delete",
+			JSONStr:   jsonStr,
+			Path:      path,
+			Config:    options,
+			StartTime: time.Now(),
+		}
+		if hookErr := hc.executeBefore(hookCtx); hookErr != nil {
+			return jsonStr, hookErr
+		}
+		defer func() {
+			result, err = hc.executeAfterString(hookCtx, result, err)
+		}()
+	}
 
 	// Determine cleanup options from prepared options and config
 	cleanupNulls := options.CleanupNulls || p.config.CleanupNulls
@@ -79,7 +102,7 @@ func (p *Processor) Delete(jsonStr, path string, cfg ...Config) (string, error) 
 	}
 
 	// Convert back to JSON string
-	result, err := internal.FastMarshalToString(data)
+	result, err = internal.FastMarshalToString(data)
 	if err != nil {
 		return jsonStr, &JsonsError{
 			Op:      "delete",
@@ -102,7 +125,10 @@ func (p *Processor) isArrayDeletePath(path string) bool {
 	return false
 }
 
-// DeleteClean removes a value from JSON and cleans up null placeholders.
+// DeleteClean removes a value from JSON and cleans up the resulting null
+// placeholders and empty array slots. It is a convenience wrapper:
+// DeleteClean(s, p, cfg) is exactly Delete(s, p, cfg') where cfg' is cfg with
+// CleanupNulls and CompactArrays forced to true.
 func (p *Processor) DeleteClean(jsonStr, path string, cfg ...Config) (string, error) {
 	cleanupOpts := mergeOptionsWithOverride(cfg, func(o *Config) {
 		o.CleanupNulls = true

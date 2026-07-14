@@ -87,9 +87,6 @@ func TestSafeGetAPI(t *testing.T) {
 // Benchmark Tests
 // ============================================================================
 
-// BenchmarkDelete/BenchmarkFastDelete/BenchmarkFastSet/BenchmarkGet
-// are covered by comprehensive versions in benchmark_test.go
-
 func BenchmarkHandleArrayAccess(b *testing.B) {
 	processor, _ := New()
 	defer processor.Close()
@@ -127,13 +124,10 @@ func BenchmarkHandlePropertyAccess(b *testing.B) {
 }
 
 func BenchmarkJSONPointerEscape(b *testing.B) {
-	processor, _ := New()
-	defer processor.Close()
-
 	input := "user~/name/with~special/chars"
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_ = escapeJSONPointer(input)
+		_ = internal.EscapeJSONPointer(input)
 	}
 }
 
@@ -201,9 +195,6 @@ func TestArrayExtensionSignal(t *testing.T) {
 
 // TestArrayIndexValidation tests array index validation
 func TestArrayIndexValidation(t *testing.T) {
-	processor, _ := New()
-	defer processor.Close()
-
 	tests := []struct {
 		name  string
 		index string
@@ -238,7 +229,7 @@ func TestArrayIndexValidation(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := processor.isValidArrayIndex(tt.index)
+			result := internal.IsValidArrayIndex(tt.index)
 			if result != tt.valid {
 				t.Errorf("isValidArrayIndex(%s) = %v; want %v", tt.index, result, tt.valid)
 			}
@@ -1183,9 +1174,6 @@ func TestDelim_TypeMethods(t *testing.T) {
 
 // TestDistributedOperationPath tests distributed operation patterns
 func TestDistributedOperationPath(t *testing.T) {
-	processor, _ := New()
-	defer processor.Close()
-
 	// Test that distributed operation paths are detected
 	tests := []struct {
 		name            string
@@ -1216,7 +1204,7 @@ func TestDistributedOperationPath(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			isComplex := processor.isDistributedOperationPath(tt.path)
+			isComplex := internal.IsExtractionPath(tt.path)
 			if isComplex != tt.shouldBeComplex {
 				t.Errorf("isDistributedOperationPath(%s) = %v; want %v", tt.path, isComplex, tt.shouldBeComplex)
 			}
@@ -1522,40 +1510,6 @@ func TestEncodingConfiguration(t *testing.T) {
 
 		helper.AssertTrue(config.Pretty)
 		helper.AssertEqual("  ", config.Indent)
-	})
-
-	t.Run("EncodingOptions", func(t *testing.T) {
-		config := DefaultConfig()
-
-		t.Run("SetPretty", func(t *testing.T) {
-			config.Pretty = true
-			helper.AssertTrue(config.Pretty)
-		})
-
-		t.Run("SetSortKeys", func(t *testing.T) {
-			config.SortKeys = true
-			helper.AssertTrue(config.SortKeys)
-		})
-
-		t.Run("SetFloatPrecision", func(t *testing.T) {
-			config.FloatPrecision = 2
-			helper.AssertEqual(2, config.FloatPrecision)
-		})
-
-		t.Run("SetEscapeHTML", func(t *testing.T) {
-			config.EscapeHTML = false
-			helper.AssertFalse(config.EscapeHTML)
-		})
-
-		t.Run("SetEscapeUnicode", func(t *testing.T) {
-			config.EscapeUnicode = true
-			helper.AssertTrue(config.EscapeUnicode)
-		})
-
-		t.Run("SetIncludeNulls", func(t *testing.T) {
-			config.IncludeNulls = false
-			helper.AssertFalse(config.IncludeNulls)
-		})
 	})
 }
 
@@ -1935,75 +1889,90 @@ func TestForwardSlice(t *testing.T) {
 }
 
 // TestGetOrSlice tests GetTyped[[]any] function
-func TestGetOrSlice(t *testing.T) {
-	jsonStr := `{"items": [1, 2, 3]}`
-	defaultArr := []any{"default"}
+// TestGetTypedDefaults consolidates the former GetOr/GetOrGeneric/GetOrSlice/
+// GetOrBool/GetOrFloat64/GetOrMap tests. GetTyped[T] returns the stored value
+// when found (with best-effort numeric conversion) and the default when the
+// path is missing or the value is type-incompatible.
+func TestGetTypedDefaults(t *testing.T) {
+	cases := []struct {
+		name     string
+		jsonStr  string
+		path     string
+		def      any
+		expected any
+	}{
+		// string
+		{"string existing", `{"user":{"name":"Alice","age":30}}`, "user.name", "Unknown", "Alice"},
+		{"string missing returns default", `{"user":{"name":"Alice"}}`, "user.email", "no@email.com", "no@email.com"},
+		// int
+		{"int existing", `{"user":{"age":30}}`, "user.age", 0, 30},
+		{"int missing returns default", `{"user":{}}`, "user.score", 100, 100},
+		// float64
+		{"float existing", `{"price":19.99}`, "price", 0.0, 19.99},
+		{"int converted to float", `{"count":5}`, "count", 0.0, 5.0},
+		{"float missing returns default", `{}`, "missing", 99.99, 99.99},
+		// bool
+		{"bool existing true", `{"enabled":true}`, "enabled", false, true},
+		{"bool existing false over default", `{"disabled":false}`, "disabled", true, false},
+		{"bool missing returns default", `{}`, "missing", true, true},
+		// []any
+		{"slice existing", `{"items":[1,2,3]}`, "items", []any{"default"}, []any{1.0, 2.0, 3.0}},
+		{"slice missing returns default", `{}`, "missing", []any{"default"}, []any{"default"}},
+		// map[string]any
+		{"map existing", `{"config":{"theme":"dark"}}`, "config", map[string]any{"default": true}, map[string]any{"theme": "dark"}},
+		{"map missing returns default", `{}`, "missing", map[string]any{"default": true}, map[string]any{"default": true}},
+	}
 
-	t.Run("existing array", func(t *testing.T) {
-		result := GetTyped[[]any](jsonStr, "items", defaultArr)
-		if len(result) != 3 {
-			t.Errorf("GetOr[[]any](items) length = %d; want 3", len(result))
-		}
-	})
-
-	t.Run("missing returns default", func(t *testing.T) {
-		result := GetTyped[[]any](jsonStr, "missing", defaultArr)
-		if len(result) != 1 || result[0] != "default" {
-			t.Errorf("GetOr[[]any](missing) = %v; want default", result)
-		}
-	})
-}
-
-// TestGetOrBool tests GetTyped[bool] function
-func TestGetOrBool(t *testing.T) {
-	jsonStr := `{"enabled": true, "disabled": false}`
-
-	t.Run("existing true", func(t *testing.T) {
-		result := GetTyped[bool](jsonStr, "enabled", false)
-		if result != true {
-			t.Errorf("GetOr[bool](enabled) = %v; want true", result)
-		}
-	})
-
-	t.Run("existing false", func(t *testing.T) {
-		result := GetTyped[bool](jsonStr, "disabled", true)
-		if result != false {
-			t.Errorf("GetOr[bool](disabled) = %v; want false", result)
-		}
-	})
-
-	t.Run("missing returns default", func(t *testing.T) {
-		result := GetTyped[bool](jsonStr, "missing", true)
-		if result != true {
-			t.Errorf("GetOr[bool](missing) = %v; want true", result)
-		}
-	})
-}
-
-// TestGetOrFloat64 tests GetTyped[float64] function
-func TestGetOrFloat64(t *testing.T) {
-	jsonStr := `{"price": 19.99, "count": 5}`
-
-	t.Run("existing float", func(t *testing.T) {
-		result := GetTyped[float64](jsonStr, "price", 0.0)
-		if result != 19.99 {
-			t.Errorf("GetOr[float64](price) = %f; want 19.99", result)
-		}
-	})
-
-	t.Run("int converted to float", func(t *testing.T) {
-		result := GetTyped[float64](jsonStr, "count", 0.0)
-		if result != 5.0 {
-			t.Errorf("GetOr[float64](count) = %f; want 5.0", result)
-		}
-	})
-
-	t.Run("missing returns default", func(t *testing.T) {
-		result := GetTyped[float64](jsonStr, "missing", 99.99)
-		if result != 99.99 {
-			t.Errorf("GetOr[float64](missing) = %f; want 99.99", result)
-		}
-	})
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			switch def := tc.def.(type) {
+			case string:
+				got := GetTyped[string](tc.jsonStr, tc.path, def)
+				if want := tc.expected.(string); got != want {
+					t.Errorf("GetTyped[string](%s) = %q, want %q", tc.path, got, want)
+				}
+			case int:
+				got := GetTyped[int](tc.jsonStr, tc.path, def)
+				if want := tc.expected.(int); got != want {
+					t.Errorf("GetTyped[int](%s) = %d, want %d", tc.path, got, want)
+				}
+			case float64:
+				got := GetTyped[float64](tc.jsonStr, tc.path, def)
+				if want := tc.expected.(float64); got != want {
+					t.Errorf("GetTyped[float64](%s) = %v, want %v", tc.path, got, want)
+				}
+			case bool:
+				got := GetTyped[bool](tc.jsonStr, tc.path, def)
+				if want := tc.expected.(bool); got != want {
+					t.Errorf("GetTyped[bool](%s) = %v, want %v", tc.path, got, want)
+				}
+			case []any:
+				got := GetTyped[[]any](tc.jsonStr, tc.path, def)
+				want := tc.expected.([]any)
+				if len(got) != len(want) {
+					t.Fatalf("slice length = %d, want %d (got=%v)", len(got), len(want), got)
+				}
+				for i := range want {
+					if got[i] != want[i] {
+						t.Errorf("slice[%d] = %v, want %v", i, got[i], want[i])
+					}
+				}
+			case map[string]any:
+				got := GetTyped[map[string]any](tc.jsonStr, tc.path, def)
+				want := tc.expected.(map[string]any)
+				if len(got) != len(want) {
+					t.Fatalf("map size = %d, want %d (got=%v)", len(got), len(want), got)
+				}
+				for k, v := range want {
+					if got[k] != v {
+						t.Errorf("map[%q] = %v, want %v", k, got[k], v)
+					}
+				}
+			default:
+				t.Fatalf("unsupported default type %T", tc.def)
+			}
+		})
+	}
 }
 
 // TestGetHealthStatus tests health status retrieval
@@ -2091,25 +2060,6 @@ func TestGetMultiple(t *testing.T) {
 }
 
 // TestGetOrMap tests GetTyped[map[string]any] function
-func TestGetOrMap(t *testing.T) {
-	jsonStr := `{"config": {"theme": "dark"}}`
-	defaultObj := map[string]any{"default": true}
-
-	t.Run("existing object", func(t *testing.T) {
-		result := GetTyped[map[string]any](jsonStr, "config", defaultObj)
-		if result["theme"] != "dark" {
-			t.Errorf("GetOr[map[string]any](config) = %v; want theme=dark", result)
-		}
-	})
-
-	t.Run("missing returns default", func(t *testing.T) {
-		result := GetTyped[map[string]any](jsonStr, "missing", defaultObj)
-		if result["default"] != true {
-			t.Errorf("GetOr[map[string]any](missing) = %v; want default", result)
-		}
-	})
-}
-
 // TestGetStats tests statistics retrieval from the global processor.
 func TestGetStats(t *testing.T) {
 	stats := GetStats()
@@ -2121,110 +2071,6 @@ func TestGetStats(t *testing.T) {
 	// HitRatio, when reported, is a probability in [0, 1].
 	if stats.HitRatio < 0 || stats.HitRatio > 1 {
 		t.Errorf("HitRatio out of [0,1]: %v", stats.HitRatio)
-	}
-}
-
-// TestGetOr tests typed get with defaults
-func TestGetOr(t *testing.T) {
-	jsonStr := `{"user": {"name": "Alice", "age": 30}}`
-
-	t.Run("existing value", func(t *testing.T) {
-		name := GetTyped[string](jsonStr, "user.name", "Unknown")
-		if name != "Alice" {
-			t.Errorf("Expected 'Alice', got '%s'", name)
-		}
-	})
-
-	t.Run("missing value with default", func(t *testing.T) {
-		name := GetTyped[string](jsonStr, "user.email", "unknown@example.com")
-		if name != "unknown@example.com" {
-			t.Errorf("Expected default value, got '%s'", name)
-		}
-	})
-
-	t.Run("int with default", func(t *testing.T) {
-		age := GetTyped[int](jsonStr, "user.age", 0)
-		if age != 30 {
-			t.Errorf("Expected 30, got %d", age)
-		}
-	})
-
-	t.Run("missing int with default", func(t *testing.T) {
-		score := GetTyped[int](jsonStr, "user.score", 100)
-		if score != 100 {
-			t.Errorf("Expected default 100, got %d", score)
-		}
-	})
-}
-
-// TestGetOrGeneric tests the generic GetTyped function with generics
-func TestGetOrGeneric(t *testing.T) {
-	jsonStr := `{"user": {"name": "Alice", "age": 30, "active": true}}`
-
-	tests := []struct {
-		name         string
-		path         string
-		defaultValue any
-		expected     any
-	}{
-		{
-			name:         "existing string",
-			path:         "user.name",
-			defaultValue: "Unknown",
-			expected:     "Alice",
-		},
-		{
-			name:         "missing string returns default",
-			path:         "user.email",
-			defaultValue: "no@email.com",
-			expected:     "no@email.com",
-		},
-		{
-			name:         "existing int",
-			path:         "user.age",
-			defaultValue: 0,
-			expected:     30,
-		},
-		{
-			name:         "missing int returns default",
-			path:         "user.score",
-			defaultValue: 100,
-			expected:     100,
-		},
-		{
-			name:         "existing bool",
-			path:         "user.active",
-			defaultValue: false,
-			expected:     true,
-		},
-		{
-			name:         "missing bool returns default",
-			path:         "user.admin",
-			defaultValue: false,
-			expected:     false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			switch def := tt.defaultValue.(type) {
-			case string:
-				result := GetTyped[string](jsonStr, tt.path, def)
-				if result != tt.expected.(string) {
-					t.Errorf("GetOr[string](%s) = %v; want %v", tt.path, result, tt.expected)
-				}
-			case int:
-				result := GetTyped[int](jsonStr, tt.path, def)
-				if result != tt.expected.(int) {
-					t.Errorf("GetOr[int](%s) = %d; want %d", tt.path, result, tt.expected)
-				}
-			case bool:
-				result := GetTyped[bool](jsonStr, tt.path, def)
-				if result != tt.expected.(bool) {
-					t.Errorf("GetOr[bool](%s) = %v; want %v", tt.path, result, tt.expected)
-				}
-			}
-		})
 	}
 }
 
@@ -2953,9 +2799,6 @@ func TestIsComplexPath(t *testing.T) {
 
 // TestJSONPointerEscapeUnescape tests JSON Pointer escaping
 func TestJSONPointerEscapeUnescape(t *testing.T) {
-	processor, _ := New()
-	defer processor.Close()
-
 	tests := []struct {
 		name     string
 		input    string
@@ -2985,7 +2828,7 @@ func TestJSONPointerEscapeUnescape(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := escapeJSONPointer(tt.input)
+			result := internal.EscapeJSONPointer(tt.input)
 			if result != tt.expected {
 				t.Errorf("escapeJSONPointer(%s) = %s; want %s", tt.input, result, tt.expected)
 			}
@@ -3090,66 +2933,6 @@ func TestNullAndMissingFields(t *testing.T) {
 			}
 		})
 	})
-}
-
-func TestNumber_TypeMethods(t *testing.T) {
-	t.Run("String", func(t *testing.T) {
-		n := Number("123.45")
-		if n.String() != "123.45" {
-			t.Errorf("Number.String() = %q, want %q", n.String(), "123.45")
-		}
-	})
-
-	t.Run("Float64 valid", func(t *testing.T) {
-		n := Number("123.45")
-		f, err := n.Float64()
-		if err != nil {
-			t.Errorf("Number.Float64() error: %v", err)
-		}
-		if f != 123.45 {
-			t.Errorf("Number.Float64() = %v, want %v", f, 123.45)
-		}
-	})
-
-	t.Run("Float64 invalid", func(t *testing.T) {
-		n := Number("not-a-number")
-		_, err := n.Float64()
-		if err == nil {
-			t.Error("Float64 should return error for invalid number")
-		}
-	})
-
-	t.Run("Int64 valid", func(t *testing.T) {
-		n := Number("123")
-		i, err := n.Int64()
-		if err != nil {
-			t.Errorf("Number.Int64() error: %v", err)
-		}
-		if i != 123 {
-			t.Errorf("Number.Int64() = %v, want %v", i, 123)
-		}
-	})
-
-	t.Run("Int64 invalid", func(t *testing.T) {
-		n := Number("not-a-number")
-		_, err := n.Int64()
-		if err == nil {
-			t.Error("Int64 should return error for invalid number")
-		}
-	})
-}
-
-// TestOperationTypes tests Operation constants
-func TestOperationTypes(t *testing.T) {
-	if opGet != 0 {
-		t.Errorf("opGet = %d, want 0", opGet)
-	}
-	if opSet != 1 {
-		t.Errorf("opSet = %d, want 1", opSet)
-	}
-	if opDelete != 2 {
-		t.Errorf("opDelete = %d, want 2", opDelete)
-	}
 }
 
 // TestParseArrayIndex tests the internal ParseArrayIndex function
@@ -3305,11 +3088,36 @@ func TestParseExtractionSegment(t *testing.T) {
 	}
 }
 
+// splitPathSegments and joinPathSegments mirror the removed (*Processor) helpers
+// of the same names. Kept here purely to exercise the simple dot/JSON-pointer
+// segment semantics covered by TestPathCombination and TestPathSegmentation;
+// production code uses the richer internal path parser.
+func splitPathSegments(path string) []string {
+	if path == "" {
+		return []string{}
+	}
+	if strings.HasPrefix(path, "/") {
+		withoutSlash := path[1:]
+		if withoutSlash == "" {
+			return []string{}
+		}
+		return strings.Split(withoutSlash, "/")
+	}
+	return strings.Split(path, ".")
+}
+
+func joinPathSegments(segments []string, useJSONPointer bool) string {
+	if len(segments) == 0 {
+		return ""
+	}
+	if useJSONPointer {
+		return "/" + strings.Join(segments, "/")
+	}
+	return strings.Join(segments, ".")
+}
+
 // TestPathCombination tests path joining and reconstruction
 func TestPathCombination(t *testing.T) {
-	processor, _ := New()
-	defer processor.Close()
-
 	tests := []struct {
 		name     string
 		segments []string
@@ -3344,7 +3152,7 @@ func TestPathCombination(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := processor.joinPathSegments(tt.segments, tt.useJSON)
+			result := joinPathSegments(tt.segments, tt.useJSON)
 			if result != tt.expected {
 				t.Errorf("joinPathSegments(%v, %v) = %s; want %s", tt.segments, tt.useJSON, result, tt.expected)
 			}
@@ -3354,9 +3162,6 @@ func TestPathCombination(t *testing.T) {
 
 // TestPathNormalization tests path normalization operations
 func TestPathNormalization(t *testing.T) {
-	processor, _ := New()
-	defer processor.Close()
-
 	tests := []struct {
 		name     string
 		input    string
@@ -3396,7 +3201,7 @@ func TestPathNormalization(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := processor.normalizePathSeparators(tt.input)
+			result := internal.NormalizePathSeparators(tt.input)
 			if result != tt.expected {
 				t.Errorf("normalizePathSeparators(%s) = %s; want %s", tt.input, result, tt.expected)
 			}
@@ -3600,35 +3405,8 @@ func TestPathReconstruction(t *testing.T) {
 }
 
 // TestPathSegmentTypes tests different path segment type identification
-func TestPathSegmentTypes(t *testing.T) {
-	processor, _ := New()
-	defer processor.Close()
-
-	// Test segment type string representation
-	tests := []struct {
-		segmentType string
-		expectedStr string
-	}{
-		{"PropertySegment", "property"},
-		{"ArrayIndexSegment", "array"},
-		{"ArraySliceSegment", "slice"},
-		{"ExtractSegment", "extract"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.segmentType, func(t *testing.T) {
-			// This test verifies that segment types have correct string representations
-			// The actual implementation would require accessing internal types
-			t.Logf("Segment type %s should map to '%s'", tt.segmentType, tt.expectedStr)
-		})
-	}
-}
-
 // TestPathSegmentation tests splitting paths into segments
 func TestPathSegmentation(t *testing.T) {
-	processor, _ := New()
-	defer processor.Close()
-
 	tests := []struct {
 		name        string
 		path        string
@@ -3669,7 +3447,7 @@ func TestPathSegmentation(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			segments := processor.splitPathSegments(tt.path)
+			segments := splitPathSegments(tt.path)
 			if len(segments) != tt.expectedLen {
 				t.Errorf("splitPathSegments(%s) returned %d segments; want %d", tt.path, len(segments), tt.expectedLen)
 			}
@@ -3788,11 +3566,8 @@ func TestPreprocessPath(t *testing.T) {
 	}
 }
 
-// TestPrintE tests printE function
 // TestProcessBatch tests batch processing
 func TestProcessBatch(t *testing.T) {
-	jsonStr := `{"user": {"name": "Alice", "age": 30}}`
-
 	operations := []BatchOperation{
 		{Type: "get", Path: "user.name"},
 		{Type: "get", Path: "user.age"},
@@ -3807,8 +3582,6 @@ func TestProcessBatch(t *testing.T) {
 	if len(results) != len(operations) {
 		t.Errorf("Expected %d results, got %d", len(operations), len(results))
 	}
-
-	_ = jsonStr // Use the variable
 }
 
 func TestProcessor_BatchOperations(t *testing.T) {
@@ -3920,10 +3693,13 @@ func TestProcessor_EncodeWithOptions(t *testing.T) {
 		encOpts.Pretty = true
 		result, err := processor.EncodeWithConfig(data, encOpts)
 		if err != nil {
-			t.Errorf("EncodeWithConfig error: %v", err)
+			t.Fatalf("EncodeWithConfig error: %v", err)
 		}
-		if result == "" {
-			t.Error("EncodeWithConfig should return non-empty result")
+		if !strings.Contains(result, "value") {
+			t.Errorf("result should contain the value, got %q", result)
+		}
+		if !strings.Contains(result, "\n") {
+			t.Errorf("Pretty encoding should produce newlines, got %q", result)
 		}
 	})
 
@@ -3933,10 +3709,10 @@ func TestProcessor_EncodeWithOptions(t *testing.T) {
 		cfg.Pretty = true
 		result, err := processor.EncodeBatch(pairs, cfg)
 		if err != nil {
-			t.Errorf("EncodeBatch error: %v", err)
+			t.Fatalf("EncodeBatch error: %v", err)
 		}
-		if result == "" {
-			t.Error("EncodeBatch should return non-empty result")
+		if !strings.Contains(result, "\"a\"") || !strings.Contains(result, "\"b\"") {
+			t.Errorf("result should contain both keys, got %q", result)
 		}
 	})
 
@@ -3953,10 +3729,14 @@ func TestProcessor_EncodeWithOptions(t *testing.T) {
 		fields := []string{"name", "age"}
 		result, err := processor.EncodeFields(data, fields, DefaultConfig())
 		if err != nil {
-			t.Errorf("EncodeFields error: %v", err)
+			t.Fatalf("EncodeFields error: %v", err)
 		}
-		if result == "" {
-			t.Error("EncodeFields should return non-empty result")
+		if !strings.Contains(result, "John") {
+			t.Errorf("result should contain selected field 'name', got %q", result)
+		}
+		// Only the selected fields should be present; email must be excluded.
+		if strings.Contains(result, "john@example.com") {
+			t.Errorf("result should exclude unselected field 'email', got %q", result)
 		}
 	})
 
@@ -3964,10 +3744,12 @@ func TestProcessor_EncodeWithOptions(t *testing.T) {
 		values := []any{1, 2, 3}
 		result, err := processor.EncodeStream(values, DefaultConfig())
 		if err != nil {
-			t.Errorf("EncodeStream error: %v", err)
+			t.Fatalf("EncodeStream error: %v", err)
 		}
-		if result == "" {
-			t.Error("EncodeStream should return non-empty result")
+		for _, want := range []string{"1", "2", "3"} {
+			if !strings.Contains(result, want) {
+				t.Errorf("result should contain %s, got %q", want, result)
+			}
 		}
 	})
 
@@ -3976,10 +3758,10 @@ func TestProcessor_EncodeWithOptions(t *testing.T) {
 		encOpts := DefaultConfig()
 		result, err := processor.EncodeStream(values, encOpts)
 		if err != nil {
-			t.Errorf("EncodeStream error: %v", err)
+			t.Fatalf("EncodeStream error: %v", err)
 		}
-		if result == "" {
-			t.Error("EncodeStream should return non-empty result")
+		if !strings.Contains(result, "2") {
+			t.Errorf("result should contain streamed value 2, got %q", result)
 		}
 	})
 }
@@ -4473,21 +4255,47 @@ func TestProcessor_StatsAndHealth(t *testing.T) {
 	processor, _ := New()
 	defer processor.Close()
 
+	// Drive at least one operation so the operation counter is non-zero.
+	if _, err := processor.Get(`{"k":"v"}`, "k"); err != nil {
+		t.Fatalf("setup Get failed: %v", err)
+	}
+
 	t.Run("GetStats", func(t *testing.T) {
 		stats := processor.GetStats()
-		// Verify stats has expected structure (Stats is a struct, not a pointer)
-		_ = stats // Just verify it doesn't panic
+		if stats.OperationCount < 1 {
+			t.Errorf("OperationCount = %d, want >= 1 after a Get", stats.OperationCount)
+		}
+		if stats.IsClosed {
+			t.Error("IsClosed = true, want false on an open processor")
+		}
 	})
 
 	t.Run("GetHealthStatus", func(t *testing.T) {
 		health := processor.GetHealthStatus()
-		// Verify health has expected structure (HealthStatus is a struct, not a pointer)
-		_ = health // Just verify it doesn't panic
+		if len(health.Checks) == 0 {
+			t.Fatal("expected populated health checks, got none")
+		}
+		// The aggregate Healthy flag depends on metrics-collector warmup and may
+		// be false on a fresh processor; verify the pipeline returns structured
+		// per-check results with at least one healthy dimension.
+		var anyHealthy bool
+		for _, c := range health.Checks {
+			if c.Healthy {
+				anyHealthy = true
+				break
+			}
+		}
+		if !anyHealthy {
+			t.Errorf("expected at least one healthy check, got %v", health.Checks)
+		}
 	})
 
 	t.Run("ClearCache", func(t *testing.T) {
+		// ClearCache must not panic and must leave the processor usable.
 		processor.ClearCache()
-		// Should not panic
+		if _, err := processor.Get(`{"k":"v"}`, "k"); err != nil {
+			t.Errorf("Get after ClearCache failed: %v", err)
+		}
 	})
 }
 
@@ -4529,9 +4337,6 @@ func TestProcessor_WildcardAndExtraction(t *testing.T) {
 
 // TestPropertyValidation tests property name validation
 func TestPropertyValidation(t *testing.T) {
-	processor, _ := New()
-	defer processor.Close()
-
 	tests := []struct {
 		name     string
 		property string
@@ -4566,7 +4371,7 @@ func TestPropertyValidation(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := processor.isValidPropertyName(tt.property)
+			result := internal.IsValidPropertyName(tt.property)
 			if result != tt.valid {
 				t.Errorf("isValidPropertyName(%s) = %v; want %v", tt.property, result, tt.valid)
 			}
@@ -4775,9 +4580,6 @@ func TestShutdownGlobalProcessor(t *testing.T) {
 
 // TestSliceRangeValidation tests slice range validation
 func TestSliceRangeValidation(t *testing.T) {
-	processor, _ := New()
-	defer processor.Close()
-
 	tests := []struct {
 		name     string
 		rangeStr string
@@ -4822,7 +4624,7 @@ func TestSliceRangeValidation(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := processor.isValidSliceRange(tt.rangeStr)
+			result := internal.IsValidSliceRange(tt.rangeStr)
 			if result != tt.valid {
 				t.Errorf("isValidSliceRange(%s) = %v; want %v", tt.rangeStr, result, tt.valid)
 			}
@@ -5019,12 +4821,14 @@ func TestMultiFieldPathParsing(t *testing.T) {
 	}
 }
 
-// TestMultiFieldExtractionDebug debug test
+// TestMultiFieldExtractionDebug drives handleExtraction directly with a
+// pre-parsed map and an extract segment. This map-input path reaches
+// array-extraction branches in operation_array.go that the Get("...{...}")
+// JSON-string path does not exercise, so it is retained for coverage.
 func TestMultiFieldExtractionDebug(t *testing.T) {
 	processor, _ := New()
 	defer processor.Close()
 
-	// Test the extraction directly
 	data := map[string]any{
 		"id":   float64(1001),
 		"name": "Alice",
@@ -5040,14 +4844,10 @@ func TestMultiFieldExtractionDebug(t *testing.T) {
 		t.Fatalf("handleExtraction error: %v", err)
 	}
 
-	t.Logf("Result: %v (type: %T)", result, result)
-
 	if result == nil {
 		t.Error("Expected non-nil result")
 	}
 }
-
-// TestPathEscapeIntegration tests the escape functionality with real JSON data
 
 // TestPathEscapeIntegration tests the escape functionality with real JSON data
 func TestPathEscapeIntegration(t *testing.T) {

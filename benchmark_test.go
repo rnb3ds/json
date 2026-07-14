@@ -195,6 +195,37 @@ func BenchmarkLargeJSONObject_Parse_1000(b *testing.B) {
 	}
 }
 
+// BenchmarkLargeJSONArray_Parse_1000_SharedCache mirrors the default-config
+// benchmark above but enables Config.CacheSharedResults. On cache hits the
+// defensive deep copy (the dominant cost of the default benchmark) is skipped,
+// so repeated root Gets return shared references directly.
+func BenchmarkLargeJSONArray_Parse_1000_SharedCache(b *testing.B) {
+	jsonStr := generateLargeJSONArray(1000)
+	cfg := DefaultConfig()
+	cfg.CacheSharedResults = true
+	processor, _ := New(cfg)
+	defer processor.Close()
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _ = processor.Get(jsonStr, ".")
+	}
+}
+
+// BenchmarkLargeJSONObject_Parse_1000_SharedCache mirrors the object variant.
+func BenchmarkLargeJSONObject_Parse_1000_SharedCache(b *testing.B) {
+	jsonStr := generateLargeJSONObject(1000)
+	cfg := DefaultConfig()
+	cfg.CacheSharedResults = true
+	processor, _ := New(cfg)
+	defer processor.Close()
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _ = processor.Get(jsonStr, ".")
+	}
+}
+
 // ----------------------------------------------------------------------------
 // ITERATOR BENCHMARKS
 // ----------------------------------------------------------------------------

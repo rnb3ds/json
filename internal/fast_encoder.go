@@ -7,11 +7,27 @@ import (
 	"fmt"
 	"math"
 	"reflect"
+	"sort"
 	"strconv"
 	"sync"
 	"time"
 	"unicode/utf8"
 )
+
+// sortedMapKeys returns the keys of m in lexicographic order.
+//
+// encoding/json always emits object keys sorted; the fast encoder matches
+// that so its output is deterministic and byte-compatible with the standard
+// library (a map[string]any round-trip must not depend on Go's random map
+// iteration order).
+func sortedMapKeys[V any](m map[string]V) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
 
 // ============================================================================
 // LOOKUP TABLES FOR STRING ESCAPING
@@ -888,7 +904,8 @@ func (e *FastEncoder) EncodeMap(m map[string]any) error {
 	e.buf = append(e.buf, '{')
 	first := true
 
-	for k, v := range m {
+	// Sorted iteration keeps output deterministic and encoding/json-compatible.
+	for _, k := range sortedMapKeys(m) {
 		if !first {
 			e.buf = append(e.buf, ',')
 		}
@@ -897,7 +914,7 @@ func (e *FastEncoder) EncodeMap(m map[string]any) error {
 		e.EncodeString(k)
 		e.buf = append(e.buf, ':')
 
-		if err := e.EncodeValue(v); err != nil {
+		if err := e.EncodeValue(m[k]); err != nil {
 			return err
 		}
 	}
@@ -917,7 +934,7 @@ func (e *FastEncoder) EncodeMapStringString(m map[string]string) error {
 	e.buf = append(e.buf, '{')
 	first := true
 
-	for k, v := range m {
+	for _, k := range sortedMapKeys(m) {
 		if !first {
 			e.buf = append(e.buf, ',')
 		}
@@ -925,7 +942,7 @@ func (e *FastEncoder) EncodeMapStringString(m map[string]string) error {
 
 		e.EncodeString(k)
 		e.buf = append(e.buf, ':')
-		e.EncodeString(v)
+		e.EncodeString(m[k])
 	}
 
 	e.buf = append(e.buf, '}')
@@ -943,7 +960,7 @@ func (e *FastEncoder) EncodeMapStringInt(m map[string]int) error {
 	e.buf = append(e.buf, '{')
 	first := true
 
-	for k, v := range m {
+	for _, k := range sortedMapKeys(m) {
 		if !first {
 			e.buf = append(e.buf, ',')
 		}
@@ -951,7 +968,7 @@ func (e *FastEncoder) EncodeMapStringInt(m map[string]int) error {
 
 		e.EncodeString(k)
 		e.buf = append(e.buf, ':')
-		e.EncodeInt(int64(v))
+		e.EncodeInt(int64(m[k]))
 	}
 
 	e.buf = append(e.buf, '}')
@@ -1093,10 +1110,11 @@ func (e *FastEncoder) EncodeFloat32Slice(arr []float32) {
 // PERFORMANCE: Specialized encoders avoid reflection overhead
 // ============================================================================
 
-// EncodeTime encodes a time.Time in RFC3339 format
+// EncodeTime encodes a time.Time in RFC3339Nano format, matching encoding/json
+// (which preserves sub-second precision via time.Time.MarshalJSON).
 func (e *FastEncoder) EncodeTime(t time.Time) {
 	e.buf = append(e.buf, '"')
-	e.buf = append(e.buf, t.Format(time.RFC3339)...)
+	e.buf = append(e.buf, t.Format(time.RFC3339Nano)...)
 	e.buf = append(e.buf, '"')
 }
 
@@ -1128,7 +1146,7 @@ func (e *FastEncoder) EncodeMapStringInt64(m map[string]int64) error {
 	e.buf = append(e.buf, '{')
 	first := true
 
-	for k, v := range m {
+	for _, k := range sortedMapKeys(m) {
 		if !first {
 			e.buf = append(e.buf, ',')
 		}
@@ -1136,7 +1154,7 @@ func (e *FastEncoder) EncodeMapStringInt64(m map[string]int64) error {
 
 		e.EncodeString(k)
 		e.buf = append(e.buf, ':')
-		e.EncodeInt(v)
+		e.EncodeInt(m[k])
 	}
 
 	e.buf = append(e.buf, '}')
@@ -1154,7 +1172,7 @@ func (e *FastEncoder) EncodeMapStringFloat64(m map[string]float64) error {
 	e.buf = append(e.buf, '{')
 	first := true
 
-	for k, v := range m {
+	for _, k := range sortedMapKeys(m) {
 		if !first {
 			e.buf = append(e.buf, ',')
 		}
@@ -1162,7 +1180,7 @@ func (e *FastEncoder) EncodeMapStringFloat64(m map[string]float64) error {
 
 		e.EncodeString(k)
 		e.buf = append(e.buf, ':')
-		e.EncodeFloat(v, 64)
+		e.EncodeFloat(m[k], 64)
 	}
 
 	e.buf = append(e.buf, '}')

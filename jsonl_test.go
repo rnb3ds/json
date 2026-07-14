@@ -1090,3 +1090,61 @@ func TestPackageLevel_StreamJSONLFile(t *testing.T) {
 		t.Errorf("count = %d, want 2", count)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// FIX-001: StreamJSONL security-limit coverage (processor_streamjsonl.go).
+// ---------------------------------------------------------------------------
+
+// TestProcessor_StreamJSONL_NestingLimit verifies the per-line nesting guard
+// rejects a deeply nested JSONL payload before unmarshaling, preventing stack
+// overflow from adversarial input.
+func TestProcessor_StreamJSONL_NestingLimit(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.MaxNestingDepthSecurity = 10 // clamped minimum
+	p, err := New(cfg)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer p.Close()
+
+	// Build a single line nested 20 deep.
+	var b strings.Builder
+	for i := 0; i < 20; i++ {
+		b.WriteString(`{"a":`)
+	}
+	b.WriteString(`1`)
+	for i := 0; i < 20; i++ {
+		b.WriteString(`}`)
+	}
+
+	err = p.StreamJSONL(strings.NewReader(b.String()), func(int, *IterableValue) error {
+		return nil
+	})
+	if err == nil {
+		t.Fatal("StreamJSONL of deeply nested line should fail")
+	}
+	if !strings.Contains(err.Error(), "nesting") {
+		t.Errorf("expected nesting-depth error, got %v", err)
+	}
+}
+
+// TestProcessor_StreamJSONL_InvalidLine verifies a malformed JSON line surfaces
+// a parse error annotated with the line number.
+func TestProcessor_StreamJSONL_InvalidLine(t *testing.T) {
+	p, err := New()
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer p.Close()
+
+	input := `{"ok":1}` + "\n" + `{bad json` + "\n" + `{"ok":2}`
+	err = p.StreamJSONL(strings.NewReader(input), func(int, *IterableValue) error {
+		return nil
+	})
+	if err == nil {
+		t.Fatal("StreamJSONL of invalid line should fail")
+	}
+	if !strings.Contains(err.Error(), "line 2") {
+		t.Errorf("expected 'line 2' in error, got %v", err)
+	}
+}

@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 	"slices"
 	"sync"
 
@@ -32,6 +33,22 @@ func getProcessorOrFail() (*Processor, error) {
 		return nil, errInternalError
 	}
 	return p, nil
+}
+
+// processorForCfg returns the default processor when cfg is omitted, or a
+// config-cached processor whose baked-in settings match the supplied cfg.
+//
+// It lets package-level functions that delegate to Processor methods (which read
+// p.config directly, e.g. the JSONL/stream family) honor an optional trailing
+// Config by selecting the right processor, rather than threading cfg through
+// every method signature. With no cfg it is identical to getProcessorOrFail
+// (behavior unchanged). This mirrors how CompareJSON applies cfg via
+// getProcessorWithConfig.
+func processorForCfg(cfg ...Config) (*Processor, error) {
+	if len(cfg) == 0 {
+		return getProcessorOrFail()
+	}
+	return getProcessorWithConfig(cfg[0])
 }
 
 // =============================================================================
@@ -118,7 +135,8 @@ func isDefaultConfig(cfg Config) bool {
 		cfg.StrictMode ||
 		!cfg.CreatePaths ||
 		!cfg.EnableCache ||
-		!cfg.EnableValidation {
+		!cfg.EnableValidation ||
+		cfg.CacheSharedResults {
 		return false
 	}
 
@@ -152,6 +170,9 @@ var configFieldList = []configFieldAccessor{
 	{"CacheResults",
 		func(a, b Config) bool { return a.CacheResults == b.CacheResults },
 		func(h uint64, c Config) uint64 { return internal.HashBool(h, c.CacheResults) }},
+	{"CacheSharedResults",
+		func(a, b Config) bool { return a.CacheSharedResults == b.CacheSharedResults },
+		func(h uint64, c Config) uint64 { return internal.HashBool(h, c.CacheSharedResults) }},
 	// Size limits
 	{"MaxJSONSize",
 		func(a, b Config) bool { return a.MaxJSONSize == b.MaxJSONSize },
@@ -544,6 +565,13 @@ func GetWithContext(ctx context.Context, jsonStr, path string, cfg ...Config) (a
 
 // =============================================================================
 // Typed Get Operations
+//
+// The typed getters below (GetTyped, GetString, GetInt, ...) do NOT accept a
+// Config argument: their variadic parameter is already consumed by the default
+// value (Go permits only one variadic parameter per function). They use the
+// default processor. For Config-controlled validation/security on a typed read,
+// use SafeGet(str, path, cfg) (returns an AccessResult with AsString/AsInt/...),
+// or construct a processor with the desired config: New(cfg).GetString(...).
 // =============================================================================
 
 // GetTyped retrieves a typed value from JSON at the specified path.
@@ -711,35 +739,74 @@ func DeleteClean(jsonStr, path string, cfg ...Config) (string, error) {
 }
 
 // Marshal returns the JSON encoding of v.
-// This function is 100% compatible with encoding/json.Marshal.
-// For configuration options, use EncodeWithConfig or Processor.Marshal with cfg parameter.
-func Marshal(value any) ([]byte, error) {
+// This function is 100% compatible with encoding/json.Marshal: calling it as
+// json.Marshal(v) behaves identically to the standard library.
+//
+// For configuration options (indentation, number handling, etc.), pass an
+// optional Config. This mirrors Processor.Marshal, making the package-level
+// and processor-level APIs true mirrors of each other.
+//
+// Example:
+//
+//	// Drop-in compatible with encoding/json (no config)
+//	b, err := json.Marshal(value)
+//
+//	// With configuration (non-breaking, optional trailing Config)
+//	b, err = json.Marshal(value, json.PrettyConfig())
+func Marshal(value any, cfg ...Config) ([]byte, error) {
 	return withProcessorBytesResult(func(p *Processor) ([]byte, error) {
-		return p.Marshal(value)
+		return p.Marshal(value, cfg...)
 	})
 }
 
 // Unmarshal parses the JSON-encoded data and stores the result in v.
-// This function is 100% compatible with encoding/json.Unmarshal.
-// For configuration options, use Processor.Unmarshal with cfg parameter.
-func Unmarshal(data []byte, value any) error {
+// This function is 100% compatible with encoding/json.Unmarshal: calling it as
+// json.Unmarshal(data, &v) behaves identically to the standard library.
+//
+// For configuration options (security limits, number preservation, etc.), pass
+// an optional Config. This mirrors Processor.Unmarshal.
+//
+// Example:
+//
+//	// Drop-in compatible with encoding/json (no config)
+//	err := json.Unmarshal(data, &v)
+//
+//	// With configuration (non-breaking, optional trailing Config)
+//	err = json.Unmarshal(data, &v, json.SecurityConfig())
+func Unmarshal(data []byte, value any, cfg ...Config) error {
 	return withProcessorError(func(p *Processor) error {
-		return p.Unmarshal(data, value)
+		return p.Unmarshal(data, value, cfg...)
 	})
 }
 
 // MarshalIndent is like Marshal but applies indentation to format the output.
-// This function is 100% compatible with encoding/json.MarshalIndent.
-// For configuration options, use EncodeWithConfig or Processor.MarshalIndent with cfg parameter.
-func MarshalIndent(v any, prefix, indent string) ([]byte, error) {
+// This function is 100% compatible with encoding/json.MarshalIndent: calling
+// it as json.MarshalIndent(v, prefix, indent) behaves identically to the
+// standard library.
+//
+// For additional configuration options, pass an optional Config. This mirrors
+// Processor.MarshalIndent. The prefix and indent arguments override the
+// corresponding Config fields.
+//
+// Example:
+//
+//	// Drop-in compatible with encoding/json (no config)
+//	b, err := json.MarshalIndent(v, "", "  ")
+//
+//	// With configuration (non-breaking, optional trailing Config)
+//	b, err = json.MarshalIndent(v, "", "  ", json.SecurityConfig())
+func MarshalIndent(v any, prefix, indent string, cfg ...Config) ([]byte, error) {
 	return withProcessorBytesResult(func(p *Processor) ([]byte, error) {
-		return p.MarshalIndent(v, prefix, indent)
+		return p.MarshalIndent(v, prefix, indent, cfg...)
 	})
 }
 
 // Compact appends to dst the JSON-encoded src with insignificant space characters elided.
 // This function is 100% compatible with encoding/json.Compact.
 // Accepts optional Config to control compact behavior (e.g., number preservation).
+//
+// This is the buffer form: json.Compact(dst, src) mirrors Processor.CompactBuffer.
+// For a string-in/string-out form, see CompactString, which mirrors Processor.Compact.
 //
 // Example:
 //
@@ -754,6 +821,34 @@ func MarshalIndent(v any, prefix, indent string) ([]byte, error) {
 func Compact(dst *bytes.Buffer, src []byte, cfg ...Config) error {
 	return withProcessorError(func(p *Processor) error {
 		return p.CompactBuffer(dst, src, cfg...)
+	})
+}
+
+// CompactString removes insignificant whitespace from a JSON string and returns
+// the compacted result. It is the package-level mirror of Processor.Compact
+// (json.CompactString(s, cfg) behaves like p.Compact(s, cfg) on a processor with
+// the matching configuration), symmetric with Prettify mirroring Processor.Prettify.
+//
+// Note: this is distinct from Compact. Compact is the encoding/json-compatible
+// buffer form (json.Compact(dst, src) ↔ Processor.CompactBuffer); CompactString is
+// the string-in/string-out form (json.CompactString(s) ↔ Processor.Compact). The two
+// share a name with their Processor counterparts respectively, preserving the mirror.
+//
+// Example:
+//
+//	compact, err := json.CompactString(`{
+//	    "name": "Alice",
+//	    "age": 30
+//	}`)
+//	// compact == `{"name":"Alice","age":30}`
+//
+//	// With configuration (e.g., preserve original number formatting)
+//	cfg := json.DefaultConfig()
+//	cfg.PreserveNumbers = true
+//	compact, err = json.CompactString(jsonStr, cfg)
+func CompactString(jsonStr string, cfg ...Config) (string, error) {
+	return withProcessor(func(p *Processor) (string, error) {
+		return p.Compact(jsonStr, cfg...)
 	})
 }
 
@@ -789,7 +884,10 @@ func HTMLEscape(dst *bytes.Buffer, src []byte, cfg ...Config) {
 }
 
 // Encode converts any Go value to JSON string.
-// For configuration options, use EncodeWithConfig.
+//
+// Deprecated: Encode is functionally identical to EncodeWithConfig (both forward
+// to the same implementation). Use EncodeWithConfig, or Marshal when []byte
+// output is acceptable. Encode will be removed in a future major version.
 func Encode(value any, cfg ...Config) (string, error) {
 	return withProcessor(func(p *Processor) (string, error) {
 		return p.EncodeWithConfig(value, cfg...)
@@ -856,25 +954,54 @@ func Prettify(jsonStr string, cfg ...Config) (string, error) {
 }
 
 // Valid reports whether data is valid JSON.
-// This function is 100% compatible with encoding/json.Valid.
-// Delegates to Processor.ValidBytes for consistent []byte → bool behavior.
-func Valid(data []byte) bool {
+// This function is 100% compatible with encoding/json.Valid: calling it as
+// json.Valid(data) behaves identically to the standard library and returns a
+// plain bool.
+//
+// For configuration options (security limits, full security scan, etc.), pass
+// an optional Config. When config is supplied, Valid forwards to
+// Processor.Valid and collapses any error to false.
+//
+// Example:
+//
+//	// Drop-in compatible with encoding/json (no config)
+//	if json.Valid(data) { /* ... */ }
+//
+//	// With configuration (non-breaking, optional trailing Config)
+//	if json.Valid(data, json.SecurityConfig()) { /* ... */ }
+//
+// Note: ValidWithConfig returns (bool, error) for callers that need to inspect
+// the validation error; Valid intentionally collapses errors to a bool.
+func Valid(data []byte, cfg ...Config) bool {
 	p := getDefaultProcessor()
 	if p == nil {
 		// Fallback: use simple validation when processor is unavailable
 		return isValidJSON(string(data))
 	}
-	return p.ValidBytes(data)
+	if len(cfg) == 0 {
+		return p.ValidBytes(data)
+	}
+	// Config-aware path: forward to Processor.Valid and collapse error to false.
+	ok, err := p.Valid(string(data), cfg...)
+	return err == nil && ok
 }
 
-// ValidWithConfig reports whether the JSON string is valid with configuration.
-// Returns both the validation result and any error that occurred during validation.
-// This is the unified API for validation with configuration.
+// ValidWithConfig reports whether jsonStr is valid JSON, returning the parse
+// error when it is not.
+//
+// Note: the name predates Valid accepting an optional Config — both functions
+// now take cfg. The actual difference from Valid is the return type: Valid
+// collapses any error to a single bool (encoding/json drop-in), whereas
+// ValidWithConfig returns (bool, error) so callers can inspect why validation
+// failed. The cfg argument governs security limits and number handling in both.
 //
 // Example:
 //
 //	cfg := json.SecurityConfig()
 //	valid, err := json.ValidWithConfig(jsonStr, cfg)
+//	if err != nil {
+//	    // inspect the validation failure
+//	}
 func ValidWithConfig(jsonStr string, cfg ...Config) (bool, error) {
 	return withProcessor(func(p *Processor) (bool, error) {
 		return p.Valid(jsonStr, cfg...)
@@ -1110,6 +1237,14 @@ var asyncCloseSem = make(chan struct{}, maxConcurrentCloses)
 // leak and the redundant double-timeout.
 func asyncCloseProcessor(p *Processor) {
 	go func() {
+		// SAFETY (SEC-003): this goroutine runs library cleanup as a side effect of
+		// public cache-eviction calls; a panic in Close() must not crash the caller.
+		// Registered first so the semaphore-release defer still runs on panic (LIFO).
+		defer func() {
+			if r := recover(); r != nil {
+				fmt.Fprintf(os.Stderr, "json: warning: async processor close panicked: %v\n", r)
+			}
+		}()
 		// Non-blocking acquire: never stall the eviction caller. getProcessorWithConfig
 		// (and thus maybeEvictConfigCache) runs on the user's goroutine, so a blocking
 		// send here — under cache-churn eviction with maxConcurrentCloses already in

@@ -3,6 +3,7 @@ package json
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"reflect"
 	"sort"
 	"strconv"
@@ -351,41 +352,41 @@ func (it *Iterator) ResetWith(data any) {
 //   - ErrProcessorClosed: the default processor has been closed
 //   - errors from resolving path (ErrInvalidJSON, ErrPathNotFound, ErrSizeLimit)
 func ForeachWithPathAndControl(jsonStr, path string, fn func(key any, value any) IteratorControl, cfg ...Config) error {
-	processor := getDefaultProcessor()
-	if processor == nil {
-		return errInternalError
-	}
-	if processor.IsClosed() {
-		return ErrProcessorClosed
-	}
-
-	data, err := processor.Get(jsonStr, path, cfg...)
-	if err != nil {
-		return err
-	}
-
-	return foreachOnValue(data, fn)
+	// Delegate to the Processor method so the callback runs on a deep copy of
+	// the resolved value, preventing mutation callbacks from corrupting cached
+	// parse data (mirror principle: json.ForeachWithPathAndControl ↔ p.ForeachWithPathAndControl).
+	return withProcessorError(func(p *Processor) error {
+		return p.ForeachWithPathAndControl(jsonStr, path, fn, cfg...)
+	})
 }
 
 // Foreach iterates over JSON arrays or objects with simplified signature (for test compatibility).
 // Accepts optional Config for consistency with Processor.Foreach.
 func Foreach(jsonStr string, fn func(key any, item *IterableValue), cfg ...Config) {
-	processor := getDefaultProcessor()
-	if processor == nil || processor.IsClosed() {
-		return
-	}
-
-	data, err := processor.Get(jsonStr, ".", cfg...)
+	// Delegate to the Processor method so the callback runs on a deep copy of
+	// the resolved value, preventing mutation callbacks from corrupting cached
+	// parse data. Void wrapper: processor setup errors are intentionally
+	// ignored to match the void signature; the closed-processor check happens
+	// inside p.Foreach.
+	p, err := getProcessorOrFail()
 	if err != nil {
 		return
 	}
-
-	foreachWithIterableValue(data, fn)
+	p.Foreach(jsonStr, fn, cfg...)
 }
 
 // foreachWithIterableValue iterates over a value and applies a function with IterableValue
 // PERFORMANCE: Uses pooled IterableValue to reduce allocations
 func foreachWithIterableValue(data any, fn func(key any, item *IterableValue)) {
+	// SAFETY (SEC-003): a panicking user callback must not crash the program. The
+	// void signature has no error return, so recover, log, and stop iteration.
+	// A pooled IterableValue held during the panic is simply not returned — sync.Pool
+	// tolerates that (it is best-effort by design).
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Error("foreach callback panicked", slog.Any("panic", r))
+		}
+	}()
 	switch v := data.(type) {
 	case []any:
 		for i, item := range v {
@@ -413,26 +414,23 @@ func foreachWithIterableValue(data any, fn func(key any, item *IterableValue)) {
 //   - ErrProcessorClosed: the default processor has been closed
 //   - errors from resolving path (ErrInvalidJSON, ErrPathNotFound, ErrSizeLimit)
 func ForeachWithPath(jsonStr, path string, fn func(key any, item *IterableValue), cfg ...Config) error {
-	processor := getDefaultProcessor()
-	if processor == nil {
-		return errInternalError
-	}
-	if processor.IsClosed() {
-		return ErrProcessorClosed
-	}
-
-	data, err := processor.Get(jsonStr, path, cfg...)
-	if err != nil {
-		return err
-	}
-
-	foreachWithIterableValue(data, fn)
-	return nil
+	// Delegate to the Processor method so the callback runs on a deep copy of
+	// the resolved value, preventing mutation callbacks from corrupting cached
+	// parse data (mirror principle: json.ForeachWithPath ↔ p.ForeachWithPath).
+	return withProcessorError(func(p *Processor) error {
+		return p.ForeachWithPath(jsonStr, path, fn, cfg...)
+	})
 }
 
 // foreachWithPathIterableValue iterates with IterableValue and path information
 // PERFORMANCE: Uses pooled IterableValue to reduce allocations
-func foreachWithPathIterableValue(data any, currentPath string, fn func(key any, item *IterableValue, currentPath string) IteratorControl) error {
+func foreachWithPathIterableValue(data any, currentPath string, fn func(key any, item *IterableValue, currentPath string) IteratorControl) (err error) {
+	// SAFETY (SEC-003): recover a panicking user callback and surface it as an error.
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("foreach callback panicked: %v", r)
+		}
+	}()
 	switch v := data.(type) {
 	case []any:
 		for i, item := range v {
@@ -483,28 +481,27 @@ func foreachWithPathIterableValue(data any, currentPath string, fn func(key any,
 //   - ErrProcessorClosed: the default processor has been closed
 //   - errors from parsing the root (ErrInvalidJSON, ErrSizeLimit)
 func ForeachReturn(jsonStr string, fn func(key any, item *IterableValue), cfg ...Config) (string, error) {
-	processor := getDefaultProcessor()
-	if processor == nil {
-		return "", errInternalError
-	}
-	if processor.IsClosed() {
-		return "", ErrProcessorClosed
-	}
-
-	data, err := processor.Get(jsonStr, ".", cfg...)
+	// Delegate to the Processor method, which deep-copies the resolved value
+	// before iteration and re-marshals it afterwards, so callback mutations via
+	// IterableValue are reflected in the returned string and cached parse data
+	// is not corrupted. Previously this returned the original jsonStr unchanged
+	// while iterating on (mutable) cached data — a divergence from
+	// Processor.ForeachReturn.
+	p, err := getProcessorOrFail()
 	if err != nil {
 		return "", err
 	}
-
-	// Execute the iteration
-	foreachWithIterableValue(data, fn)
-
-	// Return the original JSON string
-	return jsonStr, nil
+	return p.ForeachReturn(jsonStr, fn, cfg...)
 }
 
 // foreachOnValue iterates over a value and applies a function
-func foreachOnValue(data any, fn func(key any, value any) IteratorControl) error {
+func foreachOnValue(data any, fn func(key any, value any) IteratorControl) (err error) {
+	// SAFETY (SEC-003): recover a panicking user callback and surface it as an error.
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("foreach callback panicked: %v", r)
+		}
+	}()
 	switch v := data.(type) {
 	case []any:
 		for i, item := range v {
@@ -528,17 +525,14 @@ func foreachOnValue(data any, fn func(key any, value any) IteratorControl) error
 // ForeachNested iterates over nested JSON structures.
 // Accepts optional Config for consistency with Processor.ForeachNested.
 func ForeachNested(jsonStr string, fn func(key any, item *IterableValue), cfg ...Config) {
-	processor := getDefaultProcessor()
-	if processor == nil || processor.IsClosed() {
-		return
-	}
-
-	data, err := processor.Get(jsonStr, ".", cfg...)
+	// Delegate to the Processor method so the callback runs on a deep copy of
+	// the resolved value, preventing mutation callbacks from corrupting cached
+	// parse data (mirror principle: json.ForeachNested ↔ p.ForeachNested).
+	p, err := getProcessorOrFail()
 	if err != nil {
 		return
 	}
-
-	foreachNestedOnValue(data, fn)
+	p.ForeachNested(jsonStr, fn, cfg...)
 }
 
 // foreachNestedMaxDepth limits recursion depth for nested iteration to prevent stack overflow.
@@ -548,6 +542,14 @@ const foreachNestedMaxDepth = 200
 // PERFORMANCE: Uses pooled IterableValue to reduce allocations.
 // SECURITY: Depth-limited to prevent stack overflow from deeply nested structures.
 func foreachNestedOnValue(data any, fn func(key any, item *IterableValue)) {
+	// SAFETY (SEC-003): recover is placed here (the entry), NOT in the recursive
+	// *Depth variant, so a panic at any depth unwinds fully out of nested iteration
+	// (full stop) rather than resuming sibling subtrees. Void signature → log + stop.
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Error("foreach nested callback panicked", slog.Any("panic", r))
+		}
+	}()
 	foreachNestedOnValueDepth(data, fn, 0)
 }
 
@@ -580,7 +582,13 @@ func foreachNestedOnValueDepth(data any, fn func(key any, item *IterableValue), 
 
 // foreachWithIterableValueError iterates with error-returning callback
 // PERFORMANCE: Uses pooled IterableValue to reduce allocations
-func foreachWithIterableValueError(data any, fn func(key any, item *IterableValue) error) error {
+func foreachWithIterableValueError(data any, fn func(key any, item *IterableValue) error) (err error) {
+	// SAFETY (SEC-003): recover a panicking user callback and surface it as an error.
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("foreach callback panicked: %v", r)
+		}
+	}()
 	switch v := data.(type) {
 	case []any:
 		for i, item := range v {
@@ -617,7 +625,14 @@ func foreachWithIterableValueError(data any, fn func(key any, item *IterableValu
 // foreachNestedOnValueError recursively iterates with error-returning callback.
 // PERFORMANCE: Uses pooled IterableValue to reduce allocations.
 // SECURITY: Depth-limited to prevent stack overflow from deeply nested structures.
-func foreachNestedOnValueError(data any, fn func(key any, item *IterableValue) error) error {
+func foreachNestedOnValueError(data any, fn func(key any, item *IterableValue) error) (err error) {
+	// SAFETY (SEC-003): recover is placed here (the entry), NOT in the recursive
+	// *Depth variant, so a panic at any depth unwinds fully out of nested iteration.
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("foreach nested callback panicked: %v", r)
+		}
+	}()
 	return foreachNestedOnValueErrorDepth(data, fn, 0)
 }
 
@@ -917,6 +932,11 @@ func (it *BatchIterator) Remaining() int {
 //   - item.Break(): stop iteration without error
 //   - other error: stop iteration and return the error
 //
+// Accepts an optional trailing Config (cfg) which is forwarded to the underlying
+// Get for per-call validation/security limits, consistent with the rest of the
+// iterate family and the mirror principle (json.ForeachWithError(..., cfg) ↔
+// p.ForeachWithError(..., cfg)).
+//
 // Example:
 //
 //	err := json.ForeachWithError(jsonStr, ".", func(key any, item *json.IterableValue) error {
@@ -925,13 +945,17 @@ func (it *BatchIterator) Remaining() int {
 //	    }
 //	    return nil // continue
 //	})
-func ForeachWithError(jsonStr, path string, fn func(key any, item *IterableValue) error) error {
+func ForeachWithError(jsonStr, path string, fn func(key any, item *IterableValue) error, cfg ...Config) error {
 	return withProcessorError(func(p *Processor) error {
-		return p.ForeachWithError(jsonStr, path, fn)
+		return p.ForeachWithError(jsonStr, path, fn, cfg...)
 	})
 }
 
 // ForeachNestedWithError recursively iterates over all nested JSON structures with error-returning callback.
+//
+// Accepts an optional trailing Config (cfg) forwarded to the underlying Get for
+// per-call validation/security limits (json.ForeachNestedWithError(..., cfg) ↔
+// p.ForeachNestedWithError(..., cfg)).
 //
 // Example:
 //
@@ -943,14 +967,18 @@ func ForeachWithError(jsonStr, path string, fn func(key any, item *IterableValue
 // Errors:
 //   - ErrProcessorClosed: the default processor has been closed
 //   - any error returned by fn, or ErrInvalidJSON if jsonStr is not valid JSON
-func ForeachNestedWithError(jsonStr string, fn func(key any, item *IterableValue) error) error {
+func ForeachNestedWithError(jsonStr string, fn func(key any, item *IterableValue) error, cfg ...Config) error {
 	return withProcessorError(func(p *Processor) error {
-		return p.ForeachNestedWithError(jsonStr, fn)
+		return p.ForeachNestedWithError(jsonStr, fn, cfg...)
 	})
 }
 
 // ForeachWithPathAndIterator iterates over JSON at a path with path information in the callback.
 // The callback receives the current path and returns IteratorControl to control iteration flow.
+//
+// Accepts an optional trailing Config (cfg) forwarded to the underlying Get for
+// per-call validation/security limits (json.ForeachWithPathAndIterator(..., cfg) ↔
+// p.ForeachWithPathAndIterator(..., cfg)).
 //
 // Example:
 //
@@ -962,8 +990,8 @@ func ForeachNestedWithError(jsonStr string, fn func(key any, item *IterableValue
 // Errors:
 //   - ErrProcessorClosed: the default processor has been closed
 //   - errors from resolving path (ErrInvalidJSON, ErrPathNotFound, ErrSizeLimit)
-func ForeachWithPathAndIterator(jsonStr, path string, fn func(key any, item *IterableValue, currentPath string) IteratorControl) error {
+func ForeachWithPathAndIterator(jsonStr, path string, fn func(key any, item *IterableValue, currentPath string) IteratorControl, cfg ...Config) error {
 	return withProcessorError(func(p *Processor) error {
-		return p.ForeachWithPathAndIterator(jsonStr, path, fn)
+		return p.ForeachWithPathAndIterator(jsonStr, path, fn, cfg...)
 	})
 }

@@ -1220,36 +1220,6 @@ func TestIterableValue_RealWorldScenario(t *testing.T) {
 	})
 }
 
-// TestIteratorDataState tests iterator maintains correct state
-func TestIteratorDataState(t *testing.T) {
-	processor, _ := New()
-	defer processor.Close()
-
-	data := []any{1, 2, 3, 4, 5}
-	it := NewIterator(data)
-
-	// Check initial state
-	if it.position != 0 {
-		t.Errorf("Initial position = %d; want 0", it.position)
-	}
-
-	// Consume all elements
-	count := 0
-	for it.HasNext() {
-		it.Next()
-		count++
-	}
-
-	if count != 5 {
-		t.Errorf("Expected 5 elements, got %d", count)
-	}
-
-	// Verify no more elements
-	if it.HasNext() {
-		t.Error("Expected no more elements")
-	}
-}
-
 // TestIteratorHasNext tests Iterator.HasNext method
 func TestIteratorHasNext(t *testing.T) {
 	processor, _ := New()

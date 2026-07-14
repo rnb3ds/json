@@ -70,13 +70,13 @@ func (p *Processor) navigateToParent(data any, segments []string) (any, string, 
 			if next, exists := v[segment]; exists {
 				current = next
 			} else {
-				return nil, "", fmt.Errorf("path not found: %s", segment)
+				return nil, "", fmt.Errorf("path not found: %s: %w", segment, ErrPathNotFound)
 			}
 		case map[any]any:
 			if next, exists := v[segment]; exists {
 				current = next
 			} else {
-				return nil, "", fmt.Errorf("path not found: %s", segment)
+				return nil, "", fmt.Errorf("path not found: %s: %w", segment, ErrPathNotFound)
 			}
 		case []any:
 			if index, ok := internal.ParseAndValidateArrayIndex(segment, len(v)); ok {
@@ -142,7 +142,7 @@ func (p *Processor) deletePropertyFromContainer(current any, property string) er
 		return nil
 	}
 	if containerIsMap(current) {
-		return fmt.Errorf("property not found: %s", property)
+		return fmt.Errorf("property not found: %s: %w", property, ErrPathNotFound)
 	}
 	return fmt.Errorf("cannot delete property '%s' from type %T", property, current)
 }

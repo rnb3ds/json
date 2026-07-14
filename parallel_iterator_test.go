@@ -2,6 +2,7 @@ package json
 
 import (
 	"errors"
+	"strings"
 	"sync/atomic"
 	"testing"
 )
@@ -203,4 +204,56 @@ func TestParallelIteratorCloseNoPanic(t *testing.T) {
 
 	// Close should not panic
 	iter.Close()
+}
+
+// TestParallelIteratorPanicRecovery verifies SEC-003: a panic inside a
+// user-provided callback is recovered and surfaced as an error rather than
+// crashing the process. Mirrors the guarantee already provided by the JSONL
+// worker (see processor_streamjsonl.go). If the recover guard is removed, the
+// panic propagates and the test binary aborts — so this test pins the guard.
+func TestParallelIteratorPanicRecovery(t *testing.T) {
+	data := make([]any, 10)
+	for i := range data {
+		data[i] = i
+	}
+
+	t.Run("ForEach", func(t *testing.T) {
+		cfg := DefaultConfig()
+		cfg.MaxConcurrency = 4
+		iter := NewParallelIterator(data, cfg)
+		defer iter.Close()
+
+		err := iter.ForEach(func(idx int, val any) error {
+			if idx == 3 {
+				panic("boom from ForEach callback")
+			}
+			return nil
+		})
+		if err == nil {
+			t.Fatal("expected error from panicking callback, got nil")
+		}
+		if !strings.Contains(err.Error(), "panicked") {
+			t.Errorf("expected error to mention panic, got: %v", err)
+		}
+	})
+
+	t.Run("ForEachBatch", func(t *testing.T) {
+		cfg := DefaultConfig()
+		cfg.MaxConcurrency = 4
+		iter := NewParallelIterator(data, cfg)
+		defer iter.Close()
+
+		err := iter.ForEachBatch(3, func(batchIdx int, batch []any) error {
+			if batchIdx == 1 {
+				panic("boom from ForEachBatch callback")
+			}
+			return nil
+		})
+		if err == nil {
+			t.Fatal("expected error from panicking callback, got nil")
+		}
+		if !strings.Contains(err.Error(), "panicked") {
+			t.Errorf("expected error to mention panic, got: %v", err)
+		}
+	})
 }

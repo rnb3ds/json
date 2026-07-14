@@ -4,6 +4,68 @@ All notable changes to the cybergodev/json library will be documented in this fi
 
 ---
 
+## v1.5.0 - API Unification, Correctness, Security & Performance (2026-07-15)
+
+> Major effort: package-level ↔ Processor API mirror completed, per-call config enforced everywhere, encoding/json compatibility hardened, broad correctness and performance work. Non-breaking.
+
+### Breaking Changes
+
+- None — no exported symbol removed or signature changed; all new parameters are optional trailing `cfg ...Config`; `Encode` retained as a deprecated alias
+- `MaxObjectKeys`/`MaxArrayElements` are now enforced (previously declared but never checked) — flat structures exceeding the default 5000 keys/elements now return `ErrSizeLimit` (aligns behavior with the documented `SecurityConfig` limits; was a silent no-op bug)
+
+### Added
+
+- Package-level `Marshal`/`Unmarshal`/`MarshalIndent`/`Valid`/`CompareJSON` accept optional `cfg ...Config`, mirroring their `Processor` methods (encoding/json drop-in compatibility preserved)
+- `CompactString(jsonStr, cfg)` — string-form mirror of `Processor.Compact`, resolving the `Compact` (buffer form) / `CompactString` (string form) naming split
+- `Processor.CompareJSON`/`MergeJSON`/`MergeMany` methods mirror the package-level functions; the `ForeachFile` family accepts a trailing `cfg ...Config`
+- `Config.CacheSharedResults` opt-in — cached `Get`/`GetFromParsed` skip the defensive deep-copy for up to ~14× faster repeated large reads (caller must not mutate returned containers)
+- Per-call `cfg` security limits (`MaxJSONSize`, `MaxNestingDepthSecurity`, `FullSecurityScan`, …) now take effect across Get/Set/Delete/Valid/Parse/iteration/JSONL/file paths (previously ignored on most methods)
+- All user-callback paths (`Foreach*`, `StreamJSONL*`, `MapJSONL`/`ReduceJSONL`/…, `ProcessReader`, `ForeachFileChunked`, `ParallelIterator` workers) recover panics into errors instead of crashing the process
+- `Set`/`Delete` on arrays now support index/wildcard/range/multi-field targets — `Set([*].name)`, `Set([0:2].field)`, `Set/Delete([*].{a,b})`
+- Bare numeric (`0`, `-1`) and wildcard (`*`) path segments now parse as array-index/wildcard — `Get(arr,"0")` ≡ `Get(arr,"[0]")`, `Get(arr,"*")` ≡ `Get(arr,"[*]")`
+
+### Fixed
+
+- `SetFromParsed` returns the modified document (was the set value), so `GetFromParsed` reads all paths correctly afterward
+- Hooks (`AddHook`/`Config.Hooks`) now fire on Get/Set/Delete; the After chain observes Set/Delete string results
+- Library `Number` type no longer degrades to `string` under `PreserveNumbers` (deep-copy switches + encoder now handle it)
+- Float encoding byte-matches `encoding/json` (large/small exponents, `-0`, `NaN`/`Inf` → error); `Marshal`/`FastEncoder.EncodeMap` output is deterministic (sorted keys) and `nil` slice/map → `null`
+- Slice `step` honored on Set/Delete/extract-then-slice; reverse slices `[::-1]` no longer panic
+- `Delete` unified onto the recursive processor — `[*]`/`{a,b}`/`[a:b]` deletions now work (were silent no-ops)
+- Non-BMP characters (emoji, CJK ext.) emit UTF-16 surrogate pairs under `EscapeUnicode` (was corrupted to wrong code points)
+- `CompiledPath` reverse slice `[::-1]` returns the reversed array (was empty)
+- `MinProcessingTime` metric replaces its `-1` sentinel on the first value (was stuck at 0, masking latency spikes)
+- `convertToUint64` accepts the full `(MaxInt64, MaxUint64]` range via `ParseUint` fallback; `ProcessBatch` honors per-call `cfg.MaxBatchSize`
+- `Unmarshal` with no config now runs security validation (was skipped, unlike `Parse`)
+- `KeyIntern.Clear()` uses a concurrent-safe in-place clear (the prior field-swap was a data race)
+- Cache `Get`/`Set` shard consistency for long keys (`> MaxCacheKeyLength`); `safeCopyResult` returns `nil` on deep-copy failure
+- File ops honor per-call `cfg.MaxJSONSize` at read time; `SaveToFile`/`MarshalToFile` write atomically (temp + rename) — no truncation on crash; `report...draft.json` no longer mis-flagged as path traversal
+- Stream iterators enforce `cfg.MaxJSONSize`; a top-level object stream now errors instead of returning the first key as a value
+- `StreamJSONL` workers pre-check nesting depth and recover panics
+- Documented error sentinels (`ErrDepthLimit`/`ErrPathNotFound`/`ErrSizeLimit`/`ErrConcurrencyLimit`) now returned where specified
+
+### Changed
+
+- `Encode` (method + package func) deprecated in favor of `EncodeWithConfig`/`Marshal`; physical removal deferred to the next major version
+- `Marshal`/`FastEncoder` output is deterministic and `encoding/json`-compatible by default (sorted map keys, `RFC3339Nano` time, `nil` → `null`)
+- Dead-code removal: ~16 complex-path functions in `operation_delete.go`, `recursive.go` self-assignments/dead branches, `escapeJSONPointer`, and ~7 unused path helpers
+- Test coverage raised 76% → 82.4%; D-002 regression files consolidated 7 → 3
+
+### Performance
+
+- `snapshotHooks` lock skipped on the common no-hook path via an `atomic.Bool` gate — `Concurrent_Get` ~23% faster
+- `InternBytes` cache-hit path is zero-allocation (was 26 B / 5 allocs), ~37% lower latency
+- `CacheSharedResults` skips the defensive deep-copy on cache hits — up to ~14× faster repeated large reads
+- Cache invalidation fast-path skips the write-lock scan when the cache is empty — `Set`/`Delete` ~40% faster under default config
+
+### Security
+
+- `MaxObjectKeys`/`MaxArrayElements` enforced via a single-pass byte scan — blocks flat-but-wide DoS (e.g. a million-key object) that previously bypassed nesting/bracket checks
+- Per-call security limits enforced across all config-accepting methods
+- All user-callback paths recover panics — a misbehaving callback can no longer crash the process
+
+---
+
 ## v1.4.3 - Performance, Quality, Security & Concurrency Improvements (2026-06-19)
 
 ### Breaking Changes

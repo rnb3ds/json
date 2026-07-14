@@ -94,7 +94,7 @@ func PreprocessPath(path string, sb *strings.Builder) string {
 func IsComplexPath(path string) bool {
 	for i := 0; i < len(path); i++ {
 		c := path[i]
-		if c == '{' || c == '}' || c == '[' || c == ']' || c == ':' {
+		if c == '{' || c == '}' || c == '[' || c == ']' || c == ':' || c == '*' {
 			return true
 		}
 	}

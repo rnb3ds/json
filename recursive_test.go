@@ -1579,26 +1579,40 @@ func TestRecursiveProcessor_ExtractMultipleFieldsFromMap(t *testing.T) {
 // Property segment on non-object types
 // ============================================================================
 
-func TestRecursiveProcessor_PropertySegmentNonContainer(t *testing.T) {
-	processor, rp := helperRP(t)
-	defer processor.Close()
+// TestRecursiveProcessor_SegmentOnNonContainer covers applying a property or
+// wildcard segment to a non-container value (an int): Get returns nil, Set
+// returns an error. Previously split across PropertySegmentNonContainer and
+// WildcardOnNonContainer; consolidated into one table.
+func TestRecursiveProcessor_SegmentOnNonContainer(t *testing.T) {
+	_, rp := helperRP(t)
 
-	t.Run("get property on non-container returns nil", func(t *testing.T) {
-		result, err := rp.ProcessRecursively(42, "key", opGet, nil)
-		if err != nil {
-			t.Errorf("unexpected error: %v", err)
-		}
-		if result != nil {
-			t.Errorf("expected nil result, got %v", result)
-		}
-	})
-
-	t.Run("set property on non-container returns error", func(t *testing.T) {
-		_, err := rp.ProcessRecursively(42, "key", opSet, "val")
-		if err == nil {
-			t.Error("expected error for property access on int")
-		}
-	})
+	tests := []struct {
+		name    string
+		path    string
+		op      operation
+		value   any
+		wantErr bool
+		wantNil bool
+	}{
+		{"property get on int", "key", opGet, nil, false, true},
+		{"property set on int", "key", opSet, "val", true, false},
+		{"wildcard get on int", "*", opGet, nil, false, true},
+		{"wildcard set on int", "*", opSet, "val", true, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := rp.ProcessRecursively(42, tt.path, tt.op, tt.value)
+			if tt.wantErr && err == nil {
+				t.Error("expected error for segment access on int")
+			}
+			if !tt.wantErr && err != nil {
+				t.Errorf("unexpected error: %v", err)
+			}
+			if tt.wantNil && result != nil {
+				t.Errorf("expected nil result, got %v", result)
+			}
+		})
+	}
 }
 
 // ============================================================================
@@ -1627,32 +1641,6 @@ func TestRecursiveProcessor_ArraySliceOnMap(t *testing.T) {
 		}
 		if len(arr) != 2 {
 			t.Errorf("len = %d, want 2", len(arr))
-		}
-	})
-}
-
-// ============================================================================
-// Wildcard segment on non-container type
-// ============================================================================
-
-func TestRecursiveProcessor_WildcardOnNonContainer(t *testing.T) {
-	processor, rp := helperRP(t)
-	defer processor.Close()
-
-	t.Run("get wildcard on non-container returns nil", func(t *testing.T) {
-		result, err := rp.ProcessRecursively(42, "*", opGet, nil)
-		if err != nil {
-			t.Errorf("unexpected error: %v", err)
-		}
-		if result != nil {
-			t.Errorf("expected nil, got %v", result)
-		}
-	})
-
-	t.Run("set wildcard on non-container returns error", func(t *testing.T) {
-		_, err := rp.ProcessRecursively(42, "*", opSet, "val")
-		if err == nil {
-			t.Error("expected error for wildcard on int")
 		}
 	})
 }
@@ -1776,11 +1764,25 @@ func TestRecursive_DistributedArrayIndex(t *testing.T) {
 		json := `{"matrix":[[1],[2,3]]}`
 		// First sub-array has length 1, so index 1 is out of bounds
 		result, err := Get(json, "matrix[1]")
+		// Implementation may reject an out-of-bounds distributed index; if it
+		// does, that is an acceptable outcome.
 		if err != nil {
-			// May or may not error depending on impl
-			t.Logf("Get returned error: %v", err)
+			return
 		}
-		t.Logf("Get result: %v", result)
+		arr, ok := result.([]any)
+		if !ok {
+			t.Fatalf("result is %T, want []any", result)
+		}
+		// The valid sub-array ([2,3][1]) must survive; the OOB one is skipped.
+		var hasThree bool
+		for _, v := range arr {
+			if n, ok := v.(float64); ok && n == 3 {
+				hasThree = true
+			}
+		}
+		if !hasThree {
+			t.Errorf("distributed matrix[1] = %v, want 3 present", result)
+		}
 	})
 }
 
@@ -1911,9 +1913,20 @@ func TestRecursive_ExtractThenSlice(t *testing.T) {
 
 	t.Run("extract and delete slice", func(t *testing.T) {
 		json := `{"items":[{"name":"a","v":1},{"name":"b","v":2}]}`
-		_, err := Delete(json, "items.{name}[0:1]")
+		result, err := Delete(json, "items.{name}[0:1]")
+		// The operation may be rejected; if so, that is acceptable. If it
+		// succeeds, the result must still be valid JSON with both items intact
+		// (the slice delete must not corrupt the surrounding array).
 		if err != nil {
-			t.Logf("Delete extract+slice error: %v", err)
+			return
+		}
+		var got map[string]any
+		if err := Unmarshal([]byte(result), &got); err != nil {
+			t.Fatalf("result is not valid JSON: %v\n%s", err, result)
+		}
+		items, ok := got["items"].([]any)
+		if !ok || len(items) != 2 {
+			t.Errorf("after delete, items has %d elements, want 2; result=%s", len(items), result)
 		}
 	})
 }

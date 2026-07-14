@@ -45,13 +45,14 @@
 ### Marshal
 
 ```go
-func Marshal(value any) ([]byte, error)
+func Marshal(value any, cfg ...Config) ([]byte, error)
 ```
 
 Encodes a Go value to JSON. 100% compatible with `encoding/json.Marshal`.
+When called without `cfg`, it is byte-compatible with `encoding/json.Marshal`.
 
 **Parameters:**
-- `v` - Any Go value to encode
+- `value` - Any Go value to encode
 
 **Returns:**
 - `[]byte` - JSON encoded bytes
@@ -68,14 +69,15 @@ jsonBytes, err := json.Marshal(data)
 ### Unmarshal
 
 ```go
-func Unmarshal(data []byte, value any) error
+func Unmarshal(data []byte, value any, cfg ...Config) error
 ```
 
 Decodes JSON bytes into a Go value. 100% compatible with `encoding/json.Unmarshal`.
+When called without `cfg`, it is byte-compatible with `encoding/json.Unmarshal`.
 
 **Parameters:**
 - `data` - JSON bytes to decode
-- `v` - Pointer to target value
+- `value` - Pointer to target value
 
 **Returns:**
 - `error` - Decoding error if any
@@ -91,7 +93,7 @@ err := json.Unmarshal(jsonBytes, &result)
 ### MarshalIndent
 
 ```go
-func MarshalIndent(v any, prefix, indent string) ([]byte, error)
+func MarshalIndent(v any, prefix, indent string, cfg ...Config) ([]byte, error)
 ```
 
 Encodes a Go value to formatted JSON with indentation.
@@ -111,10 +113,11 @@ jsonBytes, err := json.MarshalIndent(data, "", "  ")
 ### Valid
 
 ```go
-func Valid(data []byte) bool
+func Valid(data []byte, cfg ...Config) bool
 ```
 
-Reports whether data is valid JSON.
+Reports whether data is valid JSON. Byte-compatible with `encoding/json.Valid`
+when called without `cfg`.
 
 **Parameters:**
 - `data` - JSON bytes to validate
@@ -578,9 +581,14 @@ func Encode(value any, cfg ...Config) (string, error)
 
 Converts any Go value to JSON string.
 
+> **Deprecated:** `Encode` is functionally identical to `EncodeWithConfig` (both forward to the
+> same implementation). Use `EncodeWithConfig`, or `Marshal` when `[]byte` output is acceptable.
+> `Encode` will be removed in a future major version.
+
 **Example:**
 ```go
-result, err := json.Encode(data)
+// Prefer EncodeWithConfig (or Marshal for []byte output):
+result, err := json.EncodeWithConfig(data)
 ```
 
 ---
@@ -678,6 +686,17 @@ func Compact(dst *bytes.Buffer, src []byte, cfg ...Config) error
 ```
 
 Appends compacted JSON to dst. 100% compatible with encoding/json.Compact. Accepts optional Config.
+
+---
+
+### CompactString
+
+```go
+func CompactString(jsonStr string, cfg ...Config) (string, error)
+```
+
+Compacts a JSON string and returns the result as a string. This is the string-in/string-out
+mirror of `Processor.Compact`. Accepts optional Config.
 
 ---
 
@@ -907,7 +926,7 @@ json.ForeachWithPath(data, "users", func(key any, item *json.IterableValue) {
 func ForeachReturn(jsonStr string, fn func(key any, item *IterableValue), cfg ...Config) (string, error)
 ```
 
-Iterates over JSON and returns the JSON string. The package-level function returns the original string unchanged; the Processor method may return a re-encoded copy.
+Iterates over JSON and returns the JSON string. Both the package-level function and the Processor method deep-copy the data, run the callback, and re-encode the result, so the returned string is a re-encoded copy that reflects any mutations made through the callback's `*IterableValue`.
 
 **Note:** The callback receives data for reading. Use `json.Set()` for modifications.
 
@@ -916,7 +935,7 @@ Iterates over JSON and returns the JSON string. The package-level function retur
 ### ForeachWithPathAndIterator
 
 ```go
-func ForeachWithPathAndIterator(jsonStr, path string, fn func(key any, item *IterableValue, currentPath string) IteratorControl) error
+func ForeachWithPathAndIterator(jsonStr, path string, fn func(key any, item *IterableValue, currentPath string) IteratorControl, cfg ...Config) error
 ```
 
 Iterates over a specific path with automatic path tracking and flow control. The callback receives the current full path as the third argument.
@@ -934,7 +953,7 @@ err := json.ForeachWithPathAndIterator(data, "users", func(key any, item *json.I
 ### ForeachWithError
 
 ```go
-func ForeachWithError(jsonStr, path string, fn func(key any, item *IterableValue) error) error
+func ForeachWithError(jsonStr, path string, fn func(key any, item *IterableValue) error, cfg ...Config) error
 ```
 
 Iterates over a specific path with an error-returning callback. Stops on first error returned.
@@ -944,7 +963,7 @@ Iterates over a specific path with an error-returning callback. Stops on first e
 ### ForeachNestedWithError
 
 ```go
-func ForeachNestedWithError(jsonStr string, fn func(key any, item *IterableValue) error) error
+func ForeachNestedWithError(jsonStr string, fn func(key any, item *IterableValue) error, cfg ...Config) error
 ```
 
 Recursively iterates through all nested levels with an error-returning callback. Stops on first error returned.
@@ -954,7 +973,7 @@ Recursively iterates through all nested levels with an error-returning callback.
 ### ForeachFile
 
 ```go
-func ForeachFile(filePath string, fn func(key any, item *IterableValue) error) error
+func ForeachFile(filePath string, fn func(key any, item *IterableValue) error, cfg ...Config) error
 ```
 
 Iterates over a JSON file without loading it entirely into memory. Supports early termination via `item.Break()`.
@@ -972,7 +991,7 @@ err := json.ForeachFile("data.json", func(key any, item *json.IterableValue) err
 ### ForeachFileWithPath
 
 ```go
-func ForeachFileWithPath(filePath, path string, fn func(key any, item *IterableValue) error) error
+func ForeachFileWithPath(filePath, path string, fn func(key any, item *IterableValue) error, cfg ...Config) error
 ```
 
 Iterates over a specific path within a JSON file.
@@ -982,7 +1001,7 @@ Iterates over a specific path within a JSON file.
 ### ForeachFileChunked
 
 ```go
-func ForeachFileChunked(filePath string, chunkSize int, fn func(chunk []*IterableValue) error) error
+func ForeachFileChunked(filePath string, chunkSize int, fn func(chunk []*IterableValue) error, cfg ...Config) error
 ```
 
 Iterates over a JSON file in chunks for memory-efficient processing of large files.
@@ -992,7 +1011,7 @@ Iterates over a JSON file in chunks for memory-efficient processing of large fil
 ### ForeachFileNested
 
 ```go
-func ForeachFileNested(filePath string, fn func(key any, item *IterableValue) error) error
+func ForeachFileNested(filePath string, fn func(key any, item *IterableValue) error, cfg ...Config) error
 ```
 
 Recursively iterates through all nested levels in a JSON file.
@@ -1002,7 +1021,7 @@ Recursively iterates through all nested levels in a JSON file.
 ### ForeachJSONL
 
 ```go
-func ForeachJSONL(reader io.Reader, fn func(lineNum int, item *IterableValue) error) error
+func ForeachJSONL(reader io.Reader, fn func(lineNum int, item *IterableValue) error, cfg ...Config) error
 ```
 
 Iterates over JSONL/NDJSON lines from a reader.
@@ -1014,7 +1033,7 @@ Iterates over JSONL/NDJSON lines from a reader.
 ### StreamJSONL
 
 ```go
-func StreamJSONL(reader io.Reader, fn func(lineNum int, item *IterableValue) error) error
+func StreamJSONL(reader io.Reader, fn func(lineNum int, item *IterableValue) error, cfg ...Config) error
 ```
 
 Streams JSONL data from a reader with callback processing.
@@ -1024,7 +1043,7 @@ Streams JSONL data from a reader with callback processing.
 ### StreamJSONLParallel
 
 ```go
-func StreamJSONLParallel(reader io.Reader, workers int, fn func(lineNum int, item *IterableValue) error) error
+func StreamJSONLParallel(reader io.Reader, workers int, fn func(lineNum int, item *IterableValue) error, cfg ...Config) error
 ```
 
 Streams JSONL data with parallel worker processing.
@@ -1034,7 +1053,7 @@ Streams JSONL data with parallel worker processing.
 ### StreamJSONLParallelWithContext
 
 ```go
-func StreamJSONLParallelWithContext(ctx context.Context, reader io.Reader, workers int, fn func(lineNum int, item *IterableValue) error) error
+func StreamJSONLParallelWithContext(ctx context.Context, reader io.Reader, workers int, fn func(lineNum int, item *IterableValue) error, cfg ...Config) error
 ```
 
 Streams JSONL data with parallel workers and context cancellation support.
@@ -1044,7 +1063,7 @@ Streams JSONL data with parallel workers and context cancellation support.
 ### StreamJSONLChunked
 
 ```go
-func StreamJSONLChunked(reader io.Reader, chunkSize int, fn func(chunk []*IterableValue) error) error
+func StreamJSONLChunked(reader io.Reader, chunkSize int, fn func(chunk []*IterableValue) error, cfg ...Config) error
 ```
 
 Streams JSONL data in chunks for batch processing.
@@ -1054,7 +1073,7 @@ Streams JSONL data in chunks for batch processing.
 ### MapJSONL
 
 ```go
-func MapJSONL(reader io.Reader, fn func(lineNum int, item *IterableValue) (any, error)) ([]any, error)
+func MapJSONL(reader io.Reader, fn func(lineNum int, item *IterableValue) (any, error), cfg ...Config) ([]any, error)
 ```
 
 Maps each JSONL line to a transformed value.
@@ -1064,7 +1083,7 @@ Maps each JSONL line to a transformed value.
 ### ReduceJSONL
 
 ```go
-func ReduceJSONL(reader io.Reader, initial any, fn func(acc any, item *IterableValue) any) (any, error)
+func ReduceJSONL(reader io.Reader, initial any, fn func(acc any, item *IterableValue) any, cfg ...Config) (any, error)
 ```
 
 Reduces JSONL lines to a single accumulated value.
@@ -1074,7 +1093,7 @@ Reduces JSONL lines to a single accumulated value.
 ### FilterJSONL
 
 ```go
-func FilterJSONL(reader io.Reader, predicate func(item *IterableValue) bool) ([]*IterableValue, error)
+func FilterJSONL(reader io.Reader, predicate func(item *IterableValue) bool, cfg ...Config) ([]*IterableValue, error)
 ```
 
 Filters JSONL lines by a predicate function.
@@ -1084,7 +1103,7 @@ Filters JSONL lines by a predicate function.
 ### StreamJSONLFile
 
 ```go
-func StreamJSONLFile(filename string, fn func(lineNum int, item *IterableValue) error) error
+func StreamJSONLFile(filename string, fn func(lineNum int, item *IterableValue) error, cfg ...Config) error
 ```
 
 Streams JSONL data from a file with callback processing. Convenience wrapper for file-based JSONL processing.
@@ -1102,7 +1121,7 @@ err := json.StreamJSONLFile("data.jsonl", func(lineNum int, item *json.IterableV
 ### CollectJSONL
 
 ```go
-func CollectJSONL(reader io.Reader) ([]*IterableValue, error)
+func CollectJSONL(reader io.Reader, cfg ...Config) ([]*IterableValue, error)
 ```
 
 Collects all JSONL items from a reader into a slice. Useful for loading JSONL data into memory.
@@ -1120,7 +1139,7 @@ for _, item := range items {
 ### FirstJSONL
 
 ```go
-func FirstJSONL(reader io.Reader, predicate func(item *IterableValue) bool) (*IterableValue, bool, error)
+func FirstJSONL(reader io.Reader, predicate func(item *IterableValue) bool, cfg ...Config) (*IterableValue, bool, error)
 ```
 
 Returns the first JSONL item that matches the predicate. Stops scanning after the first match for efficiency.
@@ -1282,7 +1301,7 @@ if err != nil || !ok {
 ### CompareJSON
 
 ```go
-func CompareJSON(json1, json2 string) (bool, error)
+func CompareJSON(json1, json2 string, cfg ...Config) (bool, error)
 ```
 
 Compares two JSON strings for semantic equality.
@@ -1350,7 +1369,7 @@ result, err := json.MergeMany([]string{config1, config2, config3}, cfg)
 func ProcessBatch(operations []BatchOperation, cfg ...Config) ([]BatchResult, error)
 ```
 
-Processes multiple operations in a single batch call. Each `BatchOperation` specifies a `Type` ("get", "set", "delete"), `JSONStr`, `Path`, `Value`, and `ID`.
+Processes multiple operations in a single batch call. Each `BatchOperation` specifies a `Type` ("get", "set", "delete", "validate"), `JSONStr`, `Path`, `Value`, and `ID`.
 
 **Example:**
 ```go
@@ -1796,7 +1815,7 @@ var ErrDepthLimit        = errors.New("depth limit exceeded")
 var ErrSecurityViolation = errors.New("security violation detected")
 var ErrInvalidPath       = errors.New("invalid path format")
 var ErrProcessorClosed   = errors.New("processor is closed")
-var ErrConcurrencyLimit  = errors.New("concurrency limit exceeded")  // Deprecated: Reserved for future use; not currently returned by any operation.
+var ErrConcurrencyLimit  = errors.New("concurrency limit exceeded")  // Returned by governed operations (Get/Set/Delete/...) when MaxConcurrency is reached. Increase MaxConcurrency in Config for high-concurrency scenarios.
 var ErrOperationTimeout  = errors.New("operation timeout")             // Deprecated: Reserved for future use; not currently returned by any operation.
 var ErrUnsupportedPath   = errors.New("unsupported path operation")
 var ErrResourceExhausted = errors.New("system resources exhausted")    // Deprecated: Reserved for future use; not currently returned by any operation.
@@ -2108,7 +2127,7 @@ Statistics from JSONLWriter operations.
 
 ```go
 type BatchOperation struct {
-    Type    string  // "get", "set", or "delete"
+    Type    string  // "get", "set", "delete", or "validate"
     JSONStr string
     Path    string
     Value   any
@@ -2283,9 +2302,14 @@ type ParallelIterator struct { /* unexported fields */ }
 func NewParallelIterator(data []any, cfg ...Config) *ParallelIterator
 func (pi *ParallelIterator) ForEach(fn func(index int, value any) error) error
 func (pi *ParallelIterator) ForEachWithContext(ctx context.Context, fn func(index int, value any) error) error
+func (pi *ParallelIterator) ForEachBatch(batchSize int, fn func(int, []any) error) error
+func (pi *ParallelIterator) ForEachBatchWithContext(ctx context.Context, batchSize int, fn func(int, []any) error) error
+func (pi *ParallelIterator) Map(transform func(int, any) (any, error)) ([]any, error)
+func (pi *ParallelIterator) Filter(predicate func(int, any) bool) []any
+func (pi *ParallelIterator) Close()
 ```
 
-Processes arrays in parallel using worker goroutines. The optional `cfg` parameter controls worker count via `Config.MaxConcurrency`. Also provides `ForEachBatch`, `ForEachBatchWithContext`, `Map`, `Filter`, and `Close` methods.
+Processes arrays in parallel using worker goroutines. The optional `cfg` parameter controls worker count via `Config.MaxConcurrency`. Remember to call `Close()` to release worker goroutines when done.
 
 **Example:**
 ```go

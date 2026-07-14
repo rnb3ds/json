@@ -102,6 +102,18 @@ func (p *Processor) isSimpleArraySlicePath(path string) bool {
 		return false
 	}
 
+	// A negative-step (reverse) slice such as [::-1] or [::-2] is handled by the
+	// RecursiveProcessor, which iterates the index set correctly in either
+	// direction. The dot-notation path assumes a positive step (its array
+	// extension logic and assignValueToSlice loop only go forward), so a reverse
+	// slice would silently have its step flipped to +1 here. Reverse slices do
+	// not extend the array, so routing them to the recursive path loses nothing.
+	if _, _, stepPtr, perr := internal.ParseSliceComponents(slicePart); perr == nil {
+		if stepPtr != nil && *stepPtr < 0 {
+			return false
+		}
+	}
+
 	return true
 }
 

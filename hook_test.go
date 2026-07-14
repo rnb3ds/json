@@ -103,9 +103,9 @@ func TestAddHook(t *testing.T) {
 			},
 		})
 
-		// Perform a Get to trigger hook execution if hooks are wired.
-		// Since hooks are stored on the processor but not automatically invoked
-		// by Get, verify the hook was added to internal storage and is functional.
+		// Verify the hook was stored and is functional when invoked through the
+		// hookChain directly. End-to-end firing during Get/Set/Delete is covered
+		// by d005_library_regression_test.go (TestHookFiresDuringOperations etc.).
 		if len(p.hooks) != 1 {
 			t.Errorf("expected 1 hook, got %d", len(p.hooks))
 		}

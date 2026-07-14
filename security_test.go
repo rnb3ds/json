@@ -2,6 +2,8 @@ package json
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
@@ -1511,96 +1513,222 @@ func TestPanicProtectionSafeErrorNilErr(t *testing.T) {
 	})
 }
 
-// TestPanicProtectionNilProcessor verifies that calling methods on a nil
-// Processor returns an error instead of panicking.
+// TestPanicProtectionNilProcessor pins SEC-003 across the full public Processor
+// API: every method on a nil *Processor MUST either return an error (mutating /
+// query ops) or a safe zero value (typed getters, stats, config) — never a
+// nil-pointer panic. Guards are centralized in checkClosed(); this table-driven
+// test covers the whole surface so a future refactor cannot silently regress.
+// (Go fails the subtest on panic, so a direct call is a valid "must not panic"
+// assertion.)
 func TestPanicProtectionNilProcessor(t *testing.T) {
-	t.Run("ParseNilProcessor", func(t *testing.T) {
-		var p *Processor
-		var target any
-		err := p.Parse(`{"a":1}`, &target)
-		if err == nil {
-			t.Error("expected error when calling Parse on nil Processor")
-		}
-	})
-
-	t.Run("GetNilProcessor", func(t *testing.T) {
-		var p *Processor
-		_, err := p.Get("{}", "a")
-		if err == nil {
-			t.Error("expected error when calling Get on nil Processor")
-		}
-	})
-
-	t.Run("SetNilProcessor", func(t *testing.T) {
-		var p *Processor
-		_, err := p.Set(`{}`, "a", 1)
-		if err == nil {
-			t.Error("expected error when calling Set on nil Processor")
-		}
-	})
-}
-
-// TestPanicProtectionNilProcessorFullSurface extends the nil-receiver coverage
-// to the rest of the public Processor API. Every public method on a nil
-// *Processor MUST either return an error (mutating/query ops) or a safe zero
-// value (typed getters, stats, config) — never a nil-pointer panic.
-// Guards are centralized in checkClosed(); this test pins them so a future
-// refactor cannot silently regress SEC-003.
-func TestPanicProtectionNilProcessorFullSurface(t *testing.T) {
 	var p *Processor // intentionally nil
 
-	// Mutating / query operations: a nil receiver must surface an error,
-	// not panic. (Go fails the subtest on panic, so a direct call is a valid
-	// "must not panic" assertion.)
-	t.Run("Delete", func(t *testing.T) {
-		if _, err := p.Delete(`{"a":1}`, "a"); err == nil {
-			t.Error("expected error when calling Delete on nil Processor")
-		}
-	})
-	t.Run("Marshal", func(t *testing.T) {
-		if _, err := p.Marshal(map[string]any{"a": 1}); err == nil {
-			t.Error("expected error when calling Marshal on nil Processor")
-		}
-	})
-	t.Run("MarshalIndent", func(t *testing.T) {
-		if _, err := p.MarshalIndent(map[string]any{"a": 1}, "", "  "); err == nil {
-			t.Error("expected error when calling MarshalIndent on nil Processor")
-		}
-	})
-	t.Run("Unmarshal", func(t *testing.T) {
-		var v any
-		if err := p.Unmarshal([]byte(`{"a":1}`), &v); err == nil {
-			t.Error("expected error when calling Unmarshal on nil Processor")
-		}
-	})
-	t.Run("StreamJSONL", func(t *testing.T) {
-		if err := p.StreamJSONL(strings.NewReader(`{"a":1}`), func(int, *IterableValue) error { return nil }); err == nil {
-			t.Error("expected error when calling StreamJSONL on nil Processor")
+	tests := []struct {
+		name string
+		call func(t *testing.T)
+	}{
+		{name: "Parse", call: func(t *testing.T) {
+			var target any
+			if err := p.Parse(`{"a":1}`, &target); err == nil {
+				t.Error("expected error when calling Parse on nil Processor")
+			}
+		}},
+		{name: "Get", call: func(t *testing.T) {
+			if _, err := p.Get("{}", "a"); err == nil {
+				t.Error("expected error when calling Get on nil Processor")
+			}
+		}},
+		{name: "Set", call: func(t *testing.T) {
+			if _, err := p.Set(`{}`, "a", 1); err == nil {
+				t.Error("expected error when calling Set on nil Processor")
+			}
+		}},
+		{name: "Delete", call: func(t *testing.T) {
+			if _, err := p.Delete(`{"a":1}`, "a"); err == nil {
+				t.Error("expected error when calling Delete on nil Processor")
+			}
+		}},
+		{name: "Marshal", call: func(t *testing.T) {
+			if _, err := p.Marshal(map[string]any{"a": 1}); err == nil {
+				t.Error("expected error when calling Marshal on nil Processor")
+			}
+		}},
+		{name: "MarshalIndent", call: func(t *testing.T) {
+			if _, err := p.MarshalIndent(map[string]any{"a": 1}, "", "  "); err == nil {
+				t.Error("expected error when calling MarshalIndent on nil Processor")
+			}
+		}},
+		{name: "Unmarshal", call: func(t *testing.T) {
+			var v any
+			if err := p.Unmarshal([]byte(`{"a":1}`), &v); err == nil {
+				t.Error("expected error when calling Unmarshal on nil Processor")
+			}
+		}},
+		{name: "StreamJSONL", call: func(t *testing.T) {
+			if err := p.StreamJSONL(strings.NewReader(`{"a":1}`), func(int, *IterableValue) error { return nil }); err == nil {
+				t.Error("expected error when calling StreamJSONL on nil Processor")
+			}
+		}},
+		// Typed getters: return the provided default (or zero value), no panic.
+		{name: "GetString", call: func(t *testing.T) {
+			if got := p.GetString(`{"a":1}`, "a", "fallback"); got != "fallback" {
+				t.Errorf("GetString on nil Processor = %q, want default %q", got, "fallback")
+			}
+		}},
+		// Information accessors: return a safe zero-value state, no panic.
+		{name: "GetStats", call: func(t *testing.T) {
+			if stats := p.GetStats(); stats.IsClosed {
+				t.Errorf("GetStats on nil Processor reports IsClosed=true; want zero-value Stats")
+			}
+		}},
+		{name: "GetHealthStatus", call: func(t *testing.T) {
+			if hs := p.GetHealthStatus(); hs.Healthy {
+				t.Error("GetHealthStatus on nil Processor reports Healthy=true; want unhealthy")
+			}
+		}},
+		{name: "GetConfig", call: func(t *testing.T) {
+			_ = p.GetConfig() // must not panic; zero-value Config is acceptable
+		}},
+		{name: "SetLogger", call: func(t *testing.T) {
+			p.SetLogger(nil) // no-op on nil receiver; must not panic
+		}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tt.call(t)
+		})
+	}
+}
+
+// sec003AssertPanicked verifies that err is non-nil and describes a recovered
+// panic. Every test below pins a recover() guard: if the guard is removed the
+// panicking callback aborts the test binary instead of reaching these assertions
+// (see TestParallelIteratorPanicRecovery for the established pattern).
+func sec003AssertPanicked(t *testing.T, err error) {
+	t.Helper()
+	if err == nil {
+		t.Fatal("expected error from panicking callback, got nil")
+	}
+	if !strings.Contains(err.Error(), "panicked") {
+		t.Errorf("expected error to mention panic, got: %v", err)
+	}
+}
+
+// TestPanicProtectionCallbacks pins SEC-003 across every callback-bearing path:
+// a panicking callback is recovered and surfaced as an error (or, for the void
+// variants, logged with iteration stopped). Removing any recover() guard makes
+// the panicking callback abort the test binary instead of reaching the assertion.
+func TestPanicProtectionCallbacks(t *testing.T) {
+	tests := []struct {
+		name string
+		run  func() error
+	}{
+		{name: "ForeachWithError", run: func() error {
+			p, _ := New()
+			defer p.Close()
+			return p.ForeachWithError(`[1,2,3,4,5]`, ".", func(key any, item *IterableValue) error {
+				if key.(int) == 2 {
+					panic("boom from ForeachWithError callback")
+				}
+				return nil
+			})
+		}},
+		{name: "ForeachNestedWithError", run: func() error {
+			p, _ := New()
+			defer p.Close()
+			return p.ForeachNestedWithError(`{"a":{"b":[1,2]},"c":3}`, func(key any, item *IterableValue) error {
+				panic("boom from nested callback")
+			})
+		}},
+		{name: "StreamJSONL", run: func() error {
+			p, _ := New()
+			defer p.Close()
+			data := "{\"id\":1}\n{\"id\":2}\n{\"id\":3}"
+			return p.StreamJSONL(strings.NewReader(data), func(lineNum int, item *IterableValue) error {
+				if lineNum == 2 {
+					panic("boom from StreamJSONL callback")
+				}
+				return nil
+			})
+		}},
+		{name: "MapJSONL", run: func() error {
+			p, _ := New()
+			defer p.Close()
+			data := "{\"id\":1}\n{\"id\":2}"
+			_, err := p.MapJSONL(strings.NewReader(data), func(lineNum int, item *IterableValue) (any, error) {
+				if lineNum == 2 {
+					panic("boom from MapJSONL fn")
+				}
+				return item.GetData(), nil
+			})
+			return err
+		}},
+		{name: "StreamLinesInto", run: func() error {
+			data := "{\"id\":1}\n{\"id\":2}"
+			_, err := StreamLinesInto(strings.NewReader(data), func(lineNum int, _ map[string]any) error {
+				if lineNum == 2 {
+					panic("boom from StreamLinesInto fn")
+				}
+				return nil
+			})
+			return err
+		}},
+		{name: "ProcessReader", run: func() error {
+			np := NewNDJSONProcessor()
+			data := "{\"id\":1}\n{\"id\":2}"
+			return np.ProcessReader(strings.NewReader(data), func(lineNum int, obj map[string]any) error {
+				if lineNum == 2 {
+					panic("boom from ProcessReader fn")
+				}
+				return nil
+			})
+		}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sec003AssertPanicked(t, tt.run())
+		})
+	}
+}
+
+// TestPanicProtectionForeachVoid verifies SEC-003 for the void Foreach variants,
+// whose signature has no error return: a panicking callback is recovered, logged,
+// and iteration stops — it must not crash the program.
+func TestPanicProtectionForeachVoid(t *testing.T) {
+	p, _ := New()
+	defer p.Close()
+
+	visited := 0
+	// If the recover guard is removed this call aborts the test binary.
+	p.Foreach(`[1,2,3,4,5]`, func(key any, item *IterableValue) {
+		visited++
+		if visited == 2 {
+			panic("boom from void Foreach callback")
 		}
 	})
 
-	// Typed getters: return the provided default (or zero value), no panic.
-	t.Run("GetString", func(t *testing.T) {
-		if got := p.GetString(`{"a":1}`, "a", "fallback"); got != "fallback" {
-			t.Errorf("GetString on nil Processor = %q, want default %q", got, "fallback")
-		}
-	})
+	if visited == 0 {
+		t.Fatal("expected at least one callback invocation before the panic")
+	}
+	if visited > 2 {
+		t.Errorf("expected iteration to stop on panic; visited=%d", visited)
+	}
+}
 
-	// Information accessors: return a safe zero-value state, no panic.
-	t.Run("GetStats", func(t *testing.T) {
-		if stats := p.GetStats(); stats.IsClosed {
-			t.Errorf("GetStats on nil Processor reports IsClosed=true; want zero-value Stats")
-		}
+// TestPanicProtectionForeachFileChunked verifies SEC-003 for chunked file iteration.
+func TestPanicProtectionForeachFileChunked(t *testing.T) {
+	p, _ := New()
+	defer p.Close()
+
+	tmp := filepath.Join(t.TempDir(), "chunked.json")
+	if err := os.WriteFile(tmp, []byte(`["a","b","c","d","e"]`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	err := p.ForeachFileChunked(tmp, 2, func(chunk []*IterableValue) error {
+		panic("boom from ForeachFileChunked fn")
 	})
-	t.Run("GetHealthStatus", func(t *testing.T) {
-		if hs := p.GetHealthStatus(); hs.Healthy {
-			t.Error("GetHealthStatus on nil Processor reports Healthy=true; want unhealthy")
-		}
-	})
-	t.Run("GetConfig", func(t *testing.T) {
-		_ = p.GetConfig() // must not panic; zero-value Config is acceptable
-	})
-	t.Run("SetLogger", func(t *testing.T) {
-		p.SetLogger(nil) // no-op on nil receiver; must not panic
-	})
+	sec003AssertPanicked(t, err)
 }

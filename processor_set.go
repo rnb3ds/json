@@ -2,6 +2,7 @@ package json
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/cybergodev/json/internal"
 )
@@ -10,7 +11,7 @@ import (
 // Returns:
 //   - On success: modified JSON string and nil error
 //   - On failure: original unmodified JSON string and error information
-func (p *Processor) Set(jsonStr, path string, value any, cfg ...Config) (string, error) {
+func (p *Processor) Set(jsonStr, path string, value any, cfg ...Config) (result string, err error) {
 	options, err := p.prepareOperation(jsonStr, path, cfg...)
 	if err != nil {
 		return jsonStr, err
@@ -19,6 +20,28 @@ func (p *Processor) Set(jsonStr, path string, value any, cfg ...Config) (string,
 	// Defers run LIFO, so endGovernedOp (registered first) runs last.
 	defer p.endGovernedOp()
 	defer releaseConfig(options)
+
+	// Run registered hooks around the operation. A Before hook may abort; an
+	// After hook may observe or transform the result/error. Registered last so
+	// it unwinds first (hooks see the raw result). snapshotHooks is nil in the
+	// common no-hook case, so the whole block is skipped.
+	hc := p.snapshotHooks()
+	if len(hc) > 0 {
+		hookCtx := HookContext{
+			Operation: "set",
+			JSONStr:   jsonStr,
+			Path:      path,
+			Value:     value,
+			Config:    options,
+			StartTime: time.Now(),
+		}
+		if hookErr := hc.executeBefore(hookCtx); hookErr != nil {
+			return jsonStr, hookErr
+		}
+		defer func() {
+			result, err = hc.executeAfterString(hookCtx, result, err)
+		}()
+	}
 
 	data, err := p.parseJSON(jsonStr, "set", path, options)
 	if err != nil {
@@ -30,8 +53,15 @@ func (p *Processor) Set(jsonStr, path string, value any, cfg ...Config) (string,
 	// parse results from Get() are never shared with this scope.
 	// If the operation fails, the original jsonStr string is returned unchanged.
 
-	// Determine if we should create paths
-	createPaths := options.CreatePaths || p.config.CreatePaths
+	// Determine if we should create paths. A per-call Config (when supplied)
+	// fully overrides the processor's setting — including disabling CreatePaths
+	// when the processor default has it on. When no Config is supplied, the
+	// processor's own setting applies (not the global default singleton, which
+	// would silently re-enable CreatePaths on a processor built with it off).
+	createPaths := p.config.CreatePaths
+	if len(cfg) > 0 {
+		createPaths = options.CreatePaths
+	}
 
 	// Set the value at the specified path
 	err = p.setValueAtPathWithOptions(data, path, value, createPaths)
@@ -62,7 +92,7 @@ func (p *Processor) Set(jsonStr, path string, value any, cfg ...Config) (string,
 	// Convert modified data back to JSON string
 	// PERFORMANCE: Use FastMarshalToString instead of json.Marshal to avoid
 	// double allocation (bytes -> string) and leverage optimized encoder pools
-	result, err := internal.FastMarshalToString(data)
+	result, err = internal.FastMarshalToString(data)
 	if err != nil {
 		// Return original data if marshaling fails
 		return jsonStr, &JsonsError{
@@ -102,19 +132,37 @@ func (p *Processor) SetMultiple(jsonStr string, updates map[string]any, cfg ...C
 	}
 	defer releaseConfig(options)
 
-	// Validate JSON input
-	if err := p.validateInput(jsonStr); err != nil {
-		return jsonStr, err
+	// Validate JSON input. Honor SkipValidation (essential DoS checks only) to
+	// stay consistent with Set/Delete, which route through validateOperationInput.
+	// Previously this called validateInputForOptions unconditionally, silently
+	// ignoring SkipValidation — a behavioral divergence from Set.
+	if options.SkipValidation {
+		if err := p.validateInputEssential(jsonStr); err != nil {
+			return jsonStr, err
+		}
+	} else {
+		if err := p.validateInputForOptions(jsonStr, options); err != nil {
+			return jsonStr, err
+		}
 	}
 
-	// Validate all paths before processing
+	// Validate all paths before processing. Path SYNTAX is always validated —
+	// matching validateOperationInput's policy — so a malformed index can never
+	// silently corrupt data even under SkipValidation. Under SkipValidation the
+	// cheaper syntax-only internal.ValidatePath is used, as in the single-path path.
 	for path := range updates {
-		if err := p.validatePath(path); err != nil {
+		var pathErr error
+		if options.SkipValidation {
+			pathErr = internal.ValidatePath(path)
+		} else {
+			pathErr = p.validatePath(path)
+		}
+		if pathErr != nil {
 			return jsonStr, &JsonsError{
 				Op:      "set_multiple",
 				Path:    path,
-				Message: fmt.Sprintf("invalid path '%s': %v", path, err),
-				Err:     err,
+				Message: fmt.Sprintf("invalid path '%s': %v", path, pathErr),
+				Err:     pathErr,
 			}
 		}
 	}
@@ -140,8 +188,15 @@ func (p *Processor) SetMultiple(jsonStr string, updates map[string]any, cfg ...C
 		}
 	}
 
-	// Determine if we should create paths
-	createPaths := options.CreatePaths || p.config.CreatePaths
+	// Determine if we should create paths. A per-call Config (when supplied)
+	// fully overrides the processor's setting — including disabling CreatePaths
+	// when the processor default has it on. When no Config is supplied, the
+	// processor's own setting applies (not the global default singleton, which
+	// would silently re-enable CreatePaths on a processor built with it off).
+	createPaths := p.config.CreatePaths
+	if len(cfg) > 0 {
+		createPaths = options.CreatePaths
+	}
 
 	// Apply all updates on the copy
 	var lastError error
@@ -206,8 +261,9 @@ func (p *Processor) SetMultiple(jsonStr string, updates map[string]any, cfg ...C
 	return result, nil
 }
 
-// SetCreate sets a value at the specified path, creating intermediate paths as needed.
-// This is the unified API for set-with-path-creation operations.
+// SetCreate sets a value at the specified path, creating intermediate paths as
+// needed. It is a convenience wrapper: SetCreate(s, p, v, cfg) is exactly
+// Set(s, p, v, cfg') where cfg' is cfg with CreatePaths forced to true.
 //
 // Example:
 //
@@ -220,7 +276,8 @@ func (p *Processor) SetCreate(jsonStr, path string, value any, cfg ...Config) (s
 }
 
 // SetMultipleCreate sets multiple values, creating intermediate paths as needed.
-// This is the unified API for batch set-with-path-creation operations.
+// It is a convenience wrapper: SetMultipleCreate(s, u, cfg) is exactly
+// SetMultiple(s, u, cfg') where cfg' is cfg with CreatePaths forced to true.
 //
 // Example:
 //

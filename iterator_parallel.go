@@ -2,6 +2,8 @@ package json
 
 import (
 	"context"
+	"fmt"
+	"log/slog"
 	"sync"
 	"sync/atomic"
 )
@@ -109,6 +111,19 @@ func (it *ParallelIterator) ForEachWithContext(ctx context.Context, fn func(int,
 		go func(idx int, val any) {
 			defer wg.Done()
 			defer func() { <-it.sem }()
+			// SAFETY (SEC-003): a panic inside the user callback fn must not tear
+			// down the process; convert it to an error reported to the caller.
+			// Mirrors the JSONL worker recovery in processor_streamjsonl.go.
+			defer func() {
+				if r := recover(); r != nil {
+					if atomic.CompareAndSwapInt32(&hasError, 0, 1) {
+						select {
+						case errCh <- fmt.Errorf("parallel iterator worker panicked: %v", r):
+						default:
+						}
+					}
+				}
+			}()
 
 			select {
 			case <-ctx.Done():
@@ -210,6 +225,19 @@ func (it *ParallelIterator) ForEachBatchWithContext(ctx context.Context, batchSi
 		go func(idx int, b []any) {
 			defer wg.Done()
 			defer func() { <-it.sem }()
+			// SAFETY (SEC-003): a panic inside the user callback fn must not tear
+			// down the process; convert it to an error reported to the caller.
+			// Mirrors the JSONL worker recovery in processor_streamjsonl.go.
+			defer func() {
+				if r := recover(); r != nil {
+					if atomic.CompareAndSwapInt32(&hasError, 0, 1) {
+						select {
+						case errCh <- fmt.Errorf("parallel iterator batch worker panicked: %v", r):
+						default:
+						}
+					}
+				}
+			}()
 
 			select {
 			case <-ctx.Done():
@@ -252,7 +280,6 @@ func (it *ParallelIterator) ForEachBatchWithContext(ctx context.Context, batchSi
 //   - nil if all elements transform successfully
 func (it *ParallelIterator) Map(transform func(int, any) (any, error)) ([]any, error) {
 	result := make([]any, len(it.data))
-	var mu sync.Mutex
 
 	err := it.ForEach(func(idx int, val any) error {
 		transformed, err := transform(idx, val)
@@ -260,9 +287,11 @@ func (it *ParallelIterator) Map(transform func(int, any) (any, error)) ([]any, e
 			return err
 		}
 
-		mu.Lock()
+		// Each worker writes a distinct index; concurrent writes to distinct
+		// slice elements do not race (separate memory locations). ForEach
+		// joins all workers via wg.Wait before returning, so every write is
+		// visible to the caller — no mutex required.
 		result[idx] = transformed
-		mu.Unlock()
 
 		return nil
 	})
@@ -280,14 +309,20 @@ func (it *ParallelIterator) Filter(predicate func(int, any) bool) []any {
 	var mu sync.Mutex
 	result := make([]any, 0)
 
-	it.ForEach(func(idx int, val any) error {
+	if err := it.ForEach(func(idx int, val any) error {
 		if predicate(idx, val) {
 			mu.Lock()
 			result = append(result, val)
 			mu.Unlock()
 		}
 		return nil
-	})
+	}); err != nil {
+		// SEC-003: ForEach returns a non-nil error only when a worker recovered a
+		// panic (see the recover in ForEachWithContext). Filter has no error return,
+		// so log rather than silently swallow — keeps the panic visible without
+		// crashing the program.
+		slog.Error("parallel filter recovered a panic", slog.Any("error", err))
+	}
 
 	return result
 }

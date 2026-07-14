@@ -18,7 +18,7 @@ import (
 // - ProcessBatch for mixed batch operations
 // - BatchOperation types (get, set, delete)
 // - WarmupCache for pre-populating cache
-// - BulkProcessor for efficient bulk operations
+// - GetMultiple for efficient bulk retrieval
 // - EncodeStream, EncodeBatch, EncodeFields for encoding
 // - Path cache warmup
 // - Performance optimization techniques
@@ -35,8 +35,8 @@ func main() {
 	// 2. CACHE WARMUP
 	demonstrateCacheWarmup()
 
-	// 3. BULK PROCESSOR
-	demonstrateBulkProcessor()
+	// 3. BULK RETRIEVAL (GETMULTIPLE)
+	demonstrateGetMultiple()
 
 	// 4. ENCODE STREAM/BATCH/FIELDS
 	demonstrateEncodeFunctions()
@@ -91,7 +91,8 @@ func demonstrateProcessBatch() {
 		}
 	}
 
-	// Using with processor for more control
+	// The processor-level ProcessBatch mirrors the package-level form but runs
+	// on a processor you own (useful with a custom Config).
 	processor, err := json.New(json.DefaultConfig())
 	if err != nil {
 		fmt.Printf("   New error: %v\n", err)
@@ -99,21 +100,19 @@ func demonstrateProcessBatch() {
 	}
 	defer processor.Close()
 
-	// Note: BatchOperation also supports JSONStr field for different JSON inputs
-	operations2 := []json.BatchOperation{
-		{Type: "get", JSONStr: jsonStr, Path: "user.name", ID: "get_name"},
-		{Type: "get", JSONStr: jsonStr, Path: "user.email", ID: "get_email"},
-	}
-
-	results2, err := processor.ProcessBatch(operations2)
+	procResults, err := processor.ProcessBatch(operations)
 	if err != nil {
 		fmt.Printf("   Processor batch error: %v\n", err)
 		return
 	}
 
 	fmt.Println("\n   Processor batch results:")
-	for _, result := range results2 {
-		fmt.Printf("   [%s] %v\n", result.ID, result.Result)
+	for _, result := range procResults {
+		if result.Error != nil {
+			fmt.Printf("   [%s] Error: %v\n", result.ID, result.Error)
+		} else {
+			fmt.Printf("   [%s] Result: %v\n", result.ID, result.Result)
+		}
 	}
 }
 
@@ -152,7 +151,7 @@ func demonstrateCacheWarmup() {
 	fmt.Printf("   - Total paths: %d\n", result.TotalPaths)
 	fmt.Printf("   - Successful: %d\n", result.Successful)
 	fmt.Printf("   - Failed: %d\n", result.Failed)
-	fmt.Printf("   - Success rate: %.1f%%\n", result.SuccessRate*100)
+	fmt.Printf("   - Success rate: %.1f%%\n", result.SuccessRate)
 
 	if len(result.FailedPaths) > 0 {
 		fmt.Printf("   - Failed paths: %v\n", result.FailedPaths)
@@ -171,8 +170,8 @@ func demonstrateCacheWarmup() {
 	fmt.Println("   Cache cleared")
 }
 
-func demonstrateBulkProcessor() {
-	fmt.Println("\n3. Bulk Operations with GetMultiple")
+func demonstrateGetMultiple() {
+	fmt.Println("\n3. Bulk Retrieval with GetMultiple")
 	fmt.Println("------------------------------------")
 
 	processor, err := json.New(json.DefaultConfig())

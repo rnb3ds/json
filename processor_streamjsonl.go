@@ -37,7 +37,16 @@ const (
 //		return nil // continue processing
 //		// return item.Break() // to stop iteration
 //	})
-func (p *Processor) StreamJSONL(reader io.Reader, fn func(lineNum int, item *IterableValue) error) error {
+func (p *Processor) StreamJSONL(reader io.Reader, fn func(lineNum int, item *IterableValue) error) (err error) {
+	// SAFETY (SEC-003): a panicking user callback (or any unexpected panic during
+	// the stream) must not crash the program. Recover and surface as an error.
+	// Registered before beginGovernedOp so the governance release (endGovernedOp)
+	// still runs on panic — defers unwind LIFO, so endGovernedOp fires first.
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("jsonl callback panicked: %v", r)
+		}
+	}()
 	// Concurrency governance for the full stream duration. A StreamJSONL call on a
 	// config-cached processor can run for many seconds, so per-op governance (as
 	// Get/Set provide) would not protect it: between lines activeOps drops to zero and
@@ -202,7 +211,12 @@ func (p *Processor) StreamJSONLParallelWithContext(ctx context.Context, reader i
 				default:
 				}
 				if atomic.LoadInt32(&errCount) > 0 {
-					continue
+					// Another worker hit an error or the consumer requested a break.
+					// Exit immediately instead of `continue`-ing to drain the rest of
+					// the (bounded) jobs channel performing no useful work. The feed
+					// loop breaks on errCount and closes(jobs), so other workers still
+					// range-out cleanly; defer wg.Done() runs on this return.
+					return
 				}
 				item := newIterableValue(job.data)
 				if jobErr := fn(job.lineNum, item); jobErr != nil {
@@ -319,7 +333,15 @@ feedLoop:
 //		// Process chunk of 1000 items
 //		return nil
 //	})
-func (p *Processor) StreamJSONLChunked(reader io.Reader, chunkSize int, fn func(chunk []*IterableValue) error) error {
+func (p *Processor) StreamJSONLChunked(reader io.Reader, chunkSize int, fn func(chunk []*IterableValue) error) (err error) {
+	// SAFETY (SEC-003): a panicking user callback must not crash the program.
+	// Registered first so the pool-cleanup and governance defers (registered later)
+	// still run on panic — defers unwind LIFO, so they fire before this recover.
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("jsonl chunk callback panicked: %v", r)
+		}
+	}()
 	// Concurrency governance for the full chunked stream (see StreamJSONL for the
 	// rationale). Calls json.Unmarshal directly, so never nested under another op.
 	if err := p.beginGovernedOp(); err != nil {
@@ -338,6 +360,15 @@ func (p *Processor) StreamJSONLChunked(reader io.Reader, chunkSize int, fn func(
 	}
 
 	var chunk []*IterableValue
+	// Return any accumulated pool objects on every return path, including the
+	// early-return error paths below (memory limit, nesting, parse, scanner).
+	// The flush points reset chunk after returning their objects, so this defer
+	// only fires when we bail out with a partially filled chunk.
+	defer func() {
+		for i := range chunk {
+			iterableValuePool.Put(chunk[i])
+		}
+	}()
 
 	chunkBufSize := p.config.JSONLBufferSize
 	if chunkBufSize <= 0 {
@@ -397,6 +428,7 @@ func (p *Processor) StreamJSONLChunked(reader io.Reader, chunkSize int, fn func(
 				for i := range chunk {
 					iterableValuePool.Put(chunk[i])
 				}
+				chunk = chunk[:0]
 				return err
 			}
 			for i := range chunk {
@@ -416,11 +448,13 @@ func (p *Processor) StreamJSONLChunked(reader io.Reader, chunkSize int, fn func(
 			for i := range chunk {
 				iterableValuePool.Put(chunk[i])
 			}
+			chunk = chunk[:0]
 			return err
 		}
 		for i := range chunk {
 			iterableValuePool.Put(chunk[i])
 		}
+		chunk = chunk[:0]
 	}
 
 	return nil
@@ -569,7 +603,7 @@ func (p *Processor) StreamJSONLFile(filename string, fn func(lineNum int, item *
 	if err != nil {
 		return fmt.Errorf("failed to open file: %w", err)
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }() // best-effort cleanup
 
 	return p.StreamJSONL(file, fn)
 }
@@ -640,7 +674,11 @@ func (p *Processor) FirstJSONL(reader io.Reader, predicate func(item *IterableVa
 
 // ============================================================================
 // Package-level JSONL wrappers (dual-layer design)
-// Delegate to the default processor for convenience
+// Delegate to a processor for convenience. Each accepts an optional trailing
+// Config: when omitted it uses the default processor (behavior unchanged); when
+// supplied it selects a config-cached processor whose baked-in JSONL settings
+// (workers, buffer/line sizes, memory limits) reflect cfg. Explicit parameters
+// (e.g. StreamJSONLParallel's workers) still take precedence over cfg fields.
 // ============================================================================
 
 // StreamJSONL streams JSONL data from a reader with IterableValue callback support.
@@ -652,10 +690,12 @@ func (p *Processor) FirstJSONL(reader io.Reader, predicate func(item *IterableVa
 //		fmt.Printf("Line %d: name=%s\n", lineNum, name)
 //		return nil // continue processing
 //	})
-func StreamJSONL(reader io.Reader, fn func(lineNum int, item *IterableValue) error) error {
-	return withProcessorError(func(p *Processor) error {
-		return p.StreamJSONL(reader, fn)
-	})
+func StreamJSONL(reader io.Reader, fn func(lineNum int, item *IterableValue) error, cfg ...Config) error {
+	p, err := processorForCfg(cfg...)
+	if err != nil {
+		return err
+	}
+	return p.StreamJSONL(reader, fn)
 }
 
 // StreamJSONLParallel processes JSONL data in parallel with multiple workers.
@@ -666,18 +706,22 @@ func StreamJSONL(reader io.Reader, fn func(lineNum int, item *IterableValue) err
 //		// Process each item in parallel
 //		return nil
 //	})
-func StreamJSONLParallel(reader io.Reader, workers int, fn func(lineNum int, item *IterableValue) error) error {
-	return withProcessorError(func(p *Processor) error {
-		return p.StreamJSONLParallel(reader, workers, fn)
-	})
+func StreamJSONLParallel(reader io.Reader, workers int, fn func(lineNum int, item *IterableValue) error, cfg ...Config) error {
+	p, err := processorForCfg(cfg...)
+	if err != nil {
+		return err
+	}
+	return p.StreamJSONLParallel(reader, workers, fn)
 }
 
 // StreamJSONLParallelWithContext processes JSONL data in parallel with context support
 // for cancellation. See Processor.StreamJSONLParallelWithContext for details.
-func StreamJSONLParallelWithContext(ctx context.Context, reader io.Reader, workers int, fn func(lineNum int, item *IterableValue) error) error {
-	return withProcessorError(func(p *Processor) error {
-		return p.StreamJSONLParallelWithContext(ctx, reader, workers, fn)
-	})
+func StreamJSONLParallelWithContext(ctx context.Context, reader io.Reader, workers int, fn func(lineNum int, item *IterableValue) error, cfg ...Config) error {
+	p, err := processorForCfg(cfg...)
+	if err != nil {
+		return err
+	}
+	return p.StreamJSONLParallelWithContext(ctx, reader, workers, fn)
 }
 
 // StreamJSONLChunked processes JSONL data in chunks for memory-efficient processing.
@@ -688,10 +732,12 @@ func StreamJSONLParallelWithContext(ctx context.Context, reader io.Reader, worke
 //		// Process chunk of 1000 items
 //		return nil
 //	})
-func StreamJSONLChunked(reader io.Reader, chunkSize int, fn func(chunk []*IterableValue) error) error {
-	return withProcessorError(func(p *Processor) error {
-		return p.StreamJSONLChunked(reader, chunkSize, fn)
-	})
+func StreamJSONLChunked(reader io.Reader, chunkSize int, fn func(chunk []*IterableValue) error, cfg ...Config) error {
+	p, err := processorForCfg(cfg...)
+	if err != nil {
+		return err
+	}
+	return p.StreamJSONLChunked(reader, chunkSize, fn)
 }
 
 // ForeachJSONL iterates over JSONL data with IterableValue callback.
@@ -702,10 +748,12 @@ func StreamJSONLChunked(reader io.Reader, chunkSize int, fn func(chunk []*Iterab
 //		fmt.Printf("Line: %d, Value: %v\n", lineNum, item.GetData())
 //		return nil
 //	})
-func ForeachJSONL(reader io.Reader, fn func(lineNum int, item *IterableValue) error) error {
-	return withProcessorError(func(p *Processor) error {
-		return p.ForeachJSONL(reader, fn)
-	})
+func ForeachJSONL(reader io.Reader, fn func(lineNum int, item *IterableValue) error, cfg ...Config) error {
+	p, err := processorForCfg(cfg...)
+	if err != nil {
+		return err
+	}
+	return p.ForeachJSONL(reader, fn)
 }
 
 // MapJSONL maps JSONL data into a new format using a mapping function.
@@ -718,10 +766,12 @@ func ForeachJSONL(reader io.Reader, fn func(lineNum int, item *IterableValue) er
 //			"age":  item.GetInt("age"),
 //		}, nil
 //	})
-func MapJSONL(reader io.Reader, fn func(lineNum int, item *IterableValue) (any, error)) ([]any, error) {
-	return withProcessor(func(p *Processor) ([]any, error) {
-		return p.MapJSONL(reader, fn)
-	})
+func MapJSONL(reader io.Reader, fn func(lineNum int, item *IterableValue) (any, error), cfg ...Config) ([]any, error) {
+	p, err := processorForCfg(cfg...)
+	if err != nil {
+		return nil, err
+	}
+	return p.MapJSONL(reader, fn)
 }
 
 // ReduceJSONL reduces JSONL data to a single aggregated result using a reducer function.
@@ -731,10 +781,10 @@ func MapJSONL(reader io.Reader, fn func(lineNum int, item *IterableValue) (any, 
 //	totalAge, err := json.ReduceJSONL(reader, 0, func(acc any, item *json.IterableValue) any {
 //		return acc.(int64) + int64(item.GetInt("age"))
 //	})
-func ReduceJSONL(reader io.Reader, initial any, fn func(acc any, item *IterableValue) any) (any, error) {
+func ReduceJSONL(reader io.Reader, initial any, fn func(acc any, item *IterableValue) any, cfg ...Config) (any, error) {
 	// Note: Cannot use withProcessor because it returns zero-value on error,
 	// but ReduceJSONL must return the initial accumulator on error.
-	p, err := getProcessorOrFail()
+	p, err := processorForCfg(cfg...)
 	if err != nil {
 		return initial, err
 	}
@@ -748,10 +798,12 @@ func ReduceJSONL(reader io.Reader, initial any, fn func(acc any, item *IterableV
 //	adults, err := json.FilterJSONL(reader, func(item *json.IterableValue) bool {
 //		return item.GetInt("age") >= 18
 //	})
-func FilterJSONL(reader io.Reader, predicate func(item *IterableValue) bool) ([]*IterableValue, error) {
-	return withProcessor(func(p *Processor) ([]*IterableValue, error) {
-		return p.FilterJSONL(reader, predicate)
-	})
+func FilterJSONL(reader io.Reader, predicate func(item *IterableValue) bool, cfg ...Config) ([]*IterableValue, error) {
+	p, err := processorForCfg(cfg...)
+	if err != nil {
+		return nil, err
+	}
+	return p.FilterJSONL(reader, predicate)
 }
 
 // StreamJSONLFile streams JSONL data from a file with IterableValue callback.
@@ -762,10 +814,12 @@ func FilterJSONL(reader io.Reader, predicate func(item *IterableValue) bool) ([]
 //		fmt.Printf("Line %d: %v\n", lineNum, item.GetData())
 //		return nil
 //	})
-func StreamJSONLFile(filename string, fn func(lineNum int, item *IterableValue) error) error {
-	return withProcessorError(func(p *Processor) error {
-		return p.StreamJSONLFile(filename, fn)
-	})
+func StreamJSONLFile(filename string, fn func(lineNum int, item *IterableValue) error, cfg ...Config) error {
+	p, err := processorForCfg(cfg...)
+	if err != nil {
+		return err
+	}
+	return p.StreamJSONLFile(filename, fn)
 }
 
 // CollectJSONL collects all JSONL items into a slice.
@@ -776,10 +830,12 @@ func StreamJSONLFile(filename string, fn func(lineNum int, item *IterableValue) 
 //	for _, item := range items {
 //		fmt.Println(item.GetString("name"))
 //	}
-func CollectJSONL(reader io.Reader) ([]*IterableValue, error) {
-	return withProcessor(func(p *Processor) ([]*IterableValue, error) {
-		return p.CollectJSONL(reader)
-	})
+func CollectJSONL(reader io.Reader, cfg ...Config) ([]*IterableValue, error) {
+	p, err := processorForCfg(cfg...)
+	if err != nil {
+		return nil, err
+	}
+	return p.CollectJSONL(reader)
 }
 
 // FirstJSONL returns the first JSONL item that matches a predicate.
@@ -789,10 +845,10 @@ func CollectJSONL(reader io.Reader) ([]*IterableValue, error) {
 //	user, found, err := json.FirstJSONL(reader, func(item *json.IterableValue) bool {
 //		return item.GetString("name") == "Alice"
 //	})
-func FirstJSONL(reader io.Reader, predicate func(item *IterableValue) bool) (*IterableValue, bool, error) {
+func FirstJSONL(reader io.Reader, predicate func(item *IterableValue) bool, cfg ...Config) (*IterableValue, bool, error) {
 	// Note: Cannot use withProcessor because it only supports (T, error) return,
 	// but FirstJSONL returns (*IterableValue, bool, error).
-	p, err := getProcessorOrFail()
+	p, err := processorForCfg(cfg...)
 	if err != nil {
 		return nil, false, err
 	}

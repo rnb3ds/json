@@ -2,6 +2,7 @@ package json
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -143,7 +144,9 @@ func TestAppendOperation(t *testing.T) {
 	}{
 		{name: "append to existing array", jsonStr: `{"items":[1,2]}`, path: "items[+]", value: 3, wantJSON: `{"items":[1,2,3]}`},
 		{name: "append to empty array", jsonStr: `{"items":[]}`, path: "items[+]", value: 1, wantJSON: `{"items":[1]}`},
-		{name: "append to non-existent key errors", jsonStr: `{}`, path: "items[+]", value: 1, cfg: func() Config { c := DefaultConfig(); c.CreatePaths = false; return c }(), wantErr: true, errSubstr: "cannot append"},
+		{name: "append spreads slice value", jsonStr: `{"items":[1]}`, path: "items[+]", value: []any{2, 3}, wantJSON: `{"items":[1,2,3]}`},
+		{name: "append to nested array element", jsonStr: `{"m":[[1,2],[3,4]]}`, path: "m[1][+]", value: 5, wantJSON: `{"m":[[1,2],[3,4,5]]}`},
+		{name: "append to non-existent key errors", jsonStr: `{}`, path: "items[+]", value: 1, cfg: func() Config { c := DefaultConfig(); c.CreatePaths = false; return c }(), wantErr: true, errSubstr: "not found"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -2125,6 +2128,141 @@ func TestArraySetSliceEdgeCases(t *testing.T) {
 				t.Fatalf("unexpected error: %v", err)
 			}
 			assertJSONEqual(t, tt.want, result)
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// FIX-001: operation boundary & error-path coverage
+// ---------------------------------------------------------------------------
+
+// TestSet_ArrayIndex_Boundary covers array index auto-extension and the
+// parse-time "reasonable range" guard that rejects pathologically large
+// indices (operation_set.go extendArrayAndSetValue + path index validation).
+func TestSet_ArrayIndex_Boundary(t *testing.T) {
+	t.Run("auto-extends array even without CreatePaths", func(t *testing.T) {
+		got, err := Set(`{"a":[1,2]}`, "a[5]", 9)
+		if err != nil {
+			t.Fatalf("Set: %v", err)
+		}
+		assertJSONEqual(t, `{"a":[1,2,null,null,null,9]}`, got)
+	})
+
+	t.Run("index beyond reasonable range is rejected", func(t *testing.T) {
+		_, err := Set(`{"a":[]}`, "a[1000001]", 1, Config{CreatePaths: true})
+		if err == nil {
+			t.Fatal("Set with index 1000001 should be rejected")
+		}
+		if !strings.Contains(err.Error(), "reasonable range") {
+			t.Errorf("error = %q, want substring %q", err.Error(), "reasonable range")
+		}
+	})
+
+	t.Run("JSON Pointer index trips extension size guard", func(t *testing.T) {
+		// Bracket index paths are bounded at parse time (subtest above), so the
+		// maxArrayExtension guard in operation_set.go is reachable only via a
+		// JSON Pointer path, whose index bypasses the bracket parser. The guard
+		// must surface as ErrSizeLimit rather than allocating a multi-GB slice.
+		_, err := Set(`{"a":[]}`, "/a/2000000", "x", Config{CreatePaths: true})
+		if !errors.Is(err, ErrSizeLimit) {
+			t.Errorf("err = %v, want errors.Is ErrSizeLimit", err)
+		}
+	})
+
+	t.Run("slice extends beyond current length", func(t *testing.T) {
+		got, err := Set(`{"a":[1,2]}`, "a[5:10]", 9, Config{CreatePaths: true})
+		if err != nil {
+			t.Fatalf("Set: %v", err)
+		}
+		assertJSONEqual(t, `{"a":[1,2,null,null,null,9,9,9,9,9]}`, got)
+	})
+}
+
+// TestNavigateToPath_DistributedExtract covers getValueWithDistributedOperation
+// (operation_array.go) and handleDistributedOperation (path.go): an extract
+// segment ({field}) followed by an array index/slice applies the array op to
+// the field extracted from each element of an array.
+func TestNavigateToPath_DistributedExtract(t *testing.T) {
+	p, err := New()
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer p.Close()
+
+	data := map[string]any{
+		"items": []any{
+			map[string]any{"tags": []any{"a", "b"}},
+			map[string]any{"tags": []any{"c"}},
+		},
+	}
+
+	t.Run("index after extract", func(t *testing.T) {
+		got, err := p.navigateToPath(data, "items.{tags}[0]")
+		if err != nil {
+			t.Fatalf("navigateToPath: %v", err)
+		}
+		arr, ok := got.([]any)
+		if !ok {
+			t.Fatalf("got %T, want []any", got)
+		}
+		// first tag from each item -> ["a","c"]
+		if len(arr) != 2 || arr[0] != "a" || arr[1] != "c" {
+			t.Errorf("got %v, want [a c]", arr)
+		}
+	})
+
+	t.Run("slice after extract", func(t *testing.T) {
+		got, err := p.navigateToPath(data, "items.{tags}[0:1]")
+		if err != nil {
+			t.Fatalf("navigateToPath: %v", err)
+		}
+		if _, ok := got.([]any); !ok {
+			t.Errorf("got %T, want []any", got)
+		}
+	})
+}
+
+// TestNavigateToPath_JSONPointer_Edges covers navigateJSONPointer (path.go)
+// branches via the dot/pointer navigator: tilde escapes (~0 -> ~, ~1 -> /),
+// the "-" past-end token, and out-of-bounds indices, which resolve to nil
+// (not-found) rather than an error.
+func TestNavigateToPath_JSONPointer_Edges(t *testing.T) {
+	p, err := New()
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer p.Close()
+
+	tests := []struct {
+		name    string
+		data    any
+		path    string
+		wantErr bool
+		want    any
+	}{
+		{"tilde1 slash escape", map[string]any{"a/b": float64(1)}, "/a~1b", false, float64(1)},
+		{"tilde0 escape", map[string]any{"a~b": float64(2)}, "/a~0b", false, float64(2)},
+		{"dash past-end not found", map[string]any{"a": []any{float64(1), float64(2)}}, "/a/-", true, nil},
+		{"out-of-bounds index not found", map[string]any{"a": []any{float64(1), float64(2)}}, "/a/9", true, nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := p.navigateToPath(tt.data, tt.path)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("navigateToPath(%q) expected error, got nil (val=%v)", tt.path, got)
+				}
+				if !errors.Is(err, ErrPathNotFound) {
+					t.Errorf("navigateToPath(%q) err = %q, want ErrPathNotFound", tt.path, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("navigateToPath() unexpected error: %v", err)
+			}
+			if got != tt.want {
+				t.Errorf("navigateToPath(%q) = %v (%T), want %v", tt.path, got, got, tt.want)
+			}
 		})
 	}
 }

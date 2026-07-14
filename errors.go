@@ -48,13 +48,12 @@ var (
 	ErrSizeLimit = errors.New("size limit exceeded")
 
 	// ErrDepthLimit indicates that the JSON nesting depth exceeds the configured limit.
-	// Increase MaxNestingDepth in Config for deeply nested structures.
+	// Increase MaxNestingDepthSecurity in Config for deeply nested structures.
 	ErrDepthLimit = errors.New("depth limit exceeded")
 
 	// ErrConcurrencyLimit indicates that the concurrent operation count exceeds the limit.
 	// Increase MaxConcurrency in Config for high-concurrency scenarios.
-	//
-	// Deprecated: not currently returned by any operation. Reserved for future use.
+	// Returned by governed operations (Get/Set/Delete/...) when MaxConcurrency is reached.
 	ErrConcurrencyLimit = errors.New("concurrency limit exceeded")
 
 	// ErrSecurityViolation indicates that potentially dangerous content was detected.

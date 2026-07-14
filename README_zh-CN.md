@@ -13,6 +13,28 @@
 
 ---
 
+## 目录
+
+- [为什么选择 cybergodev/json](#为什么选择-cybergodevjson)
+- [特性](#特性)
+- [安装](#安装)
+- [快速开始](#快速开始)
+- [路径语法参考](#路径语法参考)
+- [核心 API](#核心-api)
+  - [数据获取](#数据获取) · [解析](#解析) · [数据修改](#数据修改)
+  - [编码与格式化](#编码与格式化) · [文件操作](#文件操作) · [JSON 工具](#json-工具)
+- [配置](#配置)
+- [高级功能](#高级功能)
+- [常见用例](#常见用例)
+- [性能监控](#性能监控)
+- [从 encoding/json 迁移](#从-encodingjson-迁移)
+- [安全配置](#安全配置)
+- [示例代码](#示例代码)
+- [文档](#文档)
+- [许可证](#许可证)
+
+---
+
 ## 为什么选择 cybergodev/json
 
 | 功能 | encoding/json | cybergodev/json |
@@ -223,14 +245,18 @@ var buf bytes.Buffer
 json.Compact(&buf, []byte(jsonStr))
 compact := buf.String()
 
-// 带配置编码
+// 或使用 string-in/string-out 形式（直接压缩 JSON 字符串）
+compact, _ = json.CompactString(jsonStr)
+
+// 带配置编码 —— EncodeWithConfig 是推荐的编码函数
+// （json.Encode 是已废弃的别名，计划移除）
 cfg := json.DefaultConfig()
 cfg.Pretty = true
 cfg.SortKeys = true
-result, _ := json.Encode(data, cfg)
+result, _ := json.EncodeWithConfig(data, cfg)
 
 // 预设配置
-result, _ := json.Encode(data, json.PrettyConfig())
+result, _ = json.EncodeWithConfig(data, json.PrettyConfig())
 
 // 快速美化编码
 result, _ = json.EncodePretty(data)
@@ -401,11 +427,13 @@ json.ForeachNested(data, func(key any, item *json.IterableValue) {
     })
 })
 
-// 带路径迭代（使用 ForeachFile 可支持返回 error 的回调）
-err := json.ForeachWithPath(data, "users", func(key any, item *json.IterableValue) {
+// 返回 error 的回调：返回非 nil 的 error 可提前终止迭代。
+// （普通回调请用 ForeachWithPath；基于文件输入请用 ForeachFile。）
+err := json.ForeachWithError(data, "users", func(key any, item *json.IterableValue) error {
     if item.IsNull("id") {
         log.Printf("警告: 键 %v 缺少 id", key)
     }
+    return nil
 })
 
 // 迭代器控制（break / continue）
@@ -721,6 +749,17 @@ defer processor.Close()
 stats := processor.GetStats()
 health := processor.GetHealthStatus()
 processor.ClearCache()
+```
+
+### 基准测试
+
+本库内置了一套基准测试套件，将热路径（快速编码器、基于路径的 `Get`、
+数组切片、字段提取）与 `encoding/json` 进行对比。运行它可在你的硬件上
+实测性能：
+
+```bash
+# 完整基准测试套件（含内存分配统计）
+go test -run='^$' -bench=. -benchmem ./...
 ```
 
 ---

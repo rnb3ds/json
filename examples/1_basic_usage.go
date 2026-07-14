@@ -141,10 +141,9 @@ func demonstrateSet(data string) {
 	newTheme := json.GetString(updated2, "settings.theme", "")
 	fmt.Printf("   Updated theme: %s\n", newTheme)
 
-	// Set with auto-create paths using fluent config
-	cfg := json.DefaultConfig()
-	cfg.CreatePaths = true
-	updated3, _ := json.Set(data, "user.premium.level", "gold", cfg)
+	// SetCreate auto-creates intermediate paths (equivalent to Set with
+	// Config{CreatePaths: true}, but without the manual Config).
+	updated3, _ := json.SetCreate(data, "user.premium.level", "gold")
 	level := json.GetString(updated3, "user.premium.level", "")
 	fmt.Printf("   New premium level (auto-created): %s\n", level)
 
@@ -204,14 +203,12 @@ func demonstrateBatch(data string) {
 	fmt.Printf("   After batch set - Age: %d, Theme: %s, Active: %t\n",
 		newAge, newTheme, newActive)
 
-	// SetMultiple with auto-create paths using fluent config
+	// SetMultipleCreate auto-creates intermediate paths for every update.
 	newUpdates := map[string]any{
 		"user.stats.logins":    100,
 		"user.stats.lastLogin": "2024-06-15",
 	}
-	cfg := json.DefaultConfig()
-	cfg.CreatePaths = true
-	updated2, _ := json.SetMultiple(data, newUpdates, cfg)
+	updated2, _ := json.SetMultipleCreate(data, newUpdates)
 	logins := json.GetInt(updated2, "user.stats.logins", 0)
 	fmt.Printf("   New stats.logins: %d\n", logins)
 }

@@ -5,6 +5,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/cybergodev/json"
 )
@@ -41,6 +42,9 @@ func main() {
 
 	// 5. VALIDATION WITH PROCESSOR
 	demonstrateProcessorValidation()
+
+	// 6. PER-CALL CONFIG ENFORCEMENT (PHASE 2)
+	demonstratePerCallConfigEnforcement()
 
 	fmt.Println("\nValidation examples complete!")
 }
@@ -172,38 +176,31 @@ func demonstrateSchemaValidation() {
 		"age": "thirty"
 	}`
 
-	// Validate valid user
-	// NOTE: the result is named validationErrors (not "errors") to avoid
-	// shadowing the imported "errors" package within this function.
-	fmt.Println("   Validating valid user:")
-	validationErrors, err := json.ValidateSchema(validUser, schema)
-	if err != nil {
-		fmt.Printf("   Validation error: %v\n", err)
-	} else if len(validationErrors) == 0 {
-		fmt.Println("   User data is valid!")
-	} else {
-		for _, e := range validationErrors {
+	// reportSchema validates data against the schema and prints a consistent
+	// result for every case: valid, the list of validation errors, or a hard
+	// validation error. (The result var is named verrs/verr to avoid shadowing
+	// the imported "errors" package.)
+	reportSchema := func(label, data string) {
+		fmt.Printf("   %s:\n", label)
+		verrs, verr := json.ValidateSchema(data, schema)
+		if verr != nil {
+			fmt.Printf("   X validation error: %v\n", verr)
+			return
+		}
+		if len(verrs) == 0 {
+			fmt.Println("   ✓ valid")
+			return
+		}
+		for _, e := range verrs {
 			fmt.Printf("   X %s: %s\n", e.Path, e.Message)
 		}
 	}
 
-	// Validate invalid user 1
-	fmt.Println("\n   Validating invalid user (missing required field):")
-	validationErrors, err = json.ValidateSchema(invalidUser1, schema)
-	if err == nil {
-		for _, e := range validationErrors {
-			fmt.Printf("   X %s: %s\n", e.Path, e.Message)
-		}
-	}
-
-	// Validate invalid user 2
-	fmt.Println("\n   Validating invalid user (wrong types):")
-	validationErrors, err = json.ValidateSchema(invalidUser2, schema)
-	if err == nil {
-		for _, e := range validationErrors {
-			fmt.Printf("   X %s: %s\n", e.Path, e.Message)
-		}
-	}
+	reportSchema("Validating valid user", validUser)
+	fmt.Println()
+	reportSchema("Validating invalid user (missing required field)", invalidUser1)
+	fmt.Println()
+	reportSchema("Validating invalid user (wrong types)", invalidUser2)
 }
 
 func demonstrateSecurityValidation() {
@@ -272,15 +269,43 @@ func demonstrateProcessorValidation() {
 	}
 }
 
+func demonstratePerCallConfigEnforcement() {
+	fmt.Println("\n6. Per-call Config Enforcement (Phase 2)")
+	fmt.Println("-------------------------------------------")
+
+	// The optional trailing Config on package-level functions (Get/Set/Delete/...)
+	// is now truly enforced — it used to be silently ignored. A deep-but-legal
+	// document is accepted under the default nesting limit (200) and rejected
+	// under a tighter per-call limit, with no Processor required.
+	deep := strings.Repeat(`{"a":`, 50) + `1` + strings.Repeat(`}`, 50)
+
+	if _, err := json.Get(deep, "a"); err != nil {
+		fmt.Printf("   default cfg (depth 200): rejected -> %v\n", err)
+	} else {
+		fmt.Println("   default cfg (depth 200): accepted")
+	}
+
+	tight := json.DefaultConfig()
+	tight.MaxNestingDepthSecurity = 15
+	if _, err := json.Get(deep, "a", tight); err != nil {
+		fmt.Printf("   tight cfg   (depth 15) : rejected -> %v\n", err)
+	} else {
+		fmt.Println("   tight cfg   (depth 15) : accepted")
+	}
+
+	fmt.Println("   => the trailing cfg now governs security limits on a single call")
+}
+
 // Helper function to generate large JSON for testing
 func generateLargeJSON(size int) string {
-	result := "{"
+	var b strings.Builder
+	b.WriteByte('{')
 	for i := 0; i < size; i++ {
 		if i > 0 {
-			result += ","
+			b.WriteByte(',')
 		}
-		result += fmt.Sprintf("\"field%d\": \"value%d\"", i, i)
+		fmt.Fprintf(&b, "\"field%d\": \"value%d\"", i, i)
 	}
-	result += "}"
-	return result
+	b.WriteByte('}')
+	return b.String()
 }

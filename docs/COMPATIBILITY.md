@@ -20,6 +20,10 @@ import "github.com/cybergodev/json"
 
 The following functions accept an optional `cfg ...Config` trailing parameter in addition to the standard `encoding/json` signatures. Calls without the extra argument work identically:
 
+- `Marshal(v any, cfg ...Config) ([]byte, error)`
+- `Unmarshal(data []byte, v any, cfg ...Config) error`
+- `MarshalIndent(v any, prefix, indent string, cfg ...Config) ([]byte, error)`
+- `Valid(data []byte, cfg ...Config) bool`
 - `Compact(dst *bytes.Buffer, src []byte, cfg ...Config) error`
 - `Indent(dst *bytes.Buffer, src []byte, prefix, indent string, cfg ...Config) error`
 - `HTMLEscape(dst *bytes.Buffer, src []byte, cfg ...Config)`
@@ -32,10 +36,10 @@ These are backward-compatible: existing call sites compile without changes. Howe
 
 | Function                                                             | Status | Notes                                 |
 |----------------------------------------------------------------------|--------|---------------------------------------|
-| `Marshal(v any) ([]byte, error)`                                     | ✅      | Identical behavior and output         |
-| `Unmarshal(data []byte, v any) error`                                | ✅      | Identical behavior and error handling |
-| `MarshalIndent(v any, prefix, indent string) ([]byte, error)`        | ✅      | Same formatting rules                 |
-| `Valid(data []byte) bool`                                            | ✅      | Same validation logic                 |
+| `Marshal(v any, cfg ...Config) ([]byte, error)`                                     | ✅      | Identical behavior and output (extended with optional `Config`)         |
+| `Unmarshal(data []byte, v any, cfg ...Config) error`                                | ✅      | Identical behavior and error handling (extended with optional `Config`) |
+| `MarshalIndent(v any, prefix, indent string, cfg ...Config) ([]byte, error)`        | ✅      | Same formatting rules (extended with optional `Config`)                 |
+| `Valid(data []byte, cfg ...Config) bool`                                            | ✅      | Same validation logic (extended with optional `Config`)                 |
 | `Compact(dst *bytes.Buffer, src []byte, cfg ...Config) error`                       | ✅      | Identical whitespace removal (extended with optional `Config`) |
 | `Indent(dst *bytes.Buffer, src []byte, prefix, indent string, cfg ...Config) error` | ✅      | Same indentation behavior (extended with optional `Config`)    |
 | `HTMLEscape(dst *bytes.Buffer, src []byte, cfg ...Config)`                          | ✅      | Same HTML escaping rules (extended with optional `Config`)     |
@@ -181,7 +185,7 @@ We guarantee:
 
 1. **API Compatibility**: All standard `encoding/json` public APIs are present and behave equivalently. Some functions accept an optional `cfg ...Config` trailing parameter (see Extended Signatures above).
 2. **Behavioral Compatibility**: Semantically equivalent output for same input (JSON object key ordering may differ, which is compliant with JSON specification)
-3. **Error Compatibility**: Same error types; messages are semantically equivalent (minor formatting details may differ). Note that top-level `Unmarshal`/`Marshal` return `*encoding/json.SyntaxError` (not this package's type); use `errors.As` for portable matching.
+3. **Error Compatibility**: Same error types; messages are semantically equivalent (minor formatting details may differ). Note that top-level `Unmarshal` (on the no-`cfg` fast path) delegates to `encoding/json.Unmarshal` and returns `*encoding/json.SyntaxError` (not this package's type); use `errors.As` for portable matching. `Marshal` does not produce `SyntaxError` (syntax errors are a decode concern); it returns this package's own `*UnsupportedTypeError` / `*MarshalerError`, or a wrapped `*JsonsError`.
 4. **Performance Compatibility**: Same or better performance
 5. **Version Compatibility**: Requires Go 1.25.0+ (as specified in `go.mod`)
 

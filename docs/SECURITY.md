@@ -263,12 +263,12 @@ schema := &json.Schema{
 }
 
 // Validate JSON against schema
-errors, err := processor.ValidateSchema(jsonString, schema)
+validationErrors, err := processor.ValidateSchema(jsonString, schema)
 if err != nil {
     log.Printf("Validation failed: %v", err)
 }
-if len(errors) > 0 {
-    for _, validationErr := range errors {
+if len(validationErrors) > 0 {
+    for _, validationErr := range validationErrors {
         log.Printf("Validation error at %s: %s",
             validationErr.Path, validationErr.Message)
     }
@@ -291,10 +291,10 @@ The library performs security-specific validation:
 // 8. Zero-width character detection
 // 9. Unicode normalization (NFC) for homograph attack prevention
 
-// Example: Detecting deeply nested JSON
-deeplyNested := `{"a":{"b":{"c":{"d":{"e":{"f":{"g":{"h":{"i":{"j":"value"}}}}}}}}}}}`
-_, err := processor.Get(deeplyNested, "a.b.c.d.e.f.g.h.i.j")
-// Will fail if nesting exceeds MaxNestingDepthSecurity
+// Example: Detecting deeply nested JSON that exceeds the default depth limit
+deeplyNested := strings.Repeat(`{"a":`, 250) + `0` + strings.Repeat(`}`, 250)
+_, err := processor.Get(deeplyNested, "a")
+// Fails when nesting depth exceeds MaxNestingDepthSecurity (default: 200)
 ```
 
 ### Optimized Security Scanning
@@ -303,9 +303,11 @@ For large JSON (>4KB), the library uses an optimized security scanning approach:
 
 ```go
 // Default mode (FullSecurityScan: false) - Optimized for performance:
+// - Critical patterns (__proto__, constructor[, prototype.) always fully scanned first
+// - Indicator-character fast path: if no indicator characters are present and no
+//   per-config additional patterns are set, remaining pattern scanning is skipped
 // - Rolling window scan (32KB windows) over the entire JSON content
 // - Suspicious character density sampling (4KB beginning, middle, and end regions)
-// - Critical patterns (__proto__, constructor, prototype) always fully scanned
 // - High suspicious density triggers automatic full scan
 // - Pattern fragment detection for targeted scanning
 
@@ -386,11 +388,9 @@ _, err = processor.LoadFromFile("file\x00.json")           // ✗ Null byte
 Access to sensitive system directories is blocked:
 
 ```go
-// Blocked directories (Unix/Linux):
-// - /etc/
-// - /proc/
-// - /sys/
-// - /dev/
+// Blocked paths (Unix/Linux):
+// - Directory-level: /proc/, /sys/, /dev/
+// - Specific files under /etc/: passwd, shadow, sudoers, hosts, fstab, crontab
 
 // Example:
 _, err := processor.LoadFromFile("/etc/passwd")
@@ -440,7 +440,7 @@ if err != nil {
 // 1. Validate the file path
 // 2. Check for path traversal
 // 3. Validate the data before writing
-// 4. Use atomic writes when possible
+// 4. Write the file (non-atomic: truncate-then-write via os.WriteFile)
 ```
 
 ---
@@ -488,9 +488,9 @@ Cache keys use secure hashing:
 // 2. Cache timing attacks
 // 3. Information disclosure through cache keys
 
-// Key generation (all JSON sizes):
-h1 := HashBytesFNV1a([]byte(input))
-h2 := HashBytesFNV1aOffset([]byte(input))  // independent seed
+// Key generation (all JSON sizes) — internal helpers, not part of the public API:
+h1 := internal.HashBytesFNV1a([]byte(input))
+h2 := internal.HashBytesFNV1aOffset([]byte(input))  // independent seed
 cacheKey := validationKey{length: len(input), h1: h1, h2: h2}
 ```
 
@@ -673,8 +673,8 @@ userSchema := &json.Schema{
 }
 
 // Validate before processing
-errors, err := processor.ValidateSchema(userInput, userSchema)
-if err != nil || len(errors) > 0 {
+validationErrors, err := processor.ValidateSchema(userInput, userSchema)
+if err != nil || len(validationErrors) > 0 {
     // Handle validation errors
     return
 }
@@ -834,8 +834,8 @@ defer processor.Close()
 
 // Layer 3: Schema validation
 schema := defineStrictSchema()
-errors, err := processor.ValidateSchema(input, schema)
-if err != nil || len(errors) > 0 {
+validationErrors, err := processor.ValidateSchema(input, schema)
+if err != nil || len(validationErrors) > 0 {
     return fmt.Errorf("validation failed")
 }
 
@@ -1078,8 +1078,8 @@ func LoadSecureConfig(configPath string) (*Config, error) {
     }
 
     // Validate config structure
-    errors, err := processor.ValidateSchema(jsonStr, configSchema)
-    if err != nil || len(errors) > 0 {
+    validationErrors, err := processor.ValidateSchema(jsonStr, configSchema)
+    if err != nil || len(validationErrors) > 0 {
         return nil, fmt.Errorf("invalid config structure")
     }
 
@@ -1218,21 +1218,30 @@ The library implements a multi-layered security validation system:
 │         ↓                                                       │
 │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐             │
 │  │ Structure   │→ │ Depth Check │→ │ Cache Result│             │
-│  │ Validation  │  │ (Max: 200)  │  │ (FNV-1a)    │             │
+│  │ Validation  │  │ (def: 200)  │  │ (FNV-1a)    │             │
 │  └─────────────┘  └─────────────┘  └─────────────┘             │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
 ### Dangerous Pattern Detection
 
-The library detects **28 dangerous patterns** across multiple categories, plus supports custom patterns via `RegisterDangerousPattern`:
+The library detects **28 dangerous patterns** across multiple categories, plus supports custom patterns via `RegisterDangerousPattern`.
+
+> **Pattern levels:** Each pattern carries a `PatternLevel` — `PatternLevelCritical` (always block), `PatternLevelWarning` (block in strict mode), or `PatternLevelInfo` (log only, never block). All 28 built-in patterns are registered as `PatternLevelCritical`. Separately, the three prototype-pollution patterns below are members of the `criticalPatterns` set, which means they are **fully scanned regardless of JSON size** even when sampling mode is active.
 
 #### Prototype Pollution Patterns (Critical — always fully scanned)
 ```go
-// Detected patterns:
+// These three patterns are in the criticalPatterns set and are always
+// fully scanned regardless of JSON size or sampling settings.
 "__proto__"           // Prototype pollution
 "constructor["        // Constructor access
 "prototype."          // Prototype manipulation
+```
+
+#### Other Prototype-Related Patterns (optimized scan path)
+```go
+// These are in the dangerousPatterns list but NOT in criticalPatterns, so they
+// follow the optimized/sampling scan path unless FullSecurityScan = true.
 "__defineGetter__"    // Getter definition
 "__defineSetter__"    // Setter definition
 ```

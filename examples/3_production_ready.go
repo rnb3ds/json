@@ -86,6 +86,7 @@ func demonstrateConfigurations(testData string) {
 	perfProc, _ := json.New(perfConfig) // OK: DefaultConfig-derived, always valid
 	defer perfProc.Close()
 
+	// Benchmark loop: errors discarded to avoid skewing the measurement.
 	start := time.Now()
 	for i := 0; i < 100; i++ {
 		_, _ = perfProc.Get(testData, "users[0].name")
@@ -173,7 +174,7 @@ func demonstrateConcurrency(testData string) {
 
 func demonstratePerformance(testData string) {
 	fmt.Println("\n3. Performance Optimization")
-	fmt.Println("   ---------------------------")
+	fmt.Println("---------------------------")
 
 	// Note: benchmark loops discard errors to avoid skewing measurements.
 	// Test with cache enabled
@@ -231,7 +232,7 @@ func demonstrateResourceManagement(testData string) {
 		fmt.Println("   Processor resources cleaned up")
 	}()
 
-	// Perform operations
+	// Perform an operation (result not needed; exercising the processor).
 	_, _ = processor.Get(testData, "users[0].name")
 
 	// Check processor health
@@ -280,6 +281,7 @@ func demonstrateMonitoring(testData string) {
 		{"Get features", "config.features"},
 	}
 
+	// Exercise each path to populate metrics (results discarded).
 	for _, op := range operations {
 		_, _ = processor.Get(testData, op.path)
 	}

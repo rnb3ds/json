@@ -95,6 +95,10 @@ func DefaultConfig() Config {
 		EnableCache:  true,
 		CacheResults: true,
 
+		// CacheSharedResults defaults to false: cache-hit reads return an
+		// independent deep copy so callers can freely mutate results.
+		CacheSharedResults: false,
+
 		// Size Limits
 		MaxJSONSize:  DefaultMaxJSONSize,
 		MaxPathDepth: DefaultMaxPathDepth,

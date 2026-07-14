@@ -224,7 +224,8 @@ func (urp *recursiveProcessor) handleArrayIndexSegmentUnified(data any, segment 
 							errs = append(errs, err)
 							continue
 						}
-						if op == opGet && result != nil {
+						if op == opGet {
+							// Keep nil results: an explicit JSON null is a real value.
 							results = append(results, result)
 						}
 					}
@@ -295,7 +296,9 @@ func (urp *recursiveProcessor) handleArrayIndexSegmentUnified(data any, segment 
 				continue
 			}
 
-			if op == opGet && result != nil {
+			if op == opGet {
+				// Keep nil results: an explicit JSON null is a real value.
+				// Missing/not-applicable elements are skipped above via err.
 				results = append(results, result)
 			}
 			// opSet/opDelete mutate mapValue (a map/slice header) in place through
@@ -393,7 +396,7 @@ func (urp *recursiveProcessor) handlePropertySegmentUnified(data any, segment in
 
 		// Path doesn't exist and we're not creating paths
 		if op == opSet {
-			return nil, fmt.Errorf("path not found: %s", segment.Key)
+			return nil, fmt.Errorf("path not found: %s: %w", segment.Key, ErrPathNotFound)
 		}
 
 		// For Get op, return ErrPathNotFound as documented
@@ -416,7 +419,9 @@ func (urp *recursiveProcessor) handlePropertySegmentUnified(data any, segment in
 				continue
 			}
 
-			if op == opGet && result != nil {
+			if op == opGet {
+				// Keep nil results: an explicit JSON null is a real value.
+				// Missing/not-applicable elements are skipped above via err.
 				results = append(results, result)
 			}
 			// opSet/opDelete mutate item's nested containers in place via shared
@@ -437,10 +442,41 @@ func (urp *recursiveProcessor) handlePropertySegmentUnified(data any, segment in
 
 	default:
 		if op == opGet {
-			return nil, nil // Cannot access property on non-object/array
+			// NOTE: property access on a non-object/array returns (nil, nil) by
+			// contract (see TestRecursiveProcessor_ErrorPaths /
+			// TestRecursiveProcessor_SegmentOnNonContainer): top-level/mid-path
+			// gets on a primitive yield nil with no error. Distributed Get keeps
+			// explicit nulls via the loops below; non-object elements there also
+			// surface as (nil, nil) and are preserved as nil slots to maintain
+			// positional correspondence with the source array.
+			return nil, nil
 		}
 		return nil, fmt.Errorf("cannot access property '%s' on type %T", segment.Key, data)
 	}
+}
+
+// sliceSegmentIndices returns the array indices that the given slice segment
+// resolves to on container, honoring start/end/step — including negative step
+// (reverse slices such as [::-1]). Shared by the opSet and opDelete
+// last-segment handlers in handleArraySliceSegmentUnified so neither hand-rolls
+// a step-direction-dependent loop: a plain `for i := start; i < end; i += step`
+// only handles positive step and panics on negative step (i decrements below 0
+// and indexes container[-1]). startVal/endVal are the caller-resolved defaults
+// used when the segment omits start/end.
+func sliceSegmentIndices(container []any, segment internal.PathSegment, startVal, endVal int) []int {
+	var startPtr, endPtr, stepPtr *int
+	if segment.HasStart() {
+		startPtr = &startVal
+	}
+	if segment.HasEnd() {
+		endPtr = &endVal
+	}
+	step := 1
+	if segment.HasStep() && segment.Step != 0 {
+		step = segment.Step
+	}
+	stepPtr = &step
+	return internal.PerformArraySliceIndices(len(container), startPtr, endPtr, stepPtr)
 }
 
 // handleArraySliceSegmentUnified handles array slice segments for all ops
@@ -518,7 +554,8 @@ func (urp *recursiveProcessor) handleArraySliceSegmentUnified(data any, segment 
 						errs = append(errs, err)
 						continue
 					}
-					if op == opGet && result != nil {
+					if op == opGet {
+						// Keep nil results: an explicit JSON null is a real value.
 						results = append(results, result)
 					}
 				}
@@ -574,26 +611,26 @@ func (urp *recursiveProcessor) handleArraySliceSegmentUnified(data any, segment 
 					return nil, fmt.Errorf("array slice extension required: use legacy handling for path with slice [%d:%d] on array length %d", start, end, len(container))
 				}
 
-				// Set value to all elements in slice, honoring the step
-				// (e.g., [0:5:2] sets indices 0,2,4). Step defaults to 1.
-				// CONSISTENCY FIX: this previously used i++ and ignored step, diverging
-				// from opDelete below (which honors step) and from the dot-notation path.
-				step := 1
-				if segment.HasStep() && segment.Step != 0 {
-					step = segment.Step
-				}
-				for i := start; i < end && i < len(container); i += step {
+				// Set value to all elements in slice, honoring the step (e.g.,
+				// [0:5:2] sets indices 0,2,4). Step defaults to 1.
+				//
+				// Route through PerformArraySliceIndices rather than a hand-rolled
+				// `for i := start; i < end; i += step`: that loop only handles
+				// positive step and panics on a reverse slice ([::-1] decrements i
+				// below 0 and indexes container[-1]). The helper computes the exact
+				// index set — including reverse order — with every index clamped to
+				// [0, len(container)), matching the opGet path that already uses
+				// PerformArraySlice.
+				for _, i := range sliceSegmentIndices(container, segment, startVal, endVal) {
 					container[i] = value
 				}
 				return value, nil
 			case opDelete:
-				// Mark elements in slice for deletion, honoring the step
-				// (e.g., [0:5:2] deletes indices 0,2,4). Step defaults to 1.
-				step := 1
-				if segment.HasStep() && segment.Step != 0 {
-					step = segment.Step
-				}
-				for i := start; i < end && i < len(container); i += step {
+				// Mark elements in slice for deletion, honoring the step (e.g.,
+				// [0:5:2] deletes indices 0,2,4). Step defaults to 1. See opSet above
+				// for why the index set is computed via PerformArraySliceIndices
+				// (negative-step / reverse-slice safety).
+				for _, i := range sliceSegmentIndices(container, segment, startVal, endVal) {
 					container[i] = deletedMarker
 				}
 				return nil, nil
@@ -608,8 +645,23 @@ func (urp *recursiveProcessor) handleArraySliceSegmentUnified(data any, segment 
 		// If this slice comes after an extraction, we should slice the extracted results
 		// If this slice comes before further processing, we should slice first then process
 
-		// Apply slice first, then process remaining segments
-		slicedContainer := container[start:end]
+		// Apply slice first, then process remaining segments.
+		// Honor step (including reverse via negative step) by routing through
+		// PerformArraySlice, matching the last-segment opGet path above. A plain
+		// container[start:end] would silently drop step, so a[0:6:2].b would
+		// descend into elements 0..5 instead of 0,2,4.
+		var startPtr, endPtr, stepPtr *int
+		if segment.HasStart() {
+			startPtr = &startVal
+		}
+		if segment.HasEnd() {
+			endPtr = &endVal
+		}
+		if segment.HasStep() {
+			stepVal := segment.Step
+			stepPtr = &stepVal
+		}
+		slicedContainer := internal.PerformArraySlice(container, startPtr, endPtr, stepPtr)
 
 		if len(slicedContainer) == 0 {
 			return []any{}, nil
@@ -627,7 +679,9 @@ func (urp *recursiveProcessor) handleArraySliceSegmentUnified(data any, segment 
 				continue
 			}
 
-			if op == opGet && result != nil {
+			if op == opGet {
+				// Keep nil results: an explicit JSON null is a real value.
+				// Missing/not-applicable elements are skipped above via err.
 				results = append(results, result)
 			}
 			// slicedContainer shares container's backing array; in-place mutation
@@ -653,7 +707,8 @@ func (urp *recursiveProcessor) handleArraySliceSegmentUnified(data any, segment 
 				continue
 			}
 
-			if op == opGet && result != nil {
+			if op == opGet {
+				// Keep nil results: an explicit JSON null is a real value.
 				// Preserve structure for map values - don't flatten
 				results = append(results, result)
 			}
@@ -735,9 +790,10 @@ func (urp *recursiveProcessor) handleExtractSegmentUnified(data any, segment int
 									errs = append(errs, err)
 									continue
 								}
-								if result != nil {
-									results = append(results, result)
-								}
+								// Keep the result even when nil: an explicit JSON
+								// null at the extracted path is a real value and must
+								// round-trip (previously dropped by `result != nil`).
+								results = append(results, result)
 							}
 						} else if op == opDelete {
 							// For Delete ops on extraction paths, check if this is the last extraction
@@ -1040,6 +1096,14 @@ func (urp *recursiveProcessor) handleExtractThenSlice(data any, extractSegment, 
 	if op == opDelete {
 		return urp.handleExtractThenSliceDelete(data, extractSegment, sliceSegment, segments, segmentIndex, value)
 	}
+	// For Set ops, apply the slice assignment to each extracted array
+	// individually (mirroring Delete). Without this branch Set fell through to
+	// the Get logic, extracted+sliced the data, and returned it — but
+	// ProcessRecursively ignores the return value for Set, so nothing was
+	// written and the document came back unchanged (silent no-op).
+	if op == opSet {
+		return urp.handleExtractThenSliceSet(data, extractSegment, sliceSegment, value)
+	}
 
 	// For Get ops, use the original logic
 	var extractedResults []any
@@ -1077,24 +1141,38 @@ func (urp *recursiveProcessor) handleExtractThenSlice(data any, extractSegment, 
 			endVal = len(extractedResults)
 		}
 
-		start, end := internal.NormalizeSlice(startVal, endVal, len(extractedResults))
+		// Honor step (including reverse via negative step) by routing through
+		// PerformArraySlice instead of a plain extractedResults[start:end], which
+		// would silently drop step (e.g. items{tags}[0:5:2]) and never reverse
+		// (e.g. items{tags}[::-1]). PerformArraySlice normalizes bounds itself,
+		// so the explicit range/empty guards are no longer needed.
+		var startPtr, endPtr, stepPtr *int
+		if sliceSegment.HasStart() {
+			startPtr = &startVal
+		}
+		if sliceSegment.HasEnd() {
+			endPtr = &endVal
+		}
+		if sliceSegment.HasStep() {
+			stepVal := sliceSegment.Step
+			stepPtr = &stepVal
+		}
+		slicedData := internal.PerformArraySlice(extractedResults, startPtr, endPtr, stepPtr)
 
 		// Check if this is the last op (extract + slice)
-		isLastop := segmentIndex+2 >= len(segments)
+		isLastOp := segmentIndex+2 >= len(segments)
 
-		if isLastop {
+		if isLastOp {
 			// Final result: slice the extracted data
-			if start >= len(extractedResults) || end <= 0 || start >= end {
+			if len(slicedData) == 0 {
 				return []any{}, nil
 			}
-			return extractedResults[start:end], nil
+			return slicedData, nil
 		} else {
 			// More segments to process: slice first, then continue processing
-			if start >= len(extractedResults) || end <= 0 || start >= end {
+			if len(slicedData) == 0 {
 				return []any{}, nil
 			}
-
-			slicedData := extractedResults[start:end]
 
 			// Process remaining segments on each sliced element
 			var results []any
@@ -1107,7 +1185,8 @@ func (urp *recursiveProcessor) handleExtractThenSlice(data any, extractSegment, 
 					continue
 				}
 
-				if op == opGet && result != nil {
+				if op == opGet {
+					// Keep nil results: an explicit JSON null is a real value.
 					results = append(results, result)
 				}
 			}
@@ -1122,6 +1201,51 @@ func (urp *recursiveProcessor) handleExtractThenSlice(data any, extractSegment, 
 
 	// No extraction results
 	return []any{}, nil
+}
+
+// handleExtractThenSliceSet handles Set ops for {extract}[slice] patterns by
+// applying the slice assignment to each extracted array individually (mirroring
+// handleExtractThenSliceDelete). The value is written to every index the slice
+// resolves to, honoring step direction including reverse ([::-1]).
+func (urp *recursiveProcessor) handleExtractThenSliceSet(data any, extractSegment, sliceSegment internal.PathSegment, value any) (any, error) {
+	applyTo := func(arr []any) error {
+		startVal := sliceSegment.Index // valid only when HasStart
+		endVal := sliceSegment.End     // valid only when HasEnd
+		for _, i := range sliceSegmentIndices(arr, sliceSegment, startVal, endVal) {
+			arr[i] = value
+		}
+		return nil
+	}
+	switch container := data.(type) {
+	case []any:
+		var errs []error
+		for _, item := range container {
+			if itemMap, ok := item.(map[string]any); ok {
+				if extractedValue, exists := itemMap[extractSegment.Key]; exists {
+					if extractedArray, isArray := extractedValue.([]any); isArray {
+						if err := applyTo(extractedArray); err != nil {
+							errs = append(errs, err)
+							continue
+						}
+						itemMap[extractSegment.Key] = extractedArray
+					}
+				}
+			}
+		}
+		return nil, urp.combineErrors(errs)
+	case map[string]any:
+		if extractedValue, exists := container[extractSegment.Key]; exists {
+			if extractedArray, isArray := extractedValue.([]any); isArray {
+				if err := applyTo(extractedArray); err != nil {
+					return nil, err
+				}
+				container[extractSegment.Key] = extractedArray
+			}
+		}
+		return nil, nil
+	default:
+		return nil, fmt.Errorf("cannot extract from type %T", data)
+	}
 }
 
 // handleExtractThenSliceDelete handles Delete ops for {extract}[slice] patterns
@@ -1167,25 +1291,17 @@ func (urp *recursiveProcessor) handleExtractThenSliceDelete(data any, extractSeg
 
 // applySliceDeletion applies slice deletion to an array
 func (urp *recursiveProcessor) applySliceDeletion(arr []any, sliceSegment internal.PathSegment) error {
-	var startVal, endVal int
-	if sliceSegment.HasStart() {
-		startVal = sliceSegment.Index // Index stores start for slices
-	} else {
-		startVal = 0
-	}
-	if sliceSegment.HasEnd() {
-		endVal = sliceSegment.End
-	} else {
-		endVal = len(arr)
-	}
-
-	start, end := internal.NormalizeSlice(startVal, endVal, len(arr))
-
-	// Mark elements in slice for deletion
-	for i := start; i < end && i < len(arr); i++ {
+	// Mark elements in slice for deletion, honoring the step (e.g. [0:5:2]
+	// deletes indices 0,2,4) including negative step / reverse ([::-1]).
+	// Routes through sliceSegmentIndices (and thus PerformArraySliceIndices)
+	// for the same reason handleArraySliceSegmentUnified's opDelete does: a
+	// hand-rolled `for i := start; i < end; i += step` panics on negative step
+	// and silently no-ops on reverse bounds (NormalizeSlice forces start<=end).
+	startVal := sliceSegment.Index // valid only when HasStart
+	endVal := sliceSegment.End     // valid only when HasEnd
+	for _, i := range sliceSegmentIndices(arr, sliceSegment, startVal, endVal) {
 		arr[i] = deletedMarker
 	}
-
 	return nil
 }
 
@@ -1225,7 +1341,8 @@ func (urp *recursiveProcessor) handleWildcardSegmentUnified(data any, _ internal
 				continue
 			}
 
-			if op == opGet && result != nil {
+			if op == opGet {
+				// Keep nil results: an explicit JSON null is a real value.
 				// Preserve structure - don't flatten unless explicitly requested
 				results = append(results, result)
 			}
@@ -1276,7 +1393,8 @@ func (urp *recursiveProcessor) handleWildcardSegmentUnified(data any, _ internal
 				continue
 			}
 
-			if op == opGet && result != nil {
+			if op == opGet {
+				// Keep nil results: an explicit JSON null is a real value.
 				// Preserve structure - don't flatten unless explicitly requested
 				results = append(results, result)
 			}

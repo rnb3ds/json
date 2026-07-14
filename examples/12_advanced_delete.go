@@ -22,6 +22,18 @@ import (
 //
 // Run: go run -tags=example examples/12_advanced_delete.go
 
+// deleteAndShow deletes path from data and prints the before→after result.
+// The demo operates on author-controlled valid data, so an error is reported
+// and the demo continues rather than aborting.
+func deleteAndShow(data, path string) {
+	result, err := json.Delete(data, path)
+	if err != nil {
+		fmt.Printf("   Error deleting %s: %v\n", path, err)
+		return
+	}
+	fmt.Printf("\n   After deleting %s:\n   %s\n", path, result)
+}
+
 func main() {
 	fmt.Println("JSON Library - Advanced Delete Operations")
 	fmt.Println("==============================================")
@@ -95,25 +107,15 @@ func demonstrateArrayDelete() {
 	fmt.Println("   Original:")
 	fmt.Println("   " + data)
 
-	// Delete first item
-	deleted, _ := json.Delete(data, "items[0]")
-	fmt.Println("\n   After deleting items[0]:")
-	fmt.Println("   " + deleted)
-
-	// Delete last item
-	deleted2, _ := json.Delete(data, "numbers[-1]")
-	fmt.Println("\n   After deleting numbers[-1]:")
-	fmt.Println("   " + deleted2)
-
-	// Delete middle item
-	deleted3, _ := json.Delete(data, "items[2]")
-	fmt.Println("\n   After deleting items[2]:")
-	fmt.Println("   " + deleted3)
+	// Delete first / last / middle items (each operates on the original data).
+	deleteAndShow(data, "items[0]")
+	deleteAndShow(data, "numbers[-1]")
+	deleteAndShow(data, "items[2]")
 }
 
 func demonstrateDeleteWithCleanup() {
-	fmt.Println("\n3. Delete with Cleanup (Config{CleanupNulls: true})")
-	fmt.Println("---------------------------------------------------")
+	fmt.Println("\n3. Delete with Cleanup (DeleteClean)")
+	fmt.Println("-------------------------------------")
 
 	data := `{
 		"user": {
@@ -132,30 +134,38 @@ func demonstrateDeleteWithCleanup() {
 	fmt.Println("   Original (with null values):")
 	fmt.Println("   " + data)
 
-	// Regular delete - leaves null
-	regularDelete, _ := json.Delete(data, "user.email")
+	// Regular Delete removes the targeted key but leaves any null siblings behind.
+	regularDelete, err := json.Delete(data, "user.email")
+	if err != nil {
+		fmt.Printf("   Error: %v\n", err)
+		return
+	}
 	fmt.Println("\n   After regular Delete (user.email):")
 	fmt.Println("   " + regularDelete)
 
-	// Delete with cleanup using Config - RECOMMENDED approach
-	cfg := json.DefaultConfig()
-	cfg.CleanupNulls = true
-	cleanDelete, _ := json.Delete(data, "user.phone", cfg)
-	fmt.Println("\n   After Delete with Config{CleanupNulls: true} (user.phone):")
+	// DeleteClean = Delete with CleanupNulls+CompactArrays: removes the key AND
+	// sweeps up null/empty values left behind. No manual Config needed.
+	cleanDelete, err := json.DeleteClean(data, "user.phone")
+	if err != nil {
+		fmt.Printf("   Error: %v\n", err)
+		return
+	}
+	fmt.Println("\n   After DeleteClean (user.phone):")
 	fmt.Println("   " + cleanDelete)
 
-	// Another example with cleanup
-	cfg2 := json.DefaultConfig()
-	cfg2.CleanupNulls = true
-	cleanDelete2, _ := json.Delete(data, "user.address", cfg2)
-	fmt.Println("\n   After Delete with CleanupNulls (user.address):")
+	cleanDelete2, err := json.DeleteClean(data, "user.address")
+	if err != nil {
+		fmt.Printf("   Error: %v\n", err)
+		return
+	}
+	fmt.Println("\n   After DeleteClean (user.address):")
 	fmt.Println("   " + cleanDelete2)
 
 	fmt.Println("\n   Key differences:")
-	fmt.Println("   - Delete: removes field, may leave null in its place")
-	fmt.Println("   - Delete with CleanupNulls: removes field and cleans up nulls")
+	fmt.Println("   - Delete:      removes the targeted key (sibling nulls remain)")
+	fmt.Println("   - DeleteClean: removes it AND sweeps up null/empty values")
 
-	// Show cleanup of null values
+	// Show cleanup of null values on a small object.
 	dataWithNulls := `{
 		"a": 1,
 		"b": null,
@@ -166,8 +176,12 @@ func demonstrateDeleteWithCleanup() {
 	fmt.Println("\n   Cleanup demonstration:")
 	fmt.Println("   Original: " + dataWithNulls)
 
-	cleaned, _ := json.Delete(dataWithNulls, "b", cfg)
-	fmt.Println("   After Delete('b', cfg): " + cleaned)
+	cleaned, err := json.DeleteClean(dataWithNulls, "b")
+	if err != nil {
+		fmt.Printf("   Error: %v\n", err)
+		return
+	}
+	fmt.Println("   After DeleteClean('b'): " + cleaned)
 }
 
 func demonstrateNestedDelete() {
@@ -194,20 +208,10 @@ func demonstrateNestedDelete() {
 	fmt.Println("   Original:")
 	fmt.Println("   " + data)
 
-	// Delete nested credential
-	deleted1, _ := json.Delete(data, "config.database.credentials.password")
-	fmt.Println("\n   After deleting config.database.credentials.password:")
-	fmt.Println("   " + deleted1)
-
-	// Delete entire nested object
-	deleted2, _ := json.Delete(data, "config.api")
-	fmt.Println("\n   After deleting config.api:")
-	fmt.Println("   " + deleted2)
-
-	// Delete entire database section
-	deleted3, _ := json.Delete(data, "config.database")
-	fmt.Println("\n   After deleting config.database:")
-	fmt.Println("   " + deleted3)
+	// Delete nested credential / object / section (each from the original data).
+	deleteAndShow(data, "config.database.credentials.password")
+	deleteAndShow(data, "config.api")
+	deleteAndShow(data, "config.database")
 }
 
 func demonstrateBatchDelete() {
@@ -259,10 +263,6 @@ func demonstratePracticalUseCases() {
 	fmt.Println("\n6. Practical Use Cases")
 	fmt.Println("----------------------")
 
-	// Cleanup config for reuse
-	cleanupCfg := json.DefaultConfig()
-	cleanupCfg.CleanupNulls = true
-
 	// Use case 1: Sanitize user data for logging
 	fmt.Println("   Use Case 1: Sanitize user data for logging")
 
@@ -289,7 +289,11 @@ func demonstratePracticalUseCases() {
 	}
 
 	for _, field := range sensitiveFields {
-		sanitized, _ = json.Delete(sanitized, field)
+		var err error
+		sanitized, err = json.Delete(sanitized, field)
+		if err != nil {
+			fmt.Printf("   Error deleting %s: %v\n", field, err)
+		}
 	}
 
 	fmt.Println("\n   Sanitized for logging:")
@@ -312,15 +316,17 @@ func demonstratePracticalUseCases() {
 	fmt.Println("   API response (with nulls):")
 	fmt.Println("   " + apiResponse)
 
-	// Clean up nulls by deleting with cleanup config
-	cleaned := apiResponse
-	nullFields := []string{"data.description", "data.category", "data.discount"}
-
-	for _, field := range nullFields {
-		cleaned, _ = json.Delete(cleaned, field, cleanupCfg)
+	// A single DeleteClean removes the targeted field AND sweeps every other
+	// null value in the document — so one call cleans the whole response.
+	// (Looping DeleteClean over each null field would fail: the first call
+	// removes them all, leaving nothing for the later calls to find.)
+	cleaned, err := json.DeleteClean(apiResponse, "data.description")
+	if err != nil {
+		fmt.Printf("   Error cleaning response: %v\n", err)
+		return
 	}
 
-	fmt.Println("\n   Cleaned response:")
+	fmt.Println("\n   Cleaned response (one DeleteClean swept all nulls):")
 	fmt.Println("   " + cleaned)
 
 	// Use case 3: Remove optional fields that weren't provided
@@ -339,12 +345,18 @@ func demonstratePracticalUseCases() {
 	fmt.Println("   Form submission (unset fields as null):")
 	fmt.Println("   " + formData)
 
-	// Remove null optional fields
+	// Remove specific optional fields one by one with plain Delete. Unlike
+	// DeleteClean (use case 2), this removes only the listed fields and leaves
+	// any other nulls untouched.
 	cleanedForm := formData
 	optionalFields := []string{"user.bio", "user.website", "user.twitter"}
 
 	for _, field := range optionalFields {
-		cleanedForm, _ = json.Delete(cleanedForm, field, cleanupCfg)
+		var err error
+		cleanedForm, err = json.Delete(cleanedForm, field)
+		if err != nil {
+			fmt.Printf("   Error deleting %s: %v\n", field, err)
+		}
 	}
 
 	fmt.Println("\n   Cleaned (only provided fields):")

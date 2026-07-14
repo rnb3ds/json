@@ -6,21 +6,6 @@ import (
 )
 
 // ============================================================================
-// BYTE TO STRING CONVERSION OPTIMIZATION
-// PERFORMANCE: Reduces allocations when converting []byte to string for interning
-// SECURITY: Uses safe conversion for untrusted input
-// ============================================================================
-
-// safeStringFromBytes converts []byte to string with allocation
-// PERFORMANCE: Allocates a new string, but safer for untrusted input
-func safeStringFromBytes(b []byte) string {
-	if len(b) == 0 {
-		return ""
-	}
-	return string(b)
-}
-
-// ============================================================================
 // STRING INTERNING
 // Reduces memory allocations for frequently used strings (JSON keys, paths)
 // PERFORMANCE: Significant memory reduction for JSON with repeated keys
@@ -124,16 +109,36 @@ func (si *StringIntern) Intern(s string) string {
 	return copied
 }
 
-// InternBytes returns an interned string from a byte slice
-// SECURITY: Uses safe conversion to avoid potential race conditions with pooled buffers
+// InternBytes returns an interned string from a byte slice.
+//
+// SECURITY: The returned string never aliases the caller's byte buffer — on a
+// hit we return the canonical interned copy, on a miss we convert once to an
+// owned string and intern that.
+//
+// PERFORMANCE: The cache-hit path is allocation-free: si.strings[string(b)] is
+// a map index over a byte-slice-to-string conversion, which the Go compiler
+// optimizes to not materialize the temporary string. Only a genuine miss pays
+// the single string(b) conversion that Intern needs for storage.
 func (si *StringIntern) InternBytes(b []byte) string {
 	if len(b) == 0 {
 		return ""
 	}
-	// SECURITY: Use safe conversion for both lookup and storage
-	// This avoids potential race conditions when byte slices are reused from pools
-	s := safeStringFromBytes(b)
-	return si.Intern(s)
+	// Match Intern's length guard: long strings are returned as-is, never stored.
+	if len(b) > 256 {
+		return string(b)
+	}
+
+	si.mu.RLock()
+	// Zero-allocation lookup: string(b) in a map index does not allocate.
+	if interned, ok := si.strings[string(b)]; ok {
+		si.mu.RUnlock()
+		atomic.AddInt64(&si.hits, 1)
+		return interned
+	}
+	si.mu.RUnlock()
+
+	// Cache miss: convert to an owned string once and run the full Intern path.
+	return si.Intern(string(b))
 }
 
 // evictRandomLocked removes entries when size limit is reached
@@ -389,21 +394,60 @@ func (ki *KeyIntern) evictShardLocked(shard *keyInternShard) bool {
 	return count > 0
 }
 
-// InternBytes returns an interned string from a byte slice
-// SECURITY: Uses safe conversion to avoid potential race conditions with pooled buffers
+// InternBytes returns an interned string from a byte slice.
+//
+// SECURITY: The returned string NEVER references the caller's byte buffer.
+// On a cache hit we return the canonical interned copy; on a miss we convert
+// the bytes to an owned string once and intern that copy. This preserves the
+// original safe-conversion guarantee (no aliasing of pooled buffers) while
+// removing the per-call string(b) allocation on the hot cache-hit path.
+//
+// PERFORMANCE: The cache-hit path is allocation-free. Go's compiler treats a
+// map index of the form m[string(byteSlice)] specially and avoids materializing
+// the temporary string, so shard.strings[string(b)] costs zero allocations. The
+// shard is selected by hashing the bytes directly (HashBytesFNV1a), again with
+// no conversion. Only a genuine cache miss pays the single string(b) conversion
+// that Intern requires for storage.
 func (ki *KeyIntern) InternBytes(b []byte) string {
 	if len(b) == 0 {
 		return ""
 	}
-	// SECURITY: Use safe conversion for both lookup and storage
-	// This avoids potential race conditions when byte slices are reused from pools
-	s := safeStringFromBytes(b)
-	return ki.Intern(s)
+	// Match Intern's length guard: long keys are returned as-is, never stored.
+	if len(b) > 128 {
+		return string(b)
+	}
+
+	shard := ki.getShardFromBytes(b)
+	shard.mu.RLock()
+	// Zero-allocation lookup: the string(b) conversion in a map index expression
+	// does not allocate (compiler optimization), so cache hits cost nothing here.
+	if interned, ok := shard.strings[string(b)]; ok {
+		shard.mu.RUnlock()
+		return interned
+	}
+	shard.mu.RUnlock()
+
+	// Cache miss: convert to an owned string once and run the full Intern path
+	// (hot-cache + shard double-check, copy, store, promote). Promotion to the
+	// hot cache happens here, not on hits — calling promoteToHotCache on every
+	// byte-path hit would box two strings into sync.Map.LoadOrStore's interface
+	// args and allocate, defeating the zero-alloc goal. The shard is the source
+	// of truth, so returning without promotion is correct.
+	return ki.Intern(string(b))
 }
 
 // getShard returns the shard for a key using FNV-1a hash
 func (ki *KeyIntern) getShard(key string) *keyInternShard {
 	h := HashStringFNV1a(key)
+	return ki.shards[h&ki.shardMask]
+}
+
+// getShardFromBytes returns the shard for a byte slice using FNV-1a hash.
+// PERFORMANCE: Hashes the bytes directly to avoid a string(b) allocation, so
+// InternBytes can locate the shard on the cache-hit path without allocating.
+// The result is identical to getShard(string(b)).
+func (ki *KeyIntern) getShardFromBytes(b []byte) *keyInternShard {
+	h := HashBytesFNV1a(b)
 	return ki.shards[h&ki.shardMask]
 }
 
@@ -415,8 +459,18 @@ func (ki *KeyIntern) Clear() {
 		shard.size = 0
 		shard.mu.Unlock()
 	}
-	// Clear hot key cache
-	ki.hotKeys = sync.Map{}
+	// Clear hot key cache in place. Reassigning the sync.Map field
+	// (ki.hotKeys = sync.Map{}) is a DATA RACE: Intern() reads ki.hotKeys
+	// (Load/LoadOrStore/Delete/Range) with no field-level lock, and a struct
+	// assignment is a non-atomic multi-word copy that a concurrent reader could
+	// observe torn. sync.Map is safe for concurrent Range+Delete, so removing
+	// entries in place keeps the field identity stable and is race-free. A key
+	// added by a concurrent Intern() during the Range may survive; that is the
+	// standard best-effort semantics of clearing a concurrent structure.
+	ki.hotKeys.Range(func(k, _ any) bool {
+		ki.hotKeys.Delete(k)
+		return true
+	})
 	atomic.StoreInt64(&ki.hotKeyCount, 0)
 }
 
@@ -616,13 +670,23 @@ func BatchIntern(strings []string) []string {
 			continue
 		}
 
-		// SECURITY: Check memory before adding
+		// SECURITY: Check memory before adding. If eviction cannot free enough
+		// (interner already empty), skip interning this string. A bare
+		// `continue` here would target THIS inner for-loop — re-evaluating the
+		// condition and, when the interner is empty, spinning forever — and on
+		// the non-spinning path it would fall through to the store below and
+		// overwrite result[i]=s with result[i]=copied. Break out and skip to
+		// the next input string instead.
+		skip := false
 		for intern.size+int64(len(s)) > highWatermark {
 			if !intern.evictRandomLocked() {
-				// Can't evict anymore, skip interning this string
 				result[i] = s
-				continue
+				skip = true
+				break
 			}
+		}
+		if skip {
+			continue
 		}
 
 		// SECURITY FIX: Use safe string copy instead of unsafe

@@ -34,6 +34,15 @@ type Processor struct {
 	// Extension points for hooks
 	hooks   []Hook
 	hooksMu sync.Mutex // protects hooks slice for concurrent AddHook
+	// hasHooks is a lock-free fast-path gate for snapshotHooks: when false (the
+	// overwhelmingly common case — a processor with no hooks registered), the
+	// per-operation snapshotHooks call returns nil without touching hooksMu.
+	// Profiling (P-001) showed that acquiring hooksMu on every Get/Set/Delete
+	// dominated CPU under concurrent load (~50% on BenchmarkConcurrent_Get),
+	// even though the mutex protected nothing in the no-hook case. AddHook/Close
+	// update this flag under hooksMu, so any reader that observes true also
+	// observes the populated slice (happens-before via the lock).
+	hasHooks atomic.Bool
 	// Cached processor ID to avoid fmt.Sprintf on every log call
 	processorID string
 }
@@ -106,6 +115,9 @@ func New(cfg ...Config) (*Processor, error) {
 			config.MaxNestingDepthSecurity,
 			config.FullSecurityScan,
 			config.DisableDefaultPatterns,
+			toInternalPatterns(config.AdditionalDangerousPatterns),
+			config.MaxObjectKeys,
+			config.MaxArrayElements,
 		),
 		resources: &processorResources{
 			lastPoolReset:   0,
@@ -121,6 +133,18 @@ func New(cfg ...Config) (*Processor, error) {
 
 	// Initialize logger atomically for thread safety
 	p.logger.Store(slog.Default().With("component", "json-processor"))
+
+	// Install hooks supplied through Config.Hooks. AddHook replaces p.hooks with
+	// a fresh slice on every call, so a defensive copy keeps the processor's hook
+	// list independent of the caller's Config slice after construction (and
+	// immune to a later AddHook on the same Config value).
+	if len(config.Hooks) > 0 {
+		p.hooks = make([]Hook, len(config.Hooks))
+		copy(p.hooks, config.Hooks)
+	}
+	// Seed the lock-free hook gate so the first operation does not need to
+	// acquire hooksMu to discover hooks are present.
+	p.hasHooks.Store(len(p.hooks) > 0)
 
 	// Only create metrics collector if metrics are enabled
 	if config.EnableMetrics {
@@ -326,7 +350,7 @@ func (p *Processor) prepareOperation(jsonStr, path string, cfg ...Config) (*Conf
 // Handles the SkipValidation flag: when true, only essential size/depth checks run.
 func (p *Processor) validateOperationInput(jsonStr, path string, options *Config) error {
 	if !options.SkipValidation {
-		if err := p.validateInput(jsonStr); err != nil {
+		if err := p.validateInputForOptions(jsonStr, options); err != nil {
 			return err
 		}
 		if !isSimplePropertyAccess(path) {

@@ -261,7 +261,13 @@ func shouldSkipJSONLLineFromConfig(line []byte, cfg *Config) bool {
 //     (wrapped with the line number, unless JSONLContinueOnErr is set)
 //   - any error returned by fn, or while reading reader
 //     (including bufio.ErrTooLong when a line exceeds JSONLMaxLineSize)
-func StreamLinesInto[T any](reader io.Reader, fn func(lineNum int, data T) error, cfg ...Config) ([]T, error) {
+func StreamLinesInto[T any](reader io.Reader, fn func(lineNum int, data T) error, cfg ...Config) (results []T, err error) {
+	// SAFETY (SEC-003): a panicking user callback must not crash the program.
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("stream callback panicked: %v", r)
+		}
+	}()
 	var config Config
 	if len(cfg) > 0 {
 		config = cfg[0]
@@ -289,7 +295,6 @@ func StreamLinesInto[T any](reader io.Reader, fn func(lineNum int, data T) error
 	scanner := bufio.NewScanner(reader)
 	scanner.Buffer(make([]byte, bufSize), maxLineSize)
 
-	var results []T
 	lineNum := 0
 
 	for scanner.Scan() {

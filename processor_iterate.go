@@ -5,12 +5,12 @@ import (
 )
 
 // Foreach iterates over JSON arrays or objects using this processor
-func (p *Processor) Foreach(jsonStr string, fn func(key any, item *IterableValue)) {
+func (p *Processor) Foreach(jsonStr string, fn func(key any, item *IterableValue), cfg ...Config) {
 	if err := p.checkClosed(); err != nil {
 		return
 	}
 
-	data, err := p.Get(jsonStr, ".")
+	data, err := p.Get(jsonStr, ".", cfg...)
 	if err != nil {
 		return
 	}
@@ -27,12 +27,12 @@ func (p *Processor) Foreach(jsonStr string, fn func(key any, item *IterableValue
 
 // ForeachWithPath iterates over JSON arrays or objects at a specific path using this processor
 // This allows using custom processor configurations (security limits, nesting depth, etc.)
-func (p *Processor) ForeachWithPath(jsonStr, path string, fn func(key any, item *IterableValue)) error {
+func (p *Processor) ForeachWithPath(jsonStr, path string, fn func(key any, item *IterableValue), cfg ...Config) error {
 	if err := p.checkClosed(); err != nil {
 		return err
 	}
 
-	data, err := p.Get(jsonStr, path)
+	data, err := p.Get(jsonStr, path, cfg...)
 	if err != nil {
 		return err
 	}
@@ -48,12 +48,12 @@ func (p *Processor) ForeachWithPath(jsonStr, path string, fn func(key any, item 
 }
 
 // ForeachWithPathAndIterator iterates over JSON at a path with path information
-func (p *Processor) ForeachWithPathAndIterator(jsonStr, path string, fn func(key any, item *IterableValue, currentPath string) IteratorControl) error {
+func (p *Processor) ForeachWithPathAndIterator(jsonStr, path string, fn func(key any, item *IterableValue, currentPath string) IteratorControl, cfg ...Config) error {
 	if err := p.checkClosed(); err != nil {
 		return err
 	}
 
-	data, err := p.Get(jsonStr, path)
+	data, err := p.Get(jsonStr, path, cfg...)
 	if err != nil {
 		return err
 	}
@@ -68,12 +68,12 @@ func (p *Processor) ForeachWithPathAndIterator(jsonStr, path string, fn func(key
 }
 
 // ForeachWithPathAndControl iterates with control over iteration flow
-func (p *Processor) ForeachWithPathAndControl(jsonStr, path string, fn func(key any, value any) IteratorControl) error {
+func (p *Processor) ForeachWithPathAndControl(jsonStr, path string, fn func(key any, value any) IteratorControl, cfg ...Config) error {
 	if err := p.checkClosed(); err != nil {
 		return err
 	}
 
-	data, err := p.Get(jsonStr, path)
+	data, err := p.Get(jsonStr, path, cfg...)
 	if err != nil {
 		return err
 	}
@@ -89,12 +89,12 @@ func (p *Processor) ForeachWithPathAndControl(jsonStr, path string, fn func(key 
 
 // ForeachReturn iterates over JSON arrays or objects and returns the modified JSON string.
 // The callback can modify IterableValue fields via Set method; changes are reflected in the result.
-func (p *Processor) ForeachReturn(jsonStr string, fn func(key any, item *IterableValue)) (string, error) {
+func (p *Processor) ForeachReturn(jsonStr string, fn func(key any, item *IterableValue), cfg ...Config) (string, error) {
 	if err := p.checkClosed(); err != nil {
 		return "", err
 	}
 
-	data, err := p.Get(jsonStr, ".")
+	data, err := p.Get(jsonStr, ".", cfg...)
 	if err != nil {
 		return "", err
 	}
@@ -118,12 +118,12 @@ func (p *Processor) ForeachReturn(jsonStr string, fn func(key any, item *Iterabl
 
 // ForeachNested recursively iterates over all nested JSON structures
 // This method traverses through all nested objects and arrays
-func (p *Processor) ForeachNested(jsonStr string, fn func(key any, item *IterableValue)) {
+func (p *Processor) ForeachNested(jsonStr string, fn func(key any, item *IterableValue), cfg ...Config) {
 	if err := p.checkClosed(); err != nil {
 		return
 	}
 
-	data, err := p.Get(jsonStr, ".")
+	data, err := p.Get(jsonStr, ".", cfg...)
 	if err != nil {
 		return
 	}
@@ -150,12 +150,12 @@ func (p *Processor) ForeachNested(jsonStr string, fn func(key any, item *Iterabl
 //	    }
 //	    return nil // continue
 //	})
-func (p *Processor) ForeachWithError(jsonStr, path string, fn func(key any, item *IterableValue) error) error {
+func (p *Processor) ForeachWithError(jsonStr, path string, fn func(key any, item *IterableValue) error, cfg ...Config) error {
 	if err := p.checkClosed(); err != nil {
 		return err
 	}
 
-	data, err := p.Get(jsonStr, path)
+	data, err := p.Get(jsonStr, path, cfg...)
 	if err != nil {
 		return err
 	}
@@ -177,12 +177,12 @@ func (p *Processor) ForeachWithError(jsonStr, path string, fn func(key any, item
 //	    fmt.Printf("Key: %v\n", key)
 //	    return nil
 //	})
-func (p *Processor) ForeachNestedWithError(jsonStr string, fn func(key any, item *IterableValue) error) error {
+func (p *Processor) ForeachNestedWithError(jsonStr string, fn func(key any, item *IterableValue) error, cfg ...Config) error {
 	if err := p.checkClosed(); err != nil {
 		return err
 	}
 
-	data, err := p.Get(jsonStr, ".")
+	data, err := p.Get(jsonStr, ".", cfg...)
 	if err != nil {
 		return err
 	}

@@ -48,6 +48,39 @@
 //	}
 //	defer processor.Close()
 //
+// # Package-level API and Processor Mirror
+//
+// Every operation exists in two equivalent forms: a package-level function and
+// a Processor method. The package-level form is a thin mirror of the Processor
+// form — json.Foo(args, cfg) behaves like p.Foo(args, cfg) on a processor with
+// the matching configuration:
+//
+//	// Package-level (uses a cached processor keyed by cfg)
+//	v, err := json.Get(data, "user.name", json.SecurityConfig())
+//
+//	// Processor-level (explicit processor you own)
+//	p, err := json.New(json.SecurityConfig())
+//	defer p.Close()
+//	v, err = p.Get(data, "user.name")
+//
+// Both accept an optional trailing Config (cfg ...Config) so the encoding/json
+// drop-in signatures (Marshal, Unmarshal, MarshalIndent, Valid) stay
+// byte-compatible while still allowing configuration. When cfg is supplied, its
+// security limits (MaxJSONSize, MaxNestingDepthSecurity, FullSecurityScan) and
+// encoding options take effect on that call; when omitted, the processor's own
+// configuration applies.
+//
+// Three intentional exceptions to the trailing-cfg convention:
+//
+//   - Typed getters (GetTyped, GetString, GetInt, ...) take a variadic default
+//     value instead of cfg (Go allows only one variadic parameter). Use SafeGet
+//     or New(cfg).GetXxx for Config-controlled typed reads.
+//   - Convenience variants (SetCreate, SetMultipleCreate, DeleteClean) are
+//     shorthand that force a flag (CreatePaths, or CleanupNulls+CompactArrays).
+//   - Valid returns a single bool (encoding/json drop-in); ValidWithConfig
+//     returns (bool, error) for callers that need the failure reason. Both take
+//     cfg; the name difference is historical.
+//
 // # Key Features
 //
 //   - 100% encoding/json compatibility - drop-in replacement
@@ -77,18 +110,33 @@
 // Core types are organized in the following files:
 //
 //   - types.go: All type definitions (Config, Stats, Schema, Result[T], etc.)
-//   - processor.go: Processor struct, constructor, lifecycle, typed getters
-//   - operation.go: Set/Delete implementations, array operations, fast paths
+//   - processor.go: Processor struct and constructor
+//   - processor_lifecycle.go: Lifecycle (Close, IsClosed, hooks, logger)
+//   - processor_get.go: Get operations and typed getters (GetString, GetInt, ...)
+//   - processor_set.go: Set operations (Set, SetMultiple, SetCreate, ...)
+//   - processor_delete.go: Delete operations (Delete, DeleteClean)
+//   - processor_iterate.go: Foreach iteration operations
+//   - processor_cache.go: Cache management and cache keys
+//   - processor_stats.go: Batch processing, cache warmup, stats, health
+//   - processor_streamjsonl.go: JSONL streaming operations
+//   - operation.go: Internal operation type definitions
+//   - operation_set.go: Set value-at-path implementation
+//   - operation_delete.go: Delete value-at-path implementation
+//   - operation_array.go: Array access, slice, and extraction operations
 //   - recursive.go: Unified recursive processing, segment handlers
 //   - path.go: Path parsing and navigation
 //   - encoding.go: JSON encoding/decoding, streaming, schema validation
+//   - encoding_format.go: JSON formatting (Prettify, Compact, Indent, HTMLEscape)
+//   - encoding_schema.go: Schema validation logic
 //   - api.go: Package-level API functions and delegation helpers
 //   - file.go: File operations and NDJSON processing
-//   - iterator.go: Iteration utilities and streaming iterators
+//   - iterator.go: Iteration utilities
+//   - iterator_stream.go: Streaming iterators (StreamIterator, StreamObjectIterator)
+//   - iterator_parallel.go: Parallel iterator
+//   - iterable_value.go: IterableValue type for safe iteration access
 //   - security.go: Security validation and dangerous pattern detection
 //   - helpers.go: Type conversion, deep copy, merge, compare utilities
 //   - errors.go: Error types, sentinels, and classification
 //   - interfaces.go: Extension interfaces (hooks, custom encoders, validators)
-//   - processor_streamjsonl.go: JSONL streaming operations
-//   - performance.go: Path cache warmup, decoder pool, bulk operations
+//   - json.go: Global processor, JSONL support, and StreamLinesInto
 package json

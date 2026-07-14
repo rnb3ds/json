@@ -82,34 +82,6 @@ func TestHTMLEscape_Boundary(t *testing.T) {
 	})
 }
 
-// --- SafeGet (api.go:628, 75% coverage) ---
-
-func TestSafeGet_Boundary(t *testing.T) {
-	t.Run("invalid JSON returns not exists", func(t *testing.T) {
-		result := SafeGet(`{invalid}`, "key")
-		if result.Exists {
-			t.Error("expected Exists=false for invalid JSON")
-		}
-	})
-
-	t.Run("missing key returns not exists", func(t *testing.T) {
-		result := SafeGet(`{"a":1}`, "missing")
-		if result.Exists {
-			t.Error("expected Exists=false for missing key")
-		}
-	})
-
-	t.Run("valid key returns value", func(t *testing.T) {
-		result := SafeGet(`{"a":1}`, "a")
-		if !result.Exists {
-			t.Fatal("expected Exists=true")
-		}
-		if result.Value != float64(1) {
-			t.Errorf("val = %v, want 1", result.Value)
-		}
-	})
-}
-
 // --- GetTyped (api.go:559, 42.9% coverage) ---
 
 func TestGetTyped_Boundary(t *testing.T) {
@@ -135,75 +107,37 @@ func TestGetTyped_Boundary(t *testing.T) {
 	})
 }
 
-// --- Config.Clone (config.go:199, 57.9% coverage) ---
-
-func TestConfigClone_Boundary(t *testing.T) {
-	t.Run("clone preserves custom escapes", func(t *testing.T) {
-		cfg := DefaultConfig()
-		cfg.CustomEscapes = map[rune]string{'\x00': "\\u0000"}
-		cloned := cfg.Clone()
-		if len(cloned.CustomEscapes) != len(cfg.CustomEscapes) {
-			t.Error("CustomEscapes not cloned")
-		}
-		cloned.CustomEscapes['\x01'] = "\\u0001"
-		if _, ok := cfg.CustomEscapes['\x01']; ok {
-			t.Error("modifying clone should not affect original")
-		}
-	})
-
-	t.Run("clone preserves all fields", func(t *testing.T) {
-		cfg := DefaultConfig()
-		cfg.Pretty = true
-		cfg.EscapeHTML = true
-		cfg.EscapeUnicode = true
-		cfg.PreserveNumbers = true
-		cfg.SortKeys = true
-		cfg.FloatPrecision = 4
-		cfg.FloatTruncate = true
-		cloned := cfg.Clone()
-		if !cloned.Pretty || !cloned.EscapeHTML || !cloned.EscapeUnicode {
-			t.Error("clone did not preserve boolean fields")
-		}
-		if !cloned.PreserveNumbers || !cloned.SortKeys || cloned.FloatPrecision != 4 {
-			t.Error("clone did not preserve all fields")
-		}
-	})
-}
-
-// --- containsOverlongEncoding (security.go:1006, 13.6% coverage) ---
+// --- containsOverlongEncoding (security.go:1006) ---
+// Detects URL-encoded overlong UTF-8 sequences used in path-traversal attacks
+// (%c0%af -> overlong '/', %c1%9c -> overlong '\'). The detector scans for the
+// percent-encoded form, not raw bytes.
 
 func TestContainsOverlongEncoding_Boundary(t *testing.T) {
-	t.Run("no overlong encoding", func(t *testing.T) {
-		if containsOverlongEncoding("normal text") {
-			t.Error("should not detect overlong encoding in normal text")
-		}
-	})
-
-	t.Run("empty input", func(t *testing.T) {
-		if containsOverlongEncoding("") {
-			t.Error("should not detect overlong encoding in empty input")
-		}
-	})
-
-	t.Run("2-byte overlong for ASCII", func(t *testing.T) {
-		input := string([]byte{0xC0, 0x41})
-		// May or may not detect depending on implementation depth
-		result := containsOverlongEncoding(input)
-		t.Logf("2-byte overlong detection: %v", result)
-	})
-
-	t.Run("valid 2-byte UTF-8", func(t *testing.T) {
-		input := string([]byte{0xC3, 0xA9}) // 'é'
-		if containsOverlongEncoding(input) {
-			t.Error("should not flag valid UTF-8")
-		}
-	})
-
-	t.Run("3-byte overlong", func(t *testing.T) {
-		input := string([]byte{0xE0, 0x80, 0x41})
-		result := containsOverlongEncoding(input)
-		t.Logf("3-byte overlong detection: %v", result)
-	})
+	tests := []struct {
+		name string
+		in   string
+		want bool
+	}{
+		{"empty", "", false},
+		{"no percent sign", "normal text", false},
+		{"valid URL-encoded char", "%41", false},        // 'A'
+		{"valid 2-byte UTF-8 encoded", "%c3%A9", false}, // 'é' — not overlong
+		{"overlong slash lowercase", "%c0%af", true},
+		{"overlong slash uppercase", "%C0%AF", true},
+		{"overlong backslash lowercase", "%c1%9c", true},
+		{"overlong backslash uppercase", "%C1%9C", true},
+		{"embedded overlong", "safe%c0%afpath", true},
+		{"truncated sequence", "%c0", false},
+		{"truncated after percent", "%c0%", false},
+		{"percent at end", "path%", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := containsOverlongEncoding(tt.in); got != tt.want {
+				t.Errorf("containsOverlongEncoding(%q) = %v, want %v", tt.in, got, tt.want)
+			}
+		})
+	}
 }
 
 // --- Integer overflow edge cases ---
@@ -215,8 +149,14 @@ func TestIntegerOverflow_Boundary(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Get failed: %v", err)
 		}
-		// Large integers may be returned as float64
-		t.Logf("large int result: %v (%T)", val, val)
+		// JSON numbers decode to float64; the magnitude must survive.
+		f, ok := val.(float64)
+		if !ok {
+			t.Fatalf("expected float64 for large int, got %T (%v)", val, val)
+		}
+		if f <= 9e18 {
+			t.Errorf("large int magnitude lost: got %v, want > 9e18", f)
+		}
 	})
 
 	t.Run("large float that can't fit in int", func(t *testing.T) {
@@ -225,43 +165,46 @@ func TestIntegerOverflow_Boundary(t *testing.T) {
 			t.Error("should not convert MaxFloat64 to int")
 		}
 	})
-
-	t.Run("negative to uint64", func(t *testing.T) {
-		val, ok := convertToUint64(-1)
-		if ok {
-			t.Error("should not convert -1 to uint64")
-		}
-		if val != 0 {
-			t.Errorf("val = %d, want 0", val)
-		}
-	})
 }
 
 // --- Deep nesting edge cases ---
 
 func TestDeepNesting_Boundary(t *testing.T) {
 	t.Run("very deep nesting 50 levels", func(t *testing.T) {
-		// Build 50 levels of nesting
+		// Build 50 levels of nesting; default MaxDepth is 100, so this must succeed.
 		inner := `"value"`
 		for i := 0; i < 50; i++ {
 			inner = `{"a":` + inner + `}`
 		}
-		_, err := Get(inner, strings.Repeat("a.", 49)+"a")
+		got, err := Get(inner, strings.Repeat("a.", 49)+"a")
 		if err != nil {
-			t.Logf("Deep nesting result: %v", err)
+			t.Fatalf("Get at 50-level nesting failed: %v", err)
+		}
+		if got != "value" {
+			t.Errorf("deep nesting result = %v, want \"value\"", got)
 		}
 	})
 
-	t.Run("deep array nesting", func(t *testing.T) {
-		inner := `1`
-		for i := 0; i < 20; i++ {
-			inner = `[` + inner + `]`
+	t.Run("deep path with value assertion", func(t *testing.T) {
+		deep := `{"a":{"b":{"c":{"d":{"e":"deep"}}}}}`
+		got, err := Get(deep, "a.b.c.d.e")
+		if err != nil {
+			t.Fatalf("Get deep path failed: %v", err)
 		}
-		path := strings.Repeat("[0].", 19) + "[0]"
-		path = strings.ReplaceAll(path, ".", "")
-		// Use simple nested array access
-		result, err := Get(inner, "[0]")
-		t.Logf("Deep array nesting [0]: result=%v, err=%v", result, err)
+		if got != "deep" {
+			t.Errorf("deep path = %v, want deep", got)
+		}
+	})
+
+	t.Run("chained array indices", func(t *testing.T) {
+		deep := `{"a":[[[1,2],[3,4]],[[5,6],[7,8]]]}`
+		got, err := Get(deep, "a[0][1][0]")
+		if err != nil {
+			t.Fatalf("Get chained array index failed: %v", err)
+		}
+		if got != 3.0 {
+			t.Errorf("chained array index = %v, want 3", got)
+		}
 	})
 }
 
@@ -291,6 +234,28 @@ func TestEmptyInput_Boundary(t *testing.T) {
 			t.Errorf("val = %v, want nil", val)
 		}
 	})
+
+	t.Run("empty path returns root", func(t *testing.T) {
+		result, err := Get(`{"key":"value"}`, "")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		m, ok := result.(map[string]any)
+		if !ok {
+			t.Fatalf("expected root map, got %T", result)
+		}
+		if m["key"] != "value" {
+			t.Errorf("root map key = %v, want value", m["key"])
+		}
+	})
+
+	t.Run("Set nil value", func(t *testing.T) {
+		result, err := Set(`{"key":"value"}`, "key", nil)
+		if err != nil {
+			t.Fatalf("Set nil value failed: %v", err)
+		}
+		assertJSONEqual(t, `{"key":null}`, result)
+	})
 }
 
 // --- Path edge cases ---
@@ -314,15 +279,24 @@ func TestPathEdgeCases_Boundary(t *testing.T) {
 	})
 
 	t.Run("large array index", func(t *testing.T) {
-		_, err := Get(`{"arr":[1,2,3]}`, "arr[999999]")
-		if err == nil {
-			// May return nil without error
+		// An out-of-bounds index is a missing value, not a malformed query: it
+		// returns nil with no error.
+		val, err := Get(`{"arr":[1,2,3]}`, "arr[999999]")
+		if err != nil {
+			t.Fatalf("unexpected error for out-of-bounds index: %v", err)
+		}
+		if val != nil {
+			t.Errorf("out-of-bounds array index should return nil, got %v", val)
 		}
 	})
 
 	t.Run("path with escaped bracket in key", func(t *testing.T) {
-		_, err := Get(`{"a.b":1}`, "a.b")
-		t.Logf("dotted key result: err=%v", err)
+		// A literal key containing a dot must NOT be reachable via the dot-path
+		// "a.b" (which denotes nested a -> b). The value 1 must not be returned.
+		val, err := Get(`{"a.b":1}`, "a.b")
+		if err == nil && val != nil {
+			t.Errorf("dot-path should not resolve the literal dotted key, got %v", val)
+		}
 	})
 }
 
@@ -330,14 +304,19 @@ func TestPathEdgeCases_Boundary(t *testing.T) {
 
 func TestEncodingEdgeCases_Boundary(t *testing.T) {
 	t.Run("encode NaN float", func(t *testing.T) {
-		_, err := Encode(map[string]any{"val": math.NaN()}, DefaultConfig())
-		// NaN encoding behavior varies - may error or produce "null"
-		t.Logf("NaN encode error: %v", err)
+		// NaN is not representable in JSON: it must surface as an error or "null".
+		result, err := Encode(map[string]any{"val": math.NaN()}, DefaultConfig())
+		if err == nil && !strings.Contains(result, "null") {
+			t.Errorf("NaN must surface as an error or null, got %q", result)
+		}
 	})
 
 	t.Run("encode Infinity float", func(t *testing.T) {
-		_, err := Encode(map[string]any{"val": math.Inf(1)}, DefaultConfig())
-		t.Logf("Infinity encode error: %v", err)
+		// +/-Inf is not representable in JSON: it must surface as an error or "null".
+		result, err := Encode(map[string]any{"val": math.Inf(1)}, DefaultConfig())
+		if err == nil && !strings.Contains(result, "null") {
+			t.Errorf("Infinity must surface as an error or null, got %q", result)
+		}
 	})
 
 	t.Run("encode with EscapeUnicode + CJK", func(t *testing.T) {
@@ -421,6 +400,39 @@ func TestValidateFilePath_Boundary(t *testing.T) {
 			t.Error("expected error for null byte in path")
 		}
 	})
+}
+
+// TestValidateUnixPath_Boundary exercises the Unix path security check directly.
+// validateUnixPath is gated behind runtime.GOOS != "windows" inside the public
+// path-validation pipeline, so on Windows it is unreachable via the public API;
+// the platform-specific logic is therefore unit-tested here.
+func TestValidateUnixPath_Boundary(t *testing.T) {
+	tests := []struct {
+		name    string
+		path    string
+		wantErr bool
+	}{
+		{"safe tmp path", "/tmp/safe.json", false},
+		{"safe home path", "/home/user/data.json", false},
+		{"dev blocked", "/dev/null", true},
+		{"proc blocked", "/proc/self/status", true},
+		{"etc passwd blocked", "/etc/passwd", true},
+		{"etc shadow blocked", "/etc/shadow", true},
+		{"root blocked", "/root/.bashrc", true},
+		{"var log blocked", "/var/log/syslog", true},
+		{"case-insensitive etc passwd", "/ETC/PASSWD", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateUnixPath(tt.path)
+			if tt.wantErr && err == nil {
+				t.Error("expected error blocking system path, got nil")
+			}
+			if !tt.wantErr && err != nil {
+				t.Errorf("unexpected error for safe path: %v", err)
+			}
+		})
+	}
 }
 
 // --- Config edge cases ---

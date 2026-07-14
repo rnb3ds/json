@@ -66,6 +66,7 @@ func (p *Processor) Close() error {
 		// Release hook references to allow GC of captured closures
 		p.hooksMu.Lock()
 		p.hooks = nil
+		p.hasHooks.Store(false)
 		p.hooksMu.Unlock()
 
 		// NOTE: Global caches (pathTypeCache, structEncoderCache) are NOT cleared
@@ -145,7 +146,34 @@ func (p *Processor) AddHook(hook Hook) {
 	copy(newHooks, p.hooks)
 	newHooks[len(p.hooks)] = hook
 	p.hooks = newHooks
+	// Set the gate under the lock so any reader that observes hasHooks==true
+	// also observes the populated p.hooks slice (happens-before via the mutex).
+	p.hasHooks.Store(true)
 	p.hooksMu.Unlock()
+}
+
+// snapshotHooks returns the processor's current hooks as a hookChain that is
+// safe to iterate after the lock is released. AddHook and Close both replace
+// p.hooks with a freshly allocated slice (never appending into the existing
+// backing array), so the slice header captured here keeps pointing at an array
+// that will never be mutated for the rest of the operation's lifetime.
+//
+// This is the read-side counterpart to AddHook: operations call it once near
+// their entry to decide whether hooks are present, then run executeBefore /
+// executeAfter against the stable snapshot.
+//
+// PERFORMANCE: The common case is a processor with no hooks registered. The
+// hasHooks atomic gate lets that case return nil with a single atomic load —
+// no mutex — so concurrent operations never contend on hooksMu. The lock is
+// only taken when hooks are actually present. See hasHooks field comment.
+func (p *Processor) snapshotHooks() hookChain {
+	if p == nil || !p.hasHooks.Load() {
+		return nil
+	}
+	p.hooksMu.Lock()
+	hc := hookChain(p.hooks)
+	p.hooksMu.Unlock()
+	return hc
 }
 
 // GetConfig returns a copy of the processor configuration

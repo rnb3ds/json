@@ -20,6 +20,16 @@ func (p *Processor) invalidateJSONCache(jsonStr string) {
 		return
 	}
 
+	// PERFORMANCE: Set/Delete call this on every mutation. When the cache holds
+	// no entries there is nothing to invalidate, so skip the FNV hash + hex
+	// formatting + per-shard scan entirely. Profiling (P-001) showed that with
+	// the default config (cache enabled) this path dominated Set/Delete CPU even
+	// though Set never populates the cache — the scan ran write-locked across
+	// every shard for no work.
+	if p.cache.EntryCount() == 0 {
+		return
+	}
+
 	jsonHash := hashStringToUint64(jsonStr)
 	hashPrefix := formatUint64HexString(jsonHash)
 
@@ -148,6 +158,13 @@ func (p *Processor) getCachedPathSegments(path string) ([]internal.PathSegment, 
 		cacheKey := createSimpleCacheKey("path", path)
 		if cached, ok := p.cache.Get(cacheKey); ok {
 			if segments, ok := cached.([]internal.PathSegment); ok {
+				// PERFORMANCE: When CacheSharedResults is enabled, return the
+				// cached slice directly. Navigation (recursive.go) only reads
+				// segments — it never mutates them — so the defensive copy is
+				// safe to skip under the opt-in "do not mutate" contract.
+				if p.config.CacheSharedResults {
+					return segments, nil
+				}
 				// Return a copy to prevent callers from mutating cached data
 				result := make([]internal.PathSegment, len(segments))
 				copy(result, segments)

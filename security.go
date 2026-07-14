@@ -334,11 +334,24 @@ type validationKey struct {
 
 // securityValidator provides comprehensive security validation for JSON processing.
 type securityValidator struct {
-	maxJSONSize            int64
-	maxPathLength          int
-	maxNestingDepth        int
+	maxJSONSize     int64
+	maxPathLength   int
+	maxNestingDepth int
+	// maxObjectKeys / maxArrayElements cap the number of direct children of any
+	// single object or array. <=0 means unlimited. Enforced by
+	// validateContainerCounts to stop flat-but-wide structures (e.g. an object
+	// with millions of keys at depth 1) that bypass the nesting-depth and
+	// total-bracket checks. SECURITY: protects against memory-exhaustion DoS.
+	maxObjectKeys          int
+	maxArrayElements       int
 	fullSecurityScan       bool
 	disableDefaultPatterns bool
+	// additionalPatterns are config-supplied dangerous patterns (converted from
+	// Config.AdditionalDangerousPatterns). They are scanned in addition to the
+	// built-in defaults and remain in effect even when disableDefaultPatterns
+	// is set, since they are explicitly opted in by the caller. Globally
+	// registered patterns (globalPatternRegistry) are scanned live as well.
+	additionalPatterns []dangerousPattern
 	// Composed validators for separation of concerns
 	// Cache for validation results
 	validationCache map[validationKey]*validationCacheEntry
@@ -346,16 +359,35 @@ type securityValidator struct {
 }
 
 // newSecurityValidator creates a new security validator with the given limits.
-func newSecurityValidator(maxJSONSize int64, maxPathLength, maxNestingDepth int, fullSecurityScan, disableDefaultPatterns bool) *securityValidator {
+// additionalPatterns are config-supplied patterns scanned in addition to the
+// built-in defaults (see Config.AdditionalDangerousPatterns).
+func newSecurityValidator(maxJSONSize int64, maxPathLength, maxNestingDepth int, fullSecurityScan, disableDefaultPatterns bool, additionalPatterns []dangerousPattern, maxObjectKeys, maxArrayElements int) *securityValidator {
 	sv := &securityValidator{
 		maxJSONSize:            maxJSONSize,
 		maxPathLength:          maxPathLength,
 		maxNestingDepth:        maxNestingDepth,
+		maxObjectKeys:          maxObjectKeys,
+		maxArrayElements:       maxArrayElements,
 		fullSecurityScan:       fullSecurityScan,
 		disableDefaultPatterns: disableDefaultPatterns,
+		additionalPatterns:     additionalPatterns,
 		validationCache:        make(map[validationKey]*validationCacheEntry, 256),
 	}
 	return sv
+}
+
+// toInternalPatterns converts public DangerousPattern values to the internal
+// dangerousPattern representation used by the security validator. Returns nil
+// for empty input so the validator stores no slice in the common case.
+func toInternalPatterns(patterns []DangerousPattern) []dangerousPattern {
+	if len(patterns) == 0 {
+		return nil
+	}
+	result := make([]dangerousPattern, len(patterns))
+	for i, p := range patterns {
+		result[i] = dangerousPattern{pattern: p.Pattern, name: p.Name}
+	}
+	return result
 }
 
 // Close releases resources held by the security validator.
@@ -383,6 +415,13 @@ func (sv *securityValidator) ValidateJSONInputEssential(jsonStr string) error {
 
 	// Always enforce nesting depth — prevents stack overflow during parsing
 	if err := sv.validateNestingDepth(jsonStr); err != nil {
+		return err
+	}
+
+	// Always enforce per-container size — prevents memory-exhaustion DoS from
+	// flat-but-wide structures (e.g. an object with millions of keys at depth 1)
+	// that bypass the nesting-depth and total-bracket checks.
+	if err := sv.validateContainerCounts(jsonStr); err != nil {
 		return err
 	}
 
@@ -432,6 +471,12 @@ func (sv *securityValidator) ValidateJSONInput(jsonStr string) error {
 
 	// Validate nesting depth
 	if err := sv.validateNestingDepth(jsonStr); err != nil {
+		return err
+	}
+
+	// Validate per-container sizes (MaxObjectKeys / MaxArrayElements). Runs
+	// before caching so the result — including these checks — is reused.
+	if err := sv.validateContainerCounts(jsonStr); err != nil {
 		return err
 	}
 
@@ -646,8 +691,12 @@ func (sv *securityValidator) validateJSONSecurityOptimized(jsonStr string) error
 	}
 
 	// PERFORMANCE: Check for indicator characters using the pre-built map
-	// If none of these exist, we can skip the expensive pattern matching
-	if !sv.hasIndicatorChars(jsonStr) {
+	// If none of these exist, we can skip the expensive pattern matching.
+	// Config-supplied custom patterns may use characters outside the built-in
+	// indicator set, so bypass the shortcut when any are configured; globally
+	// registered patterns are still subject to the shortcut but are scanned
+	// live in scanWindowForPatterns once the rolling window runs.
+	if !sv.hasIndicatorChars(jsonStr) && len(sv.additionalPatterns) == 0 {
 		return nil
 	}
 
@@ -738,10 +787,40 @@ func (sv *securityValidator) scanWindowForPatterns(window string) error {
 				}
 			}
 		}
-		return nil
+		return sv.scanCustomPatterns(window)
 	}
 
 	for _, dp := range dangerousPatterns {
+		if idx := fastIndexIgnoreCase(window, dp.pattern); idx != -1 {
+			if sv.isDangerousContextIgnoreCase(window, idx, len(dp.pattern)) {
+				return newSecurityError("validate_json_security", fmt.Sprintf("dangerous pattern: %s", dp.name))
+			}
+		}
+	}
+	return sv.scanCustomPatterns(window)
+}
+
+// scanCustomPatterns scans a window for config-supplied and globally-registered
+// dangerous patterns. These are enforced in addition to the built-in defaults
+// and remain in effect even when disableDefaultPatterns is set, because they
+// are explicitly opted in by the caller. Globally registered patterns are read
+// live so RegisterDangerousPattern takes effect for existing processors.
+func (sv *securityValidator) scanCustomPatterns(window string) error {
+	if err := sv.scanPatternSlice(window, sv.additionalPatterns); err != nil {
+		return err
+	}
+	// Global registry: read live. Usually empty, so List() is a cheap no-op.
+	globals := globalPatternRegistry.List()
+	if len(globals) == 0 {
+		return nil
+	}
+	return sv.scanPatternSlice(window, toInternalPatterns(globals))
+}
+
+// scanPatternSlice scans a window for the given patterns using the same
+// case-insensitive context check as the built-in pattern scan.
+func (sv *securityValidator) scanPatternSlice(window string, patterns []dangerousPattern) error {
+	for _, dp := range patterns {
 		if idx := fastIndexIgnoreCase(window, dp.pattern); idx != -1 {
 			if sv.isDangerousContextIgnoreCase(window, idx, len(dp.pattern)) {
 				return newSecurityError("validate_json_security", fmt.Sprintf("dangerous pattern: %s", dp.name))
@@ -1235,6 +1314,131 @@ func (sv *securityValidator) validateNestingDepth(jsonStr string) error {
 	if depth != 0 {
 		return newOperationError("validate_nesting_depth",
 			"unbalanced brackets in JSON structure", ErrInvalidJSON)
+	}
+
+	return nil
+}
+
+// containerFrame tracks one open container (object or array) during the
+// structural scan performed by validateContainerCounts.
+type containerFrame struct {
+	isArray        bool
+	count          int  // direct children (keys or elements) seen so far
+	expectingChild bool // true after '{', '[', or ',': the next value is a new child
+}
+
+// noteValueStart records a direct child in the innermost open container when it
+// is expecting one. It mutates the top frame of the stack in place.
+func noteValueStart(stack []containerFrame) {
+	if len(stack) == 0 {
+		return
+	}
+	top := &stack[len(stack)-1]
+	if top.expectingChild {
+		top.count++
+		top.expectingChild = false
+	}
+}
+
+// validateContainerCounts enforces sv.maxObjectKeys and sv.maxArrayElements by
+// scanning the JSON structure. It rejects any object whose key count exceeds the
+// limit, or any array whose element count exceeds the limit.
+//
+// SECURITY: Together with validateNestingDepth, this closes the gap on
+// memory-exhaustion DoS. A flat object {"k1":1,...,"kN":1} at depth 1 has only
+// two brackets, so it sails past the nesting-depth and total-bracket checks;
+// this scan caps its width. It is always enforced (including under SkipValidation)
+// because, like nesting depth, it protects the process itself from denial of
+// service.
+//
+// ALGORITHM: A single byte-level pass — reusing the same in-string/escape
+// discipline as validateNestingDepth — walks the structure with a stack of
+// container frames. Each frame counts its direct children by detecting value
+// starts: the first value byte ('{', '[', '"', or a primitive/number byte)
+// observed after an opening bracket or comma. For an object the value start is
+// the key, so child count == key count; for an array it == element count. The
+// stack depth is bounded by the nesting-depth limit already enforced upstream.
+//
+// PERFORMANCE: O(n), the same cost class as the existing nesting-depth pass.
+// The scan always runs (counts cannot be known without scanning), which is the
+// cost of the security guarantee; it stays on the byte level and allocates only
+// the small depth-bounded stack.
+func (sv *securityValidator) validateContainerCounts(jsonStr string) error {
+	maxKeys := sv.maxObjectKeys
+	maxElements := sv.maxArrayElements
+	// Both unlimited — nothing to enforce. (Config validation clamps these to
+	// >=100, so this is a defensive guard for the unlimited sentinel.)
+	if maxKeys <= 0 && maxElements <= 0 {
+		return nil
+	}
+
+	stack := make([]containerFrame, 0, 32)
+
+	inString := false
+	escaped := false
+
+	for i := 0; i < len(jsonStr); i++ {
+		c := jsonStr[i]
+
+		if escaped {
+			escaped = false
+			continue
+		}
+		if inString {
+			switch c {
+			case '\\':
+				escaped = true
+			case '"':
+				inString = false
+			}
+			continue
+		}
+
+		switch c {
+		case '"':
+			inString = true
+			noteValueStart(stack)
+		case '{', '[':
+			// A container open is itself a value start in its parent...
+			noteValueStart(stack)
+			// ...then descend into the new container.
+			stack = append(stack, containerFrame{
+				isArray:        c == '[',
+				expectingChild: true,
+			})
+		case '}', ']':
+			if len(stack) > 0 {
+				frame := stack[len(stack)-1]
+				stack = stack[:len(stack)-1]
+				if frame.isArray {
+					if maxElements > 0 && frame.count > maxElements {
+						return newOperationError("validate_container_counts",
+							fmt.Sprintf("array has %d elements, exceeds maximum %d", frame.count, maxElements),
+							ErrSizeLimit)
+					}
+				} else {
+					if maxKeys > 0 && frame.count > maxKeys {
+						return newOperationError("validate_container_counts",
+							fmt.Sprintf("object has %d keys, exceeds maximum %d", frame.count, maxKeys),
+							ErrSizeLimit)
+					}
+				}
+			}
+		case ',':
+			if len(stack) > 0 {
+				stack[len(stack)-1].expectingChild = true
+			}
+		case ':':
+			// Object key/value separator. The key was already counted as a value
+			// start; nothing to do. (A ':' outside an object is malformed JSON
+			// and is rejected by the parser downstream.)
+		default:
+			// Whitespace is structural; any other byte is the leading byte of a
+			// primitive value (digit, '-', 't'/'f'/'n', etc.).
+			if !isSpace(c) {
+				noteValueStart(stack)
+			}
+		}
 	}
 
 	return nil

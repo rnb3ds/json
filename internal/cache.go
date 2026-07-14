@@ -3,6 +3,7 @@ package internal
 import (
 	"container/list"
 	"context"
+	"log/slog"
 	"runtime"
 	"strings"
 	"sync"
@@ -67,9 +68,14 @@ type CacheManager struct {
 	missCount   int64
 	memoryUsage int64
 	evictions   int64
-	shardCount  int
-	shardMask   uint64
-	entryPool   *sync.Pool // Pool for lruEntry structs
+	// entryCount is the total number of live entries across all shards, maintained
+	// atomically alongside shard.size. It lets mutation-path invalidation
+	// (DeleteByPrefix, called by Set/Delete) short-circuit when the cache is empty
+	// — avoiding a per-shard write-lock scan on every mutation. See EntryCount().
+	entryCount int64
+	shardCount int
+	shardMask  uint64
+	entryPool  *sync.Pool // Pool for lruEntry structs
 	// Memory management
 	maxMemory     int64 // Maximum memory for cache
 	highWatermark int64 // Memory threshold for proactive eviction (80% of max)
@@ -241,6 +247,15 @@ func (cm *CacheManager) Get(key string) (any, bool) {
 		return nil, false
 	}
 
+	// SECURITY: Normalize long keys identically to Set. Set truncates the key
+	// before sharding and stores the entry under the truncated key, so Get must
+	// apply the same truncation for BOTH shard selection and the items-map lookup.
+	// Without this, keys longer than MaxCacheKeyLength are stored in one shard but
+	// looked up in another — a write-only leak where the entry is never found.
+	if len(key) > MaxCacheKeyLength {
+		key = truncateCacheKey(key)
+	}
+
 	shard := cm.getShard(key)
 	now := time.Now().UnixNano()
 	ttlNanos := int64(0)
@@ -276,6 +291,7 @@ func (cm *CacheManager) Get(key string) (any, bool) {
 				delete(shard.items, entry.key)
 				shard.evictList.Remove(element)
 				shard.size--
+				atomic.AddInt64(&cm.entryCount, -1)
 				cm.decMemoryUsage(int64(entry.size))
 				atomic.AddInt64(&cm.missCount, 1)
 
@@ -422,6 +438,7 @@ func (cm *CacheManager) Set(key string, value any) {
 		element := shard.evictList.PushFront(entry)
 		shard.items[key] = element
 		shard.size++
+		atomic.AddInt64(&cm.entryCount, 1)
 		atomic.AddInt64(&cm.memoryUsage, int64(entrySize))
 	}
 
@@ -445,6 +462,14 @@ func (cm *CacheManager) Set(key string, value any) {
 					}
 					cm.wg.Add(1)
 					go func(s *cacheShard) {
+						// SAFETY (SEC-003): cleanup runs as a side effect of cache writes;
+						// a panic must not crash the caller. Registered first so wg.Done()
+						// and the semaphore release still run on panic (defers are LIFO).
+						defer func() {
+							if r := recover(); r != nil {
+								slog.Error("cache cleanup panicked", slog.Any("panic", r))
+							}
+						}()
 						defer cm.wg.Done()
 						defer func() { <-sem }()
 						// Check context before running cleanup
@@ -480,6 +505,7 @@ func (cm *CacheManager) Delete(key string) {
 		delete(shard.items, key)
 		shard.evictList.Remove(element)
 		shard.size--
+		atomic.AddInt64(&cm.entryCount, -1)
 
 		// Return entry to pool if available
 		if cm.entryPool != nil {
@@ -489,10 +515,30 @@ func (cm *CacheManager) Delete(key string) {
 	}
 }
 
+// EntryCount returns the total number of live entries across all shards.
+// It is the fast, lock-free probe used by mutation-path cache invalidation to
+// detect the empty case and skip a full per-shard scan.
+func (cm *CacheManager) EntryCount() int64 {
+	if !cm.cacheConfig.enableCache {
+		return 0
+	}
+	return atomic.LoadInt64(&cm.entryCount)
+}
+
 // DeleteByPrefix removes all cache entries whose keys contain the given prefix.
 // Used for invalidating all entries related to a specific JSON input hash.
 func (cm *CacheManager) DeleteByPrefix(prefix string) {
 	if !cm.cacheConfig.enableCache || prefix == "" {
+		return
+	}
+
+	// PERFORMANCE: skip the per-shard write-lock scan entirely when the cache
+	// holds no entries. Set/Delete call this on EVERY mutation; with an empty
+	// (or just-Clear'd) cache there is nothing to invalidate, and the scan would
+	// still acquire and release a write lock on every shard for no work.
+	// Profiling (P-001) showed this scan dominated Set/Delete CPU when the cache
+	// was unpopulated. entryCount is maintained atomically alongside shard.size.
+	if atomic.LoadInt64(&cm.entryCount) == 0 {
 		return
 	}
 
@@ -511,6 +557,7 @@ func (cm *CacheManager) DeleteByPrefix(prefix string) {
 				delete(shard.items, key)
 				shard.evictList.Remove(element)
 				shard.size--
+				atomic.AddInt64(&cm.entryCount, -1)
 				if cm.entryPool != nil {
 					entry.reset()
 					cm.entryPool.Put(entry)
@@ -541,6 +588,7 @@ func (cm *CacheManager) Clear() {
 		shard.mu.Unlock()
 	}
 	atomic.StoreInt64(&cm.memoryUsage, 0)
+	atomic.StoreInt64(&cm.entryCount, 0)
 	atomic.StoreInt64(&cm.hitCount, 0)
 	atomic.StoreInt64(&cm.missCount, 0)
 	atomic.StoreInt64(&cm.evictions, 0)
@@ -573,6 +621,12 @@ func (cm *CacheManager) CleanExpiredCache() {
 			}
 			cm.wg.Add(1)
 			go func() {
+				// SAFETY (SEC-003): see the periodic-cleanup goroutine above.
+				defer func() {
+					if r := recover(); r != nil {
+						slog.Error("cache cleanup panicked", slog.Any("panic", r))
+					}
+				}()
 				defer cm.wg.Done()
 				defer func() { <-sem }()
 				cm.cleanupShard(s)
@@ -673,6 +727,7 @@ func (cm *CacheManager) evictLRU(shard *cacheShard) {
 	delete(shard.items, entry.key)
 	shard.evictList.Remove(bestCandidate)
 	shard.size--
+	atomic.AddInt64(&cm.entryCount, -1)
 	cm.decMemoryUsage(int64(entry.size))
 	atomic.AddInt64(&cm.evictions, 1)
 
@@ -724,6 +779,7 @@ func (cm *CacheManager) cleanupShard(shard *cacheShard) {
 			delete(shard.items, entry.key)
 			shard.evictList.Remove(element)
 			shard.size--
+			atomic.AddInt64(&cm.entryCount, -1)
 			cm.decMemoryUsage(int64(entry.size))
 
 			// Reset and return entry to pool

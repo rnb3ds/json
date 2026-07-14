@@ -14,7 +14,7 @@ import (
 // to handle missing or null values gracefully.
 //
 // Topics covered:
-// - GetTyped[T] - generic method with default values
+// - GetTyped[T] — type-safe read returning T directly (no error)
 // - Practical use cases
 //
 // Run: go run -tags=example examples/11_with_defaults.go
@@ -47,78 +47,40 @@ func main() {
 		}
 	}`
 
-	// 1. GETTYPED[T] - RECOMMENDED
+	// 1. GETTYPED[T]
 	demonstrateGetTyped(partialData, completeData)
 
-	// 2. TYPED DEFAULTS IN PRACTICE
-	demonstrateTypedDefaultsPractice(partialData, completeData)
-
-	// 3. PRACTICAL USE CASES
+	// 2. PRACTICAL USE CASES
 	demonstratePracticalCases()
 
 	fmt.Println("\nWith defaults examples complete!")
 }
 
 func demonstrateGetTyped(partialData, completeData string) {
-	fmt.Println("1. GetTyped[T] (Recommended)")
-	fmt.Println("------------------------------")
+	fmt.Println("1. GetTyped[T] (type-safe, with default)")
+	fmt.Println("-----------------------------------------")
 
-	// String with default - RECOMMENDED approach
-	email := json.GetTyped(partialData, "user.email", "no-email@example.com")
-	fmt.Printf("   user.email: %s\n", email)
+	// GetTyped[T] returns T directly — not (T, error). When the path is missing,
+	// the value is null, or conversion fails, it returns the default (or the
+	// zero value of T if no default is given). That makes it ideal for optional
+	// fields: no error handling is needed for the common "missing" case.
 
-	missingPhone := json.GetTyped(partialData, "user.phone", "N/A")
-	fmt.Printf("   user.phone (missing): %s\n", missingPhone)
+	// String
+	fmt.Println("   Strings:")
+	fmt.Printf("   - user.email:           %s\n", json.GetTyped(partialData, "user.email", "no-email@example.com"))
+	fmt.Printf("   - user.phone (missing): %s\n", json.GetTyped(partialData, "user.phone", "N/A"))
 
-	// Int with default
-	age := json.GetTyped(partialData, "user.age", 0)
-	fmt.Printf("   user.age (missing): %d\n", age)
+	// Int — missing returns the default; present returns the actual value.
+	fmt.Println("\n   Ints (default vs actual):")
+	fmt.Printf("   - user.age (missing, default 18):        %d\n", json.GetTyped(partialData, "user.age", 18))
+	fmt.Printf("   - user.age (complete, default ignored): %d\n", json.GetTyped(completeData, "user.age", 18))
 
-	completeAge := json.GetTyped(completeData, "user.age", 0)
-	fmt.Printf("   user.age (from complete): %d\n", completeAge)
-
-	// Bool with default
-	notifications := json.GetTyped(partialData, "settings.notifications", false)
-	fmt.Printf("   settings.notifications (missing): %t\n", notifications)
-
-	// Float with default
-	score := json.GetTyped(partialData, "user.score", 100.0)
-	fmt.Printf("   user.score (missing): %.1f\n", score)
-
-	// Array with default
+	// Bool / Float / Array
+	fmt.Println("\n   Bool / Float / Array:")
+	fmt.Printf("   - settings.notifications (missing): %t\n", json.GetTyped(partialData, "settings.notifications", false))
+	fmt.Printf("   - user.score (missing):             %.1f\n", json.GetTyped(partialData, "user.score", 100.0))
 	tags := json.GetTyped[[]any](partialData, "user.tags", []any{})
-	fmt.Printf("   user.tags (missing): %v (length: %d)\n", tags, len(tags))
-}
-
-func demonstrateTypedDefaultsPractice(partialData, completeData string) {
-	fmt.Println("\n2. GetTyped[T] (generic, type-safe)")
-	fmt.Println("-------------------------------------")
-
-	// Missing field with default
-	missingPath := "user.age"
-	defaultAge := 18
-
-	age := json.GetTyped(partialData, missingPath, defaultAge)
-	fmt.Printf("   Missing field '%s': %v (default: %d)\n", missingPath, age, defaultAge)
-
-	// Existing field (returns actual value, not default)
-	existingPath := "user.name"
-	defaultName := "Unknown"
-
-	name := json.GetTyped(partialData, existingPath, defaultName)
-	fmt.Printf("   Existing field '%s': %v (default ignored)\n", existingPath, name)
-
-	// Nested path with default
-	missingNested := "settings.notifications"
-	defaultNotif := false
-
-	notifications := json.GetTyped(partialData, missingNested, defaultNotif)
-	fmt.Printf("   Missing nested '%s': %v (default: %t)\n", missingNested, notifications, defaultNotif)
-
-	// Show difference with complete data
-	fmt.Println("\n   With complete data:")
-	completeAge := json.GetTyped(completeData, missingPath, defaultAge)
-	fmt.Printf("   Field '%s': %v (actual value, default ignored)\n", missingPath, completeAge)
+	fmt.Printf("   - user.tags (missing):               %v (len %d)\n", tags, len(tags))
 }
 
 func demonstratePracticalCases() {

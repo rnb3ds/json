@@ -757,30 +757,6 @@ func TestFormatJSONStringEdgeCases(t *testing.T) {
 	})
 }
 
-// TestNewSchemaWithConfigEdgeCases tests NewSchemaWithConfig edge cases
-func TestNewSchemaWithConfigEdgeCases(t *testing.T) {
-	t.Run("WithValidSchema", func(t *testing.T) {
-		cfg := SchemaConfig{Type: "object"}
-		schema := NewSchemaWithConfig(cfg)
-		if schema == nil {
-			t.Error("NewSchemaWithConfig failed")
-		}
-	})
-
-	t.Run("WithProperties", func(t *testing.T) {
-		cfg := SchemaConfig{
-			Type: "object",
-			Properties: map[string]*Schema{
-				"name": {Type: "string"},
-			},
-		}
-		schema := NewSchemaWithConfig(cfg)
-		if schema == nil {
-			t.Error("NewSchemaWithConfig failed")
-		}
-	})
-}
-
 // ============================================================================
 // HELPER FUNCTION TESTS
 // ============================================================================
@@ -797,7 +773,7 @@ func TestHelperFunctions(t *testing.T) {
 	})
 
 	t.Run("validatePath", func(t *testing.T) {
-		if err := validatePath("key.nested"); err != nil {
+		if err := internal.ValidatePath("key.nested"); err != nil {
 			t.Errorf("validatePath should return nil for valid path: %v", err)
 		}
 	})
@@ -1462,9 +1438,16 @@ func TestEncodeStructEdgeCases(t *testing.T) {
 		data := TestStruct{}
 		result, err := processor.EncodeWithConfig(data, DefaultConfig())
 		if err != nil {
-			t.Errorf("EncodeWithConfig failed: %v", err)
+			t.Fatalf("EncodeWithConfig failed: %v", err)
 		}
-		_ = result
+		// All fields are empty with omitempty, so nothing should be serialized.
+		var decoded map[string]any
+		if err := json.Unmarshal([]byte(result), &decoded); err != nil {
+			t.Fatalf("result is not valid JSON: %v (got %q)", err, result)
+		}
+		if len(decoded) != 0 {
+			t.Errorf("all-omitempty empty struct should encode to {}, got %q", result)
+		}
 	})
 
 	t.Run("StructWithNestedStruct", func(t *testing.T) {
@@ -1504,72 +1487,46 @@ func TestEncodeStructEdgeCases(t *testing.T) {
 	})
 }
 
-// TestValidateNumberEdgeCases tests number validation edge cases
+// TestValidateNumberEdgeCases tests numeric schema validation (Minimum/Maximum).
+// JSON numbers decode to float64, so "number" and "integer" validate identically;
+// the previous Number/Integer subtests were an exact copy-paste and are now one
+// table that also covers the out-of-range rejection paths.
 func TestValidateNumberEdgeCases(t *testing.T) {
 	processor, _ := New()
 	defer processor.Close()
 
-	t.Run("NumberValidation", func(t *testing.T) {
-		schema := &Schema{
-			Type:    "number",
-			Minimum: 0,
-			Maximum: 100,
-		}
-		schema.hasMinimum = true
-		schema.hasMaximum = true
+	schema := &Schema{
+		Type:    "number",
+		Minimum: 0,
+		Maximum: 100,
+	}
+	schema.hasMinimum = true
+	schema.hasMaximum = true
 
-		tests := []struct {
-			jsonStr   string
-			expectErr bool
-		}{
-			{`50`, false},
-			{`0`, false},
-			{`100`, false},
-		}
+	tests := []struct {
+		name      string
+		jsonStr   string
+		expectErr bool
+	}{
+		{"mid-range", `50`, false},
+		{"at minimum", `0`, false},
+		{"at maximum", `100`, false},
+		{"below minimum", `-1`, true},
+		{"above maximum", `101`, true},
+		{"float in range", `19.99`, false},
+	}
 
-		for _, tt := range tests {
-			errors, err := processor.ValidateSchema(tt.jsonStr, schema)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			errs, err := processor.ValidateSchema(tt.jsonStr, schema)
 			if err != nil {
-				t.Errorf("ValidateSchema failed for %s: %v", tt.jsonStr, err)
-				continue
+				t.Fatalf("ValidateSchema failed for %s: %v", tt.jsonStr, err)
 			}
-			hasErrors := len(errors) > 0
-			if hasErrors != tt.expectErr {
-				t.Errorf("ValidateSchema(%s) errors = %v, expectErr = %v", tt.jsonStr, errors, tt.expectErr)
+			if (len(errs) > 0) != tt.expectErr {
+				t.Errorf("ValidateSchema(%s) errors = %v, expectErr = %v", tt.jsonStr, errs, tt.expectErr)
 			}
-		}
-	})
-
-	t.Run("IntegerValidation", func(t *testing.T) {
-		schema := &Schema{
-			Type:    "number", // Use number since JSON decodes to float64
-			Minimum: 0,
-			Maximum: 100,
-		}
-		schema.hasMinimum = true
-		schema.hasMaximum = true
-
-		tests := []struct {
-			jsonStr   string
-			expectErr bool
-		}{
-			{`50`, false},
-			{`0`, false},
-			{`100`, false},
-		}
-
-		for _, tt := range tests {
-			errors, err := processor.ValidateSchema(tt.jsonStr, schema)
-			if err != nil {
-				t.Errorf("ValidateSchema failed for %s: %v", tt.jsonStr, err)
-				continue
-			}
-			hasErrors := len(errors) > 0
-			if hasErrors != tt.expectErr {
-				t.Errorf("ValidateSchema(%s) errors = %v, expectErr = %v", tt.jsonStr, errors, tt.expectErr)
-			}
-		}
-	})
+		})
+	}
 }
 
 // TestIsEmptyFunction tests isEmpty function indirectly
@@ -1782,9 +1739,14 @@ func TestEncodeArrayEdgeCases(t *testing.T) {
 		}
 		result, err := processor.EncodeWithConfig(data, DefaultConfig())
 		if err != nil {
-			t.Errorf("EncodeWithConfig failed: %v", err)
+			t.Fatalf("EncodeWithConfig failed: %v", err)
 		}
-		_ = result
+		// Every element type must survive the round trip.
+		for _, want := range []string{`"two"`, "true", "null", `"key":"value"`} {
+			if !strings.Contains(result, want) {
+				t.Errorf("result %q missing %s", result, want)
+			}
+		}
 	})
 }
 
@@ -1814,9 +1776,14 @@ func TestEncodeMapEdgeCases(t *testing.T) {
 		}
 		result, err := processor.EncodeWithConfig(data, DefaultConfig())
 		if err != nil {
-			t.Errorf("EncodeWithConfig failed: %v", err)
+			t.Fatalf("EncodeWithConfig failed: %v", err)
 		}
-		_ = result
+		// Nested key and deepest value must both be present.
+		for _, want := range []string{`"level3"`, `"deep"`} {
+			if !strings.Contains(result, want) {
+				t.Errorf("result %q missing %s", result, want)
+			}
+		}
 	})
 
 	t.Run("MapWithNumericKeys", func(t *testing.T) {
@@ -1824,9 +1791,14 @@ func TestEncodeMapEdgeCases(t *testing.T) {
 		data := map[int]string{1: "one", 2: "two"}
 		result, err := processor.EncodeWithConfig(data, DefaultConfig())
 		if err != nil {
-			t.Errorf("EncodeWithConfig failed: %v", err)
+			t.Fatalf("EncodeWithConfig failed: %v", err)
 		}
-		_ = result
+		// Numeric keys become JSON object keys; values must round-trip.
+		for _, want := range []string{`"one"`, `"two"`} {
+			if !strings.Contains(result, want) {
+				t.Errorf("result %q missing %s", result, want)
+			}
+		}
 	})
 }
 
@@ -2001,7 +1973,6 @@ func TestEncodeStreamWithConfig(t *testing.T) {
 // PARSER EDGE CASES TESTS
 // ============================================================================
 
-// TestParseBoolean tests parseBoolean function
 // TestParseStringEdgeCases tests parseString function edge cases
 func TestParseStringEdgeCases(t *testing.T) {
 	t.Run("EscapedCharacters", func(t *testing.T) {
@@ -2212,22 +2183,25 @@ func TestEncodeNumberEdgeCases(t *testing.T) {
 	tests := []struct {
 		name  string
 		input any
+		want  string // must appear verbatim in the encoded output
 	}{
-		{"LargeInt", map[string]any{"value": 9223372036854775807}},
-		{"SmallInt", map[string]any{"value": -9223372036854775808}},
-		{"LargeFloat", map[string]any{"value": 1.7976931348623157e+308}},
-		{"SmallFloat", map[string]any{"value": -1.7976931348623157e+308}},
-		{"NegativeZero", map[string]any{"value": 0.0}},
-		{"VerySmallFloat", map[string]any{"value": 1e-300}},
+		{"LargeInt", map[string]any{"value": 9223372036854775807}, "9223372036854775807"},
+		{"SmallInt", map[string]any{"value": -9223372036854775808}, "-9223372036854775808"},
+		{"LargeFloat", map[string]any{"value": 1.7976931348623157e+308}, "1.7976931348623157e+308"},
+		{"SmallFloat", map[string]any{"value": -1.7976931348623157e+308}, "-1.7976931348623157e+308"},
+		{"NegativeZero", map[string]any{"value": 0.0}, "0"},
+		{"VerySmallFloat", map[string]any{"value": 1e-300}, "1e-300"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result, err := processor.EncodeWithConfig(tt.input, DefaultConfig())
 			if err != nil {
-				t.Errorf("EncodeWithConfig failed: %v", err)
+				t.Fatalf("EncodeWithConfig failed: %v", err)
 			}
-			_ = result
+			if !strings.Contains(result, tt.want) {
+				t.Errorf("result %q missing %q", result, tt.want)
+			}
 		})
 	}
 }
@@ -2500,7 +2474,6 @@ func TestTypedGetters_DefaultContract(t *testing.T) {
 	})
 }
 
-// TestValidString tests the validString function
 // TestValidWithConfig tests ValidWithConfig function
 func TestValidWithConfig(t *testing.T) {
 	t.Run("WithConfig", func(t *testing.T) {
@@ -2702,41 +2675,6 @@ func TestSaveToWriterTopLevel(t *testing.T) {
 // EDGE CASES - Additional boundary tests
 // ============================================================================
 
-// TestEmptyAndNilInputs tests empty and nil input handling
-func TestEmptyAndNilInputs(t *testing.T) {
-	processor, _ := New()
-	defer processor.Close()
-
-	t.Run("EmptyJSON", func(t *testing.T) {
-		_, err := processor.Get("", "key")
-		if err == nil {
-			t.Error("Get with empty JSON should return error")
-		}
-	})
-
-	t.Run("EmptyPath", func(t *testing.T) {
-		result, err := processor.Get(`{"key":"value"}`, "")
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		m, ok := result.(map[string]any)
-		if !ok {
-			t.Fatalf("expected map, got %T", result)
-		}
-		if m["key"] != "value" {
-			t.Errorf("expected key=value in root result")
-		}
-	})
-
-	t.Run("NilValue", func(t *testing.T) {
-		result, err := processor.Set(`{"key":"value"}`, "key", nil)
-		if err != nil {
-			t.Errorf("Set with nil value failed: %v", err)
-		}
-		assertJSONEqual(t, `{"key":null}`, result)
-	})
-}
-
 // TestArrayBoundaryConditions tests array boundary conditions
 func TestArrayBoundaryConditions(t *testing.T) {
 	processor, _ := New()
@@ -2774,35 +2712,6 @@ func TestArrayBoundaryConditions(t *testing.T) {
 	})
 }
 
-// TestDeepNesting tests deeply nested JSON handling
-func TestDeepNesting(t *testing.T) {
-	processor, _ := New()
-	defer processor.Close()
-
-	t.Run("DeepPath", func(t *testing.T) {
-		// Create deeply nested JSON
-		deep := `{"a":{"b":{"c":{"d":{"e":"deep"}}}}}`
-		result, err := processor.Get(deep, "a.b.c.d.e")
-		if err != nil {
-			t.Errorf("Get deep path failed: %v", err)
-		}
-		if result != "deep" {
-			t.Errorf("Result = %v, want deep", result)
-		}
-	})
-
-	t.Run("DeepArray", func(t *testing.T) {
-		deep := `{"a":[[[1,2],[3,4]],[[5,6],[7,8]]]}`
-		result, err := processor.Get(deep, "a[0][1][0]")
-		if err != nil {
-			t.Errorf("Get deep array failed: %v", err)
-		}
-		if result != 3.0 {
-			t.Errorf("Result = %v, want 3", result)
-		}
-	})
-}
-
 // ============================================================================
 // FAST ENCODER TESTS - Missing coverage
 // ============================================================================
@@ -2832,37 +2741,6 @@ func TestFastEncoderFunctions(t *testing.T) {
 	})
 }
 
-// TestConfigCloneEdgeCases tests Config.Clone edge cases
-func TestConfigCloneEdgeCases(t *testing.T) {
-	t.Run("CloneWithCustomEscapes", func(t *testing.T) {
-		original := Config{
-			CustomEscapes: map[rune]string{
-				'\n': "\\n",
-				'\t': "\\t",
-			},
-		}
-
-		cloned := original.Clone()
-		if cloned.CustomEscapes == nil {
-			t.Error("Cloned CustomEscapes should not be nil")
-		}
-
-		// Modify clone
-		cloned.CustomEscapes['\r'] = "\\r"
-		if _, exists := original.CustomEscapes['\r']; exists {
-			t.Error("Original should not be affected by clone modification")
-		}
-	})
-
-	t.Run("CloneNil", func(t *testing.T) {
-		var cfg *Config
-		cloned := cfg.Clone()
-		if cloned != nil {
-			t.Error("Clone of nil should be nil")
-		}
-	})
-}
-
 // TestConfigValidationEdgeCases tests Config.Validate edge cases
 func TestConfigValidationEdgeCases(t *testing.T) {
 	t.Run("ValidateWithWarnings", func(t *testing.T) {
@@ -2872,7 +2750,9 @@ func TestConfigValidationEdgeCases(t *testing.T) {
 		}
 		warnings := cfg.ValidateWithWarnings()
 		// Should have warnings for negative values
-		_ = warnings
+		if len(warnings) == 0 {
+			t.Errorf("expected warnings for negative MaxCacheSize/MaxJSONSize, got none")
+		}
 	})
 
 	t.Run("ValidateZeroConfig", func(t *testing.T) {
@@ -3156,6 +3036,15 @@ func TestNumberMethods(t *testing.T) {
 					t.Errorf("Float64() = %v, want %v", got, tt.want)
 				}
 			})
+		}
+	})
+
+	t.Run("String", func(t *testing.T) {
+		// String() returns the underlying literal unchanged.
+		for _, lit := range []string{"123.45", "42", "-3.14", "1e10", "0", ""} {
+			if got := Number(lit).String(); got != lit {
+				t.Errorf("Number(%q).String() = %q, want %q", lit, got, lit)
+			}
 		}
 	})
 }

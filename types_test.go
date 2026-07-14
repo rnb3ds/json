@@ -2772,3 +2772,31 @@ func TestValidationError(t *testing.T) {
 		}
 	})
 }
+
+// ---------------------------------------------------------------------------
+// FIX-001: typed map/slice conversion coverage (helpers.go convertToMapWithDepth,
+// convertToSliceWithDepth) exercised through the generic GetTyped[T] API.
+// ---------------------------------------------------------------------------
+
+// TestGetTyped_TypedMapConversion verifies GetTyped coerces JSON values into a
+// strongly-typed map (e.g. numeric strings -> int).
+func TestGetTyped_TypedMapConversion(t *testing.T) {
+	got := GetTyped[map[string]int](`{"a":"1","b":"2","c":3}`, ".")
+	if got["a"] != 1 || got["b"] != 2 || got["c"] != 3 {
+		t.Errorf("typed map conversion = %v, want {a:1 b:2 c:3}", got)
+	}
+}
+
+// TestGetTyped_TypedSliceConversion verifies GetTyped coerces a JSON array into
+// a strongly-typed slice, including numeric narrowing.
+func TestGetTyped_TypedSliceConversion(t *testing.T) {
+	got := GetTyped[[]int](`[1,2,3]`, ".")
+	if len(got) != 3 || got[0] != 1 || got[1] != 2 || got[2] != 3 {
+		t.Errorf("typed slice conversion = %v, want [1 2 3]", got)
+	}
+	// float-valued JSON numbers are narrowed to int
+	gotF := GetTyped[[]int](`[1.0,2.0]`, ".")
+	if len(gotF) != 2 || gotF[0] != 1 || gotF[1] != 2 {
+		t.Errorf("float->int slice conversion = %v, want [1 2]", gotF)
+	}
+}

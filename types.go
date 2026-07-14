@@ -27,6 +27,22 @@ type Config struct {
 	EnableCache  bool          `json:"enable_cache"`
 	CacheResults bool          `json:"cache_results"` // Per-operation caching
 
+	// CacheSharedResults, when true, lets cache-hit Get/GetFromParsed return the
+	// cached value directly WITHOUT a defensive deep copy. This eliminates the
+	// dominant allocation and CPU cost of repeated Gets on large results.
+	//
+	// CONTRACT: the caller MUST NOT mutate any returned container
+	// (map[string]any / []any). Mutation corrupts the shared cache for
+	// subsequent readers. Primitives (bool, float64, string, json.Number, nil)
+	// are immutable and therefore always safe.
+	//
+	// SECURITY: the default is false, which preserves the safe behavior of
+	// returning an independent deep copy on every cache hit. Only enable this
+	// when callers treat results as read-only — e.g. read-heavy workloads that
+	// Get the same large subtrees repeatedly. The tradeoff is explicit and
+	// opt-in; default behavior is unchanged.
+	CacheSharedResults bool `json:"cache_shared_results"`
+
 	// ===== Size Limits =====
 	MaxJSONSize  int64 `json:"max_json_size"`
 	MaxPathDepth int   `json:"max_path_depth"`
@@ -645,16 +661,22 @@ func (ve *ValidationError) Error() string {
 // =============================================================================
 
 // Result represents a type-safe operation result with comprehensive error handling.
-// This is the unified type for all type-safe operations.
+// It is a general-purpose result type that callers construct from any operation
+// to get Ok / Unwrap / UnwrapOr ergonomics.
 //
 // Example:
 //
-//	result := json.GetResult[string](data, "user.name")
-//	if result.Ok() {
-//	    name := result.Unwrap()
+//	r := json.Result[string]{Value: "Alice", Exists: true}
+//	if r.Ok() {
+//	    name := r.Unwrap()
 //	}
-//	// Or with default
-//	name := json.GetResult[string](data, "user.name").UnwrapOr("unknown")
+//	// With default
+//	name := r.UnwrapOr("unknown")
+//
+// For the library's built-in typed getter — which returns T directly with a
+// default-value fallback — see GetTyped:
+//
+//	name := json.GetTyped[string](data, "user.name", "unknown")
 type Result[T any] struct {
 	Value  T     // The result value (exported for backward compatibility)
 	Exists bool  // Whether the path exists

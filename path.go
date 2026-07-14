@@ -75,7 +75,7 @@ func (p *Processor) Parse(jsonStr string, target any, cfg ...Config) error {
 	}
 	defer releaseConfig(options)
 
-	if err := p.validateInput(jsonStr); err != nil {
+	if err := p.validateInputForOptions(jsonStr, options); err != nil {
 		return err
 	}
 
@@ -209,14 +209,17 @@ func (p *Processor) Valid(jsonStr string, cfg ...Config) (bool, error) {
 		return false, err
 	}
 
-	// Prepare options before validateInput so caller's config limits are used
+	// Prepare options, then validate against them so a caller-supplied Config
+	// (MaxJSONSize / FullSecurityScan / etc.) is actually enforced. When no
+	// Config is supplied, validateInputForOptions falls back to the processor's
+	// own baked-in limits.
 	options, err := p.prepareOptions(cfg...)
 	if err != nil {
 		return false, err
 	}
 	defer releaseConfig(options)
 
-	if err := p.validateInput(jsonStr); err != nil {
+	if err := p.validateInputForOptions(jsonStr, options); err != nil {
 		return false, err
 	}
 
@@ -305,10 +308,6 @@ func (p *Processor) parsePath(path string) ([]string, error) {
 	}
 
 	return result, nil
-}
-
-func (p *Processor) isDistributedOperationPath(path string) bool {
-	return internal.IsExtractionPath(path)
 }
 
 func (p *Processor) handleDistributedOperation(data any, segments []internal.PathSegment) (any, error) {
@@ -763,50 +762,4 @@ func preservingUnmarshal(data []byte, v any, preserveNumbers bool) error {
 	}
 
 	return json.Unmarshal(convertedBytes, v)
-}
-
-func (p *Processor) normalizePathSeparators(path string) string {
-	return internal.NormalizePathSeparators(path)
-}
-
-func (p *Processor) splitPathSegments(path string) []string {
-	if path == "" {
-		return []string{}
-	}
-
-	// Handle JSON Pointer format
-	if strings.HasPrefix(path, "/") {
-		pathWithoutSlash := path[1:]
-		if pathWithoutSlash == "" {
-			return []string{}
-		}
-		return strings.Split(pathWithoutSlash, "/")
-	}
-
-	// Handle dot notation
-	return strings.Split(path, ".")
-}
-
-func (p *Processor) joinPathSegments(segments []string, useJSONPointer bool) string {
-	if len(segments) == 0 {
-		return ""
-	}
-
-	if useJSONPointer {
-		return "/" + strings.Join(segments, "/")
-	}
-
-	return strings.Join(segments, ".")
-}
-
-func (p *Processor) isValidPropertyName(name string) bool {
-	return internal.IsValidPropertyName(name)
-}
-
-func (p *Processor) isValidArrayIndex(index string) bool {
-	return internal.IsValidArrayIndex(index)
-}
-
-func (p *Processor) isValidSliceRange(rangeStr string) bool {
-	return internal.IsValidSliceRange(rangeStr)
 }

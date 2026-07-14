@@ -92,7 +92,30 @@ func NormalizeSlice(start, end, length int) (int, int) {
 
 // PerformArraySlice performs Python-style array slicing with optimized capacity calculation
 func PerformArraySlice(arr []any, start, end, step *int) []any {
-	length := len(arr)
+	indices := PerformArraySliceIndices(len(arr), start, end, step)
+	// Return a non-nil empty slice (not nil) for empty results so that a
+	// zero-element slice serializes to JSON `[]` (matching Python and the
+	// forward dot-notation path) rather than `null`. Distinguishes "slice
+	// matched nothing" from "path not found".
+	result := make([]any, 0, len(indices))
+	for _, i := range indices {
+		result = append(result, arr[i])
+	}
+	return result
+}
+
+// PerformArraySliceIndices returns the ordered list of indices that
+// PerformArraySlice would visit, honoring both positive and negative step
+// (Python-style reverse slicing, e.g. [::-1]).
+//
+// It exists so that opSet/opDelete can apply a value to — or mark for
+// deletion — every element a slice touches without hand-rolling a
+// step-direction-dependent loop. A naive `for i := start; i < end; i += step`
+// panics on negative step (i decrements below 0 and indexes container[-1]);
+// routing through this helper keeps reverse slices safe.
+//
+// All returned indices are guaranteed to be within [0, length).
+func PerformArraySliceIndices(length int, start, end, step *int) []int {
 	if length == 0 {
 		return nil
 	}
@@ -143,9 +166,9 @@ func PerformArraySlice(arr []any, start, end, step *int) []any {
 		rangeSize := endIdx - startIdx
 		capacity := calculateSliceCapacity(rangeSize, stepVal)
 
-		result := make([]any, 0, capacity)
+		result := make([]int, 0, capacity)
 		for i := startIdx; i < endIdx; i += stepVal {
-			result = append(result, arr[i])
+			result = append(result, i)
 		}
 		return result
 	}
@@ -155,15 +178,18 @@ func PerformArraySlice(arr []any, start, end, step *int) []any {
 		startIdx = length - 1
 	}
 	if startIdx < 0 {
-		startIdx = 0
+		// A start that wraps to before the array (e.g. [-10::-1] on length 5)
+		// yields nothing under Python semantics — not index 0. Clamping to 0
+		// would instead return [arr[0]], diverging from Python.
+		return nil
 	}
 
 	rangeSize := startIdx - endIdx
 	capacity := calculateSliceCapacity(rangeSize, -stepVal)
 
-	result := make([]any, 0, capacity)
+	result := make([]int, 0, capacity)
 	for i := startIdx; i > endIdx; i += stepVal {
-		result = append(result, arr[i])
+		result = append(result, i)
 	}
 	return result
 }
