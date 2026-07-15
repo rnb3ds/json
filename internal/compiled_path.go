@@ -283,6 +283,16 @@ func applySlice(arr []any, segment *PathSegment) ([]any, error) {
 	// Handle negative step: Python-style slicing semantics
 	// For step < 0, start should be >= end (iterating downward)
 	if step < 0 {
+		// Python semantics: when start/end are omitted for a negative step,
+		// default to n-1 and -1 (iterate from the end backward). The
+		// positive-step defaults (0, n) set above would otherwise make
+		// start(0) <= end(n) and silently yield an empty result for [::-1].
+		if !segment.HasStart() {
+			start = n - 1
+		}
+		if !segment.HasEnd() {
+			end = -1
+		}
 		// Clamp bounds
 		if start < 0 {
 			start = -1

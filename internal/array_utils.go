@@ -93,6 +93,69 @@ func NormalizeSlice(start, end, length int) (int, int) {
 // PerformArraySlice performs Python-style array slicing with optimized capacity calculation
 func PerformArraySlice(arr []any, start, end, step *int) []any {
 	length := len(arr)
+
+	// Fast path: unit step (step == nil or *step == 1). This is the common case
+	// (e.g. [0:50], [:10], [5:]) and avoids allocating a temporary []int index
+	// slice — a contiguous subslice is copied directly via copy (memmove).
+	// Behavior is identical to the general path for unit step; verified against
+	// PerformArraySliceIndices (same normalization, same non-nil empty result).
+	if step == nil || *step == 1 {
+		startIdx, endIdx := 0, length
+		if start != nil {
+			startIdx = *start
+			if startIdx < 0 {
+				startIdx += length
+			}
+		}
+		if end != nil {
+			endIdx = *end
+			if endIdx < 0 {
+				endIdx += length
+			}
+		}
+		if startIdx < 0 {
+			startIdx = 0
+		}
+		if endIdx > length {
+			endIdx = length
+		}
+		// Non-nil empty slice (not nil) for empty results so that a zero-element
+		// slice serializes to JSON `[]` rather than `null`. Distinguishes "slice
+		// matched nothing" from "path not found" — mirrors the general path.
+		if startIdx >= endIdx {
+			return make([]any, 0)
+		}
+		result := make([]any, endIdx-startIdx)
+		copy(result, arr[startIdx:endIdx])
+		return result
+	}
+
+	// General path: non-unit step (e.g. [0:10:2], [::-1]) must walk indices to
+	// honor stride and direction.
+	indices := PerformArraySliceIndices(length, start, end, step)
+	// Return a non-nil empty slice (not nil) for empty results so that a
+	// zero-element slice serializes to JSON `[]` (matching Python and the
+	// forward dot-notation path) rather than `null`. Distinguishes "slice
+	// matched nothing" from "path not found".
+	result := make([]any, 0, len(indices))
+	for _, i := range indices {
+		result = append(result, arr[i])
+	}
+	return result
+}
+
+// PerformArraySliceIndices returns the ordered list of indices that
+// PerformArraySlice would visit, honoring both positive and negative step
+// (Python-style reverse slicing, e.g. [::-1]).
+//
+// It exists so that opSet/opDelete can apply a value to — or mark for
+// deletion — every element a slice touches without hand-rolling a
+// step-direction-dependent loop. A naive `for i := start; i < end; i += step`
+// panics on negative step (i decrements below 0 and indexes container[-1]);
+// routing through this helper keeps reverse slices safe.
+//
+// All returned indices are guaranteed to be within [0, length).
+func PerformArraySliceIndices(length int, start, end, step *int) []int {
 	if length == 0 {
 		return nil
 	}
@@ -143,9 +206,9 @@ func PerformArraySlice(arr []any, start, end, step *int) []any {
 		rangeSize := endIdx - startIdx
 		capacity := calculateSliceCapacity(rangeSize, stepVal)
 
-		result := make([]any, 0, capacity)
+		result := make([]int, 0, capacity)
 		for i := startIdx; i < endIdx; i += stepVal {
-			result = append(result, arr[i])
+			result = append(result, i)
 		}
 		return result
 	}
@@ -155,15 +218,18 @@ func PerformArraySlice(arr []any, start, end, step *int) []any {
 		startIdx = length - 1
 	}
 	if startIdx < 0 {
-		startIdx = 0
+		// A start that wraps to before the array (e.g. [-10::-1] on length 5)
+		// yields nothing under Python semantics — not index 0. Clamping to 0
+		// would instead return [arr[0]], diverging from Python.
+		return nil
 	}
 
 	rangeSize := startIdx - endIdx
 	capacity := calculateSliceCapacity(rangeSize, -stepVal)
 
-	result := make([]any, 0, capacity)
+	result := make([]int, 0, capacity)
 	for i := startIdx; i > endIdx; i += stepVal {
-		result = append(result, arr[i])
+		result = append(result, i)
 	}
 	return result
 }

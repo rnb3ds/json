@@ -18,6 +18,7 @@ import (
 // - Automatic type conversion from JSON
 // - Default values with GetTyped[T]
 // - Deep copy via marshal/unmarshal cycle
+// - Result[T] — type-safe result wrapper (Ok / Unwrap / UnwrapOr)
 //
 // Run: go run -tags=example examples/7_type_conversion.go
 
@@ -39,6 +40,9 @@ func main() {
 
 	// 5. DEEP COPY
 	demonstrateDeepCopy()
+
+	// 6. RESULT[T]
+	demonstrateResultType()
 
 	fmt.Println("\nType conversion examples complete!")
 }
@@ -231,8 +235,47 @@ func demonstrateDeepCopy() {
 	}
 
 	fmt.Println("\n   After modifying copy:")
-	fmt.Printf("   Original address city: %v\n", original["address"].(map[string]any)["city"])
-	fmt.Printf("   Copy address city:     %v\n", copied["address"].(map[string]any)["city"])
+	origAddr, _ := original["address"].(map[string]any)
+	copiedAddr, _ := copied["address"].(map[string]any)
+	fmt.Printf("   Original address city: %v\n", origAddr["city"])
+	fmt.Printf("   Copy address city:     %v\n", copiedAddr["city"])
 
 	fmt.Println("\n   Original is unchanged (deep copy successful)")
+}
+
+func demonstrateResultType() {
+	fmt.Println("\n6. Result[T] — Type-safe Result Wrapper")
+	fmt.Println("----------------------------------------")
+
+	data := `{"user":{"name":"Alice","age":30}}`
+
+	// Result[T] is a general-purpose wrapper a caller constructs from any
+	// operation to get Ok / Unwrap / UnwrapOr ergonomics. Unlike GetTyped
+	// (which returns T directly and folds errors into the default), Result[T]
+	// carries the error explicitly so you can inspect why a read failed.
+	val, err := json.Get(data, "user.name")
+	if err != nil {
+		fmt.Printf("   Get error: %v\n", err)
+		return
+	}
+	name, ok := val.(string)
+	if !ok {
+		fmt.Printf("   value is %T, not string\n", val)
+		return
+	}
+	r := json.Result[string]{Value: name, Exists: true}
+	fmt.Printf("   Ok():       %t\n", r.Ok())
+	fmt.Printf("   Unwrap():   %s\n", r.Unwrap())
+	fmt.Printf("   UnwrapOr(): %s\n", r.UnwrapOr("fallback"))
+
+	// A missing path yields a non-Ok result; UnwrapOr supplies a default.
+	missing := json.Result[string]{Exists: false}
+	fmt.Printf("\n   missing.Ok():       %t\n", missing.Ok())
+	fmt.Printf("   missing.Unwrap():   %q (zero value of T)\n", missing.Unwrap())
+	fmt.Printf("   missing.UnwrapOr(): %s\n", missing.UnwrapOr("guest"))
+
+	// An error also makes Ok() false; Unwrap returns the zero value.
+	failed := json.Result[string]{Error: fmt.Errorf("permission denied")}
+	fmt.Printf("\n   failed.Ok():        %t (Error set)\n", failed.Ok())
+	fmt.Printf("   failed.UnwrapOr():  %s\n", failed.UnwrapOr("guest"))
 }

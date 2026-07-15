@@ -296,7 +296,14 @@ func updateMax(target *int64, value int64) {
 func updateMin(target *int64, value int64) {
 	for {
 		current := atomic.LoadInt64(target)
-		if current < 0 || value >= current || atomic.CompareAndSwapInt64(target, current, value) {
+		// Update when the sentinel (-1, "not yet recorded") is present OR when
+		// value is a new minimum. The previous condition short-circuited on
+		// `current < 0` and returned WITHOUT updating, so the sentinel was
+		// never replaced and MinProcessingTime was reported as 0 forever.
+		if current >= 0 && value >= current {
+			return
+		}
+		if atomic.CompareAndSwapInt64(target, current, value) {
 			return
 		}
 	}

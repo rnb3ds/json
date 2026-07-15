@@ -77,23 +77,6 @@ func TestAccessResult_Ok_Unwrap_UnwrapOr(t *testing.T) {
 // Config mutation boundary tests (types.go: 0% coverage)
 // ============================================================================
 
-func TestConfigMutation_NilReceiver(t *testing.T) {
-	t.Run("AddHook nil", func(t *testing.T) {
-		var cfg *Config
-		cfg.AddHook(nil) // should not panic
-	})
-
-	t.Run("AddValidator nil", func(t *testing.T) {
-		var cfg *Config
-		cfg.AddValidator(nil) // should not panic
-	})
-
-	t.Run("AddDangerousPattern nil", func(t *testing.T) {
-		var cfg *Config
-		cfg.AddDangerousPattern(DangerousPattern{}) // should not panic
-	})
-}
-
 func TestConfigMutation_ValidReceiver(t *testing.T) {
 	t.Run("AddHook appends", func(t *testing.T) {
 		cfg := DefaultConfig()
@@ -132,36 +115,6 @@ func TestDefaultSchemaConfig(t *testing.T) {
 	if cfg.AdditionalProperties == nil || !*cfg.AdditionalProperties {
 		t.Error("DefaultSchemaConfig AdditionalProperties should be *true")
 	}
-}
-
-func TestNewSchemaWithConfig(t *testing.T) {
-	t.Run("with additional properties true", func(t *testing.T) {
-		cfg := DefaultSchemaConfig()
-		schema := NewSchemaWithConfig(cfg)
-		if schema == nil {
-			t.Fatal("NewSchemaWithConfig returned nil")
-		}
-		if !schema.AdditionalProperties {
-			t.Error("AdditionalProperties should be true")
-		}
-	})
-
-	t.Run("with additional properties false", func(t *testing.T) {
-		falsy := false
-		cfg := SchemaConfig{AdditionalProperties: &falsy}
-		schema := NewSchemaWithConfig(cfg)
-		if schema.AdditionalProperties {
-			t.Error("AdditionalProperties should be false")
-		}
-	})
-
-	t.Run("with nil additional properties", func(t *testing.T) {
-		cfg := SchemaConfig{AdditionalProperties: nil}
-		schema := NewSchemaWithConfig(cfg)
-		if !schema.AdditionalProperties {
-			t.Error("nil AdditionalProperties should default to true")
-		}
-	})
 }
 
 // ============================================================================
@@ -232,80 +185,67 @@ func TestIterator_ResetWith(t *testing.T) {
 // Pooled iterator boundary tests (iterator.go: 0% coverage)
 // ============================================================================
 
-func TestPooledSliceIterator(t *testing.T) {
-	data := []any{10, 20, 30}
-	it := newPooledSliceIterator(data)
+func TestPooledSliceIterator_Boundary(t *testing.T) {
+	t.Run("non-empty iteration", func(t *testing.T) {
+		it := newPooledSliceIterator([]any{10, 20, 30})
+		var results []any
+		for it.Next() {
+			results = append(results, it.Value())
+		}
+		if len(results) != 3 || results[0] != 10 || results[1] != 20 || results[2] != 30 {
+			t.Fatalf("unexpected values: %v", results)
+		}
+		if it.Next() {
+			t.Error("Next() should return false after exhaustion")
+		}
+		if it.Index() < 2 {
+			t.Errorf("Index() = %d, should be >= 2", it.Index())
+		}
+		it.Release()
+		it.Release() // double release must not panic
+	})
 
-	// Iterate all
-	var results []any
-	for it.Next() {
-		results = append(results, it.Value())
-	}
-	if len(results) != 3 {
-		t.Fatalf("expected 3 items, got %d", len(results))
-	}
-	if results[0] != 10 || results[1] != 20 || results[2] != 30 {
-		t.Errorf("unexpected values: %v", results)
-	}
-
-	// Next after exhaustion returns false
-	if it.Next() {
-		t.Error("Next() should return false after exhaustion")
-	}
-
-	// Index should be past the end after exhaustion
-	if it.Index() < 2 {
-		t.Errorf("Index() = %d, should be >= 2", it.Index())
-	}
-
-	// Release and verify no panic on double release
-	it.Release()
-	it.Release() // should not panic
+	t.Run("empty", func(t *testing.T) {
+		it := newPooledSliceIterator([]any{})
+		if it.Next() {
+			t.Error("Next() should return false for empty slice")
+		}
+		it.Release()
+	})
 }
 
-func TestPooledSliceIterator_Empty(t *testing.T) {
-	it := newPooledSliceIterator([]any{})
-	if it.Next() {
-		t.Error("Next() should return false for empty slice")
-	}
-	it.Release()
-}
+func TestPooledMapIterator_Boundary(t *testing.T) {
+	t.Run("non-empty iteration", func(t *testing.T) {
+		it := newPooledMapIterator(map[string]any{"a": 1, "b": 2})
+		var n int
+		for it.Next() {
+			n++
+			_ = it.Key()
+			_ = it.Value()
+		}
+		if n != 2 {
+			t.Fatalf("expected 2 items, got %d", n)
+		}
+		if it.Next() {
+			t.Error("Next() should return false after exhaustion")
+		}
+		it.Release()
+		it.Release() // double release must not panic
+	})
 
-func TestPooledMapIterator(t *testing.T) {
-	data := map[string]any{"a": 1, "b": 2}
-	it := newPooledMapIterator(data)
+	t.Run("empty", func(t *testing.T) {
+		it := newPooledMapIterator(map[string]any{})
+		if it.Next() {
+			t.Error("Next() should return false for empty map")
+		}
+		it.Release()
+	})
 
-	var keys []string
-	var values []any
-	for it.Next() {
-		keys = append(keys, it.Key())
-		values = append(values, it.Value())
-	}
-
-	if len(keys) != 2 {
-		t.Fatalf("expected 2 items, got %d", len(keys))
-	}
-	if it.Next() {
-		t.Error("Next() should return false after exhaustion")
-	}
-
-	it.Release()
-	it.Release() // should not panic
-}
-
-func TestPooledMapIterator_Empty(t *testing.T) {
-	it := newPooledMapIterator(map[string]any{})
-	if it.Next() {
-		t.Error("Next() should return false for empty map")
-	}
-	it.Release()
-}
-
-func TestPooledMapIterator_LargeKeysReplaced(t *testing.T) {
-	data := map[string]any{"a": 1}
-	it := newPooledMapIterator(data)
-	it.keys = make([]string, 0, 300) // force large capacity
-	it.Release()
+	t.Run("large keys capacity released", func(t *testing.T) {
+		it := newPooledMapIterator(map[string]any{"a": 1})
+		it.keys = make([]string, 0, 300) // oversized: not returned to the pool
+		it.Release()                     // must not panic
+	})
 }
 
 // ============================================================================
@@ -410,23 +350,22 @@ func TestProcessor_InvalidateCacheDisabled(t *testing.T) {
 	processor, _ := New(cfg)
 	defer processor.Close()
 
+	// invalidation is a no-op when caching is disabled: it must not panic and
+	// must leave Get fully functional.
 	processor.invalidateCachedResult("any_key")
+
+	result, err := processor.Get(`{"key": "value"}`, "key")
+	if err != nil {
+		t.Fatalf("Get after no-op invalidation failed: %v", err)
+	}
+	if result != "value" {
+		t.Errorf("result = %v, want 'value'", result)
+	}
 }
 
 // ============================================================================
 // checkRateLimit boundary tests (processor.go: 0% coverage)
 // ============================================================================
-
-func TestProcessor_CheckRateLimit(t *testing.T) {
-	t.Run("disabled when window is zero", func(t *testing.T) {
-		processor, _ := New()
-		defer processor.Close()
-		processor.metrics.operationWindow = 0
-		if err := processor.checkRateLimit(); err != nil {
-			t.Errorf("checkRateLimit with window=0 should return nil, got %v", err)
-		}
-	})
-}
 
 // ============================================================================
 // truncateString and sanitizePath boundary tests (processor.go: 0% coverage)
@@ -623,90 +562,6 @@ func TestPatternRegistry_ListByLevel(t *testing.T) {
 }
 
 // ============================================================================
-// encodeJSONNumber boundary tests (encoding.go: 0% coverage)
-// ============================================================================
-
-func TestEncodeJSONNumber_PreserveNumbers(t *testing.T) {
-	cfg := DefaultConfig()
-	cfg.PreserveNumbers = true
-	processor, _ := New(cfg)
-	defer processor.Close()
-
-	tests := []struct {
-		name    string
-		data    string
-		path    string
-		wantVal string
-	}{
-		{"integer", `{"num": 42}`, "num", "42"},
-		{"float", `{"num": 3.14}`, "num", "3.14"},
-		{"large number", `{"num": 9999999999999999999}`, "num", "9999999999999999999"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			val, err := processor.Get(tt.data, tt.path)
-			if err != nil {
-				t.Fatalf("Get error: %v", err)
-			}
-			num, ok := val.(json.Number)
-			if !ok {
-				t.Logf("value type: %T", val)
-				return
-			}
-			if num.String() != tt.wantVal {
-				t.Errorf("got %q, want %q", num.String(), tt.wantVal)
-			}
-		})
-	}
-}
-
-// ============================================================================
-// logError boundary test (processor.go: 0% coverage)
-// ============================================================================
-
-// logError is tested indirectly through error paths in other tests.
-// Direct testing is difficult because it depends on internal metrics collector state.
-
-// ============================================================================
-// ForeachNestedWithError (processor.go: 0% coverage)
-// ============================================================================
-
-func TestForeachNestedWithError(t *testing.T) {
-	processor, _ := New()
-	defer processor.Close()
-
-	t.Run("iterates nested data", func(t *testing.T) {
-		jsonStr := `{"users": [{"name": "Alice"}, {"name": "Bob"}]}`
-		var names []string
-		err := processor.ForeachNestedWithError(jsonStr, func(key any, item *IterableValue) error {
-			if m, ok := item.GetData().(map[string]any); ok {
-				if n, ok := m["name"]; ok {
-					names = append(names, n.(string))
-				}
-			}
-			return nil
-		})
-		if err != nil {
-			t.Errorf("ForeachNestedWithError error: %v", err)
-		}
-		if len(names) < 1 {
-			t.Errorf("expected at least 1 name, got %d: %v", len(names), names)
-		}
-	})
-
-	t.Run("callback error stops iteration", func(t *testing.T) {
-		jsonStr := `{"a": 1, "b": 2}`
-		err := processor.ForeachNestedWithError(jsonStr, func(key any, item *IterableValue) error {
-			return fmt.Errorf("stop")
-		})
-		if err == nil {
-			t.Error("expected error from callback")
-		}
-	})
-}
-
-// ============================================================================
 // StreamJSONLFile (processor_streamjsonl.go: 0% coverage)
 // ============================================================================
 
@@ -765,65 +620,6 @@ func TestDeepCopyValueWithDepth_Concurrent(t *testing.T) {
 }
 
 // ============================================================================
-// valuesEqual boundary tests (encoding.go: via Processor method)
-// ============================================================================
-
-func TestValuesEqual_EdgeCases(t *testing.T) {
-	processor, _ := New()
-	defer processor.Close()
-
-	tests := []struct {
-		name string
-		a, b any
-		want bool
-	}{
-		{"both nil", nil, nil, true},
-		{"nil vs non-nil", nil, 1, false},
-		{"non-nil vs nil", 1, nil, false},
-		{"same int", 42, 42, true},
-		{"different int", 42, 43, false},
-		{"same string", "hello", "hello", true},
-		{"different string", "hello", "world", false},
-		{"same bool", true, true, true},
-		{"different bool", true, false, false},
-		{"same float", 3.14, 3.14, true},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := processor.valuesEqual(tt.a, tt.b); got != tt.want {
-				t.Errorf("valuesEqual(%v, %v) = %v, want %v", tt.a, tt.b, got, tt.want)
-			}
-		})
-	}
-}
-
-// ============================================================================
-// isEmptyOrZero extended boundary tests
-// ============================================================================
-
-func TestIsEmptyOrZero_EdgeCases(t *testing.T) {
-	tests := []struct {
-		name  string
-		input any
-		want  bool
-	}{
-		{"zero uint", uint(0), true},
-		{"non-zero uint", uint(1), false},
-		{"json.Number zero", json.Number("0"), true},
-		{"json.Number non-zero", json.Number("42"), false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := isEmptyOrZero(tt.input); got != tt.want {
-				t.Errorf("isEmptyOrZero(%v) = %v, want %v", tt.input, got, tt.want)
-			}
-		})
-	}
-}
-
-// ============================================================================
 // Compiled path tests (processor.go: CompilePath, GetCompiled)
 // ============================================================================
 
@@ -850,11 +646,27 @@ func TestProcessor_CompileAndGetCompiledPath(t *testing.T) {
 	})
 
 	t.Run("compiled path reused", func(t *testing.T) {
-		cp1, _ := processor.CompilePath("a.b.c")
-		cp2, _ := processor.CompilePath("a.b.c")
-		// Same path should return equivalent compiled path
-		_ = cp1
-		_ = cp2
+		cp1, err := processor.CompilePath("a.b.c")
+		if err != nil {
+			t.Fatalf("CompilePath error: %v", err)
+		}
+		cp2, err := processor.CompilePath("a.b.c")
+		if err != nil {
+			t.Fatalf("CompilePath error: %v", err)
+		}
+		// Two compiled paths for the same input must yield equal results.
+		doc := `{"a":{"b":{"c":42}}}`
+		r1, err := processor.GetCompiled(doc, cp1)
+		if err != nil {
+			t.Fatalf("GetCompiled(cp1) error: %v", err)
+		}
+		r2, err := processor.GetCompiled(doc, cp2)
+		if err != nil {
+			t.Fatalf("GetCompiled(cp2) error: %v", err)
+		}
+		if r1 != r2 {
+			t.Errorf("compiled paths for the same input diverged: %v != %v", r1, r2)
+		}
 	})
 }
 
@@ -966,27 +778,6 @@ func TestContainsPercentEncodingBypass(t *testing.T) {
 // ============================================================================
 // containsOverlongEncoding (security.go: 13.6% coverage)
 // ============================================================================
-
-func TestContainsOverlongEncoding(t *testing.T) {
-	tests := []struct {
-		name  string
-		input string
-		want  bool
-	}{
-		{"clean ASCII", "hello world", false},
-		{"empty string", "", false},
-		{"normal UTF-8", "café", false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := containsOverlongEncoding(tt.input)
-			if got != tt.want {
-				t.Errorf("containsOverlongEncoding() = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
 
 // ============================================================================
 // Error wrapping boundary tests

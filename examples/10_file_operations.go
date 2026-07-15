@@ -23,6 +23,26 @@ import (
 //
 // Run: go run -tags=example examples/10_file_operations.go
 
+// User is the sample struct shared by the marshal/unmarshal demos below.
+type User struct {
+	ID     int      `json:"id"`
+	Name   string   `json:"name"`
+	Email  string   `json:"email"`
+	Tags   []string `json:"tags"`
+	Active bool     `json:"active"`
+}
+
+// readFile reads a file for display. Each file read here was just written
+// above, so a read failure is unexpected; surface it inline instead of
+// silently printing an empty string.
+func readFile(path string) string {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Sprintf("<read error: %v>", err)
+	}
+	return string(b)
+}
+
 func main() {
 	fmt.Println("JSON Library - File Operations")
 	fmt.Println("=================================")
@@ -91,12 +111,10 @@ func demonstrateSaveToFile(tempDir string) {
 
 	// Show the difference
 	fmt.Println("\n   Pretty file content:")
-	prettyContent, _ := os.ReadFile(prettyPath)
-	fmt.Println("   " + string(prettyContent))
+	fmt.Println("   " + readFile(prettyPath))
 
 	fmt.Println("\n   Compact file content:")
-	compactContent, _ := os.ReadFile(compactPath)
-	fmt.Printf("   %s\n", string(compactContent))
+	fmt.Printf("   %s\n", readFile(compactPath))
 }
 
 func demonstrateLoadFromFile(tempDir string) {
@@ -135,14 +153,6 @@ func demonstrateMarshalToFile(tempDir string) {
 	fmt.Println("\n3. Marshal to File")
 	fmt.Println("--------------------")
 
-	type User struct {
-		ID     int      `json:"id"`
-		Name   string   `json:"name"`
-		Email  string   `json:"email"`
-		Tags   []string `json:"tags"`
-		Active bool     `json:"active"`
-	}
-
 	user := User{
 		ID:     1,
 		Name:   "Bob Smith",
@@ -163,9 +173,8 @@ func demonstrateMarshalToFile(tempDir string) {
 	fmt.Printf("   ✓ Marshaled struct to: %s\n", filepath.Base(filePath))
 
 	// Show file content
-	content, _ := os.ReadFile(filePath)
 	fmt.Println("\n   File content:")
-	fmt.Println("   " + string(content))
+	fmt.Println("   " + readFile(filePath))
 }
 
 func demonstrateUnmarshalFromFile(tempDir string) {
@@ -187,14 +196,6 @@ func demonstrateUnmarshalFromFile(tempDir string) {
 	}
 
 	// Unmarshal into struct
-	type User struct {
-		ID     int      `json:"id"`
-		Name   string   `json:"name"`
-		Email  string   `json:"email"`
-		Tags   []string `json:"tags"`
-		Active bool     `json:"active"`
-	}
-
 	var user User
 	err := json.UnmarshalFromFile(filePath, &user)
 	if err != nil {
@@ -232,8 +233,7 @@ func demonstrateReadModifyWrite(tempDir string) {
 	}
 
 	fmt.Println("   Initial config:")
-	content, _ := os.ReadFile(configPath)
-	fmt.Println("   " + string(content))
+	fmt.Println("   " + readFile(configPath))
 
 	// Load, modify, and save
 	fmt.Println("\n   Performing modifications:")
@@ -256,12 +256,14 @@ func demonstrateReadModifyWrite(tempDir string) {
 		fmt.Printf("   Error setting port: %v\n", err)
 		return
 	}
-	updated, _ = json.Set(updated, "debug", true) // OK: valid path, valid value
+	updated, err = json.Set(updated, "debug", true)
+	if err != nil {
+		fmt.Printf("   Error setting debug: %v\n", err)
+		return
+	}
 
-	// Add new field with automatic path creation using Config
-	cfg := json.DefaultConfig()
-	cfg.CreatePaths = true
-	updated, err = json.Set(updated, "server.ssl", true, cfg)
+	// SetCreate adds a new nested field, auto-creating "server.ssl" — no Config needed.
+	updated, err = json.SetCreate(updated, "server.ssl", true)
 	if err != nil {
 		fmt.Printf("   Error setting ssl: %v\n", err)
 		return
@@ -279,6 +281,5 @@ func demonstrateReadModifyWrite(tempDir string) {
 	fmt.Println("   ✓ Modified and saved back to file")
 
 	fmt.Println("\n   Updated config:")
-	content, _ = os.ReadFile(configPath)
-	fmt.Println("   " + string(content))
+	fmt.Println("   " + readFile(configPath))
 }

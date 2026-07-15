@@ -42,10 +42,12 @@ func (p *Processor) ProcessBatch(operations []BatchOperation, cfg ...Config) ([]
 	}
 	defer releaseConfig(options)
 
-	if len(operations) > p.config.MaxBatchSize {
+	// Honor the per-call cfg's MaxBatchSize (via the prepared options), not the
+	// processor's own config — every other limit in the API is applied per-call.
+	if len(operations) > options.MaxBatchSize {
 		return nil, &JsonsError{
 			Op:      "process_batch",
-			Message: fmt.Sprintf("batch size %d exceeds maximum %d", len(operations), p.config.MaxBatchSize),
+			Message: fmt.Sprintf("batch size %d exceeds maximum %d", len(operations), options.MaxBatchSize),
 			Err:     ErrSizeLimit,
 		}
 	}
@@ -100,15 +102,6 @@ func (p *Processor) WarmupCache(jsonStr string, paths []string, cfg ...Config) (
 		}, nil // Nothing to warmup
 	}
 
-	// Validate JSON input
-	if err := p.validateInput(jsonStr); err != nil {
-		return nil, &JsonsError{
-			Op:      "warmup_cache",
-			Message: "invalid JSON input for cache warmup",
-			Err:     err,
-		}
-	}
-
 	// Prepare options
 	options, err := p.prepareOptions(cfg...)
 	if err != nil {
@@ -119,6 +112,15 @@ func (p *Processor) WarmupCache(jsonStr string, paths []string, cfg ...Config) (
 		}
 	}
 	defer releaseConfig(options)
+
+	// Validate JSON input
+	if err := p.validateInputForOptions(jsonStr, options); err != nil {
+		return nil, &JsonsError{
+			Op:      "warmup_cache",
+			Message: "invalid JSON input for cache warmup",
+			Err:     err,
+		}
+	}
 
 	// Track warmup statistics
 	successCount := 0
@@ -394,6 +396,41 @@ func (p *Processor) validateInput(jsonString string) error {
 	return p.securityValidator.ValidateJSONInput(jsonString)
 }
 
+// validateInputForOptions validates jsonStr against the effective security
+// limits: per-call options when the caller supplied a Config, otherwise the
+// processor's baked-in config.
+//
+// This makes per-call MaxJSONSize / MaxNestingDepthSecurity /
+// FullSecurityScan / DisableDefaultPatterns actually take effect across all
+// cfg-accepting operations (Get/Set/Delete/Valid/Parse/GetMultiple/
+// SetMultiple/Prettify/Compact/ValidateSchema/PreParse/WarmupCache). It
+// preserves prior behavior for no-cfg calls: a processor built with
+// SecurityConfig still enforces its own limits when its methods are called
+// without a per-call Config.
+//
+// The branching keys off the shared &defaultConfigSingleton sentinel — exactly
+// the value prepareOptions returns when len(cfg)==0 — so the common no-cfg hot
+// path stays on the cached p.securityValidator with no allocation. The per-call
+// path builds a transient, cache-less validator from options (Valid is not a hot
+// path; cfg'd Get/Set/Delete are less common than the no-cfg path).
+func (p *Processor) validateInputForOptions(jsonStr string, options *Config) error {
+	if options == &defaultConfigSingleton {
+		return p.validateInput(jsonStr)
+	}
+	sv := newSecurityValidator(
+		options.MaxJSONSize,
+		maxPathLength,
+		options.MaxNestingDepthSecurity,
+		options.FullSecurityScan,
+		options.DisableDefaultPatterns,
+		toInternalPatterns(options.AdditionalDangerousPatterns),
+		options.MaxObjectKeys,
+		options.MaxArrayElements,
+	)
+	sv.validationCache = nil // transient one-shot validator: skip cache machinery
+	return sv.ValidateJSONInput(jsonStr)
+}
+
 // validateInputEssential performs only essential safety checks (size + depth).
 // SECURITY: These checks protect the process from DoS and must always be enforced,
 // even when SkipValidation is true for trusted input.
@@ -445,9 +482,4 @@ func truncateString(s string, maxLen int) string {
 		return s[:maxLen]
 	}
 	return s[:maxLen-3] + "..."
-}
-
-// EscapeJSONPointer escapes special characters for JSON Pointer
-func escapeJSONPointer(s string) string {
-	return internal.EscapeJSONPointer(s)
 }

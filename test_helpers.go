@@ -149,7 +149,6 @@ func newTestDataGenerator() *testDataGenerator {
 	}
 }
 
-
 // generateComplexJSON generates complex nested JSON structures
 func (g *testDataGenerator) generateComplexJSON() string {
 	return `{
@@ -220,7 +219,6 @@ func (g *testDataGenerator) generateComplexJSON() string {
 		}
 	}`
 }
-
 
 // concurrencyTester helps test concurrent operations
 type concurrencyTester struct {
@@ -343,11 +341,20 @@ func genNestedJSONDynamicKeys(depth int) string {
 }
 
 // genLargeJSONBytes generates JSON of approximately targetSize bytes.
+// genLargeJSONBytes generates JSON of approximately targetSize bytes.
+//
+// Size is built from a modest number of ~2.6KB items (a padded string value)
+// rather than millions of tiny elements, so the resulting array stays well
+// within MaxArrayElements even under conservative SecurityConfig limits. This
+// keeps the generator useful for exercising byte-level size handling without
+// tripping the per-container element limit enforced by validateContainerCounts.
+// A 10MB document yields ~3800 items (<5000), so it fails on MaxJSONSize, not
+// MaxArrayElements — isolating the byte-size-limit behavior these tests target.
 func genLargeJSONBytes(targetSize int) string {
 	var sb strings.Builder
-	sb.Grow(targetSize + 20)
+	sb.Grow(targetSize + 64)
 	sb.WriteString(`{"data": [`)
-	item := `{"value":"data"},`
+	item := `{"value":"` + strings.Repeat("x", 2600) + `"},`
 	itemLen := len(item)
 	remaining := targetSize - 12
 	for remaining >= itemLen {
@@ -378,4 +385,3 @@ func genItemFragments(count int) string {
 	}
 	return strings.Join(items, ",")
 }
-

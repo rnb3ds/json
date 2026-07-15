@@ -13,6 +13,28 @@
 
 ---
 
+## Table of Contents
+
+- [Why cybergodev/json](#why-cybergodevjson)
+- [Features](#features)
+- [Installation](#installation)
+- [Quick Start](#quick-start)
+- [Path Syntax Reference](#path-syntax-reference)
+- [Core API](#core-api)
+  - [Data Retrieval](#data-retrieval) · [Parsing](#parsing) · [Data Modification](#data-modification)
+  - [Encoding and Formatting](#encoding-and-formatting) · [File Operations](#file-operations) · [JSON Utilities](#json-utilities)
+- [Configuration](#configuration)
+- [Advanced Features](#advanced-features)
+- [Common Use Cases](#common-use-cases)
+- [Performance Monitoring](#performance-monitoring)
+- [Migrating from encoding/json](#migrating-from-encodingjson)
+- [Security Configuration](#security-configuration)
+- [Example Code](#example-code)
+- [Documentation](#documentation)
+- [License](#license)
+
+---
+
 ## Why cybergodev/json
 
 | Feature | encoding/json | cybergodev/json |
@@ -223,14 +245,18 @@ var buf bytes.Buffer
 json.Compact(&buf, []byte(jsonStr))
 compact := buf.String()
 
-// Encoding with config
+// Or the string-in/string-out form (compact a JSON string directly)
+compact, _ = json.CompactString(jsonStr)
+
+// Encoding with config — EncodeWithConfig is the recommended encoder
+// (json.Encode is a deprecated alias, scheduled for removal)
 cfg := json.DefaultConfig()
 cfg.Pretty = true
 cfg.SortKeys = true
-result, _ := json.Encode(data, cfg)
+result, _ := json.EncodeWithConfig(data, cfg)
 
 // Preset configs
-result, _ := json.Encode(data, json.PrettyConfig())
+result, _ = json.EncodeWithConfig(data, json.PrettyConfig())
 
 // Quick pretty encoding
 result, _ = json.EncodePretty(data)
@@ -402,11 +428,13 @@ json.ForeachNested(data, func(key any, item *json.IterableValue) {
     })
 })
 
-// Error-returning iteration (use ForeachFile for file-based error callbacks)
-err := json.ForeachWithPath(data, "users", func(key any, item *json.IterableValue) {
+// Error-returning callback: return a non-nil error to abort iteration early.
+// (For a plain callback use ForeachWithPath; for file input use ForeachFile.)
+err := json.ForeachWithError(data, "users", func(key any, item *json.IterableValue) error {
     if item.IsNull("id") {
         log.Printf("warning: missing id at key %v", key)
     }
+    return nil
 })
 
 // Iterator control (break / continue)
@@ -724,6 +752,17 @@ health := processor.GetHealthStatus()
 processor.ClearCache()
 ```
 
+### Benchmarks
+
+The library ships with a benchmark suite that compares hot paths — the fast
+encoder, path-based `Get`, array slicing, and field extraction — against
+`encoding/json`. Run it to measure performance on your own hardware:
+
+```bash
+# Full benchmark suite with allocation stats
+go test -run='^$' -bench=. -benchmem ./...
+```
+
 ---
 
 ## Migrating from encoding/json
@@ -820,7 +859,7 @@ See [Security Guide](docs/SECURITY.md) for detailed security best practices.
 | [4_error_handling.go](examples/4_error_handling.go) | Error handling patterns |
 | [5_encoding_options.go](examples/5_encoding_options.go) | Encoding configuration |
 | [6_validation.go](examples/6_validation.go) | Schema validation |
-| [7_type_conversion.go](examples/7_type_conversion.go) | Type conversion |
+| [7_type_conversion.go](examples/7_type_conversion.go) | Type conversion, Result[T] |
 | [8_helper_functions.go](examples/8_helper_functions.go) | Helper utilities |
 | [9_iterator_functions.go](examples/9_iterator_functions.go) | Iteration patterns |
 | [10_file_operations.go](examples/10_file_operations.go) | File I/O |
@@ -829,8 +868,8 @@ See [Security Guide](docs/SECURITY.md) for detailed security best practices.
 | [13_batch_operations.go](examples/13_batch_operations.go) | Batch processing and caching |
 | [14_streaming_iterators.go](examples/14_streaming_iterators.go) | Streaming iterators |
 | [15_jsonl_processing.go](examples/15_jsonl_processing.go) | JSONL format processing |
-| [16_hooks_and_security.go](examples/16_hooks_and_security.go) | Hooks and security patterns |
-| [17_advanced_patterns.go](examples/17_advanced_patterns.go) | PreParse, CompiledPath, advanced patterns |
+| [16_hooks_and_security.go](examples/16_hooks_and_security.go) | Hooks (AddHook + Config.Hooks), security |
+| [17_advanced_patterns.go](examples/17_advanced_patterns.go) | PreParse, CompiledPath, package-level helpers |
 
 ```bash
 # Run individual examples (build tag required)

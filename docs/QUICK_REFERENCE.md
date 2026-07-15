@@ -157,7 +157,9 @@ json.ForeachWithPath(data, "users", func(key any, user *json.IterableValue) {
 ### Iterate and Modify
 
 ```go
-// Note: ForeachReturn iterates for reading. Use json.Set() for modifications.
+// Note: ForeachReturn returns a re-encoded string that reflects mutations made
+// via the callback's *IterableValue (e.g. modifying a map/slice obtained from
+// item.GetData()). For explicit path-based edits, json.Set() is also available.
 // Collect paths that need modification during iteration
 var pathsToUpdate []string
 json.ForeachWithPath(data, "users", func(key any, item *json.IterableValue) {
@@ -239,7 +241,7 @@ json.ForeachWithPath(data, basePath, func(key any, item *json.IterableValue) {
 | `ForeachFileNested(path, callback)` | Nested file iteration | Nested file traversal |
 | `ForeachJSONL(reader, callback)` | JSONL stream iteration | JSONL/NDJSON processing |
 
-**Note:** ForeachReturn iterates over data and returns the JSON string. Use `json.Set()` for modifications.
+**Note:** ForeachReturn deep-copies the data, runs the callback, and returns a re-encoded string that reflects any mutations made through the callback's *IterableValue. For explicit path-based modifications, use `json.Set()`.
 
 ---
 
@@ -354,13 +356,13 @@ processor, err = json.New(json.PrettyConfig())     // For pretty output
 ```go
 // Start with defaults and modify as needed
 config := json.DefaultConfig()
-config.EnableCache = true // Already true by default; shown for clarity
-config.MaxCacheSize = 128
-config.CacheTTL = 5 * time.Minute
-config.MaxJSONSize = 100 * 1024 * 1024   // 100MB
-config.MaxPathDepth = 50
-config.CreatePaths = true  // For Set operations
-config.CleanupNulls = true // For Delete operations
+config.EnableCache = true              // Already true by default; shown for clarity
+config.MaxCacheSize = 256              // Default is 128; raise for read-heavy workloads
+config.CacheTTL = 10 * time.Minute     // Default is 5 minutes
+config.MaxJSONSize = 50 * 1024 * 1024  // Default is 100MB; tighten to your payload size
+config.MaxPathDepth = 50               // Default is 50; shown for clarity
+config.CreatePaths = true              // Already true by default; lets Set create missing keys
+config.CleanupNulls = true             // Default is false; removes nulls left after Delete
 processor, err := json.New(config)
 if err != nil {
     log.Fatal(err)
@@ -395,12 +397,12 @@ result, err := json.Delete(data, "path", cfg)
 cfg := json.DefaultConfig()
 cfg.Pretty = true
 cfg.Indent = "  "
-result, err := json.Encode(data, cfg)
+result, err := json.EncodeWithConfig(data, cfg)
 
 // Pattern 4: Compact output (no nulls)
 cfg := json.DefaultConfig()
 cfg.IncludeNulls = false
-result, err := json.Encode(data, cfg)
+result, err := json.EncodeWithConfig(data, cfg)
 ```
 
 ### Performance Monitoring

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"reflect"
 	"slices"
 	"sort"
@@ -130,7 +131,9 @@ func NewEncoder(w io.Writer, cfg ...Config) *Encoder {
 //   - ErrSizeLimit: the encoded output exceeds MaxJSONSize
 //   - any error returned while writing to the underlying stream
 func (enc *Encoder) Encode(v any) error {
-	var newline = []byte{'\n'}
+	// Reuse the shared package-level newline slice instead of allocating
+	// []byte{'\n'} on every Encode call (it is passed to io.Writer.Write).
+	newline := jsonNewline
 	// Get the current processor on each Encode call to avoid stale references
 	// after SetGlobalProcessor or ShutdownGlobalProcessor.
 	processor := getDefaultProcessor()
@@ -448,6 +451,11 @@ func (dec *Decoder) readStringValue(buf *bytes.Buffer) ([]byte, error) {
 		}
 		dec.offset++
 		buf.WriteByte(b)
+		// Enforce the stream size limit on every byte so an unterminated string
+		// cannot grow the buffer without bound (mirrors readContainerValue).
+		if dec.maxBytes > 0 && int64(buf.Len()) > dec.maxBytes {
+			return nil, fmt.Errorf("streaming value size %d exceeds maximum allowed %d bytes: %w", buf.Len(), dec.maxBytes, ErrSizeLimit)
+		}
 
 		if escaped {
 			escaped = false
@@ -489,7 +497,7 @@ func (dec *Decoder) readContainerValue(buf *bytes.Buffer, openChar byte) ([]byte
 		dec.offset++
 		buf.WriteByte(b)
 		if dec.maxBytes > 0 && int64(buf.Len()) > dec.maxBytes {
-			return nil, fmt.Errorf("streaming value size %d exceeds maximum allowed %d bytes", buf.Len(), dec.maxBytes)
+			return nil, fmt.Errorf("streaming value size %d exceeds maximum allowed %d bytes: %w", buf.Len(), dec.maxBytes, ErrSizeLimit)
 		}
 
 		if escaped {
@@ -513,7 +521,7 @@ func (dec *Decoder) readContainerValue(buf *bytes.Buffer, openChar byte) ([]byte
 		case '{', '[':
 			depth++
 			if depth > maxDepth {
-				return nil, fmt.Errorf("JSON nesting depth %d exceeds maximum allowed depth %d", depth, maxDepth)
+				return nil, fmt.Errorf("JSON nesting depth %d exceeds maximum allowed depth %d: %w", depth, maxDepth, ErrDepthLimit)
 			}
 		case '}', ']':
 			expectedClose := byte('}')
@@ -555,6 +563,11 @@ func (dec *Decoder) readPrimitiveValue(buf *bytes.Buffer) ([]byte, error) {
 		}
 
 		buf.WriteByte(b)
+		// Enforce the stream size limit so a giant unquoted primitive cannot grow
+		// the buffer without bound (mirrors readContainerValue / readStringValue).
+		if dec.maxBytes > 0 && int64(buf.Len()) > dec.maxBytes {
+			return nil, fmt.Errorf("streaming value size %d exceeds maximum allowed %d bytes: %w", buf.Len(), dec.maxBytes, ErrSizeLimit)
+		}
 	}
 
 	result := make([]byte, buf.Len())
@@ -805,13 +818,12 @@ func (dec *Decoder) parseNumber(first byte) (any, error) {
 		return Number(numStr), nil
 	}
 
-	if strings.IndexByte(numStr, '.') < 0 && strings.IndexByte(numStr, 'e') < 0 && strings.IndexByte(numStr, 'E') < 0 {
-		if val, err := strconv.ParseInt(numStr, 10, 64); err == nil {
-			return val, nil
-		}
-	}
-
-	// Parse as float64
+	// encoding/json decodes every JSON number into interface{} as float64
+	// (and Token() likewise returns float64). The previous ParseInt fast path
+	// returned int64 for integer literals, which (a) broke type-switching on
+	// Token results (the documented Token contract is float64/Number only) and
+	// (b) diverged from the stdlib-backed fast path used by Get/Unmarshal,
+	// producing different types for the same input depending on the code path.
 	val, err := strconv.ParseFloat(numStr, 64)
 	if err != nil {
 		return nil, &SyntaxError{
@@ -829,7 +841,7 @@ func (p *Processor) validateDepth(value any, maxDepth, currentDepth int) error {
 		return &JsonsError{
 			Op:      "validate_depth",
 			Message: fmt.Sprintf("data structure depth %d exceeds maximum %d", currentDepth, maxDepth),
-			Err:     errOperationFailed,
+			Err:     ErrDepthLimit,
 		}
 	}
 
@@ -858,7 +870,7 @@ func (p *Processor) validateDepth(value any, maxDepth, currentDepth int) error {
 }
 
 // needsCustomEncodingOpts checks if the encoding options require custom encoding logic
-// Note: Go std lib json.Marshal escapes HTML by default since Go 1.13,
+// Note: Go std lib json.Marshal escapes HTML by default (this behavior predates Go 1.0),
 // so we only need custom encoding when EscapeHTML is explicitly set to false.
 func needsCustomEncodingOpts(cfg Config) bool {
 	return cfg.DisableEscaping ||
@@ -940,9 +952,15 @@ func (p *Processor) Unmarshal(data []byte, value any, cfg ...Config) error {
 		return &InvalidUnmarshalError{Type: nil}
 	}
 
-	// PERFORMANCE: Fast path when no options are provided
-	// Use encoding/json directly to avoid string conversion overhead
+	// Fast path when no options are provided. Validate against the processor's
+	// baked-in security limits (size, nesting depth, dangerous patterns) for
+	// consistency with Parse — which always validates — then delegate to
+	// encoding/json to avoid string conversion overhead. Without this check the
+	// drop-in Unmarshal signature bypassed all security validation.
 	if len(cfg) == 0 {
+		if err := p.validateInput(string(data)); err != nil {
+			return err
+		}
 		return json.Unmarshal(data, value)
 	}
 
@@ -1084,9 +1102,17 @@ func (p *Processor) EncodeWithConfig(value any, cfg ...Config) (string, error) {
 // encodeWithConfigToBytes encodes value to []byte directly, avoiding string round-trip.
 // PERFORMANCE: Used by Marshal/MarshalIndent to eliminate []byte->string->[]byte conversion.
 func (p *Processor) encodeWithConfigToBytes(value any, cfg ...Config) ([]byte, error) {
-	if err := p.checkClosed(); err != nil {
+	// Concurrency governance: register as an in-flight op so a concurrent Close()
+	// (e.g. cache eviction of a config-cached processor) drains via waitForActiveOps
+	// rather than tearing down resources mid-encode. This is the single funnel for all
+	// encode entry points (Marshal/MarshalIndent/EncodeWithConfig, and via those
+	// EncodeStream/EncodeBatch), none of which are reached from within an already-
+	// governed op, so acquiring here is never nested. In unlimited-concurrency mode
+	// (the default) acquireSemaphore is a no-op, so the cost is two atomic ops.
+	if err := p.beginGovernedOp(); err != nil {
 		return nil, err
 	}
+	defer p.endGovernedOp()
 
 	var config Config
 	if len(cfg) > 0 {
@@ -1095,8 +1121,12 @@ func (p *Processor) encodeWithConfigToBytes(value any, cfg ...Config) ([]byte, e
 		config = DefaultConfig()
 	}
 
+	// needsCustomEncodingOpts is pure; compute once and reuse on the full-encode
+	// branch below to avoid a second evaluation of the same config.
+	customOpts := needsCustomEncodingOpts(config)
+
 	// Fast path for simple types
-	if !config.Pretty && !needsCustomEncodingOpts(config) {
+	if !config.Pretty && !customOpts {
 		if config.EscapeHTML {
 			if result, ok := fastEncodeSimpleWithHTMLEscape(value); ok {
 				if int64(len(result)) > p.config.MaxJSONSize {
@@ -1131,7 +1161,7 @@ func (p *Processor) encodeWithConfigToBytes(value any, cfg ...Config) ([]byte, e
 	var result []byte
 	var err error
 
-	if needsCustomEncodingOpts(config) {
+	if customOpts {
 		encoder := newCustomEncoder(config)
 		defer encoder.Close()
 		result, err = encoder.EncodeToBytes(value)
@@ -1223,8 +1253,11 @@ func fastEncodeSimpleToBytes(value any) ([]byte, bool) {
 	return append([]byte(nil), data...), true
 }
 
-// Encode converts any Go value to JSON string
-// This is a convenience method that matches the package-level Encode signature
+// Encode converts any Go value to JSON string.
+//
+// Deprecated: Encode is functionally identical to EncodeWithConfig (it forwards
+// directly to it). Use EncodeWithConfig instead. Encode will be removed in a
+// future major version.
 //
 // Errors: see EncodeWithConfig.
 func (p *Processor) Encode(value any, config ...Config) (string, error) {
@@ -1303,6 +1336,27 @@ func (e *customEncoder) EncodeToBytes(value any) ([]byte, error) {
 	return result, nil
 }
 
+// marshalerType / textMarshalerType are the reflect Types of the marshaler and
+// encoding.TextMarshaler interfaces, used to detect pointer-receiver methods.
+var (
+	marshalerType     = reflect.TypeOf((*marshaler)(nil)).Elem()
+	textMarshalerType = reflect.TypeOf((*encoding.TextMarshaler)(nil)).Elem()
+)
+
+// addressablePointer returns a pointer to an addressable form of v: v's own
+// address when it is addressable, otherwise a pointer to a fresh copy. This
+// lets customEncoder call pointer-receiver MarshalJSON/MarshalText methods,
+// matching encoding/json (which marshals the addressable form). The boxed-any
+// round-trip through encodeValue otherwise loses addressability.
+func addressablePointer(v reflect.Value) reflect.Value {
+	if v.CanAddr() {
+		return v.Addr()
+	}
+	ptr := reflect.New(v.Type())
+	ptr.Elem().Set(v)
+	return ptr
+}
+
 // encodeValue encodes any value recursively
 func (e *customEncoder) encodeValue(value any) error {
 	if e.config.MaxDepth > 0 && e.depth > e.config.MaxDepth {
@@ -1329,7 +1383,7 @@ func (e *customEncoder) encodeValue(value any) error {
 		v = v.Elem()
 	}
 
-	// Check if the value implements json.Marshaler interface first
+	// Check if the value implements json.Marshaler (value-receiver) first.
 	if marshaler, ok := value.(marshaler); ok {
 		data, err := marshaler.MarshalJSON()
 		if err != nil {
@@ -1342,8 +1396,25 @@ func (e *customEncoder) encodeValue(value any) error {
 		e.buffer.Write(data)
 		return nil
 	}
+	// Pointer-receiver MarshalJSON on an addressable value (encoding/json calls
+	// it on the addressable form). v is non-addressable here, so detect the
+	// method via the pointer type and invoke on an addressable copy.
+	if v.IsValid() && v.CanInterface() && reflect.PointerTo(v.Type()).Implements(marshalerType) {
+		if m, ok := addressablePointer(v).Interface().(marshaler); ok {
+			data, err := m.MarshalJSON()
+			if err != nil {
+				return &MarshalerError{
+					Type:       reflect.TypeOf(value),
+					Err:        err,
+					sourceFunc: "MarshalJSON",
+				}
+			}
+			e.buffer.Write(data)
+			return nil
+		}
+	}
 
-	// Check if the value implements encoding.TextMarshaler interface
+	// Check if the value implements encoding.TextMarshaler (value-receiver)
 	if textMarshaler, ok := value.(encoding.TextMarshaler); ok {
 		text, err := textMarshaler.MarshalText()
 		if err != nil {
@@ -1355,18 +1426,41 @@ func (e *customEncoder) encodeValue(value any) error {
 		}
 		return e.encodeString(string(text))
 	}
+	// Pointer-receiver MarshalText on an addressable value (same rationale).
+	if v.IsValid() && v.CanInterface() && reflect.PointerTo(v.Type()).Implements(textMarshalerType) {
+		if m, ok := addressablePointer(v).Interface().(encoding.TextMarshaler); ok {
+			text, err := m.MarshalText()
+			if err != nil {
+				return &MarshalerError{
+					Type:       reflect.TypeOf(value),
+					Err:        err,
+					sourceFunc: "MarshalText",
+				}
+			}
+			return e.encodeString(string(text))
+		}
+	}
 
 	// Handle json.Number type specially to preserve original format
 	if jsonNum, ok := value.(json.Number); ok {
 		return e.encodeJSONNumber(jsonNum)
 	}
+	// Handle the library's Number type (type Number string). It is a distinct
+	// named type not matched by `case string` below; without this it falls
+	// through to reflect.String and is emitted as a quoted JSON string,
+	// corrupting the PreserveNumbers round-trip for map/slice/struct targets
+	// (Parse/Unmarshal into *map[string]any etc. would yield string values).
+	if num, ok := value.(Number); ok {
+		return e.encodeJSONNumber(json.Number(num))
+	}
 
-	// Handle time.Time type specially to convert to RFC3339 string
+	// Handle time.Time type specially to convert to RFC3339Nano string,
+	// matching encoding/json (which preserves sub-second precision).
 	if timeVal, ok := value.(time.Time); ok {
-		return e.encodeString(timeVal.Format(time.RFC3339))
+		return e.encodeString(timeVal.Format(time.RFC3339Nano))
 	}
 	if timeVal, ok := v.Interface().(time.Time); ok {
-		return e.encodeString(timeVal.Format(time.RFC3339))
+		return e.encodeString(timeVal.Format(time.RFC3339Nano))
 	}
 
 	switch v.Kind() {
@@ -1435,6 +1529,13 @@ func (e *customEncoder) encodeJSONNumber(num json.Number) error {
 }
 
 func (e *customEncoder) encodeFloat(f float64, bits int) error {
+	// Reject non-finite values: NaN/Inf are not representable in JSON. encoding/json
+	// returns UnsupportedValueError for these; emit an error with the same intent
+	// instead of writing an invalid "NaN"/"+Inf" token (truncateFloat in particular
+	// would otherwise produce garbage like "NaN.000000").
+	if math.IsNaN(f) || math.IsInf(f, 0) {
+		return fmt.Errorf("json: unsupported value: %s", strconv.FormatFloat(f, 'g', -1, bits))
+	}
 	if e.config.FloatPrecision >= 0 {
 		if e.config.FloatTruncate {
 			// Truncate mode: format with higher precision then truncate
@@ -1448,14 +1549,13 @@ func (e *customEncoder) encodeFloat(f float64, bits int) error {
 		return nil
 	}
 
-	if f >= -1e15 && f <= 1e15 {
-		formatted := strconv.FormatFloat(f, 'f', -1, bits)
-		e.buffer.WriteString(formatted)
-	} else {
-		formatted := strconv.FormatFloat(f, 'g', -1, bits)
-		e.buffer.WriteString(formatted)
-	}
-
+	// Default precision: route through AppendJSONFloat, which matches
+	// encoding/json's floatEncoder exactly for all magnitudes — it uses 'e'
+	// format for |f| < 1e-6 or |f| >= 1e21 and 'f' otherwise. The previous
+	// 'f'-format branch for [-1e15, 1e15] emitted 0.0000001 for 1e-7 (and
+	// 0.0000000001 for 1e-10) where stdlib emits 1e-7 / 1e-10.
+	b := internal.AppendJSONFloat(nil, f, bits)
+	e.buffer.Write(b)
 	return nil
 }
 
@@ -1530,6 +1630,16 @@ var hexDigits = [16]byte{'0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 
 // writeUnicodeEscape writes \uXXXX directly to buffer, avoiding fmt.Fprintf overhead.
 // PERFORMANCE: ~10-50x faster than fmt.Fprintf for Unicode escapes.
 func (e *customEncoder) writeUnicodeEscape(r rune) {
+	// Non-BMP code points (r > 0xFFFF, e.g. emoji) cannot fit in a single
+	// \uXXXX escape. Emit a UTF-16 surrogate pair instead — matching
+	// encoding/json and RFC 8259 §7. The previous code masked to 16 bits and
+	// silently dropped the high bits (U+1F600 -> ).
+	if r > 0xFFFF {
+		r1, r2 := utf16.EncodeRune(r)
+		e.writeUnicodeEscape(r1)
+		e.writeUnicodeEscape(r2)
+		return
+	}
 	var buf [6]byte
 	buf[0] = '\\'
 	buf[1] = 'u'
@@ -1599,6 +1709,12 @@ func (e *customEncoder) escapeRune(r rune) error {
 }
 
 func (e *customEncoder) encodeArray(v reflect.Value) error {
+	// encoding/json emits null for a nil slice (distinct from [] for an empty
+	// non-nil slice). Match that so callers can distinguish "absent" from "empty".
+	if v.IsNil() {
+		e.buffer.WriteString("null")
+		return nil
+	}
 	e.buffer.WriteByte('[')
 	e.depth++
 
@@ -1627,15 +1743,22 @@ func (e *customEncoder) encodeArray(v reflect.Value) error {
 }
 
 func (e *customEncoder) encodeMap(v reflect.Value) error {
+	// encoding/json emits null for a nil map (distinct from {} for an empty
+	// non-nil map). Match that so callers can distinguish "absent" from "empty".
+	if v.IsNil() {
+		e.buffer.WriteString("null")
+		return nil
+	}
 	e.buffer.WriteByte('{')
 	e.depth++
 
 	keys := v.MapKeys()
-	if e.config.SortKeys {
-		sort.Slice(keys, func(i, j int) bool {
-			return keys[i].String() < keys[j].String()
-		})
-	}
+	// encoding/json always sorts object keys; match it regardless of SortKeys.
+	// Go maps have no insertion order, so unsorted output is nondeterministic
+	// and never useful — sorting makes the output stable and stdlib-compatible.
+	sort.Slice(keys, func(i, j int) bool {
+		return keys[i].String() < keys[j].String()
+	})
 
 	first := true
 	for _, key := range keys {
@@ -1702,87 +1825,111 @@ func (e *customEncoder) encodeStruct(v reflect.Value) error {
 	return nil
 }
 
+// cField is a resolved JSON struct field: its encoded name, the reflect.Value
+// to encode, and the omitempty / ,string tag options.
+type cField struct {
+	name      string
+	value     reflect.Value
+	omitempty bool
+	stringTag bool
+}
+
+// flattenStructFields walks the struct v and returns its JSON fields, promoting
+// anonymous (embedded) struct fields into the parent — matching encoding/json.
+// Rules applied:
+//   - unexported fields and `json:"-"` fields are skipped;
+//   - an anonymous struct field with NO explicit json name has its exported
+//     fields promoted (recursively, through pointer embedding);
+//   - an anonymous field WITH a json name, or an anonymous non-struct (e.g. an
+//     embedded named integer type), is treated as an ordinary named field;
+//   - name conflicts resolve first-wins (a pragmatic approximation of
+//     encoding/json's shallowest-depth dominance rule).
+func (e *customEncoder) flattenStructFields(v reflect.Value) []cField {
+	var out []cField
+	seen := make(map[string]bool)
+	var visit func(sv reflect.Value)
+	visit = func(sv reflect.Value) {
+		t := sv.Type()
+		for i := 0; i < t.NumField(); i++ {
+			field := t.Field(i)
+			if !field.IsExported() {
+				continue
+			}
+			jsonTag := field.Tag.Get("json")
+			if jsonTag == "-" {
+				continue
+			}
+			tagParts := strings.Split(jsonTag, ",")
+			fv := sv.Field(i)
+
+			// Anonymous promotion: dereference pointer embedding, then recurse
+			// into the embedded struct when it has no explicit json name.
+			if field.Anonymous {
+				afv := fv
+				if afv.Kind() == reflect.Pointer {
+					if afv.IsNil() {
+						continue // nil embedded pointer: nothing to promote
+					}
+					afv = afv.Elem()
+				}
+				hasName := jsonTag != "" && tagParts[0] != ""
+				if afv.Kind() == reflect.Struct && !hasName {
+					visit(afv)
+					continue
+				}
+				// tagged-anonymous or anonymous non-struct: fall through and
+				// treat as an ordinary named field.
+				fv = afv
+			}
+
+			name := field.Name
+			if jsonTag != "" && tagParts[0] != "" {
+				name = tagParts[0]
+			}
+			if seen[name] {
+				continue
+			}
+			seen[name] = true
+			out = append(out, cField{
+				name:      name,
+				value:     fv,
+				omitempty: slices.Contains(tagParts[1:], "omitempty"),
+				stringTag: slices.Contains(tagParts[1:], "string"),
+			})
+		}
+	}
+	visit(v)
+	return out
+}
+
 func (e *customEncoder) encodeStructCustom(v reflect.Value) error {
 	e.buffer.WriteByte('{')
 	e.depth++
 
-	t := v.Type()
-	var fields []reflect.StructField
-	var fieldValues []reflect.Value
-
-	for i := 0; i < v.NumField(); i++ {
-		field := t.Field(i)
-		fieldValue := v.Field(i)
-
-		if !field.IsExported() {
+	// Resolve fields with anonymous-field promotion, then apply omitempty /
+	// IncludeNulls filtering. flattenStructFields already extracted names and
+	// the ,string / omitempty options.
+	allFields := e.flattenStructFields(v)
+	fields := make([]cField, 0, len(allFields))
+	for _, f := range allFields {
+		if f.omitempty && e.isEmpty(f.value) {
 			continue
 		}
-
-		jsonTag := field.Tag.Get("json")
-		if jsonTag == "-" {
-			continue
-		}
-
-		tagParts := strings.Split(jsonTag, ",")
-
-		hasOmitEmpty := slices.Contains(tagParts[1:], "omitempty")
-
-		shouldSkip := false
-
-		// Only respect struct omitempty tags for empty field handling
-		if hasOmitEmpty && e.isEmpty(fieldValue) {
-			shouldSkip = true
-		}
-
 		if !e.config.IncludeNulls {
-			if fieldValue.Interface() == nil || (fieldValue.Kind() == reflect.Pointer && fieldValue.IsNil()) {
-				shouldSkip = true
+			if f.value.Interface() == nil || (f.value.Kind() == reflect.Pointer && f.value.IsNil()) {
+				continue
 			}
 		}
-
-		if !shouldSkip {
-			fields = append(fields, field)
-			fieldValues = append(fieldValues, fieldValue)
-		}
+		fields = append(fields, f)
 	}
 
 	if e.config.SortKeys {
-		indices := make([]int, len(fields))
-		for i := range indices {
-			indices[i] = i
-		}
-
-		sort.Slice(indices, func(i, j int) bool {
-			nameI := fields[indices[i]].Name
-			nameJ := fields[indices[j]].Name
-
-			if tag := fields[indices[i]].Tag.Get("json"); tag != "" && tag != "-" {
-				if tagParts := strings.Split(tag, ","); len(tagParts) > 0 && tagParts[0] != "" {
-					nameI = tagParts[0]
-				}
-			}
-			if tag := fields[indices[j]].Tag.Get("json"); tag != "" && tag != "-" {
-				if tagParts := strings.Split(tag, ","); len(tagParts) > 0 && tagParts[0] != "" {
-					nameJ = tagParts[0]
-				}
-			}
-
-			return nameI < nameJ
+		sort.Slice(fields, func(i, j int) bool {
+			return fields[i].name < fields[j].name
 		})
-
-		sortedFields := make([]reflect.StructField, len(fields))
-		sortedValues := make([]reflect.Value, len(fieldValues))
-		for i, idx := range indices {
-			sortedFields[i] = fields[idx]
-			sortedValues[i] = fieldValues[idx]
-		}
-		fields = sortedFields
-		fieldValues = sortedValues
 	}
 
-	for i, field := range fields {
-		fieldValue := fieldValues[i]
-
+	for i, f := range fields {
 		if i > 0 {
 			e.buffer.WriteByte(',')
 		}
@@ -1791,15 +1938,7 @@ func (e *customEncoder) encodeStructCustom(v reflect.Value) error {
 			e.writeIndent()
 		}
 
-		jsonTag := field.Tag.Get("json")
-		fieldName := field.Name
-		if jsonTag != "" && jsonTag != "-" {
-			if tagParts := strings.Split(jsonTag, ","); len(tagParts) > 0 && tagParts[0] != "" {
-				fieldName = tagParts[0]
-			}
-		}
-
-		if err := e.encodeString(fieldName); err != nil {
+		if err := e.encodeString(f.name); err != nil {
 			return err
 		}
 
@@ -1808,8 +1947,27 @@ func (e *customEncoder) encodeStructCustom(v reflect.Value) error {
 			e.buffer.WriteByte(' ')
 		}
 
-		if err := e.encodeValue(fieldValue.Interface()); err != nil {
-			return err
+		if f.stringTag {
+			// json:",string" wraps the field's JSON encoding as a JSON string
+			// (e.g. an int 42 -> "42"), matching encoding/json.
+			tmp := getEncoderBuffer()
+			saved := e.buffer
+			e.buffer = tmp
+			verr := e.encodeValue(f.value.Interface())
+			e.buffer = saved
+			if verr != nil {
+				putEncoderBuffer(tmp)
+				return verr
+			}
+			serr := e.encodeString(tmp.String())
+			putEncoderBuffer(tmp)
+			if serr != nil {
+				return serr
+			}
+		} else {
+			if err := e.encodeValue(f.value.Interface()); err != nil {
+				return err
+			}
 		}
 	}
 

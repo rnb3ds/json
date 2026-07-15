@@ -168,6 +168,7 @@ func TestConfigClone_DeepCopy_Boundary(t *testing.T) {
 			{Pattern: "evil", Name: "n", Level: PatternLevelCritical},
 		}
 		cfg.Hooks = []Hook{cloneTestHook{}}
+		cfg.CustomEscapes = map[rune]string{'\n': "\\n"}
 
 		clone := cfg.Clone()
 
@@ -190,6 +191,11 @@ func TestConfigClone_DeepCopy_Boundary(t *testing.T) {
 		clone.Hooks = append(clone.Hooks, cloneTestHook{})
 		if len(cfg.Hooks) != 1 {
 			t.Error("Hooks must be deep-copied, not shared")
+		}
+
+		clone.CustomEscapes['\r'] = "\\r"
+		if _, ok := cfg.CustomEscapes['\r']; ok {
+			t.Error("CustomEscapes must be deep-copied, not shared")
 		}
 	})
 }
@@ -218,10 +224,10 @@ func TestNewSchemaWithConfig_OptionalFields_Boundary(t *testing.T) {
 	})
 
 	checks := []struct {
-		name   string
-		got    int
-		want   int
-		has    bool
+		name      string
+		got       int
+		want      int
+		has       bool
 		hasWanted bool
 	}{
 		{"MinLength", s.MinLength, 1, s.hasMinLength, true},
@@ -251,6 +257,37 @@ func TestNewSchemaWithConfig_OptionalFields_Boundary(t *testing.T) {
 	if !s.ExclusiveMinimum || !s.ExclusiveMaximum {
 		t.Error("ExclusiveMinimum/ExclusiveMaximum must be true")
 	}
+
+	t.Run("AdditionalProperties true/false/nil", func(t *testing.T) {
+		tr, fa := true, false
+		cases := []struct {
+			name string
+			cfg  SchemaConfig
+			want bool
+		}{
+			{"explicit true", SchemaConfig{AdditionalProperties: &tr}, true},
+			{"explicit false", SchemaConfig{AdditionalProperties: &fa}, false},
+			{"nil defaults to true", SchemaConfig{AdditionalProperties: nil}, true},
+		}
+		for _, c := range cases {
+			if got := NewSchemaWithConfig(c.cfg).AdditionalProperties; got != c.want {
+				t.Errorf("%s: AdditionalProperties = %v, want %v", c.name, got, c.want)
+			}
+		}
+	})
+
+	t.Run("Type and Properties populate", func(t *testing.T) {
+		s := NewSchemaWithConfig(SchemaConfig{
+			Type:       "object",
+			Properties: map[string]*Schema{"name": {Type: "string"}},
+		})
+		if s == nil || s.Type != "object" {
+			t.Error("Type not populated")
+		}
+		if s.Properties["name"] == nil {
+			t.Error("Properties not populated")
+		}
+	})
 }
 
 // ----------------------------------------------------------------------------

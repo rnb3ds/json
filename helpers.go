@@ -58,7 +58,7 @@ func convertToInt64Core(value any) int64Result {
 	case uint32:
 		return int64Result{int64(v), true}
 	case uint64:
-		if v <= 9223372036854775807 {
+		if v <= uint64(math.MaxInt64) {
 			return int64Result{int64(v), true}
 		}
 		return int64Result{0, false}
@@ -221,6 +221,11 @@ func convertToUint64(value any) (uint64, bool) {
 	case json.Number:
 		if i, err := v.Int64(); err == nil && i >= 0 {
 			return uint64(i), true
+		}
+		// Values in (MaxInt64, MaxUint64] fit uint64 but overflow Int64; fall
+		// back to ParseUint so this branch agrees with the string branch above.
+		if u, err := strconv.ParseUint(string(v), 10, 64); err == nil {
+			return u, true
 		}
 	}
 	return 0, false
@@ -532,45 +537,6 @@ func isValidJSON(jsonStr string) bool {
 	return err == nil
 }
 
-// ValidatePath validates a path expression and returns detailed error information.
-// Returns nil if the path is valid, or an error describing the validation failure.
-//
-// Valid path formats:
-//   - Property access: "user.name", "data.nested.key"
-//   - Array access: "items[0]", "matrix[1][2]"
-//   - Array slice: "items[0:5]", "items[::2]"
-//   - Wildcard: "items[*]", "users.*.name"
-//   - Extraction: "{name,email}", "{flat:tags}"
-//
-// Example:
-//
-//	if err := json.ValidatePath("user.profiles[0]"); err != nil {
-//	    // Handle invalid path
-//	}
-func validatePath(path string) error {
-	if path == "" {
-		return &JsonsError{
-			Op:      "validate_path",
-			Path:    path,
-			Message: "path cannot be empty",
-			Err:     ErrInvalidPath,
-		}
-	}
-	if path == "." {
-		return nil
-	}
-	processor := getDefaultProcessor()
-	if processor == nil {
-		return &JsonsError{
-			Op:      "validate_path",
-			Path:    path,
-			Message: "processor not available",
-			Err:     errInternalError,
-		}
-	}
-	return processor.validatePath(path)
-}
-
 // containerGetProperty retrieves a property from a map container (map[string]any or map[any]any).
 // Returns the value and true if found, nil and false otherwise.
 func containerGetProperty(container any, key string) (any, bool) {
@@ -687,6 +653,9 @@ func deepCopyValueWithDepth(data any, depth int) (any, error) {
 	case json.Number:
 		// json.Number is immutable, return as-is
 		return v, nil
+	case Number:
+		// Number (type Number string) is immutable, return as-is
+		return v, nil
 	}
 
 	// Handle complex types with type-specific optimizations
@@ -771,16 +740,21 @@ func deepCopySliceWithDepth(s []any, depth int) ([]any, error) {
 //   - Tier 1: JSON primitives (bool, float64, string, json.Number) → zero allocation
 //   - Tier 2: map[string]any / []any → specialized inline copy without error wrapping
 //   - Tier 3: Fallback for non-JSON types
+//
 // safeCopyResult returns a safe copy of result for JSON primitives or a deep copy for containers.
 // Prevents callers from corrupting cached data.
 func safeCopyResult(result any) any {
 	switch result.(type) {
-	case nil, bool, float64, string, int, int64, uint, uint64, json.Number:
+	case nil, bool, float64, string, int, int64, uint, uint64, json.Number, Number:
 		return result
 	}
 	copied, err := deepCopySubtree(result)
 	if err != nil {
-		return result // fallback: return original if copy fails
+		// deepCopySubtree only fails past the depth limit (>200), i.e. on
+		// pathological input. Returning the original would hand the caller a
+		// mutable reference into cached parse data and corrupt the cache for
+		// subsequent readers; return nil instead.
+		return nil
 	}
 	return copied
 }
@@ -805,6 +779,11 @@ func deepCopySubtreeWithDepth(data any, depth int) (any, error) {
 	case string:
 		return v, nil
 	case json.Number:
+		return v, nil
+	case Number:
+		// Number (type Number string) is a distinct named type not matched by
+		// `case string`; without this it falls through to the marshal fallback
+		// and is corrupted to a quoted JSON string. Immutable — return as-is.
 		return v, nil
 	}
 
@@ -835,7 +814,7 @@ func deepCopyJSONMapWithDepth(m map[string]any, depth int) (map[string]any, erro
 		// Inline leaf-value handling to avoid deepCopyJSONValueWithDepth call overhead
 		// for the common case (~80% of values are primitives in typical JSON).
 		switch val := v.(type) {
-		case nil, bool, float64, string, json.Number:
+		case nil, bool, float64, string, json.Number, Number:
 			// Immutable leaf: copy the interface word-pair directly. Routing these
 			// through a local `any` (`copied = val`) would unbox and then re-box the
 			// value on the heap once per element; copying the existing interface value
@@ -874,7 +853,7 @@ func deepCopyJSONSliceWithDepth(s []any, depth int) ([]any, error) {
 	result := make([]any, len(s))
 	for i, v := range s {
 		switch val := v.(type) {
-		case nil, bool, float64, string, json.Number:
+		case nil, bool, float64, string, json.Number, Number:
 			// Immutable leaf: copy the interface word-pair directly to avoid the
 			// unbox→rebox heap allocation (see deepCopyJSONMapWithDepth for rationale).
 			result[i] = v
@@ -904,15 +883,85 @@ func deepCopyJSONSliceWithDepth(s []any, depth int) ([]any, error) {
 // CompareJSON compares two JSON strings for equality by parsing and normalizing them.
 // This function handles numeric precision differences and key ordering.
 //
+// Without config, calling json.CompareJSON(a, b) is unchanged. Pass an optional
+// Config to apply security validation (size/depth/dangerous-pattern limits) to
+// both inputs and to control the encoding used for the symmetric comparison
+// (e.g. EscapeHTML).
+//
 // Example:
 //
+//	// Default behavior (no config)
 //	equal, err := json.CompareJSON(`{"a":1}`, `{"a":1.0}`)
 //	// equal == true
+//
+//	// With configuration (non-breaking, optional trailing Config)
+//	equal, err = json.CompareJSON(a, b, json.SecurityConfig())
 //
 // Errors:
 //   - an error wrapping the parse failure if either argument is not valid JSON
 //   - an error if number normalization or marshaling fails
-func CompareJSON(json1, json2 string) (bool, error) {
+//   - when config is supplied, an error if either argument fails security validation
+func CompareJSON(json1, json2 string, cfg ...Config) (bool, error) {
+	// Without config, behavior is unchanged: no security validation and encoding/json
+	// marshaling on both sides. With config, delegate to Processor.CompareJSON (built
+	// from cfg) so size/depth/dangerous-pattern limits and the configured encoding
+	// apply symmetrically.
+	if len(cfg) == 0 {
+		return compareJSONCore(json1, json2, func(v any) ([]byte, error) {
+			return json.Marshal(v)
+		})
+	}
+	p, err := getProcessorWithConfig(cfg[0])
+	if err != nil {
+		return false, err
+	}
+	return p.CompareJSON(json1, json2, cfg...)
+}
+
+// CompareJSON is the Processor method equivalent of the package-level CompareJSON.
+// Unlike the package function's no-config path, the method always runs security
+// validation — against the supplied cfg when given, otherwise against the processor's
+// own configuration — and marshals both sides with the library encoder so that the
+// configured encoding (e.g. EscapeHTML) applies symmetrically.
+//
+// Example:
+//
+//	equal, err := processor.CompareJSON(a, b)
+//	equal, err = processor.CompareJSON(a, b, json.SecurityConfig())
+//
+// Errors:
+//   - an error wrapping the parse failure if either argument is not valid JSON
+//   - an error if number normalization or marshaling fails
+//   - an error if either argument fails security validation
+func (p *Processor) CompareJSON(json1, json2 string, cfg ...Config) (bool, error) {
+	if err := p.checkClosed(); err != nil {
+		return false, err
+	}
+
+	options, err := p.prepareOptions(cfg...)
+	if err != nil {
+		return false, err
+	}
+	defer releaseConfig(options)
+
+	if err := p.validateInputForOptions(json1, options); err != nil {
+		return false, fmt.Errorf("invalid JSON in first argument: %w", err)
+	}
+	if err := p.validateInputForOptions(json2, options); err != nil {
+		return false, fmt.Errorf("invalid JSON in second argument: %w", err)
+	}
+
+	return compareJSONCore(json1, json2, func(v any) ([]byte, error) {
+		return Marshal(v, *options)
+	})
+}
+
+// compareJSONCore decodes both inputs with number preservation, normalizes the
+// library's Number type to float64 (so 1 and 1.0 compare equal), marshals both sides
+// with the same marshal function, and reports byte-identity. It performs no security
+// validation; callers validate inputs as needed. Using one marshal function for both
+// sides keeps the comparison symmetric regardless of which encoder is chosen.
+func compareJSONCore(json1, json2 string, marshal func(any) ([]byte, error)) (bool, error) {
 	decoder := newNumberPreservingDecoder(true)
 
 	data1, err := decoder.DecodeToAny(json1)
@@ -935,12 +984,12 @@ func CompareJSON(json1, json2 string) (bool, error) {
 		return false, fmt.Errorf("number conversion failed in second argument: %w", err)
 	}
 
-	bytes1, err := json.Marshal(data1)
+	bytes1, err := marshal(data1)
 	if err != nil {
 		return false, err
 	}
 
-	bytes2, err := json.Marshal(data2)
+	bytes2, err := marshal(data2)
 	if err != nil {
 		return false, err
 	}
@@ -976,9 +1025,55 @@ func CompareJSON(json1, json2 string) (bool, error) {
 //   - an error if either argument is not a JSON object
 //   - an error if number conversion or final encoding fails
 func MergeJSON(json1, json2 string, cfg ...Config) (string, error) {
-	config := getConfigOrDefault(cfg...)
-	mode := config.MergeMode
+	return withProcessor(func(p *Processor) (string, error) {
+		return p.MergeJSON(json1, json2, cfg...)
+	})
+}
 
+// MergeJSON is the Processor method equivalent of the package-level MergeJSON.
+// It resolves options from cfg (or the processor's own configuration when cfg is
+// omitted), deep-merges the two objects under Config.MergeMode, and re-encodes the
+// result with this processor.
+//
+// Like the package-level function, MergeJSON performs no security validation — it is
+// a structural utility that only decodes, deep-merges, and re-encodes. CompareJSON, by
+// contrast, validates when configuration is supplied.
+//
+// Example:
+//
+//	// Union merge (default)
+//	result, err := processor.MergeJSON(a, b)
+//
+//	// Intersection merge
+//	cfg := json.DefaultConfig()
+//	cfg.MergeMode = json.MergeIntersection
+//	result, err = processor.MergeJSON(a, b, cfg)
+//
+// Errors:
+//   - an error if either argument is not valid JSON
+//   - an error if either argument is not a JSON object
+//   - an error if number conversion or final encoding fails
+func (p *Processor) MergeJSON(json1, json2 string, cfg ...Config) (string, error) {
+	if err := p.checkClosed(); err != nil {
+		return "", err
+	}
+
+	options, err := p.prepareOptions(cfg...)
+	if err != nil {
+		return "", err
+	}
+	defer releaseConfig(options)
+
+	return mergeJSONWithMode(json1, json2, options.MergeMode, func(v any) (string, error) {
+		return p.EncodeWithConfig(v, *options)
+	})
+}
+
+// mergeJSONWithMode decodes both inputs, requires both to be JSON objects, deep-merges
+// them under the given mode, normalizes the library's Number type to float64, and
+// encodes the result with the provided marshal function. It performs no security
+// validation.
+func mergeJSONWithMode(json1, json2 string, mode MergeMode, marshal func(any) (string, error)) (string, error) {
 	decoder := newNumberPreservingDecoder(true)
 
 	data1, err := decoder.DecodeToAny(json1)
@@ -1009,8 +1104,7 @@ func MergeJSON(json1, json2 string, cfg ...Config) (string, error) {
 		return "", fmt.Errorf("number conversion failed: %w", convErr)
 	}
 
-	// Use library's Encode function to properly handle the result
-	return Encode(converted, config)
+	return marshal(converted)
 }
 
 // convertLibraryNumbers recursively converts the library's Number type to float64.
@@ -1072,7 +1166,33 @@ func convertLibraryNumbersWithDepth(data any, depth int) (any, error) {
 //	cfg.MergeMode = json.MergeIntersection
 //	result, err := json.MergeMany([]string{config1, config2, config3}, cfg)
 func MergeMany(jsons []string, cfg ...Config) (string, error) {
-	config := getConfigOrDefault(cfg...)
+	return withProcessor(func(p *Processor) (string, error) {
+		return p.MergeMany(jsons, cfg...)
+	})
+}
+
+// MergeMany is the Processor method equivalent of the package-level MergeMany.
+// It folds the slice left-to-right via MergeJSON, using Config.MergeMode to determine
+// the merge strategy (default: MergeUnion).
+//
+// Example:
+//
+//	// Union merge (default)
+//	result, err := processor.MergeMany([]string{config1, config2, config3})
+//
+//	// Intersection merge
+//	cfg := json.DefaultConfig()
+//	cfg.MergeMode = json.MergeIntersection
+//	result, err = processor.MergeMany([]string{config1, config2, config3}, cfg)
+//
+// Errors:
+//   - an error if fewer than 2 JSON strings are provided
+//   - an error if any merge step fails (wrapped with the failing index)
+func (p *Processor) MergeMany(jsons []string, cfg ...Config) (string, error) {
+	if err := p.checkClosed(); err != nil {
+		return "", err
+	}
+
 	if len(jsons) < 2 {
 		return "", fmt.Errorf("MergeMany requires at least 2 JSON strings, got %d", len(jsons))
 	}
@@ -1080,7 +1200,7 @@ func MergeMany(jsons []string, cfg ...Config) (string, error) {
 	result := jsons[0]
 	for i := 1; i < len(jsons); i++ {
 		var err error
-		result, err = MergeJSON(result, jsons[i], config)
+		result, err = p.MergeJSON(result, jsons[i], cfg...)
 		if err != nil {
 			return "", fmt.Errorf("merge failed at index %d: %w", i, err)
 		}

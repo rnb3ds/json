@@ -1089,15 +1089,11 @@ func TestErrorScenarios(t *testing.T) {
 			_ = result // Don't assert value, library may convert
 		})
 
-			t.Run("ObjectAsArray", func(t *testing.T) {
-				// GetArray returns default value on type mismatch
-				result := GetArray(testData, "str", nil)
-				_ = result
-			})
-
-
-
-
+		t.Run("ObjectAsArray", func(t *testing.T) {
+			// GetArray returns default value on type mismatch
+			result := GetArray(testData, "str", nil)
+			_ = result
+		})
 
 	})
 
@@ -2040,15 +2036,15 @@ func TestRootDataTypeConversionError(t *testing.T) {
 func TestSchemaComprehensive(t *testing.T) {
 	t.Run("constraint fields", func(t *testing.T) {
 		tests := []struct {
-			name            string
-			minLen          int
-			maxLen          int
-			minimum         float64
-			maximum         float64
-			minItems        int
-			maxItems        int
-			exclusiveMin    bool
-			exclusiveMax    bool
+			name         string
+			minLen       int
+			maxLen       int
+			minimum      float64
+			maximum      float64
+			minItems     int
+			maxItems     int
+			exclusiveMin bool
+			exclusiveMax bool
 		}{
 			{"all set positive", 5, 100, 0, 1000, 1, 10, true, true},
 			{"all set negative range", 5, 50, -100, 100, 1, 10, false, false},
@@ -2774,5 +2770,402 @@ func TestValidationError(t *testing.T) {
 		if got := ve.Error(); got != expected {
 			t.Errorf("ValidationError.Error() = %v, want %v", got, expected)
 		}
+	})
+}
+
+// ---------------------------------------------------------------------------
+// FIX-001: typed map/slice conversion coverage (helpers.go convertToMapWithDepth,
+// convertToSliceWithDepth) exercised through the generic GetTyped[T] API.
+// ---------------------------------------------------------------------------
+
+// TestGetTyped_TypedMapConversion verifies GetTyped coerces JSON values into a
+// strongly-typed map (e.g. numeric strings -> int).
+func TestGetTyped_TypedMapConversion(t *testing.T) {
+	got := GetTyped[map[string]int](`{"a":"1","b":"2","c":3}`, ".")
+	if got["a"] != 1 || got["b"] != 2 || got["c"] != 3 {
+		t.Errorf("typed map conversion = %v, want {a:1 b:2 c:3}", got)
+	}
+}
+
+// TestGetTyped_TypedSliceConversion verifies GetTyped coerces a JSON array into
+// a strongly-typed slice, including numeric narrowing.
+func TestGetTyped_TypedSliceConversion(t *testing.T) {
+	got := GetTyped[[]int](`[1,2,3]`, ".")
+	if len(got) != 3 || got[0] != 1 || got[1] != 2 || got[2] != 3 {
+		t.Errorf("typed slice conversion = %v, want [1 2 3]", got)
+	}
+	// float-valued JSON numbers are narrowed to int
+	gotF := GetTyped[[]int](`[1.0,2.0]`, ".")
+	if len(gotF) != 2 || gotF[0] != 1 || gotF[1] != 2 {
+		t.Errorf("float->int slice conversion = %v, want [1 2]", gotF)
+	}
+}
+
+// ============================================================================
+// ERROR TYPE TESTS (merged from errors_test.go)
+// ============================================================================
+
+// TestJsonsErrorIs verifies the Is method including nil receiver.
+func TestJsonsErrorIs(t *testing.T) {
+	tests := []struct {
+		name     string
+		receiver *JsonsError
+		target   error
+		want     bool
+	}{
+		{
+			name:     "nil receiver with nil target",
+			receiver: nil,
+			target:   nil,
+			want:     true,
+		},
+		{
+			name:     "nil receiver with non-nil target",
+			receiver: nil,
+			target:   ErrInvalidJSON,
+			want:     false,
+		},
+		{
+			name:     "non-nil receiver with nil target",
+			receiver: &JsonsError{Op: "get", Message: "test"},
+			target:   nil,
+			want:     false,
+		},
+		{
+			name:     "matching Op, Path, Err",
+			receiver: &JsonsError{Op: "get", Path: "data", Err: ErrPathNotFound},
+			target:   &JsonsError{Op: "get", Path: "data", Err: ErrPathNotFound},
+			want:     true,
+		},
+		{
+			name:     "mismatched Op",
+			receiver: &JsonsError{Op: "get", Path: "data", Err: ErrPathNotFound},
+			target:   &JsonsError{Op: "set", Path: "data", Err: ErrPathNotFound},
+			want:     false,
+		},
+		{
+			name:     "mismatched Path",
+			receiver: &JsonsError{Op: "get", Path: "data", Err: ErrPathNotFound},
+			target:   &JsonsError{Op: "get", Path: "other", Err: ErrPathNotFound},
+			want:     false,
+		},
+		{
+			name:     "mismatched Err",
+			receiver: &JsonsError{Op: "get", Path: "data", Err: ErrPathNotFound},
+			target:   &JsonsError{Op: "get", Path: "data", Err: ErrInvalidJSON},
+			want:     false,
+		},
+		{
+			name:     "nil Err fields match",
+			receiver: &JsonsError{Op: "get", Path: "data"},
+			target:   &JsonsError{Op: "get", Path: "data"},
+			want:     true,
+		},
+		{
+			name:     "one nil Err other non-nil Err",
+			receiver: &JsonsError{Op: "get", Path: "data"},
+			target:   &JsonsError{Op: "get", Path: "data", Err: ErrPathNotFound},
+			want:     false,
+		},
+		{
+			name:     "underlying sentinel matches via errors.Is",
+			receiver: &JsonsError{Op: "get", Message: "not found", Err: ErrPathNotFound},
+			target:   ErrPathNotFound,
+			want:     true,
+		},
+		{
+			name:     "underlying sentinel does not match",
+			receiver: &JsonsError{Op: "get", Message: "not found", Err: ErrPathNotFound},
+			target:   ErrInvalidJSON,
+			want:     false,
+		},
+		{
+			name:     "no underlying error, target is sentinel",
+			receiver: &JsonsError{Op: "get", Message: "test"},
+			target:   ErrInvalidJSON,
+			want:     false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := tt.receiver.Is(tt.target)
+			if got != tt.want {
+				t.Errorf("JsonsError.Is() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestSafeError verifies SafeError strips internal context from errors.
+func TestSafeError(t *testing.T) {
+	tests := []struct {
+		name  string
+		input error
+		want  string
+	}{
+		{"nil returns empty", nil, ""},
+		{"JsonsError returns sentinel message", &JsonsError{Op: "get", Path: "users.admin.password", Message: "not found", Err: ErrPathNotFound}, "path not found"},
+		{"plain error returns full message", errors.New("something went wrong"), "something went wrong"},
+		{"security error strips context", newSecurityError("parse", "dangerous input"), "security violation detected"},
+		{"size limit error strips context", newSizeLimitError("load", 1<<30, 1<<20), "size limit exceeded"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := SafeError(tt.input)
+			if got != tt.want {
+				t.Errorf("SafeError() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestRedactedPath verifies path redaction for safe logging.
+func TestRedactedPath(t *testing.T) {
+	tests := []struct {
+		name string
+		path string
+		want string
+	}{
+		{"empty returns empty", "", ""},
+		{"short path returns masked", "users.name", "***"},
+		{"exactly 32 returns masked", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "***"},
+		{"long path returns fully masked", "this.is.a.very.long.path.that.exceeds.thirty.two.characters", "***"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := RedactedPath(tt.path)
+			if got != tt.want {
+				t.Errorf("RedactedPath(%q) = %q, want %q", tt.path, got, tt.want)
+			}
+		})
+	}
+}
+
+// ============================================================================
+// HELPERS BOUNDARY TESTS (merged from helpers_boundary_test.go)
+// Targets helpers.go: isEmptyOrZero, convertToInt64, containerGetProperty,
+// safeCopyResult + deepCopy family, unifiedTypeConversion.
+// ============================================================================
+
+// TestIsEmptyOrZero_Boundary exercises isEmptyOrZero (helpers.go).
+func TestIsEmptyOrZero_Boundary(t *testing.T) {
+	tests := []struct {
+		name string
+		v    any
+		want bool
+	}{
+		{"nil", nil, true},
+		{"empty_string", "", true},
+		{"nonempty_string", "x", false},
+		{"int_zero", 0, true},
+		{"int_nonzero", 1, false},
+		{"int8_zero", int8(0), true},
+		{"int16_zero", int16(0), true},
+		{"int32_zero", int32(0), true},
+		{"int64_zero", int64(0), true},
+		{"uint_zero", uint(0), true},
+		{"uint8_zero", uint8(0), true},
+		{"uint16_zero", uint16(0), true},
+		{"uint32_zero", uint32(0), true},
+		{"uint64_zero", uint64(0), true},
+		{"float32_zero", float32(0), true},
+		{"float64_zero", float64(0), true},
+		{"float64_nonzero", float64(1.5), false},
+		{"bool_false", false, true},
+		{"bool_true", true, false},
+		{"number_zero", Number("0"), true},
+		{"number_nonzero", Number("5"), false},
+		{"stdjson_number_zero", json.Number("0"), true},
+		{"empty_any_slice", []any{}, true},
+		{"nonempty_any_slice", []any{1}, false},
+		{"empty_string_map", map[string]any{}, true},
+		{"nonempty_string_map", map[string]any{"a": 1}, false},
+		{"empty_any_map", map[any]any{}, true},
+		{"nonempty_any_map", map[any]any{"a": 1}, false},
+		{"default_struct", struct{}{}, false},
+		{"default_chan", make(chan int), false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isEmptyOrZero(tt.v); got != tt.want {
+				t.Errorf("isEmptyOrZero(%v) = %v, want %v", tt.v, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestConvertToInt64_EdgeCases exercises convertToInt64 (helpers.go).
+func TestConvertToInt64_EdgeCases(t *testing.T) {
+	tests := []struct {
+		name   string
+		v      any
+		want   int64
+		wantOk bool
+	}{
+		{"int64", int64(42), 42, true},
+		{"float64_whole", float64(42.0), 42, true},
+		{"float64_fractional", float64(3.14), 0, false},
+		{"float32_whole", float32(42.0), 42, true},
+		{"float32_fractional", float32(3.14), 0, false},
+		{"string_valid", "42", 42, true},
+		{"string_invalid", "abc", 0, false},
+		{"bool_true", true, 1, true},
+		{"bool_false", false, 0, true},
+		{"stdjson_number_valid", json.Number("42"), 42, true},
+		{"stdjson_number_invalid", json.Number("abc"), 0, false},
+		{"unsupported_slice", []any{1}, 0, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := convertToInt64(tt.v)
+			if ok != tt.wantOk || got != tt.want {
+				t.Errorf("convertToInt64(%v) = (%d, %v), want (%d, %v)", tt.v, got, ok, tt.want, tt.wantOk)
+			}
+		})
+	}
+}
+
+// TestContainerGetProperty exercises containerGetProperty (helpers.go).
+func TestContainerGetProperty(t *testing.T) {
+	t.Run("string_map_hit", func(t *testing.T) {
+		v, ok := containerGetProperty(map[string]any{"k": "v"}, "k")
+		if !ok || v != "v" {
+			t.Errorf("got (%v, %v), want (v, true)", v, ok)
+		}
+	})
+	t.Run("string_map_miss", func(t *testing.T) {
+		v, ok := containerGetProperty(map[string]any{"k": "v"}, "missing")
+		if ok || v != nil {
+			t.Errorf("got (%v, %v), want (nil, false)", v, ok)
+		}
+	})
+	t.Run("any_map_hit", func(t *testing.T) {
+		v, ok := containerGetProperty(map[any]any{"k": "v"}, "k")
+		if !ok || v != "v" {
+			t.Errorf("got (%v, %v), want (v, true)", v, ok)
+		}
+	})
+	t.Run("non_map", func(t *testing.T) {
+		v, ok := containerGetProperty("not a map", "k")
+		if ok || v != nil {
+			t.Errorf("got (%v, %v), want (nil, false)", v, ok)
+		}
+	})
+}
+
+// TestSafeCopyResult exercises safeCopyResult + the deepCopy family (helpers.go).
+func TestSafeCopyResult(t *testing.T) {
+	t.Run("primitive_returned_as_is", func(t *testing.T) {
+		if got := safeCopyResult(float64(42)); got != float64(42) {
+			t.Errorf("primitive not returned as-is: %v", got)
+		}
+		if got := safeCopyResult(Number("42")); got != Number("42") {
+			t.Errorf("Number not returned as-is: %v", got)
+		}
+	})
+	t.Run("container_deep_copied", func(t *testing.T) {
+		orig := map[string]any{"a": []any{1, 2, 3}}
+		got := safeCopyResult(orig)
+		cp, ok := got.(map[string]any)
+		if !ok {
+			t.Fatalf("expected map, got %T", got)
+		}
+		// Mutating the copy must not affect the original.
+		cp["a"].([]any)[0] = 99
+		if orig["a"].([]any)[0] == 99 {
+			t.Error("safeCopyResult returned a shallow reference, not a deep copy")
+		}
+	})
+	t.Run("depth_limit_returns_nil", func(t *testing.T) {
+		// Build a structure nested deeper than deepCopyMaxDepth (200).
+		deep := any(map[string]any{"v": 1})
+		for i := 0; i < 210; i++ {
+			deep = map[string]any{"n": deep}
+		}
+		if got := safeCopyResult(deep); got != nil {
+			t.Error("expected nil from safeCopyResult on pathologically deep input")
+		}
+	})
+}
+
+func TestDeepCopySubtreeWithDepth_Boundary(t *testing.T) {
+	t.Run("nil", func(t *testing.T) {
+		got, err := deepCopySubtreeWithDepth(nil, 0)
+		if err != nil || got != nil {
+			t.Errorf("got (%v, %v), want (nil, nil)", got, err)
+		}
+	})
+	t.Run("number_preserved", func(t *testing.T) {
+		got, err := deepCopySubtreeWithDepth(Number("42"), 0)
+		if err != nil || got != Number("42") {
+			t.Errorf("Number not preserved: got (%v, %v)", got, err)
+		}
+	})
+	t.Run("nested_map_with_slice", func(t *testing.T) {
+		in := map[string]any{"a": []any{1, map[string]any{"b": 2}}}
+		got, err := deepCopySubtreeWithDepth(in, 0)
+		if err != nil {
+			t.Fatalf("err: %v", err)
+		}
+		out := got.(map[string]any)
+		// Mutate to confirm independence.
+		out["a"].([]any)[0] = 99
+		if in["a"].([]any)[0] == 99 {
+			t.Error("deep copy is not independent")
+		}
+	})
+	t.Run("depth_limit", func(t *testing.T) {
+		if _, err := deepCopySubtreeWithDepth(map[string]any{"a": 1}, 201); err == nil {
+			t.Error("expected depth-limit error")
+		}
+	})
+	t.Run("map_depth_limit", func(t *testing.T) {
+		if _, err := deepCopyJSONMapWithDepth(map[string]any{"a": 1}, 201); err == nil {
+			t.Error("expected depth-limit error for map")
+		}
+	})
+	t.Run("slice_depth_limit", func(t *testing.T) {
+		if _, err := deepCopyJSONSliceWithDepth([]any{1}, 201); err == nil {
+			t.Error("expected depth-limit error for slice")
+		}
+	})
+}
+
+// TestUnifiedTypeConversion_Boundary exercises unifiedTypeConversion (helpers.go).
+func TestUnifiedTypeConversion_Boundary(t *testing.T) {
+	t.Run("nil_value", func(t *testing.T) {
+		got, ok := unifiedTypeConversion[string](nil)
+		if !ok || got != "" {
+			t.Errorf("nil conversion got (%q, %v), want (\"\", true)", got, ok)
+		}
+	})
+	t.Run("direct_assertion", func(t *testing.T) {
+		got, ok := unifiedTypeConversion[int](42)
+		if !ok || got != 42 {
+			t.Errorf("direct assertion got (%d, %v), want (42, true)", got, ok)
+		}
+	})
+	t.Run("single_element_array_unwrap", func(t *testing.T) {
+		got, ok := unifiedTypeConversion[int]([]any{42})
+		if !ok || got != 42 {
+			t.Errorf("array unwrap got (%d, %v), want (42, true)", got, ok)
+		}
+	})
+	t.Run("conversion_failure", func(t *testing.T) {
+		got, ok := unifiedTypeConversion[int]("not a number")
+		if ok || got != 0 {
+			t.Errorf("conversion failure got (%d, %v), want (0, false)", got, ok)
+		}
+	})
+	t.Run("pointer_target", func(t *testing.T) {
+		// Target type is *int (Pointer kind) -> exercises the pointer branch.
+		got, ok := unifiedTypeConversion[*int](42)
+		if ok {
+			if got == nil || *got != 42 {
+				t.Errorf("pointer conversion got %v, want *42", got)
+			}
+		}
+		// If !ok, the pointer branch still executed and returned zero — acceptable.
 	})
 }

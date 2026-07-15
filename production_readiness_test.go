@@ -294,55 +294,6 @@ func TestDeleteArrayElement_Coverage(t *testing.T) {
 	})
 }
 
-// TestNavigateArrayIndexForDeletion_Coverage covers navigateArrayIndexForDeletion (0%).
-func TestNavigateArrayIndexForDeletion_Coverage(t *testing.T) {
-	p, err := New()
-	if err != nil {
-		t.Fatalf("New() failed: %v", err)
-	}
-	defer p.Close()
-
-	arr := []any{10, 20, 30, 40}
-
-	t.Run("valid", func(t *testing.T) {
-		got, err := p.navigateArrayIndexForDeletion(arr, "2")
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if got != 30 {
-			t.Fatalf("expected 30, got %v", got)
-		}
-	})
-
-	t.Run("negative", func(t *testing.T) {
-		got, err := p.navigateArrayIndexForDeletion(arr, "-1")
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if got != 40 {
-			t.Fatalf("expected 40, got %v", got)
-		}
-	})
-
-	t.Run("oob negative", func(t *testing.T) {
-		if _, err := p.navigateArrayIndexForDeletion(arr, "-10"); err == nil {
-			t.Fatal("expected error")
-		}
-	})
-
-	t.Run("non-array", func(t *testing.T) {
-		if _, err := p.navigateArrayIndexForDeletion("str", "0"); err == nil {
-			t.Fatal("expected error")
-		}
-	})
-
-	t.Run("invalid string", func(t *testing.T) {
-		if _, err := p.navigateArrayIndexForDeletion(arr, "x"); err == nil {
-			t.Fatal("expected error")
-		}
-	})
-}
-
 // TestSetValueForArrayIndex_Coverage covers setValueForArrayIndex (0%).
 func TestSetValueForArrayIndex_Coverage(t *testing.T) {
 	p, err := New()

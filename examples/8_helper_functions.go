@@ -17,8 +17,8 @@ import (
 // Topics covered:
 // - CompareJSON for JSON comparison
 // - MergeJSON for combining JSON objects
-// - Prettify and Compact for formatting
-// - Encode and EncodePretty for JSON output
+// - Prettify, Compact and CompactString for formatting
+// - EncodeWithConfig and EncodePretty for JSON output
 //
 // For JSON validation, see: 6_validation.go
 // For DeepCopy, see: 7_type_conversion.go
@@ -173,14 +173,22 @@ func demonstrateMerge() {
 	// Intersection merge - only common keys
 	intersectCfg := json.DefaultConfig()
 	intersectCfg.MergeMode = json.MergeIntersection
-	intersected, _ := json.MergeJSON(baseConfig, overrideConfig, intersectCfg)
+	intersected, err := json.MergeJSON(baseConfig, overrideConfig, intersectCfg)
+	if err != nil {
+		fmt.Printf("   Intersection merge error: %v\n", err)
+		return
+	}
 	fmt.Println("\n   Intersection (common keys only):")
 	fmt.Println(intersected)
 
 	// Difference merge - keys only in base
 	diffCfg := json.DefaultConfig()
 	diffCfg.MergeMode = json.MergeDifference
-	diff, _ := json.MergeJSON(baseConfig, overrideConfig, diffCfg)
+	diff, err := json.MergeJSON(baseConfig, overrideConfig, diffCfg)
+	if err != nil {
+		fmt.Printf("   Difference merge error: %v\n", err)
+		return
+	}
 	fmt.Println("\n   Difference (keys only in base):")
 	fmt.Println(diff)
 
@@ -205,7 +213,7 @@ func demonstrateFormatting() {
 
 	compactJSON := `{"name":"John","age":30,"address":{"city":"NYC","zip":"10001"},"active":true}`
 
-	fmt.Println("   Format formatting:")
+	fmt.Println("   Formatting:")
 	fmt.Println("\n   Original (compact):")
 	fmt.Println(compactJSON)
 
@@ -231,6 +239,17 @@ func demonstrateFormatting() {
 	fmt.Println("\n   Compact result:")
 	fmt.Println(compact)
 
+	// CompactString: the string-in/string-out mirror of Compact (Phase 3 API).
+	// Use Compact when you work in []byte (encoding/json-compatible); use
+	// CompactString when you work in strings — no buffer conversion needed.
+	compactStr, err := json.CompactString(pretty)
+	if err != nil {
+		fmt.Printf("   CompactString error: %v\n", err)
+		return
+	}
+	fmt.Println("\n   CompactString result (string-in/string-out):")
+	fmt.Println(compactStr)
+
 	fmt.Println("\n   Formatting is reversible!")
 }
 
@@ -246,18 +265,19 @@ func demonstrateEncode() {
 		"balance": 1250.75,
 	}
 
-	fmt.Println("   Encode (compact, single line):")
-	result, _ := json.Encode(data)
-	fmt.Println(result)
+	fmt.Println("   EncodeWithConfig (compact, single line):")
+	encoded, err := json.EncodeWithConfig(data)
+	if err != nil {
+		fmt.Printf("   EncodeWithConfig error: %v\n", err)
+		return
+	}
+	fmt.Println(encoded)
 
 	fmt.Println("\n   EncodePretty (formatted for readability):")
-	pretty, _ := json.EncodePretty(data)
-	fmt.Println(pretty)
-
-	fmt.Println("\n   Encode with error handling:")
-	if encoded, err := json.Encode(data); err != nil {
-		fmt.Printf("   Encode error: %v\n", err)
-	} else {
-		fmt.Println(encoded)
+	pretty, err := json.EncodePretty(data)
+	if err != nil {
+		fmt.Printf("   EncodePretty error: %v\n", err)
+		return
 	}
+	fmt.Println(pretty)
 }

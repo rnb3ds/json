@@ -261,25 +261,52 @@ func demonstrateTransformation(data string) {
 		fmt.Printf("   - %s: %d\n", role, count)
 	}
 
-	// Find specific user
-	fmt.Println("\n   Finding user by criteria:")
+	// Find all active developers (one line per matching user).
+	fmt.Println("\n   Finding all active developers:")
 	err = json.ForeachWithPath(data, "users", func(key any, item *json.IterableValue) {
-		name := item.GetString("name")
-		active := item.GetBool("active")
-
-		// Find active developers
-		if active {
-			roles := item.GetArray("roles")
-			for _, role := range roles {
-				if roleStr, ok := role.(string); ok && roleStr == "developer" {
-					email := item.GetString("email")
-					fmt.Printf("   - %s (%s) is an active developer\n", name, email)
-					break
-				}
+		if !item.GetBool("active") {
+			return
+		}
+		for _, role := range item.GetArray("roles") {
+			if roleStr, ok := role.(string); ok && roleStr == "developer" {
+				// This break only exits the inner range — it avoids printing the
+				// same user twice if they hold "developer" more than once. It does
+				// NOT stop the outer iteration. For early termination, see below.
+				fmt.Printf("   - %s (%s) is an active developer\n",
+					item.GetString("name"), item.GetString("email"))
+				break
 			}
 		}
 	})
+	if err != nil {
+		fmt.Printf("   Error: %v\n", err)
+	}
 
+	// Find the FIRST active developer and stop early with IteratorBreak.
+	// ForeachWithPathAndControl hands the callback a flow-control return value:
+	// IteratorBreak stops iteration entirely (unlike `break`, which would only
+	// exit an inner loop). The callback receives the raw value (not an
+	// IterableValue), so we type-assert the user map directly.
+	fmt.Println("\n   Finding first active developer (early exit with IteratorBreak):")
+	err = json.ForeachWithPathAndControl(data, "users", func(key any, value any) json.IteratorControl {
+		m, ok := value.(map[string]any)
+		if !ok {
+			return json.IteratorContinue
+		}
+		if active, _ := m["active"].(bool); !active {
+			return json.IteratorContinue
+		}
+		roles, _ := m["roles"].([]any)
+		for _, r := range roles {
+			if rs, _ := r.(string); rs == "developer" {
+				name, _ := m["name"].(string)
+				email, _ := m["email"].(string)
+				fmt.Printf("   - First match: %s (%s)\n", name, email)
+				return json.IteratorBreak
+			}
+		}
+		return json.IteratorContinue
+	})
 	if err != nil {
 		fmt.Printf("   Error: %v\n", err)
 	}

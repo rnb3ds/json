@@ -131,6 +131,33 @@ func TestProcessor_StreamJSONL(t *testing.T) {
 	}
 }
 
+func TestProcessor_StreamJSONL_RejectsDeepNesting(t *testing.T) {
+	processor, err := New()
+	if err != nil {
+		t.Fatalf("Failed to create processor: %v", err)
+	}
+	defer processor.Close()
+
+	// A single JSONL line nested deeper than the default MaxNestingDepthSecurity
+	// (200). Without the per-line nesting guard this would be handed straight to
+	// json.Unmarshal — a stack-overflow / DoS vector. The guard must reject it.
+	depth := 300
+	deep := strings.Repeat("[", depth) + strings.Repeat("]", depth)
+	input := `{"ok":1}` + "\n" + deep
+
+	var count int
+	err = processor.StreamJSONL(strings.NewReader(input), func(lineNum int, item *IterableValue) error {
+		count++
+		return nil
+	})
+	if err == nil {
+		t.Fatal("expected nesting-depth error for deeply nested JSONL line, got nil")
+	}
+	if count != 1 {
+		t.Errorf("expected exactly 1 successful line before the rejected line, got %d", count)
+	}
+}
+
 func TestProcessor_StreamJSONL_EarlyStop(t *testing.T) {
 	processor, err := New()
 	if err != nil {
@@ -1062,4 +1089,90 @@ func TestPackageLevel_StreamJSONLFile(t *testing.T) {
 	if count != 2 {
 		t.Errorf("count = %d, want 2", count)
 	}
+}
+
+// ---------------------------------------------------------------------------
+// FIX-001: StreamJSONL security-limit coverage (processor_streamjsonl.go).
+// ---------------------------------------------------------------------------
+
+// TestProcessor_StreamJSONL_NestingLimit verifies the per-line nesting guard
+// rejects a deeply nested JSONL payload before unmarshaling, preventing stack
+// overflow from adversarial input.
+func TestProcessor_StreamJSONL_NestingLimit(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.MaxNestingDepthSecurity = 10 // clamped minimum
+	p, err := New(cfg)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer p.Close()
+
+	// Build a single line nested 20 deep.
+	var b strings.Builder
+	for i := 0; i < 20; i++ {
+		b.WriteString(`{"a":`)
+	}
+	b.WriteString(`1`)
+	for i := 0; i < 20; i++ {
+		b.WriteString(`}`)
+	}
+
+	err = p.StreamJSONL(strings.NewReader(b.String()), func(int, *IterableValue) error {
+		return nil
+	})
+	if err == nil {
+		t.Fatal("StreamJSONL of deeply nested line should fail")
+	}
+	if !strings.Contains(err.Error(), "nesting") {
+		t.Errorf("expected nesting-depth error, got %v", err)
+	}
+}
+
+// TestProcessor_StreamJSONL_InvalidLine verifies a malformed JSON line surfaces
+// a parse error annotated with the line number.
+func TestProcessor_StreamJSONL_InvalidLine(t *testing.T) {
+	p, err := New()
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer p.Close()
+
+	input := `{"ok":1}` + "\n" + `{bad json` + "\n" + `{"ok":2}`
+	err = p.StreamJSONL(strings.NewReader(input), func(int, *IterableValue) error {
+		return nil
+	})
+	if err == nil {
+		t.Fatal("StreamJSONL of invalid line should fail")
+	}
+	if !strings.Contains(err.Error(), "line 2") {
+		t.Errorf("expected 'line 2' in error, got %v", err)
+	}
+}
+
+// ============================================================================
+// STREAMJSONL BOUNDARY TESTS (merged from processor_boundary_test.go)
+// ============================================================================
+
+// TestStreamJSONL_InvalidJSON exercises the StreamJSONL invalid-JSONL error
+// path (processor_streamjsonl.go).
+func TestStreamJSONL_InvalidJSON(t *testing.T) {
+	p, _ := New()
+	defer p.Close()
+	err := p.StreamJSONL(strings.NewReader("not json\n"), func(int, *IterableValue) error { return nil })
+	if err == nil {
+		t.Error("expected error for invalid JSONL input")
+	}
+}
+
+// TestStreamJSONLParallelWithContext_Cancel exercises the
+// StreamJSONLParallelWithContext context-cancellation path
+// (processor_streamjsonl.go): a pre-cancelled context must not panic.
+func TestStreamJSONLParallelWithContext_Cancel(t *testing.T) {
+	p, _ := New()
+	defer p.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // cancel before work starts
+	_ = p.StreamJSONLParallelWithContext(ctx, strings.NewReader(`{"a":1}`+"\n"), 2,
+		func(int, *IterableValue) error { return nil })
+	// A pre-cancelled context must not panic; it surfaces an error or short-circuits.
 }

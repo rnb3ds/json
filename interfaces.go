@@ -363,6 +363,21 @@ func (hc hookChain) executeAfter(ctx HookContext, result any, err error) (any, e
 	return result, err
 }
 
+// executeAfterString is the string-returning variant of executeAfter, used by
+// the operations whose result is a JSON string (Set, Delete). It runs the same
+// reverse-order After chain, then coerces the (possibly hook-transformed)
+// result back to string. A hook that returns a non-string value is treated as a
+// no-op on the result (the original string is kept) — the error is still
+// propagated. This keeps a misbehaving hook from crashing the operation while
+// still honoring well-formed result transforms.
+func (hc hookChain) executeAfterString(ctx HookContext, result string, err error) (string, error) {
+	r, e := hc.executeAfter(ctx, result, err)
+	if s, ok := r.(string); ok {
+		return s, e
+	}
+	return result, e
+}
+
 // =============================================================================
 // 6. Path Parser Interface (Breaks Circular Dependency)
 // =============================================================================

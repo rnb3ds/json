@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/cybergodev/json"
 )
@@ -180,17 +181,19 @@ func demonstrateParallelIterator() {
 	iter := json.NewParallelIterator(data, cfg)
 	defer iter.Close()
 
-	// ForEach - process all items concurrently
+	// ForEach - process all items concurrently.
+	// The callback runs on multiple worker goroutines, so the counter MUST be
+	// atomic — a plain `count++` here is a data race.
 	fmt.Println("   ForEach (concurrent, 4 workers):")
-	count := 0
+	var count atomic.Int64
 	err := iter.ForEach(func(idx int, item any) error {
-		count++
+		count.Add(1)
 		return nil
 	})
 	if err != nil {
 		fmt.Printf("   ForEach error: %v\n", err)
 	}
-	fmt.Printf("   Processed %d items\n", count)
+	fmt.Printf("   Processed %d items\n", count.Load())
 
 	// Map - transform all items concurrently
 	fmt.Println("\n   Map (concurrent transformation):")
@@ -198,13 +201,17 @@ func demonstrateParallelIterator() {
 	defer iter2.Close()
 
 	results, err := iter2.Map(func(idx int, item any) (any, error) {
-		if m, ok := item.(map[string]any); ok {
-			return map[string]any{
-				"id":      m["id"],
-				"doubled": m["value"].(int) * 2, // safe: native Go int, not JSON-decoded
-			}, nil
+		m, ok := item.(map[string]any)
+		if !ok {
+			return nil, nil
 		}
-		return nil, nil
+		// data is a native Go []any (not JSON-decoded), so "value" is int,
+		// not float64 — but guard the assertion anyway to avoid a panic.
+		v, _ := m["value"].(int)
+		return map[string]any{
+			"id":      m["id"],
+			"doubled": v * 2,
+		}, nil
 	})
 	if err != nil {
 		fmt.Printf("   Map error: %v\n", err)

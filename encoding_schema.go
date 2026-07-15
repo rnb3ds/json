@@ -49,7 +49,7 @@ func (p *Processor) ValidateSchema(jsonStr string, schema *Schema, cfg ...Config
 	}
 	defer releaseConfig(options)
 
-	if err := p.validateInput(jsonStr); err != nil {
+	if err := p.validateInputForOptions(jsonStr, options); err != nil {
 		return nil, err
 	}
 

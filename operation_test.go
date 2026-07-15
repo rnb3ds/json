@@ -2,6 +2,7 @@ package json
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -143,7 +144,9 @@ func TestAppendOperation(t *testing.T) {
 	}{
 		{name: "append to existing array", jsonStr: `{"items":[1,2]}`, path: "items[+]", value: 3, wantJSON: `{"items":[1,2,3]}`},
 		{name: "append to empty array", jsonStr: `{"items":[]}`, path: "items[+]", value: 1, wantJSON: `{"items":[1]}`},
-		{name: "append to non-existent key errors", jsonStr: `{}`, path: "items[+]", value: 1, cfg: func() Config { c := DefaultConfig(); c.CreatePaths = false; return c }(), wantErr: true, errSubstr: "cannot append"},
+		{name: "append spreads slice value", jsonStr: `{"items":[1]}`, path: "items[+]", value: []any{2, 3}, wantJSON: `{"items":[1,2,3]}`},
+		{name: "append to nested array element", jsonStr: `{"m":[[1,2],[3,4]]}`, path: "m[1][+]", value: 5, wantJSON: `{"m":[[1,2],[3,4,5]]}`},
+		{name: "append to non-existent key errors", jsonStr: `{}`, path: "items[+]", value: 1, cfg: func() Config { c := DefaultConfig(); c.CreatePaths = false; return c }(), wantErr: true, errSubstr: "not found"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -179,7 +182,10 @@ func TestNegativeArrayIndex(t *testing.T) {
 	})
 	t.Run("get various negative positions", func(t *testing.T) {
 		json := `{"items":[10,20,30,40,50]}`
-		tests := []struct{ path string; want any }{
+		tests := []struct {
+			path string
+			want any
+		}{
 			{"items[-1]", float64(50)},
 			{"items[-2]", float64(40)},
 			{"items[-5]", float64(10)},
@@ -726,7 +732,10 @@ func TestTypedGettersEdgeCases(t *testing.T) {
 		}
 	})
 	t.Run("GetBool string variants", func(t *testing.T) {
-		tests := []struct{ json, path string; want bool }{
+		tests := []struct {
+			json, path string
+			want       bool
+		}{
 			{`{"v":"true"}`, "v", true},
 			{`{"v":"TRUE"}`, "v", true},
 			{`{"v":"1"}`, "v", true},
@@ -864,7 +873,11 @@ func TestDistributedArrayOps(t *testing.T) {
 
 func TestOperationErrors(t *testing.T) {
 	t.Run("Set errors", func(t *testing.T) {
-		tests := []struct{ name, json, path string; value any; wantErr bool }{
+		tests := []struct {
+			name, json, path string
+			value            any
+			wantErr          bool
+		}{
 			{"invalid json", `{invalid}`, "a", 1, true},
 			{"empty path", `{"a":1}`, "", 1, true},
 		}
@@ -878,7 +891,10 @@ func TestOperationErrors(t *testing.T) {
 		}
 	})
 	t.Run("Delete errors", func(t *testing.T) {
-		tests := []struct{ name, json, path string; wantErr bool }{
+		tests := []struct {
+			name, json, path string
+			wantErr          bool
+		}{
 			{"invalid json", `{invalid}`, "a", true},
 			{"empty path", `{"a":1}`, "", true},
 		}
@@ -1131,7 +1147,7 @@ func TestOperationAssignValueToSlice(t *testing.T) {
 	}
 }
 
-// --- deleteArrayElement, navigateArrayIndexForDeletion, deleteComplexArray ---
+// --- Delete on array elements (index, extract, slice) via complex paths ---
 
 func TestOperationDeleteArrayElementComplex(t *testing.T) {
 	tests := []struct {
@@ -1176,7 +1192,7 @@ func TestOperationDeleteArrayElementComplex(t *testing.T) {
 	}
 }
 
-// --- deleteComplexArray: delete from nested position inside an array element ---
+// --- Delete from a nested position inside an array element ---
 
 func TestOperationDeleteComplexArrayNavigation(t *testing.T) {
 	t.Run("delete from array element with negative index", func(t *testing.T) {
@@ -2114,4 +2130,522 @@ func TestArraySetSliceEdgeCases(t *testing.T) {
 			assertJSONEqual(t, tt.want, result)
 		})
 	}
+}
+
+// ---------------------------------------------------------------------------
+// FIX-001: operation boundary & error-path coverage
+// ---------------------------------------------------------------------------
+
+// TestSet_ArrayIndex_Boundary covers array index auto-extension and the
+// parse-time "reasonable range" guard that rejects pathologically large
+// indices (operation_set.go extendArrayAndSetValue + path index validation).
+func TestSet_ArrayIndex_Boundary(t *testing.T) {
+	t.Run("auto-extends array even without CreatePaths", func(t *testing.T) {
+		got, err := Set(`{"a":[1,2]}`, "a[5]", 9)
+		if err != nil {
+			t.Fatalf("Set: %v", err)
+		}
+		assertJSONEqual(t, `{"a":[1,2,null,null,null,9]}`, got)
+	})
+
+	t.Run("index beyond reasonable range is rejected", func(t *testing.T) {
+		_, err := Set(`{"a":[]}`, "a[1000001]", 1, Config{CreatePaths: true})
+		if err == nil {
+			t.Fatal("Set with index 1000001 should be rejected")
+		}
+		if !strings.Contains(err.Error(), "reasonable range") {
+			t.Errorf("error = %q, want substring %q", err.Error(), "reasonable range")
+		}
+	})
+
+	t.Run("JSON Pointer index trips extension size guard", func(t *testing.T) {
+		// Bracket index paths are bounded at parse time (subtest above), so the
+		// maxArrayExtension guard in operation_set.go is reachable only via a
+		// JSON Pointer path, whose index bypasses the bracket parser. The guard
+		// must surface as ErrSizeLimit rather than allocating a multi-GB slice.
+		_, err := Set(`{"a":[]}`, "/a/2000000", "x", Config{CreatePaths: true})
+		if !errors.Is(err, ErrSizeLimit) {
+			t.Errorf("err = %v, want errors.Is ErrSizeLimit", err)
+		}
+	})
+
+	t.Run("slice extends beyond current length", func(t *testing.T) {
+		got, err := Set(`{"a":[1,2]}`, "a[5:10]", 9, Config{CreatePaths: true})
+		if err != nil {
+			t.Fatalf("Set: %v", err)
+		}
+		assertJSONEqual(t, `{"a":[1,2,null,null,null,9,9,9,9,9]}`, got)
+	})
+}
+
+// TestNavigateToPath_DistributedExtract covers getValueWithDistributedOperation
+// (operation_array.go) and handleDistributedOperation (path.go): an extract
+// segment ({field}) followed by an array index/slice applies the array op to
+// the field extracted from each element of an array.
+func TestNavigateToPath_DistributedExtract(t *testing.T) {
+	p, err := New()
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer p.Close()
+
+	data := map[string]any{
+		"items": []any{
+			map[string]any{"tags": []any{"a", "b"}},
+			map[string]any{"tags": []any{"c"}},
+		},
+	}
+
+	t.Run("index after extract", func(t *testing.T) {
+		got, err := p.navigateToPath(data, "items.{tags}[0]")
+		if err != nil {
+			t.Fatalf("navigateToPath: %v", err)
+		}
+		arr, ok := got.([]any)
+		if !ok {
+			t.Fatalf("got %T, want []any", got)
+		}
+		// first tag from each item -> ["a","c"]
+		if len(arr) != 2 || arr[0] != "a" || arr[1] != "c" {
+			t.Errorf("got %v, want [a c]", arr)
+		}
+	})
+
+	t.Run("slice after extract", func(t *testing.T) {
+		got, err := p.navigateToPath(data, "items.{tags}[0:1]")
+		if err != nil {
+			t.Fatalf("navigateToPath: %v", err)
+		}
+		if _, ok := got.([]any); !ok {
+			t.Errorf("got %T, want []any", got)
+		}
+	})
+}
+
+// TestNavigateToPath_JSONPointer_Edges covers navigateJSONPointer (path.go)
+// branches via the dot/pointer navigator: tilde escapes (~0 -> ~, ~1 -> /),
+// the "-" past-end token, and out-of-bounds indices, which resolve to nil
+// (not-found) rather than an error.
+func TestNavigateToPath_JSONPointer_Edges(t *testing.T) {
+	p, err := New()
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer p.Close()
+
+	tests := []struct {
+		name    string
+		data    any
+		path    string
+		wantErr bool
+		want    any
+	}{
+		{"tilde1 slash escape", map[string]any{"a/b": float64(1)}, "/a~1b", false, float64(1)},
+		{"tilde0 escape", map[string]any{"a~b": float64(2)}, "/a~0b", false, float64(2)},
+		{"dash past-end not found", map[string]any{"a": []any{float64(1), float64(2)}}, "/a/-", true, nil},
+		{"out-of-bounds index not found", map[string]any{"a": []any{float64(1), float64(2)}}, "/a/9", true, nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := p.navigateToPath(tt.data, tt.path)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("navigateToPath(%q) expected error, got nil (val=%v)", tt.path, got)
+				}
+				if !errors.Is(err, ErrPathNotFound) {
+					t.Errorf("navigateToPath(%q) err = %q, want ErrPathNotFound", tt.path, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("navigateToPath() unexpected error: %v", err)
+			}
+			if got != tt.want {
+				t.Errorf("navigateToPath(%q) = %v (%T), want %v", tt.path, got, got, tt.want)
+			}
+		})
+	}
+}
+
+// ============================================================================
+// ARRAY-ELEMENT SET/DELETE SCENARIOS (merged from operation_set_array_test.go
+// and operation_delete_array_test.go)
+//
+// Covers Set/Delete on array elements via index, shorthand index, wildcard,
+// slice range, and multi-field extract — the scenarios that previously failed
+// (silent partial update, hard error, or silent no-op) before Set routing in
+// operation_set.go was corrected, the multi-field extract opSet branch was
+// added to recursive.go, and Delete was unified onto the recursive processor.
+// ============================================================================
+
+const setArrayInput = `[
+  {"name_cn": "万国数据", "name_en": "GDS Holdings Limited", "name_hk": "万国数据", "symbol": "GDS.US"},
+  {"name_cn": "极氪", "name_en": "ZEEKR Intelligent Technology Holding Limited", "name_hk": "極氪", "symbol": "ZK.US"}
+]`
+
+const deleteArrayInput = `[
+  {"name_cn": "万国数据", "name_en": "GDS Holdings Limited", "name_hk": "万国数据", "symbol": "GDS.US"},
+  {"name_cn": "极氪", "name_en": "ZEEKR Intelligent Technology Holding Limited", "name_hk": "極氪", "symbol": "ZK.US"}
+]`
+
+// assertSetField verifies the value of a field on the given array element after
+// parsing the result JSON. wantOK=false asserts the field is absent.
+func assertSetField(t *testing.T, result string, elemIdx int, field string, want any, wantOK bool) {
+	t.Helper()
+	var arr []map[string]any
+	if err := Unmarshal([]byte(result), &arr); err != nil {
+		t.Fatalf("result is not a JSON array: %v\nresult: %s", err, result)
+	}
+	if elemIdx < 0 || elemIdx >= len(arr) {
+		t.Fatalf("element index %d out of range (len %d)", elemIdx, len(arr))
+	}
+	got, exists := arr[elemIdx][field]
+	if exists != wantOK {
+		t.Errorf("elem[%d].%q exists=%v, want exists=%v", elemIdx, field, exists, wantOK)
+		return
+	}
+	if wantOK && got != want {
+		t.Errorf("elem[%d].%q = %v, want %v", elemIdx, field, got, want)
+	}
+}
+
+// assertField verifies whether a field exists on the given array element after
+// parsing the result JSON. Used to assert deletion precisely without depending
+// on key ordering in the serialized output.
+func assertField(t *testing.T, result string, elemIdx int, field string, wantExists bool) {
+	t.Helper()
+	var arr []map[string]any
+	if err := Unmarshal([]byte(result), &arr); err != nil {
+		t.Fatalf("result is not a JSON array: %v\nresult: %s", err, result)
+	}
+	if elemIdx < 0 || elemIdx >= len(arr) {
+		t.Fatalf("element index %d out of range (len %d)", elemIdx, len(arr))
+	}
+	_, exists := arr[elemIdx][field]
+	if exists != wantExists {
+		t.Errorf("elem[%d].%q exists=%v, want %v", elemIdx, field, exists, wantExists)
+	}
+}
+
+func TestSetArrayElementScenarios(t *testing.T) {
+	tests := []struct {
+		name    string
+		path    string
+		value   any
+		wantErr bool
+		check   func(t *testing.T, result string)
+	}{
+		{
+			// Pre-existing behavior (dot-notation path): only elem 0 changes.
+			name:  "bracket index [0].name_cn sets only elem 0",
+			path:  "[0].name_cn",
+			value: "aa",
+			check: func(t *testing.T, result string) {
+				assertSetField(t, result, 0, "name_cn", "aa", true)
+				assertSetField(t, result, 1, "name_cn", "极氪", true) // untouched
+			},
+		},
+		{
+			name:  "shorthand index 0.name_cn sets only elem 0",
+			path:  "0.name_cn",
+			value: "bb",
+			check: func(t *testing.T, result string) {
+				assertSetField(t, result, 0, "name_cn", "bb", true)
+				assertSetField(t, result, 1, "name_cn", "极氪", true)
+			},
+		},
+		{
+			// REGRESSION: previously only elem 0 changed (splitPath parsed [*]
+			// as index 0 on the dot-notation path). Now distributed across all.
+			name:  "wildcard [*].name_cn sets all elements",
+			path:  "[*].name_cn",
+			value: "X",
+			check: func(t *testing.T, result string) {
+				assertSetField(t, result, 0, "name_cn", "X", true)
+				assertSetField(t, result, 1, "name_cn", "X", true)
+			},
+		},
+		{
+			// REGRESSION: previously errored "array slice not supported as
+			// intermediate path segment". Now distributed across the range.
+			name:  "slice range [0:2].name_cn sets all elements in range",
+			path:  "[0:2].name_cn",
+			value: "Y",
+			check: func(t *testing.T, result string) {
+				assertSetField(t, result, 0, "name_cn", "Y", true)
+				assertSetField(t, result, 1, "name_cn", "Y", true)
+			},
+		},
+		{
+			name:  "partial slice range [0:1].name_cn sets only elem 0",
+			path:  "[0:1].name_cn",
+			value: "P",
+			check: func(t *testing.T, result string) {
+				assertSetField(t, result, 0, "name_cn", "P", true)
+				assertSetField(t, result, 1, "name_cn", "极氪", true)
+			},
+		},
+		{
+			// REGRESSION: previously a silent no-op (handleMultiFieldExtractSegment
+			// had no opSet branch). Now sets every listed field per element.
+			name:  "multi-field [*].{name_cn,symbol} sets listed fields on all elements",
+			path:  "[*].{name_cn,symbol}",
+			value: map[string]any{"name_cn": "N", "symbol": "S", "ignored": "Z"},
+			check: func(t *testing.T, result string) {
+				assertSetField(t, result, 0, "name_cn", "N", true)
+				assertSetField(t, result, 1, "name_cn", "N", true)
+				assertSetField(t, result, 0, "symbol", "S", true)
+				assertSetField(t, result, 1, "symbol", "S", true)
+				// Fields outside the extract list must NOT be created.
+				assertSetField(t, result, 0, "ignored", nil, false)
+				// Unlisted fields are untouched.
+				assertSetField(t, result, 0, "name_en", "GDS Holdings Limited", true)
+			},
+		},
+		{
+			name:    "multi-field set with non-map value returns type error",
+			path:    "[*].{name_cn,symbol}",
+			value:   "scalar",
+			wantErr: true,
+		},
+		{
+			// Multi-field extract on a single (non-array) object element via index.
+			name:  "multi-field [0].{name_cn,symbol} sets listed fields on elem 0",
+			path:  "[0].{name_cn,symbol}",
+			value: map[string]any{"name_cn": "N0", "symbol": "S0"},
+			check: func(t *testing.T, result string) {
+				assertSetField(t, result, 0, "name_cn", "N0", true)
+				assertSetField(t, result, 0, "symbol", "S0", true)
+				assertSetField(t, result, 1, "name_cn", "极氪", true) // untouched
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p, err := New(DefaultConfig())
+			if err != nil {
+				t.Fatalf("New: %v", err)
+			}
+			result, err := p.Set(setArrayInput, tt.path, tt.value)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("expected error, got nil; result=%s", result)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Set(%q): %v", tt.path, err)
+			}
+			if tt.check != nil {
+				tt.check(t, result)
+			}
+		})
+	}
+}
+
+// TestSetArrayElementCreatePathsOff ensures the index/wildcard/slice Set fixes
+// also hold when CreatePaths is disabled (the package default enables it; this
+// exercises the other routing branch where createPaths is false).
+func TestSetArrayElementCreatePathsOff(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.CreatePaths = false
+	p, err := New(cfg)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	t.Run("wildcard", func(t *testing.T) {
+		out, err := p.Set(setArrayInput, "[*].name_cn", "X")
+		if err != nil {
+			t.Fatalf("err: %v", err)
+		}
+		assertSetField(t, out, 0, "name_cn", "X", true)
+		assertSetField(t, out, 1, "name_cn", "X", true)
+	})
+
+	t.Run("slice_range", func(t *testing.T) {
+		out, err := p.Set(setArrayInput, "[0:2].name_cn", "Y")
+		if err != nil {
+			t.Fatalf("err: %v", err)
+		}
+		assertSetField(t, out, 0, "name_cn", "Y", true)
+		assertSetField(t, out, 1, "name_cn", "Y", true)
+	})
+}
+
+func TestDeleteArrayElementScenarios(t *testing.T) {
+	tests := []struct {
+		name    string
+		path    string
+		wantErr bool
+		check   func(t *testing.T, result string)
+	}{
+		{
+			name: "bracket index [0].name_cn removes only elem 0 field",
+			path: "[0].name_cn",
+			check: func(t *testing.T, result string) {
+				assertField(t, result, 0, "name_cn", false)
+				assertField(t, result, 1, "name_cn", true) // untouched
+				assertField(t, result, 0, "symbol", true)  // untouched
+			},
+		},
+		{
+			name: "shorthand index 0.name_cn removes only elem 0 field",
+			path: "0.name_cn",
+			check: func(t *testing.T, result string) {
+				assertField(t, result, 0, "name_cn", false)
+				assertField(t, result, 1, "name_cn", true)
+			},
+		},
+		{
+			name: "wildcard [*].name_cn removes field from all elements",
+			path: "[*].name_cn",
+			check: func(t *testing.T, result string) {
+				assertField(t, result, 0, "name_cn", false)
+				assertField(t, result, 1, "name_cn", false)
+				assertField(t, result, 0, "symbol", true)
+			},
+		},
+		{
+			name: "slice [0:2].name_cn removes field from ranged elements",
+			path: "[0:2].name_cn",
+			check: func(t *testing.T, result string) {
+				assertField(t, result, 0, "name_cn", false)
+				assertField(t, result, 1, "name_cn", false)
+			},
+		},
+		{
+			name: "multi-field wildcard [*].{name_cn,symbol} removes both from all",
+			path: "[*].{name_cn,symbol}",
+			check: func(t *testing.T, result string) {
+				assertField(t, result, 0, "name_cn", false)
+				assertField(t, result, 0, "symbol", false)
+				assertField(t, result, 1, "name_cn", false)
+				assertField(t, result, 1, "symbol", false)
+				assertField(t, result, 0, "name_en", true) // untouched
+				assertField(t, result, 0, "name_hk", true)
+			},
+		},
+		{
+			name: "multi-field index [1].{name_cn,symbol} removes both from elem 1 only",
+			path: "[1].{name_cn,symbol}",
+			check: func(t *testing.T, result string) {
+				assertField(t, result, 0, "name_cn", true)  // untouched
+				assertField(t, result, 0, "symbol", true)   // untouched
+				assertField(t, result, 1, "name_cn", false) // removed
+				assertField(t, result, 1, "symbol", false)  // removed
+			},
+		},
+		{
+			name:    "precise complex missing path reports error (contract preserved)",
+			path:    "[0].nonexistent",
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := Delete(deleteArrayInput, tt.path)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("expected error for path %q, got nil; result: %s", tt.path, result)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Delete(%q) unexpected error: %v", tt.path, err)
+			}
+			if tt.check != nil {
+				tt.check(t, result)
+			}
+		})
+	}
+}
+
+// TestDeleteMultiFieldExtractTolerant verifies that batch multi-field extract
+// delete tolerates elements missing the target field (idempotent, no error),
+// matching Go's delete() semantics on absent keys.
+func TestDeleteMultiFieldExtractTolerant(t *testing.T) {
+	// Element 1 lacks "symbol" — deleting it must not error.
+	input := `[
+  {"name_cn": "甲", "symbol": "A.US"},
+  {"name_cn": "乙"}
+]`
+	result, err := Delete(input, "[*].{name_cn,symbol}")
+	if err != nil {
+		t.Fatalf("expected no error on tolerant batch delete, got: %v", err)
+	}
+	assertField(t, result, 0, "name_cn", false)
+	assertField(t, result, 0, "symbol", false)
+	assertField(t, result, 1, "name_cn", false)
+}
+
+// TestDeleteWildcardMissingFieldTolerant verifies that a wildcard property
+// delete over elements where some lack the property stays silent (no error).
+func TestDeleteWildcardMissingFieldTolerant(t *testing.T) {
+	input := `[{"a":1},{"b":2}]`
+	// [*].a: elem 0 has a (deleted), elem 1 lacks a (tolerated).
+	if _, err := Delete(input, "[*].a"); err != nil {
+		t.Fatalf("expected no error for wildcard delete with missing field, got: %v", err)
+	}
+}
+
+// ============================================================================
+// OPERATION-SET BOUNDARY TESTS (merged from operations_boundary_test.go)
+// Defensive-branch coverage for operation_set.go array-extension + flat-extract
+// paths, including the security-limit rejections.
+// ============================================================================
+
+// TestOperationSet_Extension_Boundary exercises handleArrayExtensionAndSet /
+// extendArrayAndSet* (operation_set.go), including security-limit rejections.
+func TestOperationSet_Extension_Boundary(t *testing.T) {
+	t.Run("slice_extension_security_limit", func(t *testing.T) {
+		// Slice end far beyond maxArrayExtension must be rejected.
+		if _, err := Set(`{"a":[]}`, "a[0:999999999]", []any{99}); err == nil {
+			t.Error("expected error for slice extension beyond security limit")
+		}
+	})
+	t.Run("index_extension_security_limit", func(t *testing.T) {
+		// Index far beyond maxArrayExtension must be rejected.
+		if _, err := Set(`{"a":[]}`, "a[9999999999]", 99); err == nil {
+			t.Error("expected error for index extension beyond security limit")
+		}
+	})
+	t.Run("root_array_oob_no_panic", func(t *testing.T) {
+		// OOB index on a root-level array must not panic (errors or rejects).
+		_, _ = Set(`[1,2]`, "[5]", 99)
+	})
+}
+
+// TestOperationSet_ArrayExtractFlat_Boundary exercises setValueForArrayExtractFlat
+// (operation_set.go): merge into existing array, convert non-array existing
+// value, and non-map item handling.
+func TestOperationSet_ArrayExtractFlat_Boundary(t *testing.T) {
+	t.Run("merge_into_existing_array", func(t *testing.T) {
+		r, err := Set(`{"items":[{"tags":["a"]}]}`, "items{flat:tags}", []any{"b", "c"})
+		if err != nil {
+			t.Fatalf("Set err: %v", err)
+		}
+		v, _ := Get(r, "items[0].tags")
+		arr, ok := v.([]any)
+		if !ok || len(arr) < 2 {
+			t.Errorf("flat-merge got %v, want merged slice with b,c", v)
+		}
+	})
+	t.Run("convert_non_array_existing", func(t *testing.T) {
+		// Existing value is a scalar string -> converted to a slice.
+		r, err := Set(`{"items":[{"tags":"x"}]}`, "items{flat:tags}", "y")
+		if err != nil {
+			t.Fatalf("Set err: %v", err)
+		}
+		v, _ := Get(r, "items[0].tags")
+		if v == nil {
+			t.Error("expected converted tags value, got nil")
+		}
+	})
+	t.Run("non_map_item", func(t *testing.T) {
+		// items[0] is a number, not a map -> cannot set {flat:tags}; must not panic.
+		_, _ = Set(`{"items":[42]}`, "items{flat:tags}", "y")
+	})
 }

@@ -503,8 +503,27 @@ func ParsePath(path string) ([]PathSegment, error) {
 				}
 			}
 			if !hasSpecial {
-				// Single property - return directly without allocation overhead
-				segments = []PathSegment{{Type: PropertySegment, Key: path}}
+				// Single segment with no special chars. Branch on numeric/wildcard
+				// to match multi-segment dot-notation (parseDotNotation) and JSON
+				// Pointer behavior: a bare "0" equals "[0]", a bare "*" equals "[*]".
+				if index, ok := ParseIntFast(path); ok {
+					var flags PathSegmentFlags
+					if index < 0 {
+						flags |= FlagIsNegative
+					}
+					segments = []PathSegment{{
+						Type:  ArrayIndexSegment,
+						Index: index,
+						Flags: flags,
+					}}
+				} else if path == "*" {
+					segments = []PathSegment{{
+						Type:  WildcardSegment,
+						Flags: FlagIsWildcard,
+					}}
+				} else {
+					segments = []PathSegment{{Type: PropertySegment, Key: path}}
+				}
 				setCachedPathSegments(path, segments)
 				return segments, nil
 			}
@@ -573,7 +592,7 @@ func parseDotNotation(path string) ([]PathSegment, error) {
 		for i := 0; i <= pathLen; i++ {
 			if i == pathLen || path[i] == '.' {
 				part := path[start:i]
-				// Check if this is a numeric array index (supports negative indices)
+				// Numeric index, bare wildcard ("*"), or property name.
 				if index, ok := ParseIntFast(part); ok {
 					var flags PathSegmentFlags
 					if index < 0 {
@@ -583,6 +602,11 @@ func parseDotNotation(path string) ([]PathSegment, error) {
 						Type:  ArrayIndexSegment,
 						Index: index,
 						Flags: flags,
+					}
+				} else if part == "*" {
+					segments[idx] = PathSegment{
+						Type:  WildcardSegment,
+						Flags: FlagIsWildcard,
 					}
 				} else {
 					segments[idx] = PathSegment{
@@ -680,6 +704,11 @@ func parseDotNotation(path string) ([]PathSegment, error) {
 					Type:  ArrayIndexSegment,
 					Index: index,
 					Flags: flags,
+				})
+			} else if part == "*" {
+				segments = append(segments, PathSegment{
+					Type:  WildcardSegment,
+					Flags: FlagIsWildcard,
 				})
 			} else {
 				segments = append(segments, PathSegment{

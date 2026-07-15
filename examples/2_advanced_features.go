@@ -5,7 +5,6 @@ package main
 import (
 	"fmt"
 	"log"
-	"os"
 
 	"github.com/cybergodev/json"
 )
@@ -161,8 +160,6 @@ func demonstrateMultiFieldExtraction(data string) {
 	second := json.GetObject(data, "departments[0].teams[0].members[1]{name,role}")
 	fmt.Printf("   Second member {name,role}: %v\n", second)
 
-	os.Exit(1)
-
 	// Note: multi-field extraction returns an object (map[string]any), so prefer
 	// Get/GetObject. Calling GetString would format the map via Go's default
 	// formatting, not return JSON. A single field like {name} is different — it
@@ -214,10 +211,9 @@ func demonstrateDeepModifications(data string) {
 	allMembers, _ := json.Get(updated2, "departments[0].teams[0].members{name}")
 	fmt.Printf("   Backend members after addition: %v\n", allMembers)
 
-	// Add nested path that doesn't exist using fluent config
-	cfg := json.DefaultConfig()
-	cfg.CreatePaths = true
-	updated3, _ := json.Set(data, "departments[0].budget.allocated", 1000000, cfg)
+	// SetCreate adds a nested path that doesn't exist yet (auto-creates
+	// intermediate objects), with no manual Config needed.
+	updated3, _ := json.SetCreate(data, "departments[0].budget.allocated", 1000000)
 	budget, _ := json.Get(updated3, "departments[0].budget")
 	fmt.Printf("   New budget path: %v\n", budget)
 }
@@ -262,15 +258,13 @@ func demonstrateBatchOperations(data string) {
 		fmt.Printf("   - %s: %v\n", path, value)
 	}
 
-	// SetMultiple with path creation for paths that may not exist
+	// SetMultipleCreate auto-creates the "statistics" subtree for every update.
 	newUpdates := map[string]any{
 		"statistics.total_departments": 2,
 		"statistics.total_teams":       3,
 		"statistics.last_updated":      "2024-06-15",
 	}
-	cfg := json.DefaultConfig()
-	cfg.CreatePaths = true
-	updated2, _ := json.SetMultiple(data, newUpdates, cfg)
+	updated2, _ := json.SetMultipleCreate(data, newUpdates)
 
 	stats, _ := json.Get(updated2, "statistics")
 	fmt.Printf("\n   New statistics section: %v\n", stats)

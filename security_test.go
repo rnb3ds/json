@@ -2,6 +2,9 @@ package json
 
 import (
 	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
@@ -1511,96 +1514,450 @@ func TestPanicProtectionSafeErrorNilErr(t *testing.T) {
 	})
 }
 
-// TestPanicProtectionNilProcessor verifies that calling methods on a nil
-// Processor returns an error instead of panicking.
+// TestPanicProtectionNilProcessor pins SEC-003 across the full public Processor
+// API: every method on a nil *Processor MUST either return an error (mutating /
+// query ops) or a safe zero value (typed getters, stats, config) — never a
+// nil-pointer panic. Guards are centralized in checkClosed(); this table-driven
+// test covers the whole surface so a future refactor cannot silently regress.
+// (Go fails the subtest on panic, so a direct call is a valid "must not panic"
+// assertion.)
 func TestPanicProtectionNilProcessor(t *testing.T) {
-	t.Run("ParseNilProcessor", func(t *testing.T) {
-		var p *Processor
-		var target any
-		err := p.Parse(`{"a":1}`, &target)
-		if err == nil {
-			t.Error("expected error when calling Parse on nil Processor")
+	var p *Processor // intentionally nil
+
+	tests := []struct {
+		name string
+		call func(t *testing.T)
+	}{
+		{name: "Parse", call: func(t *testing.T) {
+			var target any
+			if err := p.Parse(`{"a":1}`, &target); err == nil {
+				t.Error("expected error when calling Parse on nil Processor")
+			}
+		}},
+		{name: "Get", call: func(t *testing.T) {
+			if _, err := p.Get("{}", "a"); err == nil {
+				t.Error("expected error when calling Get on nil Processor")
+			}
+		}},
+		{name: "Set", call: func(t *testing.T) {
+			if _, err := p.Set(`{}`, "a", 1); err == nil {
+				t.Error("expected error when calling Set on nil Processor")
+			}
+		}},
+		{name: "Delete", call: func(t *testing.T) {
+			if _, err := p.Delete(`{"a":1}`, "a"); err == nil {
+				t.Error("expected error when calling Delete on nil Processor")
+			}
+		}},
+		{name: "Marshal", call: func(t *testing.T) {
+			if _, err := p.Marshal(map[string]any{"a": 1}); err == nil {
+				t.Error("expected error when calling Marshal on nil Processor")
+			}
+		}},
+		{name: "MarshalIndent", call: func(t *testing.T) {
+			if _, err := p.MarshalIndent(map[string]any{"a": 1}, "", "  "); err == nil {
+				t.Error("expected error when calling MarshalIndent on nil Processor")
+			}
+		}},
+		{name: "Unmarshal", call: func(t *testing.T) {
+			var v any
+			if err := p.Unmarshal([]byte(`{"a":1}`), &v); err == nil {
+				t.Error("expected error when calling Unmarshal on nil Processor")
+			}
+		}},
+		{name: "StreamJSONL", call: func(t *testing.T) {
+			if err := p.StreamJSONL(strings.NewReader(`{"a":1}`), func(int, *IterableValue) error { return nil }); err == nil {
+				t.Error("expected error when calling StreamJSONL on nil Processor")
+			}
+		}},
+		// Typed getters: return the provided default (or zero value), no panic.
+		{name: "GetString", call: func(t *testing.T) {
+			if got := p.GetString(`{"a":1}`, "a", "fallback"); got != "fallback" {
+				t.Errorf("GetString on nil Processor = %q, want default %q", got, "fallback")
+			}
+		}},
+		// Information accessors: return a safe zero-value state, no panic.
+		{name: "GetStats", call: func(t *testing.T) {
+			if stats := p.GetStats(); stats.IsClosed {
+				t.Errorf("GetStats on nil Processor reports IsClosed=true; want zero-value Stats")
+			}
+		}},
+		{name: "GetHealthStatus", call: func(t *testing.T) {
+			if hs := p.GetHealthStatus(); hs.Healthy {
+				t.Error("GetHealthStatus on nil Processor reports Healthy=true; want unhealthy")
+			}
+		}},
+		{name: "GetConfig", call: func(t *testing.T) {
+			_ = p.GetConfig() // must not panic; zero-value Config is acceptable
+		}},
+		{name: "SetLogger", call: func(t *testing.T) {
+			p.SetLogger(nil) // no-op on nil receiver; must not panic
+		}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tt.call(t)
+		})
+	}
+}
+
+// sec003AssertPanicked verifies that err is non-nil and describes a recovered
+// panic. Every test below pins a recover() guard: if the guard is removed the
+// panicking callback aborts the test binary instead of reaching these assertions
+// (see TestParallelIteratorPanicRecovery for the established pattern).
+func sec003AssertPanicked(t *testing.T, err error) {
+	t.Helper()
+	if err == nil {
+		t.Fatal("expected error from panicking callback, got nil")
+	}
+	if !strings.Contains(err.Error(), "panicked") {
+		t.Errorf("expected error to mention panic, got: %v", err)
+	}
+}
+
+// TestPanicProtectionCallbacks pins SEC-003 across every callback-bearing path:
+// a panicking callback is recovered and surfaced as an error (or, for the void
+// variants, logged with iteration stopped). Removing any recover() guard makes
+// the panicking callback abort the test binary instead of reaching the assertion.
+func TestPanicProtectionCallbacks(t *testing.T) {
+	tests := []struct {
+		name string
+		run  func() error
+	}{
+		{name: "ForeachWithError", run: func() error {
+			p, _ := New()
+			defer p.Close()
+			return p.ForeachWithError(`[1,2,3,4,5]`, ".", func(key any, item *IterableValue) error {
+				if key.(int) == 2 {
+					panic("boom from ForeachWithError callback")
+				}
+				return nil
+			})
+		}},
+		{name: "ForeachNestedWithError", run: func() error {
+			p, _ := New()
+			defer p.Close()
+			return p.ForeachNestedWithError(`{"a":{"b":[1,2]},"c":3}`, func(key any, item *IterableValue) error {
+				panic("boom from nested callback")
+			})
+		}},
+		{name: "StreamJSONL", run: func() error {
+			p, _ := New()
+			defer p.Close()
+			data := "{\"id\":1}\n{\"id\":2}\n{\"id\":3}"
+			return p.StreamJSONL(strings.NewReader(data), func(lineNum int, item *IterableValue) error {
+				if lineNum == 2 {
+					panic("boom from StreamJSONL callback")
+				}
+				return nil
+			})
+		}},
+		{name: "MapJSONL", run: func() error {
+			p, _ := New()
+			defer p.Close()
+			data := "{\"id\":1}\n{\"id\":2}"
+			_, err := p.MapJSONL(strings.NewReader(data), func(lineNum int, item *IterableValue) (any, error) {
+				if lineNum == 2 {
+					panic("boom from MapJSONL fn")
+				}
+				return item.GetData(), nil
+			})
+			return err
+		}},
+		{name: "StreamLinesInto", run: func() error {
+			data := "{\"id\":1}\n{\"id\":2}"
+			_, err := StreamLinesInto(strings.NewReader(data), func(lineNum int, _ map[string]any) error {
+				if lineNum == 2 {
+					panic("boom from StreamLinesInto fn")
+				}
+				return nil
+			})
+			return err
+		}},
+		{name: "ProcessReader", run: func() error {
+			np := NewNDJSONProcessor()
+			data := "{\"id\":1}\n{\"id\":2}"
+			return np.ProcessReader(strings.NewReader(data), func(lineNum int, obj map[string]any) error {
+				if lineNum == 2 {
+					panic("boom from ProcessReader fn")
+				}
+				return nil
+			})
+		}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sec003AssertPanicked(t, tt.run())
+		})
+	}
+}
+
+// TestPanicProtectionForeachVoid verifies SEC-003 for the void Foreach variants,
+// whose signature has no error return: a panicking callback is recovered, logged,
+// and iteration stops — it must not crash the program.
+func TestPanicProtectionForeachVoid(t *testing.T) {
+	p, _ := New()
+	defer p.Close()
+
+	visited := 0
+	// If the recover guard is removed this call aborts the test binary.
+	p.Foreach(`[1,2,3,4,5]`, func(key any, item *IterableValue) {
+		visited++
+		if visited == 2 {
+			panic("boom from void Foreach callback")
 		}
 	})
 
-	t.Run("GetNilProcessor", func(t *testing.T) {
-		var p *Processor
-		_, err := p.Get("{}", "a")
-		if err == nil {
-			t.Error("expected error when calling Get on nil Processor")
+	if visited == 0 {
+		t.Fatal("expected at least one callback invocation before the panic")
+	}
+	if visited > 2 {
+		t.Errorf("expected iteration to stop on panic; visited=%d", visited)
+	}
+}
+
+// TestPanicProtectionForeachFileChunked verifies SEC-003 for chunked file iteration.
+func TestPanicProtectionForeachFileChunked(t *testing.T) {
+	p, _ := New()
+	defer p.Close()
+
+	tmp := filepath.Join(t.TempDir(), "chunked.json")
+	if err := os.WriteFile(tmp, []byte(`["a","b","c","d","e"]`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	err := p.ForeachFileChunked(tmp, 2, func(chunk []*IterableValue) error {
+		panic("boom from ForeachFileChunked fn")
+	})
+	sec003AssertPanicked(t, err)
+}
+
+// ============================================================================
+// CONTAINER-LIMIT TESTS (merged from container_limits_test.go)
+// ============================================================================
+
+// makeObject builds a flat JSON object with n keys: {"k0":0,...,"k{n-1}":n-1}.
+func makeObject(n int) string {
+	var b strings.Builder
+	b.WriteByte('{')
+	for i := 0; i < n; i++ {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		fmt.Fprintf(&b, `"k%d":%d`, i, i)
+	}
+	b.WriteByte('}')
+	return b.String()
+}
+
+// makeArray builds a flat JSON array with n elements: [0,1,...,n-1].
+func makeArray(n int) string {
+	var b strings.Builder
+	b.WriteByte('[')
+	for i := 0; i < n; i++ {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		fmt.Fprintf(&b, "%d", i)
+	}
+	b.WriteByte(']')
+	return b.String()
+}
+
+// TestValidateContainerCounts_Algorithm exercises the structural scanner
+// directly with small limits, covering the tricky cases: per-container (not
+// total) counting, nesting, empty containers, and structural characters that
+// appear inside string values (which must be ignored).
+func TestValidateContainerCounts_Algorithm(t *testing.T) {
+	sv := func(maxKeys, maxElems int) *securityValidator {
+		return &securityValidator{maxObjectKeys: maxKeys, maxArrayElements: maxElems}
+	}
+
+	tests := []struct {
+		name      string
+		json      string
+		maxKeys   int
+		maxElems  int
+		wantError bool
+	}{
+		// Object key counting — strict greater-than at the limit.
+		{"object at limit", `{"a":1,"b":2}`, 2, 0, false},
+		{"object over limit", `{"a":1,"b":2,"c":3}`, 2, 0, true},
+		{"object under limit", `{"a":1}`, 2, 0, false},
+
+		// Array element counting.
+		{"array at limit", `[1,2]`, 0, 2, false},
+		{"array over limit", `[1,2,3]`, 0, 2, true},
+
+		// Empty containers.
+		{"empty object", `{}`, 1, 1, false},
+		{"empty array", `[]`, 1, 1, false},
+
+		// Structural characters inside string values must NOT be counted.
+		{"braces in string value", `{"a":"{}","b":2}`, 2, 0, false},
+		{"commas/colons in string value", `{"a":",:","b":2}`, 2, 0, false},
+		{"brackets in string value", `["[]","{}"]`, 0, 2, false},
+		{"escaped quote in string value", `{"a":"he said \"hi\"","b":2}`, 2, 0, false},
+
+		// Counting is per-container, not total: each nested container is judged
+		// independently against the same limit.
+		{"nested object over limit", `{"outer":{"x":1,"y":2,"z":3}}`, 2, 0, true},
+		{"nested object within limit", `{"outer":{"x":1,"y":2},"z":3}`, 2, 0, false},
+		{"nested array over limit", `[[1,2,3]]`, 0, 2, true},
+		{"array of small objects", `[{"a":1},{"b":2},{"c":3}]`, 0, 2, true},
+
+		// Mixed structures.
+		{"mixed object over array limit", `{"a":[1,2,3]}`, 0, 2, true},
+		{"mixed within limits", `{"a":[1,2],"b":{"x":1}}`, 2, 2, false},
+
+		// Whitespace is structural, not a value.
+		{"whitespace handled", `{ "a" : 1 , "b" : 2 }`, 2, 0, false},
+
+		// Bare (non-container) values: nothing to count.
+		{"bare number", `42`, 1, 1, false},
+		{"bare string", `"hello"`, 1, 1, false},
+		{"bare null", `null`, 1, 1, false},
+		{"bare bool", `true`, 1, 1, false},
+		{"negative numbers", `[-1,-2,-3]`, 0, 2, true},
+
+		// Unlimited (<=0) disables enforcement entirely.
+		{"unlimited skips check", makeObject(50), 0, 0, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := sv(tt.maxKeys, tt.maxElems).validateContainerCounts(tt.json)
+			if tt.wantError {
+				if !errors.Is(err, ErrSizeLimit) {
+					t.Fatalf("expected ErrSizeLimit, got: %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("expected no error, got: %v", err)
+			}
+		})
+	}
+}
+
+// TestValidateContainerCounts_PublicAPI verifies the limits are honored through
+// the public Processor API. Config validation clamps MaxObjectKeys /
+// MaxArrayElements to a minimum of 100, so the boundary is tested at 100/101.
+func TestValidateContainerCounts_PublicAPI(t *testing.T) {
+	t.Run("object keys", func(t *testing.T) {
+		cfg := DefaultConfig()
+		cfg.MaxObjectKeys = 100 // survives clamping (min 100)
+		p, err := New(cfg)
+		if err != nil {
+			t.Fatalf("New failed: %v", err)
+		}
+		defer p.Close()
+
+		// At the limit: allowed.
+		if _, err := p.Get(makeObject(100), "k0"); err != nil {
+			t.Fatalf("object with 100 keys (at limit) should pass, got: %v", err)
+		}
+		// Over the limit: rejected before any path processing.
+		_, err = p.Get(makeObject(101), "k0")
+		if !errors.Is(err, ErrSizeLimit) {
+			t.Fatalf("object with 101 keys should be rejected with ErrSizeLimit, got: %v", err)
 		}
 	})
 
-	t.Run("SetNilProcessor", func(t *testing.T) {
-		var p *Processor
-		_, err := p.Set(`{}`, "a", 1)
-		if err == nil {
-			t.Error("expected error when calling Set on nil Processor")
+	t.Run("array elements", func(t *testing.T) {
+		cfg := DefaultConfig()
+		cfg.MaxArrayElements = 100
+		p, err := New(cfg)
+		if err != nil {
+			t.Fatalf("New failed: %v", err)
+		}
+		defer p.Close()
+
+		// At the limit: allowed.
+		var out []any
+		if err := p.Parse(makeArray(100), &out); err != nil {
+			t.Fatalf("array with 100 elements (at limit) should pass, got: %v", err)
+		}
+		// Over the limit: rejected.
+		err = p.Parse(makeArray(101), &out)
+		if !errors.Is(err, ErrSizeLimit) {
+			t.Fatalf("array with 101 elements should be rejected with ErrSizeLimit, got: %v", err)
+		}
+	})
+
+	t.Run("nested object still caught", func(t *testing.T) {
+		// A wide nested object at depth 1 must be rejected even though the root
+		// has few keys — this is the exact attack the limit exists to stop.
+		cfg := DefaultConfig()
+		cfg.MaxObjectKeys = 100
+		p, err := New(cfg)
+		if err != nil {
+			t.Fatalf("New failed: %v", err)
+		}
+		defer p.Close()
+
+		nested := `{"wrapper":` + makeObject(101) + `}`
+		_, err = p.Get(nested, "wrapper")
+		if !errors.Is(err, ErrSizeLimit) {
+			t.Fatalf("nested object with 101 keys should be rejected with ErrSizeLimit, got: %v", err)
 		}
 	})
 }
 
-// TestPanicProtectionNilProcessorFullSurface extends the nil-receiver coverage
-// to the rest of the public Processor API. Every public method on a nil
-// *Processor MUST either return an error (mutating/query ops) or a safe zero
-// value (typed getters, stats, config) — never a nil-pointer panic.
-// Guards are centralized in checkClosed(); this test pins them so a future
-// refactor cannot silently regress SEC-003.
-func TestPanicProtectionNilProcessorFullSurface(t *testing.T) {
-	var p *Processor // intentionally nil
+// ============================================================================
+// SECURITY BOUNDARY TESTS (merged from security_boundary_test.go)
+// ============================================================================
 
-	// Mutating / query operations: a nil receiver must surface an error,
-	// not panic. (Go fails the subtest on panic, so a direct call is a valid
-	// "must not panic" assertion.)
-	t.Run("Delete", func(t *testing.T) {
-		if _, err := p.Delete(`{"a":1}`, "a"); err == nil {
-			t.Error("expected error when calling Delete on nil Processor")
-		}
+// TestToInternalPatterns exercises toInternalPatterns (security.go).
+func TestToInternalPatterns(t *testing.T) {
+	out := toInternalPatterns([]DangerousPattern{
+		{Pattern: "eval", Name: "eval-injection"},
 	})
-	t.Run("Marshal", func(t *testing.T) {
-		if _, err := p.Marshal(map[string]any{"a": 1}); err == nil {
-			t.Error("expected error when calling Marshal on nil Processor")
-		}
-	})
-	t.Run("MarshalIndent", func(t *testing.T) {
-		if _, err := p.MarshalIndent(map[string]any{"a": 1}, "", "  "); err == nil {
-			t.Error("expected error when calling MarshalIndent on nil Processor")
-		}
-	})
-	t.Run("Unmarshal", func(t *testing.T) {
-		var v any
-		if err := p.Unmarshal([]byte(`{"a":1}`), &v); err == nil {
-			t.Error("expected error when calling Unmarshal on nil Processor")
-		}
-	})
-	t.Run("StreamJSONL", func(t *testing.T) {
-		if err := p.StreamJSONL(strings.NewReader(`{"a":1}`), func(int, *IterableValue) error { return nil }); err == nil {
-			t.Error("expected error when calling StreamJSONL on nil Processor")
-		}
-	})
+	if len(out) != 1 {
+		t.Errorf("got %d internal patterns, want 1", len(out))
+	}
+	if len(toInternalPatterns(nil)) != 0 {
+		t.Error("nil input should yield empty result")
+	}
+}
 
-	// Typed getters: return the provided default (or zero value), no panic.
-	t.Run("GetString", func(t *testing.T) {
-		if got := p.GetString(`{"a":1}`, "a", "fallback"); got != "fallback" {
-			t.Errorf("GetString on nil Processor = %q, want default %q", got, "fallback")
-		}
-	})
+// TestSecurity_CustomDangerousPattern exercises scanCustomPatterns via
+// AdditionalDangerousPatterns (security.go).
+func TestSecurity_CustomDangerousPattern(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.AdditionalDangerousPatterns = []DangerousPattern{{Pattern: "mybomb", Name: "bomb"}}
+	p, _ := New(cfg)
+	defer p.Close()
 
-	// Information accessors: return a safe zero-value state, no panic.
-	t.Run("GetStats", func(t *testing.T) {
-		if stats := p.GetStats(); stats.IsClosed {
-			t.Errorf("GetStats on nil Processor reports IsClosed=true; want zero-value Stats")
-		}
-	})
-	t.Run("GetHealthStatus", func(t *testing.T) {
-		if hs := p.GetHealthStatus(); hs.Healthy {
-			t.Error("GetHealthStatus on nil Processor reports Healthy=true; want unhealthy")
-		}
-	})
-	t.Run("GetConfig", func(t *testing.T) {
-		_ = p.GetConfig() // must not panic; zero-value Config is acceptable
-	})
-	t.Run("SetLogger", func(t *testing.T) {
-		p.SetLogger(nil) // no-op on nil receiver; must not panic
-	})
+	var target map[string]any
+	err := p.Parse(`{"x":"this has mybomb in it"}`, &target)
+	if err == nil {
+		t.Error("expected custom dangerous pattern to be rejected")
+	}
+}
+
+// TestSecurity_EssentialSizeLimit exercises ValidateJSONInputEssential via
+// SkipValidation + size limit (security.go).
+func TestSecurity_EssentialSizeLimit(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.SkipValidation = true // essential checks still run
+	cfg.MaxJSONSize = 16
+	p, _ := New(cfg)
+	defer p.Close()
+
+	big := strings.Repeat("a", 100)
+	var target map[string]any
+	if err := p.Parse(`"`+big+`"`, &target); err == nil {
+		t.Error("expected size-limit error even with SkipValidation=true (essential check)")
+	}
+}
+
+// TestSecurity_NonASCIIPath exercises validatePathSecurity non-ASCII / NFC path
+// (security.go): must not panic and must remain usable.
+func TestSecurity_NonASCIIPath(t *testing.T) {
+	p, _ := New()
+	defer p.Close()
+	_, _ = Get(`{"café":1}`, "café")
 }

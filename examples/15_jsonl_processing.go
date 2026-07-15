@@ -88,13 +88,14 @@ func demonstrateJSONLWriter() {
 	var buf strings.Builder
 	writer := json.NewJSONLWriter(&buf)
 
-	// Write individual records
-	_ = writer.Write(map[string]any{"event": "click", "target": "button"})
-	_ = writer.Write(map[string]any{"event": "scroll", "target": "page"})
-	_ = writer.Write(map[string]any{"event": "submit", "target": "form"})
+	// Write individual records. The target is an in-memory strings.Builder, so
+	// write failures are not expected in this demo — errors are best-effort.
+	_ = writer.Write(map[string]any{"event": "click", "target": "button"}) // best-effort
+	_ = writer.Write(map[string]any{"event": "scroll", "target": "page"})  // best-effort
+	_ = writer.Write(map[string]any{"event": "submit", "target": "form"})  // best-effort
 
 	// Write raw JSON line
-	_ = writer.WriteRaw([]byte(`{"event":"hover","target":"link"}`))
+	_ = writer.WriteRaw([]byte(`{"event":"hover","target":"link"}`)) // best-effort
 
 	fmt.Printf("   Written JSONL:\n   %s", buf.String())
 
@@ -105,10 +106,13 @@ func demonstrateJSONLWriter() {
 	// WriteAll for batch writing
 	var buf2 strings.Builder
 	writer2 := json.NewJSONLWriter(&buf2)
-	_ = writer2.WriteAll([]any{
+	if err := writer2.WriteAll([]any{
 		map[string]any{"batch": 1, "count": 10},
 		map[string]any{"batch": 2, "count": 20},
-	})
+	}); err != nil {
+		fmt.Printf("   WriteAll error: %v\n", err)
+		return
+	}
 	fmt.Printf("   WriteAll output:\n   %s", buf2.String())
 }
 
@@ -187,7 +191,10 @@ func demonstrateProcessorJSONL() {
 	fmt.Println("\n   ReduceJSONL (sum scores):")
 	reader4 := strings.NewReader(jsonlData)
 	totalScore, err := processor.ReduceJSONL(reader4, 0, func(acc any, item *json.IterableValue) any {
-		return acc.(int) + item.GetInt("score")
+		// acc starts as the int 0 above and stays an int, but guard the
+		// assertion so a future change to the seed can't panic at runtime.
+		sum, _ := acc.(int)
+		return sum + item.GetInt("score")
 	})
 	if err != nil {
 		fmt.Printf("   ReduceJSONL error: %v\n", err)
@@ -205,6 +212,8 @@ func demonstrateProcessorJSONL() {
 	}
 	if found {
 		fmt.Printf("   Found: %v\n", first.GetData())
+	} else {
+		fmt.Println("   No matching record found")
 	}
 }
 

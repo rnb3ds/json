@@ -7,11 +7,27 @@ import (
 	"fmt"
 	"math"
 	"reflect"
+	"sort"
 	"strconv"
 	"sync"
 	"time"
 	"unicode/utf8"
 )
+
+// sortedMapKeys returns the keys of m in lexicographic order.
+//
+// encoding/json always emits object keys sorted; the fast encoder matches
+// that so its output is deterministic and byte-compatible with the standard
+// library (a map[string]any round-trip must not depend on Go's random map
+// iteration order).
+func sortedMapKeys[V any](m map[string]V) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
 
 // ============================================================================
 // LOOKUP TABLES FOR STRING ESCAPING
@@ -762,9 +778,15 @@ func isIntegerFloat(f float64) bool {
 // PERFORMANCE: Uses pre-computed common values and fast integer conversion
 // SECURITY: Special values (NaN, Inf) are encoded as null for JSON compatibility
 func (e *FastEncoder) EncodeFloat(n float64, bits int) {
-	// Fast path for zero
+	// Fast path for zero. Negative zero keeps its sign ("-0") for encoding/json
+	// parity (stdlib's floatEncoder emits the sign); positive zero stays on the
+	// fast path to avoid a strconv call for this very common value.
 	if n == 0 {
-		e.buf = append(e.buf, '0')
+		if math.Signbit(n) {
+			e.buf = append(e.buf, '-', '0')
+		} else {
+			e.buf = append(e.buf, '0')
+		}
 		return
 	}
 
@@ -811,8 +833,53 @@ func (e *FastEncoder) EncodeFloat(n float64, bits int) {
 		return
 	}
 
-	// Use strconv for general case
-	e.buf = strconv.AppendFloat(e.buf, n, 'f', -1, bits)
+	// General case: match encoding/json's floatEncoder so output stays
+	// compatible (e.g. 1e21 -> "1e+21", not a 22-digit decimal; very small
+	// magnitudes use scientific notation). AppendJSONFloat is the single source
+	// of truth shared with the root-package customEncoder.
+	e.buf = AppendJSONFloat(e.buf, n, bits)
+}
+
+// AppendJSONFloat appends f to dst using the same formatting rules as
+// encoding/json's floatEncoder (Go stdlib): shortest representation, 'f' for
+// moderate magnitudes, 'e' (lowercase, signed exponent) when abs < 1e-6 or
+// abs >= 1e21, plus the stdlib "e-09" -> "e-9" cleanup. bits is 32 or 64.
+//
+// This is the single source of truth for stdlib-compatible float formatting in
+// this package; FastEncoder.EncodeFloat and the root customEncoder both route
+// through it so their output stays identical and byte-compatible with
+// encoding/json for finite values.
+//
+// Callers must handle NaN/Inf BEFORE calling this — stdlib returns an
+// *UnsupportedValueError for those; this function assumes f is finite.
+func AppendJSONFloat(dst []byte, f float64, bits int) []byte {
+	abs := f
+	if f < 0 {
+		abs = -f
+	}
+	fmtByte := byte('f')
+	if abs != 0 {
+		if bits == 32 {
+			a := float32(abs)
+			if a < 1e-6 || a >= 1e21 {
+				fmtByte = 'e'
+			}
+		} else {
+			if abs < 1e-6 || abs >= 1e21 {
+				fmtByte = 'e'
+			}
+		}
+	}
+	dst = strconv.AppendFloat(dst, f, fmtByte, -1, bits)
+	if fmtByte == 'e' {
+		// clean up e-09 to e-9 (mirror encoding/json floatEncoder)
+		n := len(dst)
+		if n >= 4 && dst[n-4] == 'e' && dst[n-3] == '-' && dst[n-2] == '0' {
+			dst[n-2] = dst[n-1]
+			dst = dst[:n-1]
+		}
+	}
+	return dst
 }
 
 // EncodeBool encodes a boolean
@@ -837,7 +904,8 @@ func (e *FastEncoder) EncodeMap(m map[string]any) error {
 	e.buf = append(e.buf, '{')
 	first := true
 
-	for k, v := range m {
+	// Sorted iteration keeps output deterministic and encoding/json-compatible.
+	for _, k := range sortedMapKeys(m) {
 		if !first {
 			e.buf = append(e.buf, ',')
 		}
@@ -846,7 +914,7 @@ func (e *FastEncoder) EncodeMap(m map[string]any) error {
 		e.EncodeString(k)
 		e.buf = append(e.buf, ':')
 
-		if err := e.EncodeValue(v); err != nil {
+		if err := e.EncodeValue(m[k]); err != nil {
 			return err
 		}
 	}
@@ -866,7 +934,7 @@ func (e *FastEncoder) EncodeMapStringString(m map[string]string) error {
 	e.buf = append(e.buf, '{')
 	first := true
 
-	for k, v := range m {
+	for _, k := range sortedMapKeys(m) {
 		if !first {
 			e.buf = append(e.buf, ',')
 		}
@@ -874,7 +942,7 @@ func (e *FastEncoder) EncodeMapStringString(m map[string]string) error {
 
 		e.EncodeString(k)
 		e.buf = append(e.buf, ':')
-		e.EncodeString(v)
+		e.EncodeString(m[k])
 	}
 
 	e.buf = append(e.buf, '}')
@@ -892,7 +960,7 @@ func (e *FastEncoder) EncodeMapStringInt(m map[string]int) error {
 	e.buf = append(e.buf, '{')
 	first := true
 
-	for k, v := range m {
+	for _, k := range sortedMapKeys(m) {
 		if !first {
 			e.buf = append(e.buf, ',')
 		}
@@ -900,7 +968,7 @@ func (e *FastEncoder) EncodeMapStringInt(m map[string]int) error {
 
 		e.EncodeString(k)
 		e.buf = append(e.buf, ':')
-		e.EncodeInt(int64(v))
+		e.EncodeInt(int64(m[k]))
 	}
 
 	e.buf = append(e.buf, '}')
@@ -1042,10 +1110,11 @@ func (e *FastEncoder) EncodeFloat32Slice(arr []float32) {
 // PERFORMANCE: Specialized encoders avoid reflection overhead
 // ============================================================================
 
-// EncodeTime encodes a time.Time in RFC3339 format
+// EncodeTime encodes a time.Time in RFC3339Nano format, matching encoding/json
+// (which preserves sub-second precision via time.Time.MarshalJSON).
 func (e *FastEncoder) EncodeTime(t time.Time) {
 	e.buf = append(e.buf, '"')
-	e.buf = append(e.buf, t.Format(time.RFC3339)...)
+	e.buf = append(e.buf, t.Format(time.RFC3339Nano)...)
 	e.buf = append(e.buf, '"')
 }
 
@@ -1077,7 +1146,7 @@ func (e *FastEncoder) EncodeMapStringInt64(m map[string]int64) error {
 	e.buf = append(e.buf, '{')
 	first := true
 
-	for k, v := range m {
+	for _, k := range sortedMapKeys(m) {
 		if !first {
 			e.buf = append(e.buf, ',')
 		}
@@ -1085,7 +1154,7 @@ func (e *FastEncoder) EncodeMapStringInt64(m map[string]int64) error {
 
 		e.EncodeString(k)
 		e.buf = append(e.buf, ':')
-		e.EncodeInt(v)
+		e.EncodeInt(m[k])
 	}
 
 	e.buf = append(e.buf, '}')
@@ -1103,7 +1172,7 @@ func (e *FastEncoder) EncodeMapStringFloat64(m map[string]float64) error {
 	e.buf = append(e.buf, '{')
 	first := true
 
-	for k, v := range m {
+	for _, k := range sortedMapKeys(m) {
 		if !first {
 			e.buf = append(e.buf, ',')
 		}
@@ -1111,7 +1180,7 @@ func (e *FastEncoder) EncodeMapStringFloat64(m map[string]float64) error {
 
 		e.EncodeString(k)
 		e.buf = append(e.buf, ':')
-		e.EncodeFloat(v, 64)
+		e.EncodeFloat(m[k], 64)
 	}
 
 	e.buf = append(e.buf, '}')

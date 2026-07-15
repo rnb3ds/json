@@ -3,10 +3,53 @@ package json
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
+	"math"
 	"strings"
 	"testing"
 	"time"
 )
+
+// TestFloatEncoding_MatchesStdlib is a golden test for [D-002] C1: this package's
+// float formatting must match encoding/json byte-for-byte, including the 1e21
+// threshold (scientific notation) and the very-small (<1e-6) scientific form.
+// Previously the fast encoder used 'f' unconditionally, emitting a 22-digit
+// decimal for 1e21; the custom encoder used 'g' (uppercase E). Both now route
+// through internal.AppendJSONFloat which mirrors stdlib's floatEncoder.
+func TestFloatEncoding_MatchesStdlib(t *testing.T) {
+	values := []float64{
+		0, 1, -1, 100, -100,
+		0.5, -0.5, 3.141592653589793,
+		1e6, 1e15, 1e18, 1e20, // 'f' range
+		1e21, 1e22, 6.022e23, // 'e' range (>= 1e21)
+		1e-6, 1e-7, 9e-7, 1e-10, 1.5e-300, // 'e' range (< 1e-6)
+		123456789.123456789,
+		math.Copysign(0, -1), // negative zero -> "-0"
+	}
+	for _, v := range values {
+		got, err := Marshal(v)
+		if err != nil {
+			t.Errorf("Marshal(%v) error: %v", v, err)
+			continue
+		}
+		want, _ := json.Marshal(v)
+		if string(got) != string(want) {
+			t.Errorf("Marshal(%v) = %q, stdlib = %q (mismatch)", v, got, want)
+		}
+	}
+	// float32 through the fast path as well.
+	for _, v := range []float32{1e6, 1e21, 1e-7, 3.14} {
+		got, err := Marshal(v)
+		if err != nil {
+			t.Errorf("Marshal(float32 %v) error: %v", v, err)
+			continue
+		}
+		want, _ := json.Marshal(v)
+		if string(got) != string(want) {
+			t.Errorf("Marshal(float32 %v) = %q, stdlib = %q (mismatch)", v, got, want)
+		}
+	}
+}
 
 // TestEncodingAdvanced tests advanced encoding features
 func TestEncodingAdvanced(t *testing.T) {
@@ -1308,46 +1351,223 @@ func TestEncoding_EncodeStruct(t *testing.T) {
 	})
 }
 
-// TestEncoding_EncodeJSONNumber tests encodeJSONNumber paths
+// TestEncoding_EncodeJSONNumber tests encodeJSONNumber paths (table-driven).
 func TestEncoding_EncodeJSONNumber(t *testing.T) {
 	p, _ := New()
 	defer p.Close()
 
-	t.Run("preserve numbers", func(t *testing.T) {
+	tests := []struct {
+		name     string
+		preserve bool // Config.PreserveNumbers
+		num      string
+	}{
+		{"preserve numbers", true, "3.14159"},
+		{"integer number", false, "42"},
+		{"float number", false, "3.14"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := DefaultConfig()
+			cfg.PreserveNumbers = tt.preserve
+			result, err := p.EncodeWithConfig(map[string]any{"num": json.Number(tt.num)}, cfg)
+			if err != nil {
+				t.Fatalf("EncodeWithConfig error: %v", err)
+			}
+			if !strings.Contains(result, tt.num) {
+				t.Errorf("result %q should contain %q", result, tt.num)
+			}
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// FIX-001: encoding boundary & error-path coverage
+// ---------------------------------------------------------------------------
+
+// TestEncode_DeepNesting_MaxDepthLimit exercises the pre-encode depth guard
+// (encoding.go validateDepth). Marshal with Config.MaxDepth set must reject map
+// data nested beyond the limit rather than encoding it.
+func TestEncode_DeepNesting_MaxDepthLimit(t *testing.T) {
+	// 5-level deep map[string]any: a -> a -> a -> a -> v
+	deepest := map[string]any{"v": 1}
+	cur := any(deepest)
+	for i := 0; i < 4; i++ {
+		cur = map[string]any{"a": cur}
+	}
+	cfg := DefaultConfig()
+	cfg.MaxDepth = 3
+	cfg.SortKeys = true // bypass the simple-type fast path so validateDepth runs
+	_, err := Marshal(cur, cfg)
+	if err == nil {
+		t.Fatal("Marshal of data nested beyond MaxDepth must fail")
+	}
+	if !strings.Contains(err.Error(), "exceeds maximum") {
+		t.Errorf("expected depth-limit error, got %v", err)
+	}
+}
+
+// TestEncode_DeepStructNesting_ErrDepthLimit exercises the incremental depth
+// check inside the custom encoder (encoding.go:1319). validateDepth does not
+// recurse into structs, so deeply nested structs reach encodeValue's own guard
+// and surface ErrDepthLimit.
+func TestEncode_DeepStructNesting_ErrDepthLimit(t *testing.T) {
+	type node struct {
+		V any `json:"v"`
+	}
+	// node(1) -> node(2) -> node(3) -> node(4) -> 1
+	nested := node{V: node{V: node{V: node{V: 1}}}}
+	cfg := DefaultConfig()
+	cfg.MaxDepth = 3
+	cfg.SortKeys = true // force custom encoder so encodeValue's depth guard runs
+	_, err := Encode(nested, cfg)
+	if !errors.Is(err, ErrDepthLimit) {
+		t.Fatalf("expected ErrDepthLimit, got %v", err)
+	}
+}
+
+// TestEncodeJSONNumber_NonPreserve covers encodeJSONNumber's conversion branches
+// (encoding.go:1419) used when PreserveNumbers is false: integer, float, and
+// scientific-notation inputs must be normalized through Int64/Float64.
+func TestEncodeJSONNumber_NonPreserve(t *testing.T) {
+	cfg := DefaultConfig() // PreserveNumbers == false
+	cfg.SortKeys = true    // force custom encoder -> encodeValue -> encodeJSONNumber
+	cases := []struct {
+		name string
+		in   json.Number
+		want string
+	}{
+		{"integer", json.Number("42"), "42"},
+		{"negative int", json.Number("-7"), "-7"},
+		{"float", json.Number("3.14"), "3.14"},
+		{"scientific", json.Number("1e3"), "1000"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := Encode(tc.in, cfg)
+			if err != nil {
+				t.Fatalf("Encode(%s): %v", tc.in, err)
+			}
+			if got != tc.want {
+				t.Errorf("Encode(%s) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestEncodeStruct_OmitEmpty_ZeroFields covers isEmpty's type branches
+// (encoding.go:1847) via the custom struct encoder: zero-valued bool/int/uint/
+// float/slice/string fields tagged omitempty must be dropped from output.
+func TestEncodeStruct_OmitEmpty_ZeroFields(t *testing.T) {
+	type tagged struct {
+		Kept string  `json:"kept"`
+		B    bool    `json:"b,omitempty"`
+		I    int     `json:"i,omitempty"`
+		U    uint    `json:"u,omitempty"`
+		F    float64 `json:"f,omitempty"`
+		S    string  `json:"s,omitempty"`
+		Sl   []int   `json:"sl,omitempty"`
+	}
+	cfg := DefaultConfig()
+	cfg.SortKeys = true // force custom encoder so isEmpty runs
+
+	got, err := Encode(tagged{Kept: "x"}, cfg)
+	if err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+	// Only "kept" should survive; every zero omitempty field must be absent.
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(got), &parsed); err != nil {
+		t.Fatalf("output not valid JSON: %v (out=%q)", err, got)
+	}
+	if len(parsed) != 1 || parsed["kept"] != "x" {
+		t.Errorf("expected only {\"kept\":\"x\"}, got %q", got)
+	}
+}
+
+// TestEncodeStructFields_Coverage exercises the field-iteration branches of
+// encodeStructCustom (encoding.go:1747) that no other test reaches:
+//   - json:"-" excludes the field entirely
+//   - unexported fields are never emitted
+//   - a json tag renames the field, and SortKeys orders by the renamed key
+//   - a nil pointer is dropped when IncludeNulls=false and emitted as null when true
+func TestEncodeStructFields_Coverage(t *testing.T) {
+	type fields struct {
+		Public   string  `json:"public"`
+		Renamed  string  `json:"custom_name"`
+		Hidden   string  `json:"-"`
+		internal string  // unexported — must never appear in output
+		Maybe    *string `json:"maybe"`
+	}
+
+	val := "set"
+	populated := fields{
+		Public:   "p",
+		Renamed:  "r",
+		Hidden:   "h",
+		internal: "i",
+		Maybe:    &val,
+	}
+
+	t.Run("rename, dash-tag, unexported excluded and SortKeys by tag", func(t *testing.T) {
 		cfg := DefaultConfig()
-		cfg.PreserveNumbers = true
-		input := map[string]any{"num": json.Number("3.14159")}
-		result, err := p.EncodeWithConfig(input, cfg)
+		cfg.SortKeys = true // force custom encoder; also exercises tag-name sort
+
+		got, err := Encode(populated, cfg)
 		if err != nil {
-			t.Fatalf("EncodeWithConfig error: %v", err)
+			t.Fatalf("Encode: %v", err)
 		}
-		if !strings.Contains(result, "3.14159") {
-			t.Errorf("result %q should contain 3.14159", result)
+		var parsed map[string]any
+		if err := json.Unmarshal([]byte(got), &parsed); err != nil {
+			t.Fatalf("invalid JSON: %v (out=%q)", err, got)
+		}
+		// json:"-" and the unexported field must be absent; the bare field name
+		// "Renamed" must be replaced by its json tag "custom_name".
+		for _, banned := range []string{"Hidden", "hidden", "internal", "Renamed"} {
+			if _, ok := parsed[banned]; ok {
+				t.Errorf("field %q should be excluded, got %q", banned, got)
+			}
+		}
+		if parsed["custom_name"] != "r" {
+			t.Errorf("rename to custom_name failed: %q", got)
+		}
+		if parsed["public"] != "p" {
+			t.Errorf("public field lost: %q", got)
+		}
+		// SortKeys orders by key name: custom_name < maybe < public.
+		if !strings.HasPrefix(got, `{"custom_name":`) {
+			t.Errorf("expected custom_name first under SortKeys, got %q", got)
 		}
 	})
 
-	t.Run("integer number", func(t *testing.T) {
+	t.Run("nil pointer excluded when IncludeNulls false", func(t *testing.T) {
+		empty := fields{Public: "p", Maybe: nil}
 		cfg := DefaultConfig()
-		input := map[string]any{"num": json.Number("42")}
-		result, err := p.EncodeWithConfig(input, cfg)
+		cfg.IncludeNulls = false
+		cfg.SortKeys = true
+
+		got, err := Encode(empty, cfg)
 		if err != nil {
-			t.Fatalf("EncodeWithConfig error: %v", err)
+			t.Fatalf("Encode: %v", err)
 		}
-		if !strings.Contains(result, "42") {
-			t.Errorf("result %q should contain 42", result)
+		if strings.Contains(got, "maybe") {
+			t.Errorf("nil pointer should be dropped with IncludeNulls=false: %q", got)
 		}
 	})
 
-	t.Run("float number", func(t *testing.T) {
+	t.Run("nil pointer emitted as null when IncludeNulls true", func(t *testing.T) {
+		empty := fields{Public: "p", Maybe: nil}
 		cfg := DefaultConfig()
-		input := map[string]any{"num": json.Number("3.14")}
-		result, err := p.EncodeWithConfig(input, cfg)
+		cfg.IncludeNulls = true
+		cfg.SortKeys = true
+
+		got, err := Encode(empty, cfg)
 		if err != nil {
-			t.Fatalf("EncodeWithConfig error: %v", err)
+			t.Fatalf("Encode: %v", err)
 		}
-		if !strings.Contains(result, "3.14") {
-			t.Errorf("result %q should contain 3.14", result)
+		// With IncludeNulls=true the nil pointer is kept and renders as null.
+		if !strings.Contains(got, `"maybe":null`) {
+			t.Errorf("nil pointer should render as null with IncludeNulls=true: %q", got)
 		}
 	})
 }
-

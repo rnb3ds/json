@@ -6,6 +6,8 @@ import (
 	"io"
 	"reflect"
 	"runtime"
+	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -867,4 +869,283 @@ func TestShutdownGlobalProcessorClearsConfigCache(t *testing.T) {
 		t.Fatalf("Failed to restore processor: %v", err)
 	}
 	SetGlobalProcessor(p)
+}
+
+// ============================================================================
+// CONCURRENT-CACHE SAFETY (merged from concurrency_test.go)
+// ============================================================================
+
+// TestConcurrentCacheSafety tests concurrent access to various caches and
+// shared state. All caches follow the same access pattern, so they are
+// consolidated into a single table-driven test.
+func TestConcurrentCacheSafety(t *testing.T) {
+	cache := internal.GetGlobalCompiledPathCache()
+
+	tests := []struct {
+		name        string
+		concurrency int
+		iterations  int
+		workload    func(workerID, iteration int) error
+	}{
+		{
+			name:        "PathTypeCache",
+			concurrency: 20,
+			iterations:  100,
+			workload: func(_, _ int) error {
+				for _, path := range []string{"simple", "nested.path", "array[0]", "complex.nested[1].key", "very.deep.nested.path.with.many.segments"} {
+					_ = getPathType(path)
+				}
+				return nil
+			},
+		},
+		{
+			name:        "KeyInternMap",
+			concurrency: 20,
+			iterations:  100,
+			workload: func(_, _ int) error {
+				for _, key := range []string{"id", "name", "value", "timestamp", "metadata"} {
+					internal.GlobalKeyIntern.Intern(key)
+				}
+				return nil
+			},
+		},
+		{
+			name:        "DefaultProcessor",
+			concurrency: 20,
+			iterations:  1,
+			workload: func(_, _ int) error {
+				p := getDefaultProcessor()
+				if p == nil {
+					return errPtr("expected non-nil processor")
+				}
+				_, err := p.Get(`{"test": 1}`, "test")
+				return err
+			},
+		},
+		{
+			name:        "PathSegmentCache",
+			concurrency: 20,
+			iterations:  50,
+			workload: func(_, _ int) error {
+				for _, path := range []string{"simple", "nested.path", "array[0].item"} {
+					if segments, ok := internal.GlobalPathIntern.Get(path); ok {
+						if len(segments) == 0 {
+							return errPtr("empty segments for path " + path)
+						}
+					}
+				}
+				return nil
+			},
+		},
+		{
+			name:        "CompiledPathCache",
+			concurrency: 20,
+			iterations:  50,
+			workload: func(_, _ int) error {
+				for _, path := range []string{"simple", "nested.path", "array[0]"} {
+					cp, err := cache.Get(path)
+					if err != nil {
+						return err
+					}
+					if cp == nil {
+						return errPtr("nil CompiledPath for " + path)
+					}
+					cp.Release()
+				}
+				return nil
+			},
+		},
+		{
+			name:        "ValidationCache",
+			concurrency: 10,
+			iterations:  50,
+			workload: func(_, _ int) error {
+				p, err := New()
+				if err != nil {
+					return err
+				}
+				defer p.Close()
+				for _, jsonStr := range []string{`{"test": 1}`, `{"nested": {"key": "value"}}`, `{"array": [1, 2, 3]}`} {
+					_, err := p.Get(jsonStr, "test")
+					if err != nil && !strings.Contains(err.Error(), "not found") {
+						return err
+					}
+				}
+				return nil
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var wg sync.WaitGroup
+			errCh := make(chan error, tt.concurrency)
+
+			for i := 0; i < tt.concurrency; i++ {
+				wg.Add(1)
+				go func(workerID int) {
+					defer wg.Done()
+					for j := 0; j < tt.iterations; j++ {
+						if err := tt.workload(workerID, j); err != nil {
+							select {
+							case errCh <- err:
+							default:
+							}
+							return
+						}
+					}
+				}(i)
+			}
+
+			wg.Wait()
+			close(errCh)
+			for err := range errCh {
+				t.Errorf("concurrent %s failed: %v", tt.name, err)
+			}
+		})
+	}
+}
+
+// errPtr is a helper to create an error from a string for use in table-driven tests.
+func errPtr(msg string) error { return &testErr{msg: msg} }
+
+type testErr struct{ msg string }
+
+func (e *testErr) Error() string { return e.msg }
+
+// ============================================================================
+// CONCURRENCY-GOVERNANCE INVARIANTS (merged from governance_test.go)
+// ============================================================================
+
+// TestGovernance_EncodeFunnelNoNestedAcquire locks in that governing the encode
+// funnel (encodeWithConfigToBytes) does NOT cause nested semaphore acquisition in
+// limited-concurrency mode. Marshal/MarshalIndent/EncodeWithConfig/EncodeStream/
+// EncodeBatch all funnel through exactly one governed call; none of them govern
+// themselves. Under MaxConcurrency=1 a nested acquire would self-reject with
+// ErrConcurrencyLimit, so a spurious failure here is the canary for a nesting bug.
+func TestGovernance_EncodeFunnelNoNestedAcquire(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.MaxConcurrency = 1 // tightest legal limit: a nested acquire would fail at once
+	p, err := New(cfg)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer p.Close()
+
+	data := map[string]any{"k": []int{1, 2, 3}}
+
+	if _, err := p.Marshal(data); err != nil {
+		t.Fatalf("Marshal under MaxConcurrency=1: %v", err)
+	}
+	if _, err := p.MarshalIndent(data, "", "  "); err != nil {
+		t.Fatalf("MarshalIndent under MaxConcurrency=1: %v", err)
+	}
+	if _, err := p.EncodeWithConfig(data); err != nil {
+		t.Fatalf("EncodeWithConfig under MaxConcurrency=1: %v", err)
+	}
+	// EncodeStream funnels through EncodeWithConfig -> encodeWithConfigToBytes.
+	if _, err := p.EncodeStream([]any{data, data, data}); err != nil {
+		t.Fatalf("EncodeStream under MaxConcurrency=1: %v", err)
+	}
+	if _, err := p.EncodeBatch(map[string]any{"a": 1, "b": 2}); err != nil {
+		t.Fatalf("EncodeBatch under MaxConcurrency=1: %v", err)
+	}
+}
+
+// TestGovernance_StreamJSONLWorksUnderConcurrencyLimit confirms that acquiring
+// governance once for the whole stream does not break normal streaming and does
+// not self-reject when MaxConcurrency is small.
+func TestGovernance_StreamJSONLWorksUnderConcurrencyLimit(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.MaxConcurrency = 2
+	p, err := New(cfg)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer p.Close()
+
+	in := `{"i":1}
+{"i":2}
+{"i":3}
+`
+	count := 0
+	err = p.StreamJSONL(strings.NewReader(in), func(lineNum int, item *IterableValue) error {
+		count++
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("StreamJSONL under MaxConcurrency=2: %v", err)
+	}
+	if count != 3 {
+		t.Fatalf("expected 3 lines, got %d", count)
+	}
+}
+
+// TestGovernance_StreamJSONLParallelUnderLimit exercises the parallel stream: the
+// scanner goroutine holds the single in-flight slot for the whole run while worker
+// goroutines run unregistered. Under MaxConcurrency=1 this must still succeed —
+// workers must not contend the limit, only the outer stream call registers.
+func TestGovernance_StreamJSONLParallelUnderLimit(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.MaxConcurrency = 1
+	p, err := New(cfg)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer p.Close()
+
+	var sb strings.Builder
+	for i := 1; i <= 20; i++ {
+		sb.WriteString(`{"i":`)
+		sb.WriteString(strconv.Itoa(i))
+		sb.WriteString("}\n")
+	}
+
+	count := 0
+	err = p.StreamJSONLParallelWithContext(
+		context.Background(),
+		strings.NewReader(sb.String()),
+		4,
+		func(lineNum int, item *IterableValue) error {
+			count++
+			return nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("StreamJSONLParallelWithContext under MaxConcurrency=1: %v", err)
+	}
+	if count != 20 {
+		t.Fatalf("expected 20 lines, got %d", count)
+	}
+}
+
+// TestGovernance_StreamJSONLChunkedUnderLimit confirms the chunked stream variant
+// is also governed exactly once and works under a tight limit.
+func TestGovernance_StreamJSONLChunkedUnderLimit(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.MaxConcurrency = 1
+	p, err := New(cfg)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer p.Close()
+
+	var sb strings.Builder
+	for i := 1; i <= 25; i++ {
+		sb.WriteString(`{"i":`)
+		sb.WriteString(strconv.Itoa(i))
+		sb.WriteString("}\n")
+	}
+
+	processed := 0
+	err = p.StreamJSONLChunked(strings.NewReader(sb.String()), 10, func(chunk []*IterableValue) error {
+		processed += len(chunk)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("StreamJSONLChunked under MaxConcurrency=1: %v", err)
+	}
+	if processed != 25 {
+		t.Fatalf("expected 25 items, got %d", processed)
+	}
 }

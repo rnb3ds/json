@@ -21,6 +21,7 @@ import (
 // - CompiledPath for skipping path parsing overhead
 // - SetCreate and SetMultipleCreate for path auto-creation
 // - DeleteClean for automatic cleanup after deletion
+// - Package-level convenience functions (no Processor needed)
 //
 // Run: go run -tags=example examples/17_advanced_patterns.go
 
@@ -42,6 +43,9 @@ func main() {
 
 	// 5. PERFORMANCE COMPARISON
 	demonstratePerformanceComparison()
+
+	// 6. PACKAGE-LEVEL CONVENIENCE
+	demonstratePackageLevelConvenience()
 
 	fmt.Println("\nAdvanced patterns examples complete!")
 }
@@ -255,6 +259,7 @@ func demonstratePerformanceComparison() {
 	processor, _ := json.New(json.DefaultConfig()) // OK: preset config always valid
 	defer processor.Close()
 
+	// Benchmark loops discard errors to avoid skewing the measurement.
 	// Regular Get
 	start := time.Now()
 	for i := 0; i < iterations; i++ {
@@ -262,8 +267,14 @@ func demonstratePerformanceComparison() {
 	}
 	regularDuration := time.Since(start)
 
-	// CompiledPath
-	compiled, _ := processor.CompilePath(path)
+	// CompiledPath — check the error and Release the compiled path (it holds
+	// pooled resources; leaking it was the original smell).
+	compiled, err := processor.CompilePath(path)
+	if err != nil {
+		fmt.Printf("   CompilePath error: %v\n", err)
+		return
+	}
+	defer compiled.Release()
 	start = time.Now()
 	for i := 0; i < iterations; i++ {
 		_, _ = processor.GetCompiled(testJSON, compiled)
@@ -271,7 +282,11 @@ func demonstratePerformanceComparison() {
 	compiledDuration := time.Since(start)
 
 	// PreParse
-	parsed, _ := processor.PreParse(testJSON)
+	parsed, err := processor.PreParse(testJSON)
+	if err != nil {
+		fmt.Printf("   PreParse error: %v\n", err)
+		return
+	}
 	start = time.Now()
 	for i := 0; i < iterations; i++ {
 		_, _ = processor.GetFromParsed(parsed, path)
@@ -299,4 +314,45 @@ func demonstratePerformanceComparison() {
 	if preparseDuration > 0 {
 		fmt.Printf("   PreParse:        %.2fx\n", float64(regularDuration)/float64(preparseDuration))
 	}
+}
+
+func demonstratePackageLevelConvenience() {
+	fmt.Println("\n6. Package-level Convenience (no Processor needed)")
+	fmt.Println("-----------------------------------------------------")
+
+	// SetCreate, SetMultiple, DeleteClean, and SafeGet all have package-level
+	// forms that use a cached default processor — handy when you don't need an
+	// explicit Processor instance.
+	data := `{"user":{"name":"Alice"}}`
+
+	// Package-level SetCreate (auto-creates intermediate paths).
+	updated, err := json.SetCreate(data, "user.profile.role", "admin")
+	if err != nil {
+		fmt.Printf("   SetCreate error: %v\n", err)
+		return
+	}
+	fmt.Printf("   SetCreate: %s\n", updated)
+
+	// Package-level SetMultiple (multiple paths in one call).
+	updated, err = json.SetMultiple(updated, map[string]any{
+		"user.profile.team": "platform",
+		"user.active":       true,
+	})
+	if err != nil {
+		fmt.Printf("   SetMultiple error: %v\n", err)
+		return
+	}
+	fmt.Printf("   SetMultiple: %s\n", updated)
+
+	// Package-level DeleteClean (delete + sweep nulls/empties).
+	cleaned, err := json.DeleteClean(updated, "user.profile.role")
+	if err != nil {
+		fmt.Printf("   DeleteClean error: %v\n", err)
+		return
+	}
+	fmt.Printf("   DeleteClean: %s\n", cleaned)
+
+	// Package-level SafeGet (returns AccessResult, no error).
+	r := json.SafeGet(data, "user.name")
+	fmt.Printf("   SafeGet('user.name'): exists=%t value=%v\n", r.Exists, r.Value)
 }

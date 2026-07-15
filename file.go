@@ -32,7 +32,7 @@ import (
 //	    // Handle error
 //	}
 func (p *Processor) LoadFromFile(filePath string, cfg ...Config) (string, error) {
-	data, err := p.readValidatedFile(filePath)
+	data, err := p.readValidatedFile(filePath, cfg...)
 	if err != nil {
 		return "", err
 	}
@@ -43,7 +43,7 @@ func (p *Processor) LoadFromFile(filePath string, cfg ...Config) (string, error)
 // This is a convenience method that combines LoadFromFile and Parse.
 // The file path is validated for security before reading.
 func (p *Processor) loadFromFileAsData(filePath string, cfg ...Config) (any, error) {
-	data, err := p.readValidatedFile(filePath)
+	data, err := p.readValidatedFile(filePath, cfg...)
 	if err != nil {
 		return nil, err
 	}
@@ -52,10 +52,28 @@ func (p *Processor) loadFromFileAsData(filePath string, cfg ...Config) (any, err
 	return jsonData, err
 }
 
+// effectiveReadMaxSize returns the byte cap to apply when reading input for an
+// operation. When the caller supplies a per-call Config, its MaxJSONSize takes
+// effect (matching validateInputForOptions, so the read limit and the
+// validation limit agree); otherwise the processor's baked-in limit is used.
+// A non-positive value falls back to DefaultMaxJSONSize in both cases.
+func (p *Processor) effectiveReadMaxSize(cfg ...Config) int64 {
+	maxSize := p.config.MaxJSONSize
+	if maxSize <= 0 {
+		maxSize = int64(DefaultMaxJSONSize)
+	}
+	if len(cfg) > 0 && cfg[0].MaxJSONSize > 0 {
+		maxSize = cfg[0].MaxJSONSize
+	}
+	return maxSize
+}
+
 // readValidatedFile validates the file path and reads the file content.
 // Shared helper to eliminate duplicate validation+reading code.
 // Uses io.LimitReader to enforce size limits during read, preventing TOCTOU races.
-func (p *Processor) readValidatedFile(filePath string) ([]byte, error) {
+// Honors a per-call cfg.MaxJSONSize so tightened limits take effect during the
+// read itself, not only at the subsequent Parse/Unmarshal step.
+func (p *Processor) readValidatedFile(filePath string, cfg ...Config) ([]byte, error) {
 	if err := p.checkClosed(); err != nil {
 		return nil, err
 	}
@@ -63,10 +81,7 @@ func (p *Processor) readValidatedFile(filePath string) ([]byte, error) {
 		return nil, err
 	}
 
-	maxSize := p.config.MaxJSONSize
-	if maxSize <= 0 {
-		maxSize = int64(DefaultMaxJSONSize)
-	}
+	maxSize := p.effectiveReadMaxSize(cfg...)
 
 	f, err := os.Open(filePath)
 	if err != nil {
@@ -112,7 +127,7 @@ func (p *Processor) readValidatedFile(filePath string) ([]byte, error) {
 //	defer file.Close()
 //	jsonStr, err := processor.LoadFromReader(file)
 func (p *Processor) LoadFromReader(reader io.Reader, cfg ...Config) (string, error) {
-	data, err := p.readValidatedReader(reader)
+	data, err := p.readValidatedReader(reader, cfg...)
 	if err != nil {
 		return "", err
 	}
@@ -127,7 +142,7 @@ func (p *Processor) LoadFromReader(reader io.Reader, cfg ...Config) (string, err
 //	defer resp.Body.Close()
 //	data, err := processor.LoadFromReaderAsData(resp.Body)
 func (p *Processor) loadFromReaderAsData(reader io.Reader, cfg ...Config) (any, error) {
-	data, err := p.readValidatedReader(reader)
+	data, err := p.readValidatedReader(reader, cfg...)
 	if err != nil {
 		return nil, err
 	}
@@ -138,15 +153,13 @@ func (p *Processor) loadFromReaderAsData(reader io.Reader, cfg ...Config) (any, 
 
 // readValidatedReader reads from a reader with size limiting and validation.
 // Shared helper to eliminate duplicate reader validation code.
-func (p *Processor) readValidatedReader(reader io.Reader) ([]byte, error) {
+// Honors a per-call cfg.MaxJSONSize (see effectiveReadMaxSize).
+func (p *Processor) readValidatedReader(reader io.Reader, cfg ...Config) ([]byte, error) {
 	if err := p.checkClosed(); err != nil {
 		return nil, err
 	}
 	// Guard against zero-value MaxJSONSize which would limit reads to 1 byte
-	maxSize := p.config.MaxJSONSize
-	if maxSize <= 0 {
-		maxSize = int64(DefaultMaxJSONSize)
-	}
+	maxSize := p.effectiveReadMaxSize(cfg...)
 	// Read one byte beyond MaxJSONSize to detect truncation
 	limitedReader := io.LimitReader(reader, maxSize+1)
 	data, err := io.ReadAll(limitedReader)
@@ -221,6 +234,40 @@ func (p *Processor) createDirectoryIfNotExists(filePath string) error {
 	return nil
 }
 
+// atomicWriteFile writes data to path atomically: it writes to a sibling temp
+// file in the same directory, then renames it over the target. Rename is
+// atomic on POSIX (rename(2)) and on Windows (MoveFileEx with
+// REPLACE_EXISTING), so a crash or I/O error mid-write cannot leave the
+// existing file truncated/half-written — the previous os.WriteFile opened with
+// O_TRUNC and could. Existing file permissions are preserved (matching
+// os.WriteFile, which does not change perms on truncate).
+func atomicWriteFile(path string, data []byte, mode os.FileMode) error {
+	dir := filepath.Dir(path)
+	if fi, err := os.Stat(path); err == nil {
+		// Preserve existing permissions; os.WriteFile keeps them on truncate.
+		mode = fi.Mode()
+	}
+	f, err := os.CreateTemp(dir, ".json-tmp-*")
+	if err != nil {
+		return err
+	}
+	tmp := f.Name()
+	// Best-effort cleanup: no-op after a successful rename (tmp no longer
+	// exists at that name), removes the temp on any failure path.
+	defer func() { _ = os.Remove(tmp) }()
+	if _, err := f.Write(data); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	if err := os.Chmod(tmp, mode); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
+}
+
 // SaveToFile saves data to a JSON file using Config.
 // This is the unified API that accepts variadic Config.
 // Creates parent directories if they don't exist.
@@ -270,8 +317,9 @@ func (p *Processor) SaveToFile(filePath string, data any, cfg ...Config) error {
 		return err
 	}
 
-	// Write to file
-	err = os.WriteFile(filePath, []byte(jsonStr), 0644)
+	// Write to file atomically (temp + rename) so a crash mid-write cannot
+	// truncate the existing file.
+	err = atomicWriteFile(filePath, []byte(jsonStr), 0644)
 	if err != nil {
 		return &JsonsError{
 			Op:      "save_to_file",
@@ -387,8 +435,9 @@ func (p *Processor) MarshalToFile(path string, data any, cfg ...Config) error {
 		}
 	}
 
-	// Write JSON bytes to file
-	if err := os.WriteFile(path, jsonBytes, 0644); err != nil {
+	// Write JSON bytes to file atomically (temp + rename) so a crash mid-write
+	// cannot truncate the existing file.
+	if err := atomicWriteFile(path, jsonBytes, 0644); err != nil {
 		return &JsonsError{
 			Op:      "marshal_to_file",
 			Message: fmt.Sprintf("failed to write file: %v", err),
@@ -437,10 +486,9 @@ func (p *Processor) UnmarshalFromFile(path string, v any, cfg ...Config) error {
 		return err
 	}
 
-	maxSize := p.config.MaxJSONSize
-	if maxSize <= 0 {
-		maxSize = int64(DefaultMaxJSONSize)
-	}
+	// Honor a per-call cfg.MaxJSONSize during the read so a tightened limit
+	// caps the bytes read into memory, not just the later Unmarshal step.
+	maxSize := p.effectiveReadMaxSize(cfg...)
 
 	// Read file contents with size limiting during read
 	f, err := os.Open(path)
@@ -676,7 +724,12 @@ func containsBasicTraversalPattern(s string) bool {
 			i++ // Skip past ".." to avoid false matches
 		}
 	}
-	return containsConsecutiveDots(s, 3)
+	// NOTE: a bare run of 3+ dots (e.g. "report...draft.json") is a legal
+	// filename, not traversal. The dangerous multi-dot forms ("....//",
+	// ".....", "......", encoded variants) are covered by containsEncodedPattern
+	// via getTraversalPatterns, and parent-dir ".." is caught above. Flagging
+	// any 3-dot run here only rejected legitimate filenames (false positive).
+	return false
 }
 
 // getTraversalPatterns returns the list of known traversal attack patterns.
@@ -954,7 +1007,7 @@ func NewNDJSONProcessor(cfg ...Config) *NDJSONProcessor {
 //     (per-line parse/depth errors or fn errors; see ProcessReader)
 func (np *NDJSONProcessor) ProcessFile(filename string, fn func(lineNum int, obj map[string]any) error) error {
 	if np == nil {
-		return &JsonsError{Op: "ndjson_process", Message: "nil NDJSONProcessor"}
+		return &JsonsError{Op: "ndjson_process", Message: "nil NDJSONProcessor", Err: errInternalError}
 	}
 	// SECURITY: Validate file path to prevent path traversal attacks
 	if err := validateFilePathStandalone(filename); err != nil {
@@ -963,7 +1016,7 @@ func (np *NDJSONProcessor) ProcessFile(filename string, fn func(lineNum int, obj
 
 	file, err := os.Open(filename)
 	if err != nil {
-		return err
+		return &JsonsError{Op: "ndjson_process", Message: fmt.Sprintf("failed to open file: %v", err), Err: err}
 	}
 	defer func() { _ = file.Close() }() // best-effort cleanup; error ignored in defer
 
@@ -978,7 +1031,13 @@ func (np *NDJSONProcessor) ProcessFile(filename string, fn func(lineNum int, obj
 //     nesting-depth limit or fails to parse (skipped when JSONLContinueOnErr is set)
 //   - any error returned by fn, or while reading reader
 //     (including bufio.ErrTooLong when a line exceeds MaxJSONSize)
-func (np *NDJSONProcessor) ProcessReader(reader io.Reader, fn func(lineNum int, obj map[string]any) error) error {
+func (np *NDJSONProcessor) ProcessReader(reader io.Reader, fn func(lineNum int, obj map[string]any) error) (err error) {
+	// SAFETY (SEC-003): a panicking user callback must not crash the program.
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("ndjson callback panicked: %v", r)
+		}
+	}()
 	maxLineSize := np.config.MaxJSONSize
 	if maxLineSize <= 0 {
 		maxLineSize = int64(DefaultMaxJSONSize)
@@ -1082,17 +1141,21 @@ func checkNestingDepth(data []byte, maxDepth int) error {
 //   - ErrProcessorClosed: processor has been closed
 //   - errors from LoadFromFile (ErrSecurityViolation, file read, ErrSizeLimit, ErrInvalidJSON)
 //   - any error returned by fn (item.Break() stops iteration without an error)
-func (p *Processor) ForeachFile(filePath string, fn func(key any, item *IterableValue) error) error {
+//
+// Accepts an optional Config for per-call parsing and security-validation options,
+// forwarded to LoadFromFile and the underlying iteration. This aligns ForeachFile
+// with the in-memory Foreach family.
+func (p *Processor) ForeachFile(filePath string, fn func(key any, item *IterableValue) error, cfg ...Config) error {
 	if err := p.checkClosed(); err != nil {
 		return err
 	}
 
-	jsonStr, err := p.LoadFromFile(filePath)
+	jsonStr, err := p.LoadFromFile(filePath, cfg...)
 	if err != nil {
 		return err
 	}
 
-	return p.ForeachWithError(jsonStr, ".", fn)
+	return p.ForeachWithError(jsonStr, ".", fn, cfg...)
 }
 
 // ForeachFileWithPath iterates over JSON arrays or objects at a specific path from a file.
@@ -1109,17 +1172,20 @@ func (p *Processor) ForeachFile(filePath string, fn func(key any, item *Iterable
 //   - errors from LoadFromFile (ErrSecurityViolation, file read, ErrSizeLimit, ErrInvalidJSON)
 //   - errors from resolving path (ErrPathNotFound, ErrTypeMismatch)
 //   - any error returned by fn (item.Break() stops iteration without an error)
-func (p *Processor) ForeachFileWithPath(filePath, path string, fn func(key any, item *IterableValue) error) error {
+//
+// Accepts an optional Config for per-call parsing and security-validation options,
+// forwarded to LoadFromFile and the underlying iteration.
+func (p *Processor) ForeachFileWithPath(filePath, path string, fn func(key any, item *IterableValue) error, cfg ...Config) error {
 	if err := p.checkClosed(); err != nil {
 		return err
 	}
 
-	jsonStr, err := p.LoadFromFile(filePath)
+	jsonStr, err := p.LoadFromFile(filePath, cfg...)
 	if err != nil {
 		return err
 	}
 
-	return p.ForeachWithError(jsonStr, path, fn)
+	return p.ForeachWithError(jsonStr, path, fn, cfg...)
 }
 
 // ForeachFileChunked iterates over JSON arrays from a file in chunks (batches).
@@ -1140,7 +1206,18 @@ func (p *Processor) ForeachFileWithPath(filePath, path string, fn func(key any, 
 //   - errors from LoadFromFile (ErrSecurityViolation, file read, ErrSizeLimit, ErrInvalidJSON)
 //   - ErrTypeMismatch: the root value is not a JSON array
 //   - any error returned by fn (item.Break() stops iteration without an error)
-func (p *Processor) ForeachFileChunked(filePath string, chunkSize int, fn func(chunk []*IterableValue) error) error {
+//
+// Accepts an optional Config for per-call parsing and security-validation options,
+// forwarded to LoadFromFile and the underlying Get.
+func (p *Processor) ForeachFileChunked(filePath string, chunkSize int, fn func(chunk []*IterableValue) error, cfg ...Config) (err error) {
+	// SAFETY (SEC-003): a panicking user callback must not crash the program.
+	// A pooled IterableValue held in the current chunk at panic time is simply not
+	// returned — sync.Pool tolerates that (best-effort by design).
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("foreach file callback panicked: %v", r)
+		}
+	}()
 	if err := p.checkClosed(); err != nil {
 		return err
 	}
@@ -1149,12 +1226,12 @@ func (p *Processor) ForeachFileChunked(filePath string, chunkSize int, fn func(c
 		chunkSize = 100
 	}
 
-	jsonStr, err := p.LoadFromFile(filePath)
+	jsonStr, err := p.LoadFromFile(filePath, cfg...)
 	if err != nil {
 		return err
 	}
 
-	data, err := p.Get(jsonStr, ".")
+	data, err := p.Get(jsonStr, ".", cfg...)
 	if err != nil {
 		return err
 	}
@@ -1215,17 +1292,20 @@ func (p *Processor) ForeachFileChunked(filePath string, chunkSize int, fn func(c
 //   - ErrProcessorClosed: processor has been closed
 //   - errors from LoadFromFile (ErrSecurityViolation, file read, ErrSizeLimit, ErrInvalidJSON)
 //   - any error returned by fn (item.Break() stops iteration without an error)
-func (p *Processor) ForeachFileNested(filePath string, fn func(key any, item *IterableValue) error) error {
+//
+// Accepts an optional Config for per-call parsing and security-validation options,
+// forwarded to LoadFromFile and the underlying iteration.
+func (p *Processor) ForeachFileNested(filePath string, fn func(key any, item *IterableValue) error, cfg ...Config) error {
 	if err := p.checkClosed(); err != nil {
 		return err
 	}
 
-	jsonStr, err := p.LoadFromFile(filePath)
+	jsonStr, err := p.LoadFromFile(filePath, cfg...)
 	if err != nil {
 		return err
 	}
 
-	return p.ForeachNestedWithError(jsonStr, fn)
+	return p.ForeachNestedWithError(jsonStr, fn, cfg...)
 }
 
 // ============================================================================
@@ -1246,9 +1326,11 @@ func (p *Processor) ForeachFileNested(filePath string, fn func(key any, item *It
 //	})
 //
 // Errors: see Processor.ForeachFile.
-func ForeachFile(filePath string, fn func(key any, item *IterableValue) error) error {
+//
+// Accepts an optional Config, forwarded to Processor.ForeachFile.
+func ForeachFile(filePath string, fn func(key any, item *IterableValue) error, cfg ...Config) error {
 	return withProcessorError(func(p *Processor) error {
-		return p.ForeachFile(filePath, fn)
+		return p.ForeachFile(filePath, fn, cfg...)
 	})
 }
 
@@ -1262,9 +1344,11 @@ func ForeachFile(filePath string, fn func(key any, item *IterableValue) error) e
 //	})
 //
 // Errors: see Processor.ForeachFileWithPath.
-func ForeachFileWithPath(filePath, path string, fn func(key any, item *IterableValue) error) error {
+//
+// Accepts an optional Config, forwarded to Processor.ForeachFileWithPath.
+func ForeachFileWithPath(filePath, path string, fn func(key any, item *IterableValue) error, cfg ...Config) error {
 	return withProcessorError(func(p *Processor) error {
-		return p.ForeachFileWithPath(filePath, path, fn)
+		return p.ForeachFileWithPath(filePath, path, fn, cfg...)
 	})
 }
 
@@ -1282,9 +1366,11 @@ func ForeachFileWithPath(filePath, path string, fn func(key any, item *IterableV
 //	})
 //
 // Errors: see Processor.ForeachFileChunked.
-func ForeachFileChunked(filePath string, chunkSize int, fn func(chunk []*IterableValue) error) error {
+//
+// Accepts an optional Config, forwarded to Processor.ForeachFileChunked.
+func ForeachFileChunked(filePath string, chunkSize int, fn func(chunk []*IterableValue) error, cfg ...Config) error {
 	return withProcessorError(func(p *Processor) error {
-		return p.ForeachFileChunked(filePath, chunkSize, fn)
+		return p.ForeachFileChunked(filePath, chunkSize, fn, cfg...)
 	})
 }
 
@@ -1298,8 +1384,10 @@ func ForeachFileChunked(filePath string, chunkSize int, fn func(chunk []*Iterabl
 //	})
 //
 // Errors: see Processor.ForeachFileNested.
-func ForeachFileNested(filePath string, fn func(key any, item *IterableValue) error) error {
+//
+// Accepts an optional Config, forwarded to Processor.ForeachFileNested.
+func ForeachFileNested(filePath string, fn func(key any, item *IterableValue) error, cfg ...Config) error {
 	return withProcessorError(func(p *Processor) error {
-		return p.ForeachFileNested(filePath, fn)
+		return p.ForeachFileNested(filePath, fn, cfg...)
 	})
 }

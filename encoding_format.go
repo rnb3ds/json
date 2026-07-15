@@ -42,7 +42,7 @@ func (p *Processor) Prettify(jsonStr string, cfg ...Config) (string, error) {
 	}
 	defer releaseConfig(options)
 
-	if err := p.validateInput(jsonStr); err != nil {
+	if err := p.validateInputForOptions(jsonStr, options); err != nil {
 		return "", err
 	}
 
@@ -122,6 +122,10 @@ func (p *Processor) formatJSONString(jsonStr string, pretty bool) (string, error
 // This is useful for minimizing JSON size for transmission or storage.
 // The result is a single-line JSON string with no unnecessary whitespace.
 //
+// The package-level mirror of this method is CompactString (json.CompactString(s)
+// ↔ processor.Compact(s)). The buffer-based encoding/json-compatible form is
+// CompactBuffer (json.Compact(dst, src) ↔ processor.CompactBuffer).
+//
 // Errors:
 //   - ErrProcessorClosed: processor has been closed
 //   - ErrInvalidJSON: jsonStr is not valid JSON
@@ -145,7 +149,7 @@ func (p *Processor) Compact(jsonStr string, cfg ...Config) (string, error) {
 	}
 	defer releaseConfig(options)
 
-	if err := p.validateInput(jsonStr); err != nil {
+	if err := p.validateInputForOptions(jsonStr, options); err != nil {
 		return "", err
 	}
 
@@ -256,4 +260,3 @@ func (p *Processor) HTMLEscape(dst *bytes.Buffer, src []byte, cfg ...Config) {
 	_ = cfg // Config not used; character-level escaping requires no re-encoding
 	internal.HTMLEscapeTo(dst, string(src))
 }
-

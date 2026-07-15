@@ -97,6 +97,29 @@ func (p *Processor) Get(jsonStr, path string, cfg ...Config) (result any, err er
 		}
 	}()
 
+	// Run registered hooks around the operation. A Before hook may abort the
+	// operation by returning an error; an After hook may observe or transform the
+	// result/error. This defer is registered last so it unwinds first, letting
+	// hooks see the raw result before metrics/logging cleanup run. snapshotHooks
+	// returns nil in the common no-hook case, so the whole block is skipped.
+	hc := p.snapshotHooks()
+	if len(hc) > 0 {
+		hookCtx := HookContext{
+			Operation: "get",
+			JSONStr:   jsonStr,
+			Path:      path,
+			Config:    options,
+			StartTime: time.Now(),
+		}
+		if hookErr := hc.executeBefore(hookCtx); hookErr != nil {
+			p.incrementErrorCount()
+			return nil, hookErr
+		}
+		defer func() {
+			result, err = hc.executeAfter(hookCtx, result, err)
+		}()
+	}
+
 	// Validate input using unified helper (handles SkipValidation internally)
 	if err := p.validateOperationInput(jsonStr, path, options); err != nil {
 		p.incrementErrorCount()
@@ -106,7 +129,15 @@ func (p *Processor) Get(jsonStr, path string, cfg ...Config) (result any, err er
 	// PERFORMANCE: Fast path for simple property access without cache overhead.
 	// Bypasses hash computation, cache key creation, and recursive processor
 	// for the most common case: single-key lookup on a JSON object.
-	if isSimplePropertyAccess(path) && !p.config.EnableCache && len(cfg) == 0 {
+	// PERFORMANCE: Fast path for simple property access without cache overhead.
+	// Bypasses hash computation, cache key creation, and recursive processor
+	// for the most common case: single-key lookup on a JSON object.
+	//
+	// PreserveNumbers must be off for this path: unmarshalRootObject uses stdlib
+	// json.Unmarshal which always yields float64, so a big-integer property would
+	// lose precision here. When PreserveNumbers is on, fall through to parseJSON
+	// (which routes to p.Parse and preserves json.Number).
+	if isSimplePropertyAccess(path) && !p.config.EnableCache && !p.config.PreserveNumbers && len(cfg) == 0 {
 		m, isObj, parseErr := unmarshalRootObject(jsonStr)
 		if parseErr != nil {
 			p.incrementErrorCount()
@@ -128,7 +159,7 @@ func (p *Processor) Get(jsonStr, path string, cfg ...Config) (result any, err er
 
 	// PERFORMANCE: Skip hash and cache operations when cache is disabled
 	if !p.config.EnableCache {
-		data, parseErr := p.parseJSON(jsonStr, "get", path, options, cfg...)
+		data, parseErr := p.parseJSON(jsonStr, "get", path, options)
 		if parseErr != nil {
 			p.incrementErrorCount()
 			return nil, parseErr
@@ -163,6 +194,13 @@ func (p *Processor) Get(jsonStr, path string, cfg ...Config) (result any, err er
 		// This avoids the deepCopySubtree overhead for ~60% of Get results.
 		switch cached.(type) {
 		case nil, bool, float64, string, json.Number:
+			return cached, nil
+		}
+		// PERFORMANCE: When CacheSharedResults is enabled, return the cached
+		// value directly. The caller has opted into the "do not mutate" contract
+		// (see Config.CacheSharedResults), so the defensive deep copy — the
+		// dominant cost of repeated Gets on large results — is skipped entirely.
+		if p.config.CacheSharedResults {
 			return cached, nil
 		}
 		copied, copyErr := deepCopySubtree(cached)
@@ -288,7 +326,7 @@ func (p *Processor) PreParse(jsonStr string, cfg ...Config) (*ParsedJSON, error)
 	defer releaseConfig(options)
 
 	// Validate input
-	if err := p.validateInput(jsonStr); err != nil {
+	if err := p.validateInputForOptions(jsonStr, options); err != nil {
 		return nil, err
 	}
 
@@ -356,8 +394,12 @@ func (p *Processor) GetFromParsed(parsed *ParsedJSON, path string, cfg ...Config
 		}
 	}
 
-	// Protect cached parsed data from caller mutation
-	result = safeCopyResult(result)
+	// Protect cached parsed data from caller mutation.
+	// PERFORMANCE: Skip the copy when CacheSharedResults is enabled (caller has
+	// opted into the "do not mutate" contract — see Config.CacheSharedResults).
+	if !p.config.CacheSharedResults {
+		result = safeCopyResult(result)
+	}
 
 	// Cache result if enabled
 	if p.config.EnableCache && options.CacheResults {
@@ -401,8 +443,12 @@ func (p *Processor) SetFromParsed(parsed *ParsedJSON, path string, value any, cf
 		return nil, &JsonsError{Op: "set_from_parsed", Path: path, Err: err}
 	}
 
-	// Use unified recursive processor for path navigation and modification
-	result, err := p.recursiveProcessor.ProcessRecursivelyWithOptions(dataCopy, path, opSet, value, options.CreatePaths)
+	// opSet mutates dataCopy in place (the same contract Set relies on); the
+	// value returned by ProcessRecursivelyWithOptions is the assigned value, not
+	// the modified document. Returning `result` here was a bug: it made the new
+	// ParsedJSON hold only the set value, so a follow-up GetFromParsed could not
+	// read any other path. The modified root lives in dataCopy.
+	_, err = p.recursiveProcessor.ProcessRecursivelyWithOptions(dataCopy, path, opSet, value, options.CreatePaths)
 	if err != nil {
 		return nil, &JsonsError{
 			Op:      "set_from_parsed",
@@ -413,7 +459,7 @@ func (p *Processor) SetFromParsed(parsed *ParsedJSON, path string, value any, cf
 	}
 
 	return &ParsedJSON{
-		data:      result,
+		data:      dataCopy,
 		hash:      0, // New hash will be computed when needed
 		processor: p,
 	}, nil
@@ -461,19 +507,19 @@ func (p *Processor) GetMultiple(jsonStr string, paths []string, cfg ...Config) (
 		return nil, err
 	}
 
-	if err := p.validateInput(jsonStr); err != nil {
+	options, err := p.prepareOptions(cfg...)
+	if err != nil {
+		return nil, err
+	}
+	defer releaseConfig(options)
+
+	if err := p.validateInputForOptions(jsonStr, options); err != nil {
 		return nil, err
 	}
 
 	if len(paths) == 0 {
 		return make(map[string]any), nil
 	}
-
-	options, err := p.prepareOptions(cfg...)
-	if err != nil {
-		return nil, err
-	}
-	defer releaseConfig(options)
 
 	// Parse JSON once for all operations
 	var data any

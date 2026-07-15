@@ -3,8 +3,42 @@ package json
 import (
 	"bufio"
 	"encoding/json"
+	"fmt"
 	"io"
 )
+
+// sizeLimitedReader caps the total bytes read from an underlying reader,
+// returning a clear error when MaxJSONSize is exceeded. Streaming iterators
+// wrap their source with this so cfg.MaxJSONSize is honored (consistent with
+// LoadFromReader), closing the gap where a stream over a huge array bypassed
+// the library's size limit entirely.
+type sizeLimitedReader struct {
+	r       io.Reader
+	remain  int64
+	maxSize int64
+}
+
+func (l *sizeLimitedReader) Read(p []byte) (int, error) {
+	if l.remain <= 0 {
+		return 0, fmt.Errorf("json: input size exceeds maximum %d bytes", l.maxSize)
+	}
+	if int64(len(p)) > l.remain {
+		p = p[:l.remain]
+	}
+	n, err := l.r.Read(p)
+	l.remain -= int64(n)
+	return n, err
+}
+
+// streamMaxSize resolves the byte cap for a streaming iterator from an optional
+// per-call Config, falling back to the default when unset/non-positive.
+func streamMaxSize(cfg ...Config) int64 {
+	maxSize := int64(DefaultMaxJSONSize)
+	if len(cfg) > 0 && cfg[0].MaxJSONSize > 0 {
+		maxSize = cfg[0].MaxJSONSize
+	}
+	return maxSize
+}
 
 // ============================================================================
 // STREAM ITERATOR - Memory-efficient iteration over large JSON data
@@ -48,8 +82,12 @@ func NewStreamIterator(reader io.Reader, cfg ...Config) *StreamIterator {
 		bufSize = 32 * 1024
 	}
 
-	// Create buffered reader for improved I/O performance
-	buffered := bufio.NewReaderSize(reader, bufSize)
+	// Create buffered reader for improved I/O performance. Wrap the source with
+	// a size-limited reader so cfg.MaxJSONSize is enforced on the total stream
+	// (otherwise an oversized array is read without bound).
+	maxSize := streamMaxSize(cfg...)
+	limited := &sizeLimitedReader{r: reader, remain: maxSize, maxSize: maxSize}
+	buffered := bufio.NewReaderSize(limited, bufSize)
 	decoder := json.NewDecoder(buffered)
 
 	return &StreamIterator{
@@ -76,16 +114,21 @@ func (si *StreamIterator) Next() bool {
 			return false
 		}
 
-		// Handle single value (not an array)
+		// Handle single value (not an array).
 		if token != json.Delim('[') {
+			// A non-'[' delimiter here means a top-level object (or stray
+			// close) — StreamIterator iterates array elements. The previous
+			// code unconditionally followed Token() with Decode(&rest), which
+			// for a top-level object read from *inside* it and returned the
+			// first key as the value (silently wrong). Reject delimiters; only
+			// a scalar top-level value is yielded once as a single element.
+			if _, isDelim := token.(json.Delim); isDelim {
+				si.err = fmt.Errorf("StreamIterator expects a JSON array, got delimiter %v", token)
+				si.done = true
+				return false
+			}
 			si.current = token
 			si.index = 0
-			// Try to decode the rest if it's a complex value
-			var rest any
-			if err := si.decoder.Decode(&rest); err == nil {
-				// It was a complex object/array
-				si.current = rest
-			}
 			si.done = true
 			return true
 		}
@@ -169,8 +212,11 @@ func NewStreamObjectIterator(reader io.Reader, cfg ...Config) *StreamObjectItera
 		bufSize = 32 * 1024 // Default buffer size
 	}
 
-	// Create buffered reader for improved I/O performance
-	buffered := bufio.NewReaderSize(reader, bufSize)
+	// Create buffered reader for improved I/O performance. Wrap the source with
+	// a size-limited reader so cfg.MaxJSONSize is enforced on the total stream.
+	maxSize := streamMaxSize(cfg...)
+	limited := &sizeLimitedReader{r: reader, remain: maxSize, maxSize: maxSize}
+	buffered := bufio.NewReaderSize(limited, bufSize)
 	decoder := json.NewDecoder(buffered)
 
 	return &StreamObjectIterator{

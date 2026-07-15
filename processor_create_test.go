@@ -225,8 +225,8 @@ func TestProcessorSetMultipleCreate(t *testing.T) {
 
 	t.Run("MultipleDeepPaths", func(t *testing.T) {
 		updates := map[string]any{
-			"user.name":    "Alice",
-			"user.age":     30,
+			"user.name":         "Alice",
+			"user.age":          30,
 			"user.address.city": "Wonderland",
 		}
 
@@ -543,4 +543,3 @@ func TestProcessorDeleteClean(t *testing.T) {
 // ============================================================================
 // Verify JSON structure helper (used across test files)
 // ============================================================================
-

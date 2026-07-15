@@ -70,10 +70,11 @@ func demonstrateHookInterface() {
 	hook := &countingHook{}
 	processor.AddHook(hook)
 
-	// Perform operations through the processor — hooks fire automatically
+	// Perform operations through the processor — hooks fire automatically.
+	// Results are discarded; the point is to exercise the hook.
 	testData := `{"user": {"name": "Alice"}, "admin": true}`
-	_, _ = processor.Get(testData, "user.name")
-	_, _ = processor.Get(testData, "admin")
+	_, _ = processor.Get(testData, "user.name") // best-effort: exercising the hook
+	_, _ = processor.Get(testData, "admin")     // best-effort: exercising the hook
 
 	fmt.Printf("   Hook state after processor operations:\n")
 	fmt.Printf("   - Before calls: %d\n", hook.beforeCount)
@@ -85,77 +86,57 @@ func demonstrateHookFunc() {
 	fmt.Println("\n2. HookFunc Adapter (function-style hooks)")
 	fmt.Println("--------------------------------------------")
 
-	// HookFunc allows creating hooks from plain functions.
-	// Only set the functions you need - unset ones are no-ops.
-	// Below we demonstrate each hook function's behavior directly.
-	// In practice, register via processor.AddHook() and they fire automatically.
+	// HookFunc turns plain functions into a Hook — set only BeforeFn, only
+	// AfterFn, or both (unset ones are no-ops). Register it with AddHook and it
+	// fires for real operations: a Before error aborts the operation.
+	processor, _ := json.New(json.DefaultConfig()) // OK: preset config always valid
+	defer processor.Close()
 
-	// Before-only hook (validation)
-	validateHook := &json.HookFunc{
+	var calls []string
+	processor.AddHook(&json.HookFunc{
 		BeforeFn: func(ctx json.HookContext) error {
-			fmt.Printf("   [Before] op=%s path=%s\n", ctx.Operation, ctx.Path)
+			calls = append(calls, "before:"+ctx.Path)
 			if ctx.Path == "admin" {
 				return fmt.Errorf("blocked: cannot access admin path")
 			}
 			return nil
 		},
-	}
-
-	ctx := json.HookContext{Operation: "get", Path: "user.name"}
-	err := validateHook.Before(ctx)
-	fmt.Printf("   Before('user.name'): err=%v\n", err)
-
-	ctx2 := json.HookContext{Operation: "get", Path: "admin"}
-	err = validateHook.Before(ctx2)
-	fmt.Printf("   Before('admin'): err=%v\n", err)
-
-	// After-only hook (result logging)
-	afterHook := &json.HookFunc{
 		AfterFn: func(ctx json.HookContext, result any, err error) (any, error) {
-			status := "ok"
-			if err != nil {
-				status = "error: " + err.Error()
-			}
-			fmt.Printf("   [After] op=%s result=%v status=%s\n", ctx.Operation, result, status)
+			calls = append(calls, "after:"+ctx.Path)
 			return result, err
 		},
+	})
+
+	data := `{"user":"Alice","admin":true}`
+
+	if _, err := processor.Get(data, "user"); err != nil {
+		fmt.Printf("   Get('user'):  error: %v\n", err)
+	} else {
+		fmt.Println("   Get('user'):  ok (Before returned nil)")
 	}
 
-	afterHook.After(json.HookContext{Operation: "get"}, "Alice", nil)
-	afterHook.After(json.HookContext{Operation: "get"}, nil, fmt.Errorf("not found"))
-
-	// Both Before and After (timing)
-	timingHook := &json.HookFunc{
-		BeforeFn: func(ctx json.HookContext) error {
-			fmt.Printf("   [Before] %s started\n", ctx.Operation)
-			return nil
-		},
-		AfterFn: func(ctx json.HookContext, result any, err error) (any, error) {
-			elapsed := time.Since(ctx.StartTime)
-			fmt.Printf("   [After] %s completed in %v\n", ctx.Operation, elapsed)
-			return result, err
-		},
+	if _, err := processor.Get(data, "admin"); err != nil {
+		fmt.Printf("   Get('admin'): error: %v (aborted by Before hook)\n", err)
+	} else {
+		fmt.Println("   Get('admin'): ok")
 	}
 
-	startTime := time.Now()
-	ctx3 := json.HookContext{Operation: "set", StartTime: startTime}
-	timingHook.Before(ctx3)
-	result, _ := timingHook.After(ctx3, `{"updated": true}`, nil)
-	fmt.Printf("   Timing hook result: %v\n", result)
+	fmt.Printf("   Hook calls recorded: %v\n", calls)
 }
 
-// exampleLogger implements the Info method for LoggingHook
+// exampleLogger implements the Info method for LoggingHook. In production this
+// would write to a real logger; here it prints so the hook's effect is visible.
 type exampleLogger struct{}
 
 func (l *exampleLogger) Info(msg string, args ...any) {
-	// In production, this would write to a real logger
+	fmt.Printf("   [log] %s %v\n", msg, args)
 }
 
-// exampleRecorder implements the Record method for TimingHook
+// exampleRecorder implements the Record method for TimingHook.
 type exampleRecorder struct{}
 
 func (r *exampleRecorder) Record(op string, duration time.Duration) {
-	// In production, this would record to a metrics system
+	fmt.Printf("   [timing] %s took %v\n", op, duration)
 }
 
 func demonstrateConvenienceHooks() {
@@ -165,57 +146,70 @@ func demonstrateConvenienceHooks() {
 	processor, _ := json.New(json.DefaultConfig()) // OK: preset config always valid
 	defer processor.Close()
 
-	// LoggingHook - logs operation start/completion
-	loggingHook := json.LoggingHook(&exampleLogger{})
-	processor.AddHook(loggingHook)
-	fmt.Println("   LoggingHook registered")
-
-	// TimingHook - records operation duration
-	timingHook := json.TimingHook(&exampleRecorder{})
-	processor.AddHook(timingHook)
-	fmt.Println("   TimingHook registered")
-
-	// ValidationHook - validates input before operations
-	validationHook := json.ValidationHook(func(jsonStr, path string) error {
-		if len(jsonStr) > 1_000_000 {
+	// Register the four convenience hooks. LoggingHook and TimingHook print via
+	// the exampleLogger/exampleRecorder above so their effect is visible.
+	processor.AddHook(json.LoggingHook(&exampleLogger{}))
+	processor.AddHook(json.TimingHook(&exampleRecorder{}))
+	processor.AddHook(json.ValidationHook(func(jsonStr, path string) error {
+		if len(jsonStr) > 1_000_000 { // 1MB ceiling for any single operation
 			return fmt.Errorf("JSON too large: %d bytes", len(jsonStr))
 		}
 		return nil
-	})
-	processor.AddHook(validationHook)
-	fmt.Println("   ValidationHook registered")
-
-	// ErrorHook - intercepts and can transform errors
-	errorHook := json.ErrorHook(func(ctx json.HookContext, err error) error {
-		fmt.Printf("   [ErrorHook] op=%s err=%v\n", ctx.Operation, err)
+	}))
+	processor.AddHook(json.ErrorHook(func(ctx json.HookContext, err error) error {
+		fmt.Printf("   [error] op=%s err=%v\n", ctx.Operation, err)
 		return err
-	})
-	processor.AddHook(errorHook)
-	fmt.Println("   ErrorHook registered")
+	}))
+	fmt.Println("   Registered LoggingHook, TimingHook, ValidationHook, ErrorHook")
 
-	fmt.Println("\n   Hooks are invoked by the processor's internal hook chain")
-	fmt.Println("   during operations like Get, Set, Delete, etc.")
+	// Run an operation through the processor so the hooks actually fire.
+	fmt.Println("   Running Get through the hooked processor:")
+	data := `{"user":"Alice"}`
+	if _, err := processor.Get(data, "user"); err != nil {
+		fmt.Printf("   Get error: %v\n", err)
+	} else {
+		fmt.Println("   Get completed (see hook output above)")
+	}
+
+	// Config.Hooks: hooks can be pre-wired in the Config passed to New instead
+	// of added one-by-one via AddHook after construction.
+	fmt.Println("\n   Constructing a processor with Config.Hooks (pre-wired):")
+	cfg := json.DefaultConfig()
+	var beforeOps []string
+	cfg.Hooks = []json.Hook{
+		&json.HookFunc{BeforeFn: func(ctx json.HookContext) error {
+			beforeOps = append(beforeOps, ctx.Operation)
+			return nil
+		}},
+	}
+	preWired, _ := json.New(cfg) // OK: DefaultConfig-derived, always valid
+	defer preWired.Close()
+	_, _ = preWired.Get(data, "user") // best-effort: exercising the pre-wired hook
+	fmt.Printf("   Pre-wired hook saw operations: %v\n", beforeOps)
 }
 
 func demonstrateSecurityPatterns() {
 	fmt.Println("\n4. Security Patterns")
 	fmt.Println("----------------------")
 
-	// List default patterns
+	// ListDangerousPatterns returns USER-REGISTERED patterns only. The library's
+	// built-in dangerous and critical patterns are always active and are
+	// intentionally not exposed through this list, so an empty result here does
+	// NOT mean validation is off — the built-ins still run on every input.
 	defaults := json.ListDangerousPatterns()
-	fmt.Printf("   Default security patterns: %d\n", len(defaults))
+	fmt.Printf("   User-registered patterns: %d (built-in patterns always active)\n", len(defaults))
 	for _, p := range defaults {
 		fmt.Printf("   - [%s] %s\n", p.Level, p.Name)
 	}
 
-	// List critical patterns (filter from all patterns)
+	// Filter the user-registered patterns for the critical level.
 	var critical []json.DangerousPattern
 	for _, p := range defaults {
 		if p.Level == json.PatternLevelCritical {
 			critical = append(critical, p)
 		}
 	}
-	fmt.Printf("\n   Critical patterns: %d\n", len(critical))
+	fmt.Printf("\n   User-registered critical patterns: %d\n", len(critical))
 	for _, p := range critical {
 		fmt.Printf("   - %s (pattern: %s)\n", p.Name, p.Pattern)
 	}
@@ -231,14 +225,14 @@ func demonstrateSecurityPatterns() {
 
 	// List all patterns after registration
 	all := json.ListDangerousPatterns()
-	fmt.Printf("   Total patterns after registration: %d\n", len(all))
+	fmt.Printf("   User-registered patterns after registration: %d\n", len(all))
 
 	// Unregister the custom pattern
 	json.UnregisterDangerousPattern("eval(")
 	fmt.Println("   Unregistered custom pattern")
 
 	all = json.ListDangerousPatterns()
-	fmt.Printf("   Total patterns after removal: %d\n", len(all))
+	fmt.Printf("   User-registered patterns after removal: %d\n", len(all))
 
 	// Demonstrate SecurityConfig for secure processing
 	fmt.Println("\n   Using SecurityConfig processor:")
