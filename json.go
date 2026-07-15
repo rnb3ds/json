@@ -383,6 +383,12 @@ func NewJSONLWriter(writer io.Writer, cfg ...Config) *JSONLWriter {
 	}
 }
 
+// jsonNewline is the single shared newline byte slice used to terminate every
+// JSONL line. io.Writer.Write is documented to not modify its input, so a
+// single read-only slice is shared across all Write calls — avoiding a heap
+// allocation of []byte{'\n'} per written line.
+var jsonNewline = []byte{'\n'}
+
 // Write writes a single JSON value as a line to the underlying writer.
 // Each value is followed by a newline character.
 // Returns any error encountered during writing.
@@ -428,7 +434,7 @@ func (w *JSONLWriter) Write(data any) error {
 		return err
 	}
 	w.bytesOut += int64(n)
-	n, err = w.writer.Write([]byte{'\n'})
+	n, err = w.writer.Write(jsonNewline)
 	if err != nil {
 		w.err = err
 		return err
@@ -489,7 +495,7 @@ func (w *JSONLWriter) WriteRaw(line []byte) error {
 
 	// Add newline if not present
 	if len(line) == 0 || line[len(line)-1] != '\n' {
-		if _, err := w.writer.Write([]byte{'\n'}); err != nil {
+		if _, err := w.writer.Write(jsonNewline); err != nil {
 			w.err = err
 			return err
 		}

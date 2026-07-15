@@ -257,11 +257,6 @@ func (cm *CacheManager) Get(key string) (any, bool) {
 	}
 
 	shard := cm.getShard(key)
-	now := time.Now().UnixNano()
-	ttlNanos := int64(0)
-	if cm.cacheConfig.cacheTTL > 0 {
-		ttlNanos = int64(cm.cacheConfig.cacheTTL.Nanoseconds())
-	}
 
 	// Fast path: read lock only
 	shard.mu.RLock()
@@ -270,6 +265,17 @@ func (cm *CacheManager) Get(key string) (any, bool) {
 		shard.mu.RUnlock()
 		atomic.AddInt64(&cm.missCount, 1)
 		return nil, false
+	}
+
+	// PERFORMANCE: defer time.Now() and the TTL computation until we know the
+	// entry exists. On a cache miss (above) the timestamp is never used, so this
+	// avoids a time.Now() call (~50-100ns on Windows) per miss. The check already
+	// holds the shared RLock, and readers do not block one another, so computing
+	// the timestamp here does not reduce read concurrency.
+	now := time.Now().UnixNano()
+	ttlNanos := int64(0)
+	if cm.cacheConfig.cacheTTL > 0 {
+		ttlNanos = int64(cm.cacheConfig.cacheTTL.Nanoseconds())
 	}
 
 	entry := element.Value.(*lruEntry)

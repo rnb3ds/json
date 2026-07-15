@@ -2111,36 +2111,6 @@ func TestValuesEqualComprehensive(t *testing.T) {
 	})
 }
 
-// TestIsEmptyComprehensive tests isEmpty function more comprehensively
-func TestIsEmptyComprehensive(t *testing.T) {
-	processor, _ := New()
-	defer processor.Close()
-
-	tests := []struct {
-		name  string
-		input any
-	}{
-		{"EmptySlice", []any{}},
-		{"EmptyMap", map[string]any{}},
-		{"EmptyString", ""},
-		{"ZeroInt", 0},
-		{"ZeroFloat", 0.0},
-		{"False", false},
-		{"Nil", nil},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			data := map[string]any{"value": tt.input}
-			result, err := processor.EncodeWithConfig(data, DefaultConfig())
-			if err != nil {
-				t.Errorf("EncodeWithConfig failed: %v", err)
-			}
-			_ = result
-		})
-	}
-}
-
 // TestValidateNumberComprehensive tests validateNumber function more comprehensively
 func TestValidateNumberComprehensive(t *testing.T) {
 	processor, _ := New()

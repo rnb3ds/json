@@ -431,11 +431,14 @@ func foreachWithPathIterableValue(data any, currentPath string, fn func(key any,
 			err = fmt.Errorf("foreach callback panicked: %v", r)
 		}
 	}()
+	// PERFORMANCE: reuse one path buffer across all elements instead of
+	// allocating a fresh []byte per element. Only the string(buf) conversion
+	// (the path handed to the callback) allocates per element now.
+	buf := make([]byte, 0, 64)
 	switch v := data.(type) {
 	case []any:
 		for i, item := range v {
-			// PERFORMANCE: Build path using strconv.AppendInt instead of fmt.Sprintf
-			var buf []byte
+			buf = buf[:0]
 			buf = append(buf, currentPath...)
 			buf = append(buf, '[')
 			buf = strconv.AppendInt(buf, int64(i), 10)
@@ -452,8 +455,7 @@ func foreachWithPathIterableValue(data any, currentPath string, fn func(key any,
 		}
 	case map[string]any:
 		for key, val := range v {
-			// PERFORMANCE: Build path using append instead of string concatenation
-			var buf []byte
+			buf = buf[:0]
 			buf = append(buf, currentPath...)
 			buf = append(buf, '.')
 			buf = append(buf, key...)

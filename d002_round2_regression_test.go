@@ -17,19 +17,6 @@ import (
 // extract-then-slice, distributed null, and the F6/F7/F8 struct-encoding
 // fixes).
 
-// asStr renders a Get result with stdlib json.Marshal so assertions are
-// shape-agnostic (reuses the helper name from d002_regression_test.go).
-func asStr2(v any) string {
-	if v == nil {
-		return "<nil>"
-	}
-	b, err := stdjson.Marshal(v)
-	if err != nil {
-		return "<unmarshalable>"
-	}
-	return string(b)
-}
-
 // ---------------------------------------------------------------------------
 // Reverse / negative-step slices (C1/C2/C3, M1, M3) — previously panics or
 // silent no-ops because the opSet/opDelete loops assumed a positive step.
@@ -44,7 +31,7 @@ func TestD002R2_ReverseSlices(t *testing.T) {
 			t.Fatalf("Set err: %v", err)
 		}
 		got, _ := Get(r, "items[0].arr")
-		if s := asStr2(got); s != "[99,99,99]" {
+		if s := asStr(got); s != "[99,99,99]" {
 			t.Fatalf("got %s want [99,99,99]", s)
 		}
 	})
@@ -56,7 +43,7 @@ func TestD002R2_ReverseSlices(t *testing.T) {
 			t.Fatalf("Delete err: %v", err)
 		}
 		got, _ := Get(r, "a")
-		if s := asStr2(got); s != "[]" {
+		if s := asStr(got); s != "[]" {
 			t.Fatalf("got %s want []", s)
 		}
 	})
@@ -68,7 +55,7 @@ func TestD002R2_ReverseSlices(t *testing.T) {
 			t.Fatalf("Delete err: %v", err)
 		}
 		got, _ := Get(r, "a")
-		if s := asStr2(got); s != "[1,5]" {
+		if s := asStr(got); s != "[1,5]" {
 			t.Fatalf("got %s want [1,5]", s)
 		}
 	})
@@ -80,7 +67,7 @@ func TestD002R2_ReverseSlices(t *testing.T) {
 			t.Fatalf("Delete err: %v", err)
 		}
 		got, _ := Get(r, "data[0].arr")
-		if s := asStr2(got); s != "[]" {
+		if s := asStr(got); s != "[]" {
 			t.Fatalf("got %s want []", s)
 		}
 	})
@@ -91,7 +78,7 @@ func TestD002R2_ReverseSlices(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Get err: %v", err)
 		}
-		if s := asStr2(got); s != "[]" {
+		if s := asStr(got); s != "[]" {
 			t.Fatalf("got %s want []", s)
 		}
 	})
@@ -103,7 +90,7 @@ func TestD002R2_ReverseSlices(t *testing.T) {
 			t.Fatalf("Set err: %v", err)
 		}
 		got, _ := Get(r, "a")
-		if s := asStr2(got); s != `[{"b":99},{"b":2},{"b":99},{"b":4},{"b":99}]` {
+		if s := asStr(got); s != `[{"b":99},{"b":2},{"b":99},{"b":4},{"b":99}]` {
 			t.Fatalf("got %s", s)
 		}
 	})
@@ -269,8 +256,8 @@ func TestD002R2_M7_PerCallCreatePaths(t *testing.T) {
 		t.Fatalf("M7: default CreatePaths=true Set should succeed: %v", err)
 	}
 	got, _ := Get(r, "a")
-	if asStr2(got) != "[99,99,99,99,99]" {
-		t.Fatalf("M7: default extension got %s", asStr2(got))
+	if asStr(got) != "[99,99,99,99,99]" {
+		t.Fatalf("M7: default extension got %s", asStr(got))
 	}
 }
 
@@ -284,11 +271,11 @@ func TestD002R2_M4_ExtractThenSliceSet(t *testing.T) {
 	}
 	v0, _ := Get(r, "items[0].v")
 	v1, _ := Get(r, "items[1].v")
-	if asStr2(v0) != "[99,99,3]" {
-		t.Fatalf("M4: items[0].v=%s want [99,99,3]", asStr2(v0))
+	if asStr(v0) != "[99,99,3]" {
+		t.Fatalf("M4: items[0].v=%s want [99,99,3]", asStr(v0))
 	}
-	if asStr2(v1) != "[99,99,6]" {
-		t.Fatalf("M4: items[1].v=%s want [99,99,6]", asStr2(v1))
+	if asStr(v1) != "[99,99,6]" {
+		t.Fatalf("M4: items[1].v=%s want [99,99,6]", asStr(v1))
 	}
 }
 
@@ -301,8 +288,8 @@ func TestD002R2_M2_ReverseStepSet(t *testing.T) {
 		t.Fatalf("Set err: %v", err)
 	}
 	got, _ := Get(r, "a")
-	if asStr2(got) != "[99,2,99,4,99]" {
-		t.Fatalf("M2: got %s want [99,2,99,4,99] (step -2 must be honored)", asStr2(got))
+	if asStr(got) != "[99,2,99,4,99]" {
+		t.Fatalf("M2: got %s want [99,2,99,4,99] (step -2 must be honored)", asStr(got))
 	}
 }
 
@@ -314,8 +301,8 @@ func TestD002R2_M6_DistributedGetKeepsNull(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Get err: %v", err)
 	}
-	if asStr2(v) != "[null,1]" {
-		t.Fatalf("M6: got %s want [null,1] (null must be preserved)", asStr2(v))
+	if asStr(v) != "[null,1]" {
+		t.Fatalf("M6: got %s want [null,1] (null must be preserved)", asStr(v))
 	}
 	// Contract preserved: property access on a non-container returns nil, no error.
 	v2, err2 := Get(`{"a":1}`, "a.b")

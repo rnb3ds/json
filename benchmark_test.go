@@ -3,6 +3,7 @@ package json
 import (
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -792,4 +793,150 @@ func BenchmarkIsSimplePropertyAccess(b *testing.B) {
 			_ = isSimplePropertyAccess(p)
 		}
 	}
+}
+
+// ============================================================================
+// BENCHMARKS FOR THE RECURSIVE PROCESSOR (wildcard / extract / array ops)
+//
+// These paths exercise the per-handler []error and []any slice allocations in
+// recursive.go — the controllable allocation surface identified by pprof
+// (the dominant cost, encoding/json parsing, is not controllable).
+// ============================================================================
+
+// BenchmarkGet_PropertyOverArray exercises handlePropertySegmentUnified's []any
+// (distributed) branch: Get("name") over a root array of objects collects one
+// result per element and allocates a local []error buffer per call.
+func BenchmarkGet_PropertyOverArray_100(b *testing.B) {
+	jsonStr := generateLargeJSONArray(100)
+	processor, _ := New()
+	defer processor.Close()
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _ = processor.Get(jsonStr, "name")
+	}
+}
+
+// BenchmarkGet_ExtractArray exercises handleExtractSegmentUnified's []any branch
+// via the {field} extraction syntax over a root array of objects.
+func BenchmarkGet_ExtractArray_100(b *testing.B) {
+	jsonStr := generateLargeJSONArray(100)
+	processor, _ := New()
+	defer processor.Close()
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _ = processor.Get(jsonStr, "{name}")
+	}
+}
+
+// BenchmarkGet_ArraySlice exercises handleArraySliceSegmentUnified's non-distributed
+// []any branch, which slices the array and then iterates the remaining (none) segments.
+func BenchmarkGet_ArraySlice_100(b *testing.B) {
+	jsonStr := generateLargeJSONArray(100)
+	processor, _ := New()
+	defer processor.Close()
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _ = processor.Get(jsonStr, "[0:50]")
+	}
+}
+
+// ----------------------------------------------------------------------------
+// PerformArraySlice A/B micro-benchmark (legacy vs optimized unit-step path)
+// ----------------------------------------------------------------------------
+
+// performArraySliceLegacy is the pre-optimization implementation: it always
+// builds a temporary []int index slice via PerformArraySliceIndices, then
+// appends element-by-element. Kept here only to A/B against the optimized
+// internal.PerformArraySlice (unit-step fast path uses make+copy, no []int).
+func performArraySliceLegacy(arr []any, start, end, step *int) []any {
+	indices := internal.PerformArraySliceIndices(len(arr), start, end, step)
+	result := make([]any, 0, len(indices))
+	for _, i := range indices {
+		result = append(result, arr[i])
+	}
+	return result
+}
+
+// BenchmarkPerformArraySlice_AB compares the legacy (temp []int + append loop)
+// implementation against the optimized unit-step path (make + copy) on a
+// 1000-element []any sliced [0:500]. Isolates the slice function from parsing
+// and deep-copy so the allocation/CPU delta is visible.
+func BenchmarkPerformArraySlice_AB(b *testing.B) {
+	arr := make([]any, 1000)
+	for i := range arr {
+		arr[i] = i
+	}
+	start, end := 0, 500
+	var step *int // nil step → unit step (fast path)
+
+	b.Run("legacy", func(b *testing.B) {
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			_ = performArraySliceLegacy(arr, &start, &end, step)
+		}
+	})
+
+	b.Run("optimized", func(b *testing.B) {
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			_ = internal.PerformArraySlice(arr, &start, &end, step)
+		}
+	})
+}
+
+// ----------------------------------------------------------------------------
+// Foreach path-build A/B micro-benchmark (per-element buffer vs reused buffer)
+// ----------------------------------------------------------------------------
+
+// buildPathLegacy mirrors the pre-optimization per-element path construction
+// that foreachWithPathIterableValue used: a fresh []byte is appended from nil
+// each element, then copied to a string — 2 allocations per element.
+func buildPathLegacy(currentPath string, i int) string {
+	var buf []byte
+	buf = append(buf, currentPath...)
+	buf = append(buf, '[')
+	buf = strconv.AppendInt(buf, int64(i), 10)
+	buf = append(buf, ']')
+	return string(buf)
+}
+
+// benchmarkPathSink prevents dead-code elimination of string(buf) so the
+// per-element string allocation (which the real callback consumes) is measured.
+var benchmarkPathSink string
+
+// BenchmarkForeachPathBuild_AB isolates the per-element path-string construction
+// in foreachWithPathIterableValue (iterator.go). "legacy" allocates a fresh
+// []byte per element (the old code); "reused" reuses one buffer across all
+// elements (the optimization now in place). Only the string(buf) conversion
+// allocates per element in the reused path.
+func BenchmarkForeachPathBuild_AB(b *testing.B) {
+	const n = 1000
+	currentPath := "users"
+
+	b.Run("legacy", func(b *testing.B) {
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			for j := 0; j < n; j++ {
+				benchmarkPathSink = buildPathLegacy(currentPath, j)
+			}
+		}
+	})
+
+	b.Run("reused", func(b *testing.B) {
+		b.ReportAllocs()
+		buf := make([]byte, 0, 64)
+		for i := 0; i < b.N; i++ {
+			for j := 0; j < n; j++ {
+				buf = buf[:0]
+				buf = append(buf, currentPath...)
+				buf = append(buf, '[')
+				buf = strconv.AppendInt(buf, int64(j), 10)
+				buf = append(buf, ']')
+				benchmarkPathSink = string(buf)
+			}
+		}
+	})
 }

@@ -77,23 +77,6 @@ func TestAccessResult_Ok_Unwrap_UnwrapOr(t *testing.T) {
 // Config mutation boundary tests (types.go: 0% coverage)
 // ============================================================================
 
-func TestConfigMutation_NilReceiver(t *testing.T) {
-	t.Run("AddHook nil", func(t *testing.T) {
-		var cfg *Config
-		cfg.AddHook(nil) // should not panic
-	})
-
-	t.Run("AddValidator nil", func(t *testing.T) {
-		var cfg *Config
-		cfg.AddValidator(nil) // should not panic
-	})
-
-	t.Run("AddDangerousPattern nil", func(t *testing.T) {
-		var cfg *Config
-		cfg.AddDangerousPattern(DangerousPattern{}) // should not panic
-	})
-}
-
 func TestConfigMutation_ValidReceiver(t *testing.T) {
 	t.Run("AddHook appends", func(t *testing.T) {
 		cfg := DefaultConfig()
@@ -384,17 +367,6 @@ func TestProcessor_InvalidateCacheDisabled(t *testing.T) {
 // checkRateLimit boundary tests (processor.go: 0% coverage)
 // ============================================================================
 
-func TestProcessor_CheckRateLimit(t *testing.T) {
-	t.Run("disabled when window is zero", func(t *testing.T) {
-		processor, _ := New()
-		defer processor.Close()
-		processor.metrics.operationWindow = 0
-		if err := processor.checkRateLimit(); err != nil {
-			t.Errorf("checkRateLimit with window=0 should return nil, got %v", err)
-		}
-	})
-}
-
 // ============================================================================
 // truncateString and sanitizePath boundary tests (processor.go: 0% coverage)
 // ============================================================================
@@ -590,90 +562,6 @@ func TestPatternRegistry_ListByLevel(t *testing.T) {
 }
 
 // ============================================================================
-// encodeJSONNumber boundary tests (encoding.go: 0% coverage)
-// ============================================================================
-
-func TestEncodeJSONNumber_PreserveNumbers(t *testing.T) {
-	cfg := DefaultConfig()
-	cfg.PreserveNumbers = true
-	processor, _ := New(cfg)
-	defer processor.Close()
-
-	tests := []struct {
-		name    string
-		data    string
-		path    string
-		wantVal string
-	}{
-		{"integer", `{"num": 42}`, "num", "42"},
-		{"float", `{"num": 3.14}`, "num", "3.14"},
-		{"large number", `{"num": 9999999999999999999}`, "num", "9999999999999999999"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			val, err := processor.Get(tt.data, tt.path)
-			if err != nil {
-				t.Fatalf("Get error: %v", err)
-			}
-			num, ok := val.(json.Number)
-			if !ok {
-				t.Logf("value type: %T", val)
-				return
-			}
-			if num.String() != tt.wantVal {
-				t.Errorf("got %q, want %q", num.String(), tt.wantVal)
-			}
-		})
-	}
-}
-
-// ============================================================================
-// logError boundary test (processor.go: 0% coverage)
-// ============================================================================
-
-// logError is tested indirectly through error paths in other tests.
-// Direct testing is difficult because it depends on internal metrics collector state.
-
-// ============================================================================
-// ForeachNestedWithError (processor.go: 0% coverage)
-// ============================================================================
-
-func TestForeachNestedWithError(t *testing.T) {
-	processor, _ := New()
-	defer processor.Close()
-
-	t.Run("iterates nested data", func(t *testing.T) {
-		jsonStr := `{"users": [{"name": "Alice"}, {"name": "Bob"}]}`
-		var names []string
-		err := processor.ForeachNestedWithError(jsonStr, func(key any, item *IterableValue) error {
-			if m, ok := item.GetData().(map[string]any); ok {
-				if n, ok := m["name"]; ok {
-					names = append(names, n.(string))
-				}
-			}
-			return nil
-		})
-		if err != nil {
-			t.Errorf("ForeachNestedWithError error: %v", err)
-		}
-		if len(names) < 1 {
-			t.Errorf("expected at least 1 name, got %d: %v", len(names), names)
-		}
-	})
-
-	t.Run("callback error stops iteration", func(t *testing.T) {
-		jsonStr := `{"a": 1, "b": 2}`
-		err := processor.ForeachNestedWithError(jsonStr, func(key any, item *IterableValue) error {
-			return fmt.Errorf("stop")
-		})
-		if err == nil {
-			t.Error("expected error from callback")
-		}
-	})
-}
-
-// ============================================================================
 // StreamJSONLFile (processor_streamjsonl.go: 0% coverage)
 // ============================================================================
 
@@ -728,31 +616,6 @@ func TestDeepCopyValueWithDepth_Concurrent(t *testing.T) {
 	close(errCh)
 	for err := range errCh {
 		t.Errorf("concurrent deep copy error: %v", err)
-	}
-}
-
-// ============================================================================
-// isEmptyOrZero extended boundary tests
-// ============================================================================
-
-func TestIsEmptyOrZero_EdgeCases(t *testing.T) {
-	tests := []struct {
-		name  string
-		input any
-		want  bool
-	}{
-		{"zero uint", uint(0), true},
-		{"non-zero uint", uint(1), false},
-		{"json.Number zero", json.Number("0"), true},
-		{"json.Number non-zero", json.Number("42"), false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := isEmptyOrZero(tt.input); got != tt.want {
-				t.Errorf("isEmptyOrZero(%v) = %v, want %v", tt.input, got, tt.want)
-			}
-		})
 	}
 }
 

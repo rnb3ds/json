@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -4911,4 +4912,339 @@ func TestPathEscapeIntegration(t *testing.T) {
 			t.Errorf("GetString(%q) = %q, want Alice", "/user.name", result)
 		}
 	})
+}
+
+// ============================================================================
+// BARE-NUMERIC INDEX TESTS (merged from bare_numeric_test.go)
+// ============================================================================
+
+// TestBareIndexMatchesBracket is the core invariant of the bare-index feature:
+// for every supported array path, the bare form ("0", "-1", "*", "*.prop")
+// returns the same result as the bracket form ("[0]", "[-1]", "[*]", "[*].prop").
+func TestBareIndexMatchesBracket(t *testing.T) {
+	intArr := `[10,20,30]`
+	objArr := `[{"name_cn":"万国数据","symbol":"GDS.US"},{"name_cn":"极氪","symbol":"ZK.US"}]`
+
+	cases := []struct {
+		name string
+		json string
+		bare string
+		brkt string
+	}{
+		{"int 0", intArr, "0", "[0]"},
+		{"int -1", intArr, "-1", "[-1]"},
+		{"int *", intArr, "*", "[*]"},
+		{"object 0", objArr, "0", "[0]"},
+		{"object 0.symbol", objArr, "0.symbol", "[0].symbol"},
+		{"object -1.symbol", objArr, "-1.symbol", "[-1].symbol"},
+		{"object *.symbol", objArr, "*.symbol", "[*].symbol"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			bare, errB := Get(c.json, c.bare)
+			brkt, errK := Get(c.json, c.brkt)
+			if (errB != nil) != (errK != nil) {
+				t.Errorf("errors differ: bare %q err=%v, bracket %q err=%v", c.bare, errB, c.brkt, errK)
+			}
+			if !reflect.DeepEqual(bare, brkt) {
+				t.Errorf("bare %q = %#v, bracket %q = %#v", c.bare, bare, c.brkt, brkt)
+			}
+		})
+	}
+}
+
+// TestBareIndexObjectKeyCompat verifies backward compatibility for objects
+// that use numeric-string keys (user chose "array-first, object numeric-key
+// compat"): the value is reachable via the bare numeric path AND via "[N]".
+func TestBareIndexObjectKeyCompat(t *testing.T) {
+	cases := []struct {
+		name string
+		json string
+		path string
+		want any
+	}{
+		{`bare "0" on {"0":"x"}`, `{"0":"x"}`, "0", "x"},
+		{`bracket "[0]" on {"0":"x"}`, `{"0":"x"}`, "[0]", "x"},
+		{`recurse "0.a"`, `{"0":{"a":1}}`, "0.a", float64(1)},
+		{`bare "-1" on {"-1":"neg"}`, `{"-1":"neg"}`, "-1", "neg"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, err := Get(c.json, c.path)
+			if err != nil {
+				t.Fatalf("Get(%q) error: %v", c.path, err)
+			}
+			if !reflect.DeepEqual(got, c.want) {
+				t.Errorf("Get(%q) = %#v, want %#v", c.path, got, c.want)
+			}
+		})
+	}
+}
+
+// TestBareIndexSetGuard verifies Set with a bare numeric path is unchanged.
+func TestBareIndexSetGuard(t *testing.T) {
+	out, err := Set(`[10,20,30]`, "0", 99)
+	if err != nil {
+		t.Fatalf("Set error: %v", err)
+	}
+	if out != `[99,20,30]` {
+		t.Errorf(`Set([10,20,30], "0", 99) = %s, want [99,20,30]`, out)
+	}
+}
+
+// TestBareIndexUserScenario is the exact case from the bug report: getting an
+// array element via a bare numeric index.
+func TestBareIndexUserScenario(t *testing.T) {
+	jsonStr := `[` +
+		`{"name_cn":"万国数据","name_en":"GDS Holdings Limited","name_hk":"万国数据","symbol":"GDS.US"},` +
+		`{"name_cn":"极氪","name_en":"ZEEKR Intelligent Technology Holding Limited","name_hk":"極氪","symbol":"ZK.US"}` +
+		`]`
+
+	if got := GetString(jsonStr, "0.symbol"); got != "GDS.US" {
+		t.Errorf(`GetString(_, "0.symbol") = %q, want "GDS.US"`, got)
+	}
+	if got := GetString(jsonStr, "1.symbol"); got != "ZK.US" {
+		t.Errorf(`GetString(_, "1.symbol") = %q, want "ZK.US"`, got)
+	}
+	if got := GetArray(jsonStr, "*.symbol"); !reflect.DeepEqual(got, []any{"GDS.US", "ZK.US"}) {
+		t.Errorf(`GetArray(_, "*.symbol") = %#v, want ["GDS.US","ZK.US"]`, got)
+	}
+}
+
+// ============================================================================
+// SHARED-RESULT CACHE TESTS (merged from shared_cache_test.go)
+// ============================================================================
+
+// TestGet_DefaultCacheCopiesOnHit verifies the default (safe) behavior: two
+// cache-hit Gets return independent deep copies, so mutating one cannot affect
+// the other. This guards against regressing the default safety guarantee.
+func TestGet_DefaultCacheCopiesOnHit(t *testing.T) {
+	p, _ := New()
+	defer p.Close()
+
+	jsonStr := `{"items":[1,2,3]}`
+
+	// Prime the result cache (first call is a cache miss).
+	_, _ = p.Get(jsonStr, "items")
+
+	// Two cache-hit Gets must each deep-copy the cached slice.
+	a, err := p.Get(jsonStr, "items")
+	if err != nil {
+		t.Fatalf("Get #1: %v", err)
+	}
+	b, err := p.Get(jsonStr, "items")
+	if err != nil {
+		t.Fatalf("Get #2: %v", err)
+	}
+
+	aArr, aOK := a.([]any)
+	bArr, bOK := b.([]any)
+	if !aOK || !bOK {
+		t.Fatalf("expected []any, got %T and %T", a, b)
+	}
+	if reflect.ValueOf(aArr).Pointer() == reflect.ValueOf(bArr).Pointer() {
+		t.Error("default cache: two cache-hit Gets share a backing array; expected independent deep copies")
+	}
+}
+
+// TestGet_SharedCacheReturnsSameReference verifies that with
+// CacheSharedResults enabled, cache-hit Gets skip the defensive deep copy and
+// return the shared cached value directly (pointer identity).
+func TestGet_SharedCacheReturnsSameReference(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.CacheSharedResults = true
+	p, _ := New(cfg)
+	defer p.Close()
+
+	jsonStr := `{"items":[1,2,3]}`
+
+	// Prime the result cache.
+	_, _ = p.Get(jsonStr, "items")
+
+	a, err := p.Get(jsonStr, "items")
+	if err != nil {
+		t.Fatalf("Get #1: %v", err)
+	}
+	b, err := p.Get(jsonStr, "items")
+	if err != nil {
+		t.Fatalf("Get #2: %v", err)
+	}
+
+	aArr, aOK := a.([]any)
+	bArr, bOK := b.([]any)
+	if !aOK || !bOK {
+		t.Fatalf("expected []any, got %T and %T", a, b)
+	}
+	if reflect.ValueOf(aArr).Pointer() != reflect.ValueOf(bArr).Pointer() {
+		t.Error("CacheSharedResults: two cache-hit Gets returned distinct backing arrays; expected a shared reference")
+	}
+}
+
+// TestGet_SharedCacheStillReturnsCorrectValue ensures the opt-in fast path
+// returns the right value, not just any reference.
+func TestGet_SharedCacheStillReturnsCorrectValue(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.CacheSharedResults = true
+	p, _ := New(cfg)
+	defer p.Close()
+
+	jsonStr := `{"user":{"name":"Alice","roles":["admin","user"]}}`
+
+	roles, err := p.Get(jsonStr, "user.roles")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	arr := roles.([]any)
+	if len(arr) != 2 || arr[0] != "admin" || arr[1] != "user" {
+		t.Errorf("unexpected roles: %v", arr)
+	}
+
+	name, err := p.Get(jsonStr, "user.name")
+	if err != nil {
+		t.Fatalf("Get name: %v", err)
+	}
+	if name != "Alice" {
+		t.Errorf("unexpected name: %v", name)
+	}
+}
+
+// TestGetFromParsed_SharedCacheSkipsCopy mirrors the Get behavior for the
+// pre-parsed read path.
+func TestGetFromParsed_SharedCacheSkipsCopy(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.CacheSharedResults = true
+	p, _ := New(cfg)
+	defer p.Close()
+
+	jsonStr := `{"items":[1,2,3]}`
+	parsed, err := p.PreParse(jsonStr)
+	if err != nil {
+		t.Fatalf("PreParse: %v", err)
+	}
+	defer parsed.Release()
+
+	a, err := p.GetFromParsed(parsed, "items")
+	if err != nil {
+		t.Fatalf("GetFromParsed #1: %v", err)
+	}
+	b, err := p.GetFromParsed(parsed, "items")
+	if err != nil {
+		t.Fatalf("GetFromParsed #2: %v", err)
+	}
+	aArr := a.([]any)
+	bArr := b.([]any)
+	if reflect.ValueOf(aArr).Pointer() != reflect.ValueOf(bArr).Pointer() {
+		t.Error("CacheSharedResults: GetFromParsed returned distinct backing arrays; expected a shared reference")
+	}
+}
+
+// TestCacheSharedResults_InConfigFieldRegistry guards against the
+// maintainability hazard of forgetting to register a new Config field in
+// configFieldList: two configs differing only in CacheSharedResults must
+// compare unequal and hash differently, so their cache keys never collide.
+func TestCacheSharedResults_InConfigFieldRegistry(t *testing.T) {
+	a := DefaultConfig()
+	b := DefaultConfig()
+	b.CacheSharedResults = true
+
+	if configFieldsEqual(a, b) {
+		t.Error("configFieldsEqual must distinguish CacheSharedResults (field missing from configFieldList?)")
+	}
+	if hashConfig(a) == hashConfig(b) {
+		t.Error("hashConfig must differ for CacheSharedResults (field missing from configFieldList?)")
+	}
+
+	// isDefaultConfig must reject the shared-results config as non-default.
+	if isDefaultConfig(b) {
+		t.Error("isDefaultConfig must return false when CacheSharedResults is true")
+	}
+}
+
+// ============================================================================
+// PATH BOUNDARY TESTS (merged from path_boundary_test.go)
+// ============================================================================
+
+// TestPreservingUnmarshal_Boundary exercises preservingUnmarshal (path.go)
+// across target types: any, map, slice, struct, and invalid JSON.
+func TestPreservingUnmarshal_Boundary(t *testing.T) {
+	t.Run("non_preserve_into_any", func(t *testing.T) {
+		var v any
+		if err := preservingUnmarshal([]byte(`{"a":1}`), &v, false); err != nil {
+			t.Fatalf("err: %v", err)
+		}
+	})
+	t.Run("preserve_into_any", func(t *testing.T) {
+		var v any
+		if err := preservingUnmarshal([]byte(`{"a":42}`), &v, true); err != nil {
+			t.Fatalf("err: %v", err)
+		}
+	})
+	t.Run("preserve_into_map", func(t *testing.T) {
+		var m map[string]any
+		if err := preservingUnmarshal([]byte(`{"a":42}`), &m, true); err != nil {
+			t.Fatalf("err: %v", err)
+		}
+	})
+	t.Run("preserve_into_slice", func(t *testing.T) {
+		var s []any
+		if err := preservingUnmarshal([]byte(`[1,2,3]`), &s, true); err != nil {
+			t.Fatalf("err: %v", err)
+		}
+	})
+	t.Run("preserve_into_struct", func(t *testing.T) {
+		type S struct {
+			A int `json:"a"`
+		}
+		var s S
+		if err := preservingUnmarshal([]byte(`{"a":42}`), &s, true); err != nil {
+			t.Fatalf("err: %v", err)
+		}
+		if s.A != 42 {
+			t.Errorf("A = %d, want 42", s.A)
+		}
+	})
+	t.Run("invalid_json", func(t *testing.T) {
+		var v any
+		if err := preservingUnmarshal([]byte("not json"), &v, true); err == nil {
+			t.Error("expected error for invalid JSON")
+		}
+	})
+}
+
+// ============================================================================
+// PROCESSOR CLOSED-STATE BOUNDARY (merged from processor_boundary_test.go)
+// ============================================================================
+
+// TestProcessor_ClosedState_Boundary verifies the closed-processor error guards
+// on the iterator/JSONL methods (checkClosed branches) — coverage that
+// coverage_test.go's TestProcessorClosedState (Get/Set/Delete/Marshal only) lacks.
+func TestProcessor_ClosedState_Boundary(t *testing.T) {
+	p, _ := New()
+	p.Close()
+
+	noop := func(key any, item *IterableValue) {}
+	noopLine := func(lineNum int, item *IterableValue) error { return nil }
+	reduceFn := func(acc any, item *IterableValue) any { return acc }
+
+	if err := p.ForeachWithPath(`{"a":1}`, "a", noop); err == nil {
+		t.Error("expected error from ForeachWithPath on closed processor")
+	}
+	if _, err := p.ForeachReturn(`{"a":1}`, noop); err == nil {
+		t.Error("expected error from ForeachReturn on closed processor")
+	}
+	if _, err := p.CompilePath("a"); err == nil {
+		t.Error("expected error from CompilePath on closed processor")
+	}
+	if _, err := p.GetCompiled(`{"a":1}`, nil); err == nil {
+		t.Error("expected error from GetCompiled on closed processor")
+	}
+	if err := p.ForeachJSONL(strings.NewReader(`{"a":1}`), noopLine); err == nil {
+		t.Error("expected error from ForeachJSONL on closed processor")
+	}
+	if _, err := p.ReduceJSONL(strings.NewReader(`{"a":1}`), nil, reduceFn); err == nil {
+		t.Error("expected error from ReduceJSONL on closed processor")
+	}
+	if _, err := p.CollectJSONL(strings.NewReader(`{"a":1}`)); err == nil {
+		t.Error("expected error from CollectJSONL on closed processor")
+	}
 }

@@ -131,7 +131,9 @@ func NewEncoder(w io.Writer, cfg ...Config) *Encoder {
 //   - ErrSizeLimit: the encoded output exceeds MaxJSONSize
 //   - any error returned while writing to the underlying stream
 func (enc *Encoder) Encode(v any) error {
-	var newline = []byte{'\n'}
+	// Reuse the shared package-level newline slice instead of allocating
+	// []byte{'\n'} on every Encode call (it is passed to io.Writer.Write).
+	newline := jsonNewline
 	// Get the current processor on each Encode call to avoid stale references
 	// after SetGlobalProcessor or ShutdownGlobalProcessor.
 	processor := getDefaultProcessor()

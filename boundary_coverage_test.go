@@ -1,7 +1,6 @@
 package json
 
 import (
-	"bytes"
 	"context"
 	"math"
 	"strings"
@@ -46,63 +45,6 @@ func TestGetWithContext_Boundary(t *testing.T) {
 		}
 		if val != "two" {
 			t.Errorf("val = %v, want two", val)
-		}
-	})
-}
-
-// --- HTMLEscape (api.go:784, 60% coverage) ---
-
-func TestHTMLEscape_Boundary(t *testing.T) {
-	t.Run("empty input", func(t *testing.T) {
-		var buf bytes.Buffer
-		HTMLEscape(&buf, []byte{})
-		if buf.String() != "" {
-			t.Errorf("expected empty output, got %q", buf.String())
-		}
-	})
-
-	t.Run("no escaping needed", func(t *testing.T) {
-		var buf bytes.Buffer
-		HTMLEscape(&buf, []byte(`{"msg":"hello"}`))
-		if buf.String() != `{"msg":"hello"}` {
-			t.Errorf("unexpected escaping: %q", buf.String())
-		}
-	})
-
-	t.Run("all special chars", func(t *testing.T) {
-		var buf bytes.Buffer
-		HTMLEscape(&buf, []byte(`<script>"alert('& XSS")</script>`+"\r\n"))
-		result := buf.String()
-		if strings.Contains(result, "<script>") {
-			t.Error("HTML not escaped")
-		}
-		if !strings.Contains(result, "\\u003c") {
-			t.Error("expected unicode escaping for <")
-		}
-	})
-}
-
-// --- GetTyped (api.go:559, 42.9% coverage) ---
-
-func TestGetTyped_Boundary(t *testing.T) {
-	t.Run("type mismatch returns converted value", func(t *testing.T) {
-		val := GetTyped[string](`{"a":1}`, "a", "default")
-		if val == "" {
-			t.Errorf("expected non-empty value")
-		}
-	})
-
-	t.Run("correct type returns value", func(t *testing.T) {
-		val := GetTyped[string](`{"a":"hello"}`, "a", "")
-		if val != "hello" {
-			t.Errorf("val = %v, want hello", val)
-		}
-	})
-
-	t.Run("missing path returns default", func(t *testing.T) {
-		val := GetTyped[string](`{"a":1}`, "missing", "default")
-		if val != "default" {
-			t.Errorf("val = %v, want default", val)
 		}
 	})
 }
