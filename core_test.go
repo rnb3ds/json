@@ -796,26 +796,6 @@ func TestConfiguration(t *testing.T) {
 		helper.AssertTrue(config.EnableValidation)
 	})
 
-	t.Run("DefaultConfig_Fast", func(t *testing.T) {
-		config := DefaultConfig()
-		config.FullSecurityScan = false
-		config.StrictMode = false
-
-		helper.AssertNotNil(config)
-		helper.AssertFalse(config.FullSecurityScan)
-		helper.AssertFalse(config.StrictMode)
-	})
-
-	t.Run("DefaultConfig_Minimal", func(t *testing.T) {
-		config := DefaultConfig()
-		config.EnableValidation = false
-		config.EnableCache = false
-
-		helper.AssertNotNil(config)
-		helper.AssertFalse(config.EnableValidation)
-		helper.AssertFalse(config.EnableCache)
-	})
-
 	t.Run("ConfigClone", func(t *testing.T) {
 		original := DefaultConfig()
 		original.EnableCache = false
@@ -1231,14 +1211,6 @@ func TestEncodeBatch(t *testing.T) {
 	}
 	if !strings.Contains(result, "user1") || !strings.Contains(result, "user2") {
 		t.Error("Expected keys to be present")
-	}
-}
-
-func TestEncodeConfig_Default(t *testing.T) {
-	cfg := DefaultConfig()
-	// Check that default config has reasonable values
-	if cfg.MaxJSONSize == 0 {
-		t.Error("DefaultConfig should set MaxJSONSize")
 	}
 }
 
@@ -2749,130 +2721,7 @@ func TestIndent(t *testing.T) {
 	}
 }
 
-// TestIsComplexPath tests complex path detection
-func TestIsComplexPath(t *testing.T) {
-	processor, _ := New()
-	defer processor.Close()
-
-	tests := []struct {
-		name     string
-		path     string
-		expected bool
-	}{
-		{
-			name:     "simple path",
-			path:     "user.name",
-			expected: false,
-		},
-		{
-			name:     "with bracket",
-			path:     "users[0]",
-			expected: true,
-		},
-		{
-			name:     "with brace",
-			path:     "users{name}",
-			expected: true,
-		},
-		{
-			name:     "with colon",
-			path:     "items[0:5]",
-			expected: true,
-		},
-		{
-			name:     "very simple",
-			path:     "user",
-			expected: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := processor.isComplexPath(tt.path)
-			if result != tt.expected {
-				t.Errorf("isComplexPath(%s) = %v; want %v", tt.path, result, tt.expected)
-			}
-		})
-	}
-}
-
 // TestIsEmptyOrZero is covered by TestIsEmptyOrZeroExtended in test_helpers_new_test.go
-
-// TestJSONPointerEscapeUnescape tests JSON Pointer escaping
-func TestJSONPointerEscapeUnescape(t *testing.T) {
-	tests := []struct {
-		name     string
-		input    string
-		expected string
-	}{
-		{
-			name:     "escape tilde",
-			input:    "user~name",
-			expected: "user~0name",
-		},
-		{
-			name:     "escape slash",
-			input:    "user/name",
-			expected: "user~1name",
-		},
-		{
-			name:     "escape both",
-			input:    "user~/name",
-			expected: "user~0~1name",
-		},
-		{
-			name:     "no escaping needed",
-			input:    "username",
-			expected: "username",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := internal.EscapeJSONPointer(tt.input)
-			if result != tt.expected {
-				t.Errorf("escapeJSONPointer(%s) = %s; want %s", tt.input, result, tt.expected)
-			}
-		})
-	}
-
-	// Test unescaping
-	unescapeTests := []struct {
-		name     string
-		input    string
-		expected string
-	}{
-		{
-			name:     "unescape tilde",
-			input:    "user~0name",
-			expected: "user~name",
-		},
-		{
-			name:     "unescape slash",
-			input:    "user~1name",
-			expected: "user/name",
-		},
-		{
-			name:     "unescape both",
-			input:    "user~0~1name",
-			expected: "user~/name",
-		},
-		{
-			name:     "no unescaping needed",
-			input:    "username",
-			expected: "username",
-		},
-	}
-
-	for _, tt := range unescapeTests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := internal.UnescapeJSONPointer(tt.input)
-			if result != tt.expected {
-				t.Errorf("UnescapeJSONPointer(%s) = %s; want %s", tt.input, result, tt.expected)
-			}
-		})
-	}
-}
 
 func TestPrettyEncodeConfig(t *testing.T) {
 	cfg := PrettyConfig()
@@ -2954,136 +2803,6 @@ func TestParseArrayIndex(t *testing.T) {
 			result, ok := internal.ParseArrayIndex(tt.input)
 			if result != tt.expectedIdx || ok != tt.expectedOK {
 				t.Errorf("ParseArrayIndex(%q) = (%d, %v), want (%d, %v)", tt.input, result, ok, tt.expectedIdx, tt.expectedOK)
-			}
-		})
-	}
-}
-
-// TestParseArraySegment tests parsing array access segments
-func TestParseArraySegment(t *testing.T) {
-	processor, _ := New()
-	defer processor.Close()
-
-	tests := []struct {
-		name          string
-		part          string
-		expectedType  string
-		expectedIndex int
-		expectedStart *int
-		expectedEnd   *int
-		expectedStep  *int
-	}{
-		{
-			name:          "simple index",
-			part:          "[0]",
-			expectedType:  "array",
-			expectedIndex: 0,
-		},
-		{
-			name:          "negative index",
-			part:          "[-1]",
-			expectedType:  "array",
-			expectedIndex: -1,
-		},
-		{
-			name:          "slice",
-			part:          "[0:5]",
-			expectedType:  "slice",
-			expectedStart: intPtr(0),
-			expectedEnd:   intPtr(5),
-			expectedStep:  intPtr(1),
-		},
-		{
-			name:          "slice with step",
-			part:          "[0:10:2]",
-			expectedType:  "slice",
-			expectedStart: intPtr(0),
-			expectedEnd:   intPtr(10),
-			expectedStep:  intPtr(2),
-		},
-		{
-			name:         "property with index",
-			part:         "items[0]",
-			expectedType: "property", // First segment is property
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			segments := processor.getPathSegments()
-			defer processor.putPathSegments(segments)
-
-			*segments = processor.parseArraySegment(tt.part, *segments)
-
-			if len(*segments) == 0 {
-				t.Fatal("parseArraySegment returned no segments")
-			}
-
-			firstSeg := (*segments)[0]
-			if firstSeg.TypeString() != tt.expectedType {
-				t.Errorf("Segment type = %s; want %s", firstSeg.TypeString(), tt.expectedType)
-			}
-		})
-	}
-}
-
-// TestParseExtractionSegment tests parsing extraction segments
-func TestParseExtractionSegment(t *testing.T) {
-	processor, _ := New()
-	defer processor.Close()
-
-	tests := []struct {
-		name           string
-		part           string
-		expectedKey    string
-		expectedIsFlat bool
-	}{
-		{
-			name:           "simple extraction",
-			part:           "{name}",
-			expectedKey:    "name",
-			expectedIsFlat: false,
-		},
-		{
-			name:           "flat extraction",
-			part:           "{flat:items}",
-			expectedKey:    "items",
-			expectedIsFlat: true,
-		},
-		{
-			name:           "property with extraction",
-			part:           "users{name}",
-			expectedKey:    "name",
-			expectedIsFlat: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			segments := processor.getPathSegments()
-			defer processor.putPathSegments(segments)
-
-			*segments = processor.parseExtractionSegment(tt.part, *segments)
-
-			// Find the extraction segment
-			var extractSeg *internal.PathSegment
-			for i := range *segments {
-				if (*segments)[i].Type == internal.ExtractSegment {
-					extractSeg = &(*segments)[i]
-					break
-				}
-			}
-
-			if extractSeg == nil {
-				t.Fatal("No extraction segment found")
-			}
-
-			if extractSeg.Key != tt.expectedKey {
-				t.Errorf("Extraction key = %s; want %s", extractSeg.Key, tt.expectedKey)
-			}
-
-			if extractSeg.IsFlatExtract() != tt.expectedIsFlat {
-				t.Errorf("IsFlatExtract() = %v; want %v", extractSeg.IsFlatExtract(), tt.expectedIsFlat)
 			}
 		})
 	}
@@ -3517,56 +3236,6 @@ func TestPathWithSpecialCharacters(t *testing.T) {
 	}
 }
 
-// TestPreprocessPath tests path preprocessing for brackets and braces
-func TestPreprocessPath(t *testing.T) {
-	processor, _ := New()
-	defer processor.Close()
-
-	tests := []struct {
-		name     string
-		input    string
-		expected string
-	}{
-		{
-			name:     "bracket after letter",
-			input:    "items[0]",
-			expected: "items.[0]", // Adds dot before bracket
-		},
-		{
-			name:     "bracket after digit",
-			input:    "data1[0]",
-			expected: "data1.[0]",
-		},
-		{
-			name:     "brace after letter",
-			input:    "users{name}",
-			expected: "users.{name}", // Adds dot before brace
-		},
-		{
-			name:     "complex mixed",
-			input:    "data1[0]users{name}",
-			expected: "data1.[0]users.{name}", // Adds dots before bracket and brace
-		},
-		{
-			name:     "no preprocessing needed",
-			input:    "user.name",
-			expected: "user.name",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			sb := processor.getStringBuilder()
-			defer processor.putStringBuilder(sb)
-
-			result := processor.preprocessPath(tt.input, sb)
-			if result != tt.expected {
-				t.Errorf("preprocessPath(%s) = %s; want %s", tt.input, result, tt.expected)
-			}
-		})
-	}
-}
-
 // TestProcessBatch tests batch processing
 func TestProcessBatch(t *testing.T) {
 	operations := []BatchOperation{
@@ -3662,25 +3331,6 @@ func TestProcessor_CompiledPath(t *testing.T) {
 		if result != "John" {
 			t.Errorf("GetCompiled = %v, want 'John'", result)
 		}
-	})
-}
-
-// TestProcessor_CustomConfigVsDefault tests that custom processor config is actually used
-func TestProcessor_CustomConfigVsDefault(t *testing.T) {
-	// JSON with depth exceeding default limit
-	deepJSON := `{"a":{` + string(make([]byte, 40)) + `}}`
-
-	// Create custom config with higher nesting limit
-	config := DefaultConfig()
-	config.MaxNestingDepthSecurity = 100
-
-	processor, _ := New(config)
-	defer processor.Close()
-
-	// This should work with custom config
-	processor.Foreach(deepJSON, func(key any, item *IterableValue) {
-		// If we get here without error, custom config is being used
-		_ = item.GetString("a")
 	})
 }
 
@@ -4672,71 +4322,6 @@ func TestStandardLibraryCompatibility(t *testing.T) {
 	if Valid(invalidJSON) {
 		t.Error("Valid() returned true for invalid JSON")
 	}
-}
-
-// TestValidateSchema tests ValidateSchema function
-func TestValidateSchema(t *testing.T) {
-	t.Run("valid object", func(t *testing.T) {
-		jsonStr := `{"name": "Alice", "age": 30}`
-		schema := &Schema{
-			Type:     "object",
-			Required: []string{"name"},
-			Properties: map[string]*Schema{
-				"name": {Type: "string"},
-				"age":  {Type: "number"},
-			},
-		}
-
-		errors, err := ValidateSchema(jsonStr, schema)
-		if err != nil {
-			t.Fatalf("ValidateSchema error: %v", err)
-		}
-		if len(errors) != 0 {
-			t.Errorf("ValidateSchema should have no errors, got: %v", errors)
-		}
-	})
-
-	t.Run("missing required field", func(t *testing.T) {
-		jsonStr := `{"age": 30}`
-		schema := &Schema{
-			Type:     "object",
-			Required: []string{"name"},
-		}
-
-		errors, err := ValidateSchema(jsonStr, schema)
-		if err != nil {
-			t.Fatalf("ValidateSchema error: %v", err)
-		}
-		if len(errors) == 0 {
-			t.Error("ValidateSchema should report missing required field")
-		}
-	})
-
-	t.Run("type mismatch", func(t *testing.T) {
-		jsonStr := `{"name": 123}`
-		schema := &Schema{
-			Type: "object",
-			Properties: map[string]*Schema{
-				"name": {Type: "string"},
-			},
-		}
-
-		errors, err := ValidateSchema(jsonStr, schema)
-		if err != nil {
-			t.Fatalf("ValidateSchema error: %v", err)
-		}
-		if len(errors) == 0 {
-			t.Error("ValidateSchema should report type mismatch")
-		}
-	})
-
-	t.Run("nil schema returns error", func(t *testing.T) {
-		jsonStr := `{"name": "Alice"}`
-		_, err := ValidateSchema(jsonStr, nil)
-		if err == nil {
-			t.Error("ValidateSchema should return error for nil schema")
-		}
-	})
 }
 
 // TestWarmupCache tests cache warmup functionality

@@ -1,8 +1,6 @@
 package json
 
 import (
-	"sync/atomic"
-
 	"github.com/cybergodev/json/internal"
 )
 
@@ -43,12 +41,11 @@ func (p *Processor) invalidateJSONCache(jsonStr string) {
 //
 // CORRECTNESS: Always hashes the FULL string. This function is the identity for
 // caches that store computed results (Get/parse/encode) keyed by JSON content —
-// a collision returns a WRONG cached result. The sampled variant
-// (HashStringFNV1aSampled) only examines first/middle/last bytes of large inputs,
-// so two equal-length documents that differ outside those sample windows collide.
-// The full scan is negligible compared to the JSON parse it guards, so correctness
-// wins over the micro-optimization here. (Sampled hashing remains available in
-// the internal package for non-correctness-critical uses.)
+// a collision returns a WRONG cached result. A sampled variant (examining only
+// first/middle/last bytes of large inputs) was removed for exactly this reason:
+// two equal-length documents that differ outside the sample windows collide.
+// The full scan is negligible compared to the JSON parse it guards, so
+// correctness wins over the micro-optimization.
 func hashStringToUint64(s string) uint64 {
 	return internal.HashStringFNV1a(s)
 }
@@ -128,73 +125,18 @@ func formatUint64HexString(v uint64) string {
 	return string(buf[:])
 }
 
-// createSimpleCacheKey creates a simple "prefix:data" format cache key
-// Uses stack-allocated buffer for small keys to avoid heap allocation
-func createSimpleCacheKey(prefix, data string) string {
-	totalLen := len(prefix) + 1 + len(data) // prefix + ":" + data
-
-	// Use stack-allocated buffer for small keys (up to 256 bytes)
-	const maxStackKeySize = 256
-	if totalLen <= maxStackKeySize {
-		var buf [maxStackKeySize]byte
-		n := copy(buf[:], prefix)
-		buf[n] = ':'
-		n++
-		n += copy(buf[n:], data)
-		return string(buf[:n])
-	}
-
-	// Fall back to heap allocation for large keys
-	return prefix + ":" + data
-}
-
-// getCachedPathSegments gets parsed path segments using unified cache
-// PERFORMANCE: Creates cache key once and reuses for both lookup and storage
-// PERFORMANCE: Returns cached segments directly (immutable after creation)
+// getCachedPathSegments gets parsed path segments for the recursive processor.
+//
+// PERFORMANCE: delegates to internal.ParsePath, whose process-wide sync.Map
+// cache serves every caller (its own fast paths, iterators, path validation)
+// with lock-free reads. The former processor-level "path:" cache duplicated
+// that data a second time per processor AND returned a defensive copy on
+// every hit — one allocation per navigation for protection against a
+// mutation that no consumer performs: navigation (recursive.go) treats
+// segments as read-only, the same contract all other ParsePath callers
+// already rely on.
 func (p *Processor) getCachedPathSegments(path string) ([]internal.PathSegment, error) {
-	// Use unified cache manager
-	if p.config.EnableCache {
-		// PERFORMANCE: Create cache key once for both lookup and storage
-		cacheKey := createSimpleCacheKey("path", path)
-		if cached, ok := p.cache.Get(cacheKey); ok {
-			if segments, ok := cached.([]internal.PathSegment); ok {
-				// PERFORMANCE: When CacheSharedResults is enabled, return the
-				// cached slice directly. Navigation (recursive.go) only reads
-				// segments — it never mutates them — so the defensive copy is
-				// safe to skip under the opt-in "do not mutate" contract.
-				if p.config.CacheSharedResults {
-					return segments, nil
-				}
-				// Return a copy to prevent callers from mutating cached data
-				result := make([]internal.PathSegment, len(segments))
-				copy(result, segments)
-				return result, nil
-			}
-		}
-
-		// Parse path
-		segments, err := internal.ParsePath(path)
-		if err != nil {
-			return nil, err
-		}
-
-		// Cache the result using unified cache - reuse the cache key
-		if atomic.LoadInt32(&p.state) == processorStateActive {
-			cached := make([]internal.PathSegment, len(segments))
-			copy(cached, segments)
-			p.cache.Set(cacheKey, cached)
-		}
-
-		return segments, nil
-	}
-
-	// Parse path without caching
-	segments, err := internal.ParsePath(path)
-	if err != nil {
-		return nil, err
-	}
-
-	return segments, nil
+	return internal.ParsePath(path)
 }
 
 // getCachedResult retrieves a cached result if available

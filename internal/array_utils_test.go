@@ -204,28 +204,6 @@ func TestPathSegment_HasStep(t *testing.T) {
 	}
 }
 
-// TestPathSegment_TypeString tests the TypeString method
-func TestPathSegment_TypeString(t *testing.T) {
-	tests := []struct {
-		name     string
-		seg      PathSegment
-		expected string
-	}{
-		{"property", NewPropertySegment("test"), "property"},
-		{"array index", NewArrayIndexSegment(0), "array"},
-		{"array slice", NewArraySliceSegment(0, 1, 1, true, true, true), "slice"},
-		{"extract", NewExtractSegment("key"), "extract"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := tt.seg.TypeString(); got != tt.expected {
-				t.Errorf("TypeString() = %q, want %q", got, tt.expected)
-			}
-		})
-	}
-}
-
 // TestPathSegment_IsFlatExtract tests the IsFlatExtract method
 func TestPathSegment_IsFlatExtract(t *testing.T) {
 	// Regular extract
@@ -244,67 +222,6 @@ func TestPathSegment_IsFlatExtract(t *testing.T) {
 	propSeg := NewPropertySegment("test")
 	if propSeg.IsFlatExtract() {
 		t.Error("PropertySegment should not be flat extract")
-	}
-}
-
-// TestNewPropertySegment tests creating property segments
-func TestNewPropertySegment(t *testing.T) {
-	seg := NewPropertySegment("userName")
-
-	if seg.Type != PropertySegment {
-		t.Errorf("Type = %v, want PropertySegment", seg.Type)
-	}
-	if seg.Key != "userName" {
-		t.Errorf("Key = %q, want %q", seg.Key, "userName")
-	}
-}
-
-// TestNewArrayIndexSegment tests creating array index segments
-func TestNewArrayIndexSegment(t *testing.T) {
-	seg := NewArrayIndexSegment(42)
-
-	if seg.Type != ArrayIndexSegment {
-		t.Errorf("Type = %v, want ArrayIndexSegment", seg.Type)
-	}
-	if seg.Index != 42 {
-		t.Errorf("Index = %d, want 42", seg.Index)
-	}
-
-	// Test negative index
-	negSeg := NewArrayIndexSegment(-1)
-	if !negSeg.IsNegativeIndex() {
-		t.Error("Negative index should be marked as negative")
-	}
-}
-
-// TestNewArraySliceSegment tests creating array slice segments
-func TestNewArraySliceSegment(t *testing.T) {
-	seg := NewArraySliceSegment(1, 10, 2, true, true, true)
-
-	if seg.Type != ArraySliceSegment {
-		t.Errorf("Type = %v, want ArraySliceSegment", seg.Type)
-	}
-	if seg.Index != 1 {
-		t.Errorf("Start (Index) = %d, want 1", seg.Index)
-	}
-	if seg.End != 10 {
-		t.Errorf("End = %d, want 10", seg.End)
-	}
-	if seg.Step != 2 {
-		t.Errorf("Step = %d, want 2", seg.Step)
-	}
-}
-
-// TestNewExtractSegment tests creating extract segments
-func TestNewExtractSegment(t *testing.T) {
-	// Regular extract
-	seg := NewExtractSegment("email")
-
-	if seg.Type != ExtractSegment {
-		t.Errorf("Type = %v, want ExtractSegment", seg.Type)
-	}
-	if seg.Key != "email" {
-		t.Errorf("Key = %q, want %q", seg.Key, "email")
 	}
 }
 

@@ -1153,26 +1153,22 @@ func TestProcessor_StreamJSONL_InvalidLine(t *testing.T) {
 // STREAMJSONL BOUNDARY TESTS (merged from processor_boundary_test.go)
 // ============================================================================
 
-// TestStreamJSONL_InvalidJSON exercises the StreamJSONL invalid-JSONL error
-// path (processor_streamjsonl.go).
-func TestStreamJSONL_InvalidJSON(t *testing.T) {
-	p, _ := New()
-	defer p.Close()
-	err := p.StreamJSONL(strings.NewReader("not json\n"), func(int, *IterableValue) error { return nil })
-	if err == nil {
-		t.Error("expected error for invalid JSONL input")
-	}
-}
-
 // TestStreamJSONLParallelWithContext_Cancel exercises the
 // StreamJSONLParallelWithContext context-cancellation path
-// (processor_streamjsonl.go): a pre-cancelled context must not panic.
+// (processor_streamjsonl.go): a pre-cancelled context must surface a context
+// error without processing any item.
 func TestStreamJSONLParallelWithContext_Cancel(t *testing.T) {
 	p, _ := New()
 	defer p.Close()
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // cancel before work starts
-	_ = p.StreamJSONLParallelWithContext(ctx, strings.NewReader(`{"a":1}`+"\n"), 2,
-		func(int, *IterableValue) error { return nil })
-	// A pre-cancelled context must not panic; it surfaces an error or short-circuits.
+	processed := 0
+	err := p.StreamJSONLParallelWithContext(ctx, strings.NewReader(`{"a":1}`+"\n"), 2,
+		func(int, *IterableValue) error { processed++; return nil })
+	if err == nil {
+		t.Error("pre-cancelled context should surface a context error")
+	}
+	if processed != 0 {
+		t.Errorf("pre-cancelled context must not process items, processed %d", processed)
+	}
 }

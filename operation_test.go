@@ -521,12 +521,13 @@ func TestExtractDelete(t *testing.T) {
 	}
 
 	t.Run("consecutive extractions", func(t *testing.T) {
-		json := `[{"a":{"b":1}},{"a":{"b":2}}]`
-		result, err := Delete(json, "{a}{b}")
+		result, err := Delete(`[{"a":{"b":1}},{"a":{"b":2}}]`, "{a}{b}")
 		if err != nil {
-			return // double extraction may not be supported
+			t.Fatalf("double extraction delete: %v", err)
 		}
-		_ = result
+		if result != `[{"a":{}},{"a":{}}]` {
+			t.Errorf("double extraction delete = %s, want [\"a\":{},\"a\":{}]", result)
+		}
 	})
 }
 

@@ -531,21 +531,20 @@ func matchPatternIgnoreCaseFast(s, pattern string) bool {
 				return false
 			}
 		}
-		// Handle remaining bytes
+		// Handle remaining bytes. Fold BOTH sides: the pattern is caller-
+		// supplied (Config.AdditionalDangerousPatterns, global registry) and
+		// may contain uppercase letters — folding only the subject made every
+		// uppercase pattern byte unmatchable, so such patterns were silently
+		// never detected.
 		for i := (n / 8) * 8; i < n; i++ {
-			c1 := s[i] | 0x20
-			c2 := pattern[i]
-			if c1 != c2 {
+			if FoldLowerASCII(s[i]) != FoldLowerASCII(pattern[i]) {
 				return false
 			}
 		}
 	default:
-		// Simple loop for short patterns
+		// Simple loop for short patterns. Fold both sides — see above.
 		for i := 0; i < n; i++ {
-			c1 := s[i] | 0x20
-			c2 := pattern[i]
-			// pattern is expected to be lowercase
-			if c1 != c2 {
+			if FoldLowerASCII(s[i]) != FoldLowerASCII(pattern[i]) {
 				return false
 			}
 		}
@@ -553,13 +552,24 @@ func matchPatternIgnoreCaseFast(s, pattern string) bool {
 	return true
 }
 
-// matchBytesIgnoreCase checks if 8 bytes match case-insensitively
+// FoldLowerASCII lowercases a byte if it is an ASCII letter, and returns it
+// unchanged otherwise. OR-ing 0x20 unconditionally is NOT a case fold: it
+// rewrites other bytes ('[' matches '{', '@' matches '`'), producing false
+// matches for non-letter patterns.
+func FoldLowerASCII(c byte) byte {
+	if c >= 'A' && c <= 'Z' {
+		return c | 0x20
+	}
+	return c
+}
+
+// matchBytesIgnoreCase checks if 8 bytes match case-insensitively.
+// Both sides are folded: caller-supplied patterns may contain uppercase
+// letters, and folding only the subject would make them unmatchable.
 func matchBytesIgnoreCase(s, pattern string) bool {
 	// Process each byte
 	for i := 0; i < 8; i++ {
-		c1 := s[i] | 0x20
-		c2 := pattern[i]
-		if c1 != c2 {
+		if FoldLowerASCII(s[i]) != FoldLowerASCII(pattern[i]) {
 			return false
 		}
 	}

@@ -15,11 +15,10 @@ import (
 
 // ParallelIterator processes arrays in parallel using worker goroutines
 type ParallelIterator struct {
-	data    []any
-	workers int
-	sem     chan struct{}
-	done    chan struct{}
-	closed  atomic.Bool
+	data   []any
+	sem    chan struct{}
+	done   chan struct{}
+	closed atomic.Bool
 }
 
 // NewParallelIterator creates a new parallel iterator.
@@ -57,10 +56,9 @@ func NewParallelIterator(data []any, cfg ...Config) *ParallelIterator {
 		}
 	}
 	return &ParallelIterator{
-		data:    data,
-		workers: workers,
-		sem:     make(chan struct{}, workers),
-		done:    make(chan struct{}),
+		data: data,
+		sem:  make(chan struct{}, workers),
+		done: make(chan struct{}),
 	}
 }
 
@@ -71,16 +69,23 @@ func (it *ParallelIterator) ForEach(fn func(int, any) error) error {
 	return it.ForEachWithContext(context.Background(), fn)
 }
 
-// ForEachWithContext processes each element in parallel with context support for cancellation
-// The function receives the index and value of each element
-// Returns the first error encountered, or ctx.Err() if context is cancelled
-// RESOURCE FIX: Added context support for graceful goroutine termination
-func (it *ParallelIterator) ForEachWithContext(ctx context.Context, fn func(int, any) error) error {
+// forEachParallel is the shared dispatch/worker skeleton behind
+// ForEachWithContext (items = it.data, T = any) and ForEachBatchWithContext
+// (items = batches, T = []any). Both public methods previously carried a
+// verbatim copy of this loop — including the panic-recovery block — which
+// would silently drift apart on any concurrency fix. panicLabel keeps each
+// caller's historical panic message.
+//
+// Semantics (unchanged from the pre-dedup implementations):
+//   - workers stop early once any error is recorded (hasError gate)
+//   - ctx cancellation returns ctx.Err(); iterator Close returns nil
+//   - a callback panic is converted to an error instead of crashing
+func forEachParallel[T any](it *ParallelIterator, ctx context.Context, items []T, fn func(idx int, val T) error, panicLabel string) error {
 	errCh := make(chan error, 1)
 	var wg sync.WaitGroup
 	var hasError int32
 
-	for i, item := range it.data {
+	for i, item := range items {
 		// Check context cancellation and close signal
 		select {
 		case <-ctx.Done():
@@ -108,7 +113,7 @@ func (it *ParallelIterator) ForEachWithContext(ctx context.Context, fn func(int,
 		}
 		wg.Add(1)
 
-		go func(idx int, val any) {
+		go func(idx int, val T) {
 			defer wg.Done()
 			defer func() { <-it.sem }()
 			// SAFETY (SEC-003): a panic inside the user callback fn must not tear
@@ -118,7 +123,7 @@ func (it *ParallelIterator) ForEachWithContext(ctx context.Context, fn func(int,
 				if r := recover(); r != nil {
 					if atomic.CompareAndSwapInt32(&hasError, 0, 1) {
 						select {
-						case errCh <- fmt.Errorf("parallel iterator worker panicked: %v", r):
+						case errCh <- fmt.Errorf("%s panicked: %v", panicLabel, r):
 						default:
 						}
 					}
@@ -158,6 +163,14 @@ func (it *ParallelIterator) ForEachWithContext(ctx context.Context, fn func(int,
 	}
 }
 
+// ForEachWithContext processes each element in parallel with context support for cancellation
+// The function receives the index and value of each element
+// Returns the first error encountered, or ctx.Err() if context is cancelled
+// RESOURCE FIX: Added context support for graceful goroutine termination
+func (it *ParallelIterator) ForEachWithContext(ctx context.Context, fn func(int, any) error) error {
+	return forEachParallel(it, ctx, it.data, fn, "parallel iterator worker")
+}
+
 // ForEachBatch processes elements in batches in parallel
 // Each batch is processed by a single goroutine
 //
@@ -191,85 +204,7 @@ func (it *ParallelIterator) ForEachBatchWithContext(ctx context.Context, batchSi
 		batches = append(batches, it.data[i:end])
 	}
 
-	errCh := make(chan error, 1)
-	var wg sync.WaitGroup
-	var hasError int32
-
-	for batchIdx, batch := range batches {
-		// Check context cancellation and close signal
-		select {
-		case <-ctx.Done():
-			wg.Wait()
-			return ctx.Err()
-		case <-it.done:
-			wg.Wait()
-			return nil
-		default:
-		}
-
-		if atomic.LoadInt32(&hasError) == 1 {
-			break
-		}
-
-		select {
-		case it.sem <- struct{}{}: // Acquire semaphore
-		case <-ctx.Done():
-			wg.Wait()
-			return ctx.Err()
-		case <-it.done:
-			wg.Wait()
-			return nil
-		}
-		wg.Add(1)
-
-		go func(idx int, b []any) {
-			defer wg.Done()
-			defer func() { <-it.sem }()
-			// SAFETY (SEC-003): a panic inside the user callback fn must not tear
-			// down the process; convert it to an error reported to the caller.
-			// Mirrors the JSONL worker recovery in processor_streamjsonl.go.
-			defer func() {
-				if r := recover(); r != nil {
-					if atomic.CompareAndSwapInt32(&hasError, 0, 1) {
-						select {
-						case errCh <- fmt.Errorf("parallel iterator batch worker panicked: %v", r):
-						default:
-						}
-					}
-				}
-			}()
-
-			select {
-			case <-ctx.Done():
-				return
-			case <-it.done:
-				return
-			default:
-			}
-
-			if atomic.LoadInt32(&hasError) == 1 {
-				return
-			}
-
-			if err := fn(idx, b); err != nil {
-				if atomic.CompareAndSwapInt32(&hasError, 0, 1) {
-					select {
-					case errCh <- err:
-					default:
-					}
-				}
-			}
-		}(batchIdx, batch)
-	}
-
-	wg.Wait()
-
-	select {
-	case err := <-errCh:
-		return err
-	default:
-		return nil
-	}
+	return forEachParallel(it, ctx, batches, fn, "parallel iterator batch worker")
 }
 
 // Map applies a transformation function to each element in parallel
@@ -303,17 +238,18 @@ func (it *ParallelIterator) Map(transform func(int, any) (any, error)) ([]any, e
 	return result, nil
 }
 
-// Filter filters elements in parallel using a predicate function
-// Returns a new slice with elements that pass the predicate
+// Filter filters elements in parallel using a predicate function.
+// Returns a new slice with elements that pass the predicate, preserving the
+// input order (results land in preallocated slots keyed by index, like Map —
+// appending under a mutex would return completion order instead).
 func (it *ParallelIterator) Filter(predicate func(int, any) bool) []any {
-	var mu sync.Mutex
-	result := make([]any, 0)
+	slots := make([]any, len(it.data))
+	kept := make([]bool, len(it.data))
 
 	if err := it.ForEach(func(idx int, val any) error {
 		if predicate(idx, val) {
-			mu.Lock()
-			result = append(result, val)
-			mu.Unlock()
+			slots[idx] = val
+			kept[idx] = true
 		}
 		return nil
 	}); err != nil {
@@ -324,6 +260,12 @@ func (it *ParallelIterator) Filter(predicate func(int, any) bool) []any {
 		slog.Error("parallel filter recovered a panic", slog.Any("error", err))
 	}
 
+	result := make([]any, 0, len(slots))
+	for i, k := range kept {
+		if k {
+			result = append(result, slots[i])
+		}
+	}
 	return result
 }
 

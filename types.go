@@ -267,9 +267,7 @@ func (c *Config) AddDangerousPattern(pattern DangerousPattern) {
 // This is a performance optimization for scenarios where the same JSON is queried multiple times.
 // OPTIMIZED: Pre-parsing avoids repeated JSON parsing overhead for repeated queries.
 type ParsedJSON struct {
-	data      any
-	hash      uint64
-	processor *Processor
+	data any
 }
 
 // Data returns the underlying parsed data
@@ -281,14 +279,14 @@ func (p *ParsedJSON) Data() any {
 }
 
 // Release releases resources held by ParsedJSON.
-// After calling Release, Data() returns nil and the processor reference is cleared.
-// Call this when finished with a pre-parsed JSON document to allow GC of the processor.
+// After calling Release, Data() returns nil.
+// Call this when finished with a pre-parsed JSON document so the parsed tree
+// can be garbage-collected even while the ParsedJSON itself is still referenced.
 func (p *ParsedJSON) Release() {
 	if p == nil {
 		return
 	}
 	p.data = nil
-	p.processor = nil
 }
 
 // Stats provides processor performance statistics

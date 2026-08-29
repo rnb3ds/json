@@ -28,16 +28,4 @@ const (
 	// Buffer pool limits (for []byte)
 	MinPoolBufferSize = 256   // Minimum capacity to pool (smaller buffers not worth pooling)
 	MaxPoolBufferSize = 32768 // Maximum capacity to pool (32KB - larger buffers discarded)
-
-	// Slice pool limits (for []any, []PathSegment, etc.)
-	MinPoolSliceSize = 4   // Minimum slice capacity to pool
-	MaxPoolSliceSize = 256 // Maximum slice capacity to pool
-
-	// Map pool limits (for map[string]any)
-	MinPoolMapSize = 4  // Minimum map size to pool
-	MaxPoolMapSize = 64 // Maximum map size to pool
-
-	// StringBuilder pool limits
-	MinPoolBuilderCap = 256   // Minimum StringBuilder capacity to pool
-	MaxPoolBuilderCap = 16384 // Maximum StringBuilder capacity to pool (16KB)
 )

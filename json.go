@@ -27,6 +27,9 @@
 //	processor := json.New() // Use default config
 //	defer processor.Close()
 //	value, err := processor.Get(jsonStr, "complex.path[0].field")
+
+// The package documentation lives in doc.go; this header is a plain comment
+// so godoc does not concatenate two package comments.
 package json
 
 import (
@@ -286,8 +289,10 @@ func StreamLinesInto[T any](reader io.Reader, fn func(lineNum int, data T) error
 		maxLineSize = 1024 * 1024
 	}
 
-	// Use processor for security-validated unmarshaling
-	p, err := getProcessorWithConfig(config)
+	// Use processor for security-validated unmarshaling. With no cfg this is
+	// the default/global processor — matching the doc comment — rather than a
+	// separate config-cached processor that SetGlobalProcessor cannot reach.
+	p, err := processorForCfg(cfg...)
 	if err != nil {
 		return nil, err
 	}
@@ -362,7 +367,8 @@ type JSONLWriter struct {
 }
 
 // NewJSONLWriter creates a new JSONL writer that writes to the provided io.Writer.
-// HTML escaping is controlled by Config.EscapeHTML (default: false for performance).
+// HTML escaping is controlled by Config.EscapeHTML (default: true, matching
+// DefaultConfig).
 //
 // Example:
 //
@@ -550,8 +556,7 @@ func (w *JSONLWriter) Stats() JSONLStats {
 //   - any error returned while reading data (including bufio.ErrTooLong
 //     when a line exceeds the configured limit)
 func ParseJSONL(data []byte, cfg ...Config) ([]any, error) {
-	config := getConfigOrDefault(cfg...)
-	p, err := getProcessorWithConfig(config)
+	p, err := processorForCfg(cfg...)
 	if err != nil {
 		return nil, err
 	}
@@ -602,18 +607,23 @@ func ToJSONL(data []any, cfg ...Config) ([]byte, error) {
 		buf.Grow(estimatedSize - buf.Cap())
 	}
 
-	// Use cached processor for encoding with config
-	p, err := getProcessorWithConfig(config)
+	// Use processor for encoding (the default/global processor when no cfg is
+	// supplied, matching the doc comment; a config-cached processor otherwise)
+	p, err := processorForCfg(cfg...)
 	if err != nil {
 		return nil, err
 	}
 
 	for _, item := range data {
-		encoded, err := p.EncodeWithConfig(item, config)
+		// PERFORMANCE: encode straight to bytes — the pooled buffer is the final
+		// destination, so the intermediate string that EncodeWithConfig would
+		// produce (and buf.WriteString would copy again) is skipped entirely.
+		// encodeWithConfigToBytes keeps the per-item governance/op funnel intact.
+		encoded, err := p.encodeWithConfigToBytes(item, config)
 		if err != nil {
 			return nil, err
 		}
-		buf.WriteString(encoded)
+		buf.Write(encoded)
 		buf.WriteByte('\n')
 	}
 

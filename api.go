@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"reflect"
 	"slices"
 	"sync"
 
@@ -399,7 +400,9 @@ var configFieldList = []configFieldAccessor{
 				return false
 			}
 			for i, v := range a.CustomValidators {
-				if v != b.CustomValidators[i] {
+				// Type-only comparison, matching the hash: validator values are
+				// funcs and not comparable with ==.
+				if reflect.TypeOf(v) != reflect.TypeOf(b.CustomValidators[i]) {
 					return false
 				}
 			}
@@ -583,15 +586,7 @@ func GetWithContext(ctx context.Context, jsonStr, path string, cfg ...Config) (a
 //	age := json.GetTyped[int](data, "user.age", 0)
 //	name := json.GetTyped[string](data, "user.name") // returns "" if not found
 func GetTyped[T any](jsonStr, path string, defaultValue ...T) T {
-	p, err := getProcessorOrFail()
-	if err != nil {
-		if len(defaultValue) > 0 {
-			return defaultValue[0]
-		}
-		var zero T
-		return zero
-	}
-	return getTypedWithDefault(p, jsonStr, path, defaultValue...)
+	return withTypedGetter(getTypedWithDefault[T], jsonStr, path, defaultValue...)
 }
 
 // GetString retrieves a string value from JSON at the specified path.
@@ -1267,6 +1262,16 @@ func asyncCloseProcessor(p *Processor) {
 // getProcessorWithConfig returns a processor configured with the given config.
 // Uses caching for identical configurations to improve performance.
 func getProcessorWithConfig(cfg Config) (*Processor, error) {
+	// The cache key (hashConfig) cannot distinguish two different CustomPathParser
+	// functions — the field contributes a single "is set" bit (see configFieldList).
+	// A cached processor built with parser A would silently serve every call made
+	// with parser B, so configs carrying a custom parser are never served from the
+	// registry. (Hooks/CustomEncoder/CustomValidators have the same instance-vs-type
+	// collision, which is documented as an accepted limitation on those entries.)
+	if cfg.CustomPathParser != nil {
+		return New(cfg)
+	}
+
 	// Compute cache key from config
 	cacheKey := hashConfig(cfg)
 

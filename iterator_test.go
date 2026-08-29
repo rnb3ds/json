@@ -2294,14 +2294,6 @@ func TestParallelIteratorForEachBatch(t *testing.T) {
 	})
 }
 
-func TestParallelIteratorCloseNoPanic(t *testing.T) {
-	data := []any{1, 2, 3}
-	iter := NewParallelIterator(data)
-
-	// Close should not panic
-	iter.Close()
-}
-
 // TestParallelIteratorPanicRecovery verifies SEC-003: a panic inside a
 // user-provided callback is recovered and surfaced as an error rather than
 // crashing the process. Mirrors the guarantee already provided by the JSONL

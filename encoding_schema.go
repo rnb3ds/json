@@ -2,8 +2,13 @@ package json
 
 import (
 	"fmt"
+	"maps"
+	"math"
 	"net"
+	"reflect"
 	"regexp"
+	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -70,14 +75,25 @@ func (p *Processor) ValidateSchema(jsonStr string, schema *Schema, cfg ...Config
 
 	// Valid against schema
 	var errors []ValidationError
-	p.validateValue(data, schema, "", &errors)
+	p.validateValue(data, schema, "", &errors, 0)
 
 	return errors, nil
 }
 
-// validateValue validates a value against a schema with improved performance
-func (p *Processor) validateValue(value any, schema *Schema, path string, errors *[]ValidationError) {
+// validateValue validates a value against a schema with improved performance.
+// depth bounds the schema recursion: Schema is a recursive type, so a
+// self-referential schema (s.Items = s) would otherwise recurse until the
+// goroutine stack is exhausted — a fatal, unrecoverable crash.
+func (p *Processor) validateValue(value any, schema *Schema, path string, errors *[]ValidationError, depth int) {
 	if schema == nil {
+		return
+	}
+
+	if depth > DefaultMaxNestingDepth {
+		*errors = append(*errors, ValidationError{
+			Path:    path,
+			Message: fmt.Sprintf("schema nesting exceeds maximum depth %d", DefaultMaxNestingDepth),
+		})
 		return
 	}
 
@@ -125,11 +141,11 @@ func (p *Processor) validateValue(value any, schema *Schema, path string, errors
 	switch schema.Type {
 	case "object":
 		if obj, ok := value.(map[string]any); ok {
-			p.validateObject(obj, schema, path, errors)
+			p.validateObject(obj, schema, path, errors, depth)
 		}
 	case "array":
 		if arr, ok := value.([]any); ok {
-			p.validateArray(arr, schema, path, errors)
+			p.validateArray(arr, schema, path, errors, depth)
 		}
 	case "string":
 		if str, ok := value.(string); ok {
@@ -170,7 +186,7 @@ func (p *Processor) validateType(value any, expectedType string) bool {
 }
 
 // validateObject validates an object against a schema with type safety
-func (p *Processor) validateObject(obj map[string]any, schema *Schema, path string, errors *[]ValidationError) {
+func (p *Processor) validateObject(obj map[string]any, schema *Schema, path string, errors *[]ValidationError, depth int) {
 	// Required properties validation
 	for _, required := range schema.Required {
 		if _, exists := obj[required]; !exists {
@@ -181,10 +197,13 @@ func (p *Processor) validateObject(obj map[string]any, schema *Schema, path stri
 		}
 	}
 
-	// Valid properties
-	for key, val := range obj {
+	// Valid properties — in sorted key order so the reported error list is
+	// deterministic (map iteration order is randomized per call, which
+	// shuffled the order of "additional property" and nested errors).
+	for _, key := range slices.Sorted(maps.Keys(obj)) {
+		val := obj[key]
 		if propSchema, exists := schema.Properties[key]; exists {
-			p.validateValue(val, propSchema, p.joinPath(path, key), errors)
+			p.validateValue(val, propSchema, p.joinPath(path, key), errors, depth+1)
 		} else if !schema.AdditionalProperties {
 			*errors = append(*errors, ValidationError{
 				Path:    p.joinPath(path, key),
@@ -195,7 +214,7 @@ func (p *Processor) validateObject(obj map[string]any, schema *Schema, path stri
 }
 
 // validateArray validates an array against a schema with type safety
-func (p *Processor) validateArray(arr []any, schema *Schema, path string, errors *[]ValidationError) {
+func (p *Processor) validateArray(arr []any, schema *Schema, path string, errors *[]ValidationError, depth int) {
 	arrLen := len(arr)
 
 	// Array length validation
@@ -232,7 +251,7 @@ func (p *Processor) validateArray(arr []any, schema *Schema, path string, errors
 	if schema.Items != nil {
 		for i, item := range arr {
 			itemPath := fmt.Sprintf("%s[%d]", path, i)
-			p.validateValue(item, schema.Items, itemPath, errors)
+			p.validateValue(item, schema.Items, itemPath, errors, depth+1)
 		}
 	}
 }
@@ -293,12 +312,28 @@ func (p *Processor) validateString(str string, schema *Schema, path string, erro
 // validateNumber validates a number against a schema
 func (p *Processor) validateNumber(value any, schema *Schema, path string, errors *[]ValidationError) {
 	var num float64
+	// Cover every numeric kind validateType accepts for "number"; skipping a
+	// kind here would silently skip the range constraints for that type.
 	switch v := value.(type) {
 	case int:
+		num = float64(v)
+	case int8:
+		num = float64(v)
+	case int16:
 		num = float64(v)
 	case int32:
 		num = float64(v)
 	case int64:
+		num = float64(v)
+	case uint:
+		num = float64(v)
+	case uint8:
+		num = float64(v)
+	case uint16:
+		num = float64(v)
+	case uint32:
+		num = float64(v)
+	case uint64:
 		num = float64(v)
 	case float32:
 		num = float64(v)
@@ -347,9 +382,12 @@ func (p *Processor) validateNumber(value any, schema *Schema, path string, error
 
 	// Multiple of validation
 	if schema.MultipleOf > 0 {
-		// Use tolerance-based comparison to handle IEEE 754 floating-point imprecision
+		// Use tolerance-based comparison to handle IEEE 754 floating-point imprecision.
+		// math.Round (not int(q+0.5)) avoids the implementation-defined int(±Inf)
+		// conversion — e.g. num=1e300, MultipleOf=1e-300 produced garbage results —
+		// and rounds negative quotients symmetrically.
 		quotient := num / schema.MultipleOf
-		roundedQuotient := float64(int(quotient + 0.5))
+		roundedQuotient := math.Round(quotient)
 		remainder := num - schema.MultipleOf*roundedQuotient
 		const epsilon = 1e-9
 		if remainder < -epsilon || remainder > epsilon {
@@ -580,7 +618,13 @@ func (p *Processor) validateIPv6Format(ip, path string, errors *[]ValidationErro
 	return nil
 }
 
-// valuesEqual compares two values for equality
+// valuesEqual compares two values for equality.
+//
+// Const/Enum constraints are `any` and routinely hold objects or arrays, so
+// a bare `a == b` is unsafe: comparing two interface values with identical
+// non-comparable dynamic types (e.g. two map[string]any) panics at runtime.
+// Primitives are compared with == only when both sides are comparably typed;
+// everything else falls through to a structural comparison.
 func (p *Processor) valuesEqual(a, b any) bool {
 	// Handle nil cases
 	if a == nil && b == nil {
@@ -591,7 +635,12 @@ func (p *Processor) valuesEqual(a, b any) bool {
 	}
 
 	// Direct comparison for basic types
-	if a == b {
+	if isComparableValue(a) && isComparableValue(b) && a == b {
+		return true
+	}
+
+	// Structural comparison for container constraints (objects/arrays)
+	if reflect.DeepEqual(a, b) {
 		return true
 	}
 
@@ -628,6 +677,16 @@ func (p *Processor) valuesEqual(a, b any) bool {
 	return false
 }
 
+// isComparableValue reports whether v's dynamic type supports == without a
+// runtime panic (maps, slices, and funcs are not comparable).
+func isComparableValue(v any) bool {
+	switch v.(type) {
+	case map[string]any, []any:
+		return false
+	}
+	return reflect.TypeOf(v).Comparable()
+}
+
 // joinPath joins path segments
 func (p *Processor) joinPath(parent, child string) string {
 	if parent == "" {
@@ -636,26 +695,30 @@ func (p *Processor) joinPath(parent, child string) string {
 	return parent + "." + child
 }
 
-// parseInt is a simple integer parser for validation
+// parseInt is a simple integer parser for validation.
+// Rejects empty strings, lone signs, non-digit characters, and values that
+// overflow int. (The previous implementation returned 0 for "" and "-",
+// letting "1..2.3" pass as a valid IPv4 address, and silently wrapped
+// out-of-range values.)
 func parseInt(s string) (int, error) {
-	var result int
-	var negative bool
-	i := 0
-
-	if len(s) > 0 && s[0] == '-' {
-		negative = true
-		i = 1
+	if s == "" {
+		return 0, fmt.Errorf("invalid integer: empty string")
 	}
-
-	for ; i < len(s); i++ {
-		if s[i] < '0' || s[i] > '9' {
-			return 0, fmt.Errorf("invalid integer")
+	body := s
+	if body[0] == '-' {
+		body = body[1:]
+	}
+	if body == "" {
+		return 0, fmt.Errorf("invalid integer: %q", s)
+	}
+	for i := 0; i < len(body); i++ {
+		if body[i] < '0' || body[i] > '9' {
+			return 0, fmt.Errorf("invalid integer: %q", s)
 		}
-		result = result*10 + int(s[i]-'0')
 	}
-
-	if negative {
-		result = -result
+	n, err := strconv.Atoi(s)
+	if err != nil {
+		return 0, fmt.Errorf("integer out of range: %q", s)
 	}
-	return result, nil
+	return n, nil
 }

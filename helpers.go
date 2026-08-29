@@ -6,6 +6,7 @@ import (
 	"maps"
 	"math"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -105,11 +106,15 @@ func convertToInt(value any) (int, bool) {
 	// Handle non-integer types
 	switch v := value.(type) {
 	case float32:
-		if v == float32(int(v)) && v >= float32(minInt) && v <= float32(maxInt) {
+		// Bounds BEFORE the conversion: int(v) is implementation-defined for
+		// out-of-range/NaN/Inf inputs (see convertToInt64). float64(maxInt)+1
+		// is exactly 2^63 (2^31 on 32-bit int), giving a strict upper bound.
+		f := float64(v)
+		if f >= float64(minInt) && f < float64(maxInt)+1 && v == float32(int(v)) {
 			return int(v), true
 		}
 	case float64:
-		if v == float64(int(v)) && v >= float64(minInt) && v <= float64(maxInt) {
+		if v >= float64(minInt) && v < float64(maxInt)+1 && v == float64(int(v)) {
 			return int(v), true
 		}
 	case string:
@@ -149,11 +154,16 @@ func convertToInt64(value any) (int64, bool) {
 	// Handle non-integer types
 	switch v := value.(type) {
 	case float32:
-		if v == float32(int64(v)) {
+		// Explicit bounds first: int64(v) is implementation-defined for
+		// out-of-range/NaN/Inf inputs, and on saturating platforms (arm64)
+		// a round-trip check alone lets 2^63 pass as MaxInt64. NaN and ±Inf
+		// fail the range comparison and are rejected.
+		f := float64(v)
+		if f >= -9223372036854775808.0 && f < 9223372036854775808.0 && v == float32(int64(v)) {
 			return int64(v), true
 		}
 	case float64:
-		if v == float64(int64(v)) {
+		if v >= -9223372036854775808.0 && v < 9223372036854775808.0 && v == float64(int64(v)) {
 			return int64(v), true
 		}
 	case string:
@@ -202,11 +212,15 @@ func convertToUint64(value any) (uint64, bool) {
 	// Handle non-integer types
 	switch v := value.(type) {
 	case float32:
-		if v >= 0 && v == float32(uint64(v)) {
+		// Explicit upper bound: uint64(v) is implementation-defined for
+		// out-of-range/NaN/Inf inputs; on saturating platforms the old
+		// round-trip check let 2^64 pass as MaxUint64.
+		f := float64(v)
+		if f >= 0 && f < 18446744073709551616.0 && v == float32(uint64(v)) {
 			return uint64(v), true
 		}
 	case float64:
-		if v >= 0 && v == float64(uint64(v)) {
+		if v >= 0 && v < 18446744073709551616.0 && v == float64(uint64(v)) {
 			return uint64(v), true
 		}
 	case string:
@@ -245,6 +259,15 @@ func convertToUint64(value any) (uint64, bool) {
 //	f, ok := json.convertToFloat64(true)     // f=1.0, ok=true
 //	f, ok := json.convertToFloat64("abc")    // f=0.0, ok=false
 func convertToFloat64(value any) (float64, bool) {
+	// uint64/uint values above MaxInt64 cannot route through the int64 core
+	// but are trivially representable as float64.
+	switch v := value.(type) {
+	case uint64:
+		return float64(v), true
+	case uint:
+		return float64(v), true
+	}
+
 	// Fast path 1: use core integer conversion
 	if result := convertToInt64Core(value); result.ok {
 		return float64(result.value), true
@@ -259,6 +282,12 @@ func convertToFloat64(value any) (float64, bool) {
 	switch v := value.(type) {
 	case string:
 		if f, err := strconv.ParseFloat(v, 64); err == nil {
+			// strconv accepts "NaN"/"Inf"/"Infinity" tokens; JSON cannot
+			// represent them, so treat them as failed conversions and let
+			// callers fall back to their documented default value.
+			if math.IsNaN(f) || math.IsInf(f, 0) {
+				return 0.0, false
+			}
 			return f, true
 		}
 	case bool:
@@ -268,6 +297,9 @@ func convertToFloat64(value any) (float64, bool) {
 		return 0.0, true
 	case json.Number:
 		if f, err := v.Float64(); err == nil {
+			if math.IsNaN(f) || math.IsInf(f, 0) {
+				return 0.0, false
+			}
 			return f, true
 		}
 	}
@@ -418,19 +450,9 @@ func convertValueWithDepth(value any, target any, depth int) (any, bool) {
 
 	switch targetType.Kind() {
 	case reflect.String:
-		// Inline string conversion - fix order to handle json.Number before fmt.Stringer
-		switch v := value.(type) {
-		case string:
-			return v, true
-		case []byte:
-			return string(v), true
-		case json.Number:
-			return string(v), true
-		case fmt.Stringer:
-			return v.String(), true
-		default:
-			return fmt.Sprintf("%v", v), true
-		}
+		// Single implementation shared with IterableValue (order matters:
+		// json.Number before fmt.Stringer).
+		return convertToString(value), true
 	case reflect.Int:
 		if i, ok := convertToInt(value); ok {
 			return i, true
@@ -715,6 +737,18 @@ func deepCopyMapWithDepth(m map[string]any, depth int) (map[string]any, error) {
 		result[key] = copied
 	}
 	return result, nil
+}
+
+// sortedMapKeys returns the keys of m in ascending order. Whenever results or
+// callback order are collected from a map[string]any (Get wildcard/distributed
+// results, ForEach/Iterate over objects), iteration must be deterministic:
+// Go randomizes map iteration order per iteration, so the same operation on the
+// same input previously produced a different element order on every call
+// (empirically 293 distinct orderings in 300 runs on a 12-key object).
+// Copy-building loops (deep copy, merge) don't need this — their output is a
+// map, whose order is immaterial.
+func sortedMapKeys(m map[string]any) []string {
+	return slices.Sorted(maps.Keys(m))
 }
 
 // deepCopySliceWithDepth creates a deep copy of a slice with depth tracking
@@ -1282,11 +1316,19 @@ func isEmptyOrZero(v any) bool {
 	case bool:
 		return !val
 	case Number:
-		n, err := val.Int64()
-		return err == nil && n == 0
+		// "0.0" and "0e0" are numeric zeros but not integer literals, so
+		// fall back to Float64 when Int64 refuses the format.
+		if n, err := val.Int64(); err == nil {
+			return n == 0
+		}
+		f, err := val.Float64()
+		return err == nil && f == 0
 	case json.Number:
-		n, err := val.Int64()
-		return err == nil && n == 0
+		if n, err := val.Int64(); err == nil {
+			return n == 0
+		}
+		f, err := val.Float64()
+		return err == nil && f == 0
 	case []any:
 		return len(val) == 0
 	case map[string]any:

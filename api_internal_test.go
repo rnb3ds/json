@@ -52,14 +52,16 @@ func TestHashCustomEscapes_DifferentMaps(t *testing.T) {
 		{'&': "\\u0026"},
 	}
 
-	hashes := make(map[uint64]int)
-	for i, m := range maps {
-		h := hashCustomEscapes(0, m)
-		if other, exists := hashes[h]; exists {
-			// Some maps might have the same hash (collision), but it's unlikely for these test cases
-			t.Logf("Hash collision between map[%d] and map[%d]: %d", i, other, h)
+	distinct := make(map[uint64]map[rune]string)
+	for _, m := range maps {
+		if len(m) == 0 {
+			continue // nil and {} both mean "no escapes" and may share a hash
 		}
-		hashes[h] = i
+		h := hashCustomEscapes(0, m)
+		if prev, exists := distinct[h]; exists {
+			t.Errorf("hashCustomEscapes collision: %v and %v both hash to %d", prev, m, h)
+		}
+		distinct[h] = m
 	}
 }
 
@@ -481,16 +483,16 @@ func TestReleaseConfigCoversAllReferenceFields(t *testing.T) {
 
 // --- Typed getter default-value branches ---
 
+// TestTypedGetters_Defaults pins the type-mismatch default; the
+// missing-key default rows for GetString/GetFloat/GetBool live in
+// TestTypedGetters_DefaultContract (coverage_test.go).
 func TestTypedGetters_Defaults(t *testing.T) {
 	tests := []struct {
 		name string
 		fn   func() any
 		want any
 	}{
-		{name: "GetString missing returns default", fn: func() any { return GetString(`{"a":1}`, "missing", "default") }, want: "default"},
 		{name: "GetInt type mismatch returns default", fn: func() any { return GetInt(`{"a":"not_int"}`, "a", 42) }, want: 42},
-		{name: "GetFloat missing returns default", fn: func() any { return GetFloat(`{}`, "missing", 3.14) }, want: 3.14},
-		{name: "GetBool missing returns default", fn: func() any { return GetBool(`{}`, "missing", true) }, want: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

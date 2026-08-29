@@ -74,10 +74,17 @@ func (p *Processor) effectiveReadMaxSize(cfg ...Config) int64 {
 // Honors a per-call cfg.MaxJSONSize so tightened limits take effect during the
 // read itself, not only at the subsequent Parse/Unmarshal step.
 func (p *Processor) readValidatedFile(filePath string, cfg ...Config) ([]byte, error) {
+	return p.readValidatedFileOp("load_from_file", filePath, cfg...)
+}
+
+// readValidatedFileOp is readValidatedFile with a caller-specific error Op so
+// each public API reports its own operation name (load_from_file,
+// unmarshal_from_file, ...) while sharing one implementation.
+func (p *Processor) readValidatedFileOp(op, filePath string, cfg ...Config) ([]byte, error) {
 	if err := p.checkClosed(); err != nil {
 		return nil, err
 	}
-	if err := p.validateFilePath(filePath); err != nil {
+	if err := p.validateFilePath(filePath, cfg...); err != nil {
 		return nil, err
 	}
 
@@ -86,7 +93,7 @@ func (p *Processor) readValidatedFile(filePath string, cfg ...Config) ([]byte, e
 	f, err := os.Open(filePath)
 	if err != nil {
 		return nil, &JsonsError{
-			Op:      "load_from_file",
+			Op:      op,
 			Message: fmt.Sprintf("failed to open file: %v", err),
 			Err:     err,
 		}
@@ -98,14 +105,14 @@ func (p *Processor) readValidatedFile(filePath string, cfg ...Config) ([]byte, e
 	data, err := io.ReadAll(limitedReader)
 	if err != nil {
 		return nil, &JsonsError{
-			Op:      "load_from_file",
+			Op:      op,
 			Message: fmt.Sprintf("failed to read file: %v", err),
 			Err:     err,
 		}
 	}
 	if int64(len(data)) > maxSize {
 		return nil, &JsonsError{
-			Op:      "load_from_file",
+			Op:      op,
 			Message: fmt.Sprintf("file size exceeds maximum allowed size %d bytes", maxSize),
 			Err:     ErrSizeLimit,
 		}
@@ -286,19 +293,30 @@ func atomicWriteFile(path string, data []byte, mode os.FileMode) error {
 //	// Pretty-printed save
 //	err := processor.SaveToFile("data.json", data, json.PrettyConfig())
 func (p *Processor) SaveToFile(filePath string, data any, cfg ...Config) error {
+	return p.writeFileJSON("save_to_file", filePath, data, cfg...)
+}
+
+// writeFileJSON is the single encode-and-atomic-write pipeline shared by
+// SaveToFile and MarshalToFile. op is the caller's operation name so each
+// public API keeps its own error Op. Encoding goes through EncodeWithConfig
+// exclusively — Marshal/MarshalIndent were proven byte-equivalent for the
+// configurations MarshalToFile historically used (see
+// TestA2EncoderEquivalence), so one pipeline serves both.
+func (p *Processor) writeFileJSON(op, filePath string, data any, cfg ...Config) error {
 	if err := p.checkClosed(); err != nil {
 		return err
 	}
 
-	// Validate file path for security
-	if err := p.validateFilePath(filePath); err != nil {
+	// Validate file path for security (write variant: no existing-file size
+	// check — the payload being written is what MaxJSONSize governs)
+	if err := p.validateFilePathForWrite(filePath); err != nil {
 		return err
 	}
 
 	// Create directory if it doesn't exist
 	if err := p.createDirectoryIfNotExists(filePath); err != nil {
 		return &JsonsError{
-			Op:      "save_to_file",
+			Op:      op,
 			Message: "failed to create directory for output file",
 			Err:     fmt.Errorf("directory creation error: %w", err),
 		}
@@ -319,10 +337,9 @@ func (p *Processor) SaveToFile(filePath string, data any, cfg ...Config) error {
 
 	// Write to file atomically (temp + rename) so a crash mid-write cannot
 	// truncate the existing file.
-	err = atomicWriteFile(filePath, []byte(jsonStr), 0644)
-	if err != nil {
+	if err := atomicWriteFile(filePath, []byte(jsonStr), 0644); err != nil {
 		return &JsonsError{
-			Op:      "save_to_file",
+			Op:      op,
 			Message: fmt.Sprintf("failed to write file: %v", err),
 			Err:     err,
 		}
@@ -378,6 +395,12 @@ func (p *Processor) SaveToWriter(writer io.Writer, data any, cfg ...Config) erro
 // This is the unified API that accepts variadic Config.
 // Creates parent directories if they don't exist.
 //
+// MarshalToFile shares the SaveToFile encode-and-write pipeline (see
+// writeFileJSON). The supplied cfg is honored in full — historically only the
+// Pretty flag was read, silently dropping Indent/Prefix/EscapeHTML and other
+// encoding options. Output for the previously-supported inputs
+// (no cfg, or PrettyConfig) is byte-identical to the old pipeline.
+//
 // Errors:
 //   - ErrProcessorClosed: processor has been closed
 //   - ErrSecurityViolation: path contains traversal or unsafe patterns
@@ -392,60 +415,7 @@ func (p *Processor) SaveToWriter(writer io.Writer, data any, cfg ...Config) erro
 //	// Pretty-printed save
 //	err := processor.MarshalToFile("data.json", data, json.PrettyConfig())
 func (p *Processor) MarshalToFile(path string, data any, cfg ...Config) error {
-	if err := p.checkClosed(); err != nil {
-		return err
-	}
-
-	// Validate file path for security
-	if err := p.validateFilePath(path); err != nil {
-		return err
-	}
-
-	// Create directory if it doesn't exist
-	if err := p.createDirectoryIfNotExists(path); err != nil {
-		return &JsonsError{
-			Op:      "marshal_to_file",
-			Message: "failed to create directory for output file",
-			Err:     err,
-		}
-	}
-
-	// Preprocess data to prevent double-encoding of string/[]byte inputs
-	processedData, err := p.preprocessDataForEncoding(data)
-	if err != nil {
-		return err
-	}
-
-	// Determine formatting preference
-	config := getConfigOrDefault(cfg...)
-
-	// Marshal data to JSON bytes
-	var jsonBytes []byte
-	if config.Pretty {
-		jsonBytes, err = p.MarshalIndent(processedData, "", "  ")
-	} else {
-		jsonBytes, err = p.Marshal(processedData)
-	}
-
-	if err != nil {
-		return &JsonsError{
-			Op:      "marshal_to_file",
-			Message: "failed to marshal data to JSON",
-			Err:     err,
-		}
-	}
-
-	// Write JSON bytes to file atomically (temp + rename) so a crash mid-write
-	// cannot truncate the existing file.
-	if err := atomicWriteFile(path, jsonBytes, 0644); err != nil {
-		return &JsonsError{
-			Op:      "marshal_to_file",
-			Message: fmt.Sprintf("failed to write file: %v", err),
-			Err:     err,
-		}
-	}
-
-	return nil
+	return p.writeFileJSON("marshal_to_file", path, data, cfg...)
 }
 
 // UnmarshalFromFile reads JSON data from the specified file and unmarshals it into the provided value.
@@ -481,42 +451,11 @@ func (p *Processor) UnmarshalFromFile(path string, v any, cfg ...Config) error {
 		}
 	}
 
-	// Validate file path for security
-	if err := p.validateFilePath(path); err != nil {
+	// Read the file through the shared validated reader (checkClosed +
+	// validateFilePath + size-limited read), keeping this API's error Op.
+	data, err := p.readValidatedFileOp("unmarshal_from_file", path, cfg...)
+	if err != nil {
 		return err
-	}
-
-	// Honor a per-call cfg.MaxJSONSize during the read so a tightened limit
-	// caps the bytes read into memory, not just the later Unmarshal step.
-	maxSize := p.effectiveReadMaxSize(cfg...)
-
-	// Read file contents with size limiting during read
-	f, err := os.Open(path)
-	if err != nil {
-		return &JsonsError{
-			Op:      "unmarshal_from_file",
-			Message: fmt.Sprintf("failed to open file: %v", err),
-			Err:     err,
-		}
-	}
-	defer func() { _ = f.Close() }() // best-effort cleanup
-
-	limitedReader := io.LimitReader(f, maxSize+1)
-	data, err := io.ReadAll(limitedReader)
-	if err != nil {
-		return &JsonsError{
-			Op:      "unmarshal_from_file",
-			Message: fmt.Sprintf("failed to read file: %v", err),
-			Err:     err,
-		}
-	}
-
-	if int64(len(data)) > maxSize {
-		return &JsonsError{
-			Op:      "unmarshal_from_file",
-			Message: fmt.Sprintf("file size exceeds maximum allowed size %d bytes", maxSize),
-			Err:     ErrSizeLimit,
-		}
 	}
 
 	// Unmarshal JSON data using processor's Unmarshal method
@@ -533,7 +472,10 @@ func (p *Processor) UnmarshalFromFile(path string, v any, cfg ...Config) error {
 
 // validateFilePath provides enhanced security validation for file paths.
 // Uses smaller helper functions for better maintainability and testability.
-func (p *Processor) validateFilePath(filePath string) error {
+// The optional cfg honors a per-call MaxJSONSize for the existing-file size
+// check, matching effectiveReadMaxSize so validation and the actual read
+// agree (see that method's doc comment).
+func (p *Processor) validateFilePath(filePath string, cfg ...Config) error {
 	// Step 1: Basic validation
 	if err := validatePathBasic(filePath); err != nil {
 		return err
@@ -560,8 +502,30 @@ func (p *Processor) validateFilePath(filePath string) error {
 		return err
 	}
 
-	// Step 6: File size validation
-	return p.validatePathFileSize(absPath)
+	// Step 6: File size validation (against the effective per-call limit)
+	return p.validatePathFileSize(absPath, p.effectiveReadMaxSize(cfg...))
+}
+
+// validateFilePathForWrite validates a path that is about to be written.
+// It applies the same security checks as validateFilePath but skips the
+// existing-file size check: the size of the file being replaced is
+// irrelevant to the write, and MaxJSONSize applies to the payload being
+// written (enforced by the encoder), not to the stale target file.
+func (p *Processor) validateFilePathForWrite(filePath string) error {
+	if err := validatePathBasic(filePath); err != nil {
+		return err
+	}
+	if err := validatePathSecurity(filePath); err != nil {
+		return err
+	}
+	absPath, err := normalizeAndAbsPath(filePath)
+	if err != nil {
+		return err
+	}
+	if err := validatePathPlatform(absPath); err != nil {
+		return err
+	}
+	return validatePathSymlinks(absPath)
 }
 
 // validatePathBasic performs basic path validation
@@ -679,16 +643,20 @@ func validateFilePathStandalone(filePath string) error {
 	return validatePathSymlinks(absPath)
 }
 
-// validatePathFileSize checks if file size is within limits
-func (p *Processor) validatePathFileSize(absPath string) error {
+// validatePathFileSize checks if file size is within limits.
+// maxSize is the effective limit (processor config or per-call cfg — see
+// effectiveReadMaxSize), not always the processor's baked-in value: a per-call
+// Config can only tighten today's reads, but the two sources must agree or
+// validation rejects input the read path would accept.
+func (p *Processor) validatePathFileSize(absPath string, maxSize int64) error {
 	info, err := os.Stat(absPath)
 	if err != nil {
 		// File doesn't exist yet, no size check needed
 		return nil
 	}
 
-	if info.Size() > p.config.MaxJSONSize {
-		return newSizeLimitError("validate_file_path", info.Size(), p.config.MaxJSONSize)
+	if info.Size() > maxSize {
+		return newSizeLimitError("validate_file_path", info.Size(), maxSize)
 	}
 	return nil
 }
@@ -1247,8 +1215,7 @@ func (p *Processor) ForeachFileChunked(filePath string, chunkSize int, fn func(c
 
 	chunk := make([]*IterableValue, 0, chunkSize)
 	for _, item := range arr {
-		iv := iterableValuePool.Get().(*IterableValue)
-		iv.data = item
+		iv := getIterableValue(item)
 		chunk = append(chunk, iv)
 
 		if len(chunk) >= chunkSize {

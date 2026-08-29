@@ -129,9 +129,6 @@ func (p *Processor) Get(jsonStr, path string, cfg ...Config) (result any, err er
 	// PERFORMANCE: Fast path for simple property access without cache overhead.
 	// Bypasses hash computation, cache key creation, and recursive processor
 	// for the most common case: single-key lookup on a JSON object.
-	// PERFORMANCE: Fast path for simple property access without cache overhead.
-	// Bypasses hash computation, cache key creation, and recursive processor
-	// for the most common case: single-key lookup on a JSON object.
 	//
 	// PreserveNumbers must be off for this path: unmarshalRootObject uses stdlib
 	// json.Unmarshal which always yields float64, so a big-integer property would
@@ -350,9 +347,7 @@ func (p *Processor) PreParse(jsonStr string, cfg ...Config) (*ParsedJSON, error)
 	}
 
 	return &ParsedJSON{
-		data:      data,
-		hash:      hashStringToUint64(jsonStr),
-		processor: p,
+		data: data,
 	}, nil
 }
 
@@ -401,11 +396,10 @@ func (p *Processor) GetFromParsed(parsed *ParsedJSON, path string, cfg ...Config
 		result = safeCopyResult(result)
 	}
 
-	// Cache result if enabled
-	if p.config.EnableCache && options.CacheResults {
-		cacheKey := p.createCacheKeyWithHash("get", parsed.hash, path, options)
-		p.setCachedResult(cacheKey, result, options)
-	}
+	// NOTE: no cache write here. Processor.Get reads "get:"-prefixed keys via
+	// createCacheKey(jsonStr, ...), but ParsedJSON no longer carries a content
+	// hash, so any key built here could never be read back — it would only
+	// pollute the cache and evict live entries.
 
 	return result, nil
 }
@@ -459,9 +453,7 @@ func (p *Processor) SetFromParsed(parsed *ParsedJSON, path string, value any, cf
 	}
 
 	return &ParsedJSON{
-		data:      dataCopy,
-		hash:      0, // New hash will be computed when needed
-		processor: p,
+		data: dataCopy,
 	}, nil
 }
 

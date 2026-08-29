@@ -592,17 +592,6 @@ func TestIndexIgnoreCase(t *testing.T) {
 	}
 }
 
-func TestIndexIgnoreCase_EdgeCases(t *testing.T) {
-	// Test with empty pattern (not supported by implementation)
-	// Skip this test as the implementation doesn't handle empty patterns
-
-	// Test with uppercase pattern (pattern should be lowercase for matching)
-	result := IndexIgnoreCase("hello world", "world")
-	if result != 6 {
-		t.Errorf("expected 6, got %d", result)
-	}
-}
-
 func TestIndexIgnoreCase_SpecialCases(t *testing.T) {
 	// Pattern should be lowercase for matching to work
 	result := IndexIgnoreCase("hello world", "world")
@@ -616,10 +605,13 @@ func TestIndexIgnoreCase_SpecialCases(t *testing.T) {
 		t.Errorf("expected 5, got %d", result)
 	}
 
-	// Uppercase pattern won't match (function expects lowercase pattern)
+	// Uppercase pattern matches: both sides are folded. The old matcher folded
+	// only the subject, so any caller-supplied pattern containing an uppercase
+	// letter (Config.AdditionalDangerousPatterns, global registry) could never
+	// be detected — a silent false negative in security scanning.
 	result = IndexIgnoreCase("hello world", "WORLD")
-	if result != -1 {
-		t.Errorf("expected -1 for uppercase pattern, got %d", result)
+	if result != 6 {
+		t.Errorf("expected 6 for uppercase pattern, got %d", result)
 	}
 }
 
@@ -628,23 +620,23 @@ func TestIndexIgnoreCase_SpecialCases(t *testing.T) {
 // ============================================================================
 
 func TestIsMatchPatternIgnoreCase(t *testing.T) {
-	// Note: The function expects pattern to be lowercase
-	// It only converts the string (s) to lowercase for comparison
+	// Both s and pattern are folded before comparison — matching is
+	// case-insensitive in both directions, as the name promises.
 	tests := []struct {
 		s        string
 		pattern  string
 		expected bool
 	}{
 		{"hello", "hello", true},
-		{"Hello", "hello", true},  // s is converted to lowercase
-		{"HELLO", "hello", true},  // s is converted to lowercase
-		{"hello", "HELLO", false}, // pattern must be lowercase
-		{"HeLLo", "hello", true},  // s is converted to lowercase
+		{"Hello", "hello", true},
+		{"HELLO", "hello", true},
+		{"hello", "HELLO", true}, // pattern is folded too
+		{"HeLLo", "hello", true},
 		{"hello", "world", false},
 		{"hello", "hell", false},
 		{"", "", true},
-		{"A", "a", true},  // s is converted to lowercase
-		{"a", "A", false}, // pattern must be lowercase
+		{"A", "a", true},
+		{"a", "A", true}, // pattern is folded too
 		{"ABC", "abc", true},
 	}
 

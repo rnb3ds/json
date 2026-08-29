@@ -1265,21 +1265,6 @@ func TestPutFastBuffer(t *testing.T) {
 // float64ToBits TESTS
 // ============================================================================
 
-func TestFloat64ToBits(t *testing.T) {
-	tests := []float64{0, 1.0, -1.0, math.Pi, math.MaxFloat64, math.SmallestNonzeroFloat64}
-
-	for _, tt := range tests {
-		t.Run(strconv.FormatFloat(tt, 'f', -1, 64), func(t *testing.T) {
-			bits := float64ToBits(tt)
-			// Round trip
-			back := math.Float64frombits(bits)
-			if back != tt && !(math.IsNaN(back) && math.IsNaN(tt)) {
-				t.Errorf("roundtrip failed: expected %v, got %v", tt, back)
-			}
-		})
-	}
-}
-
 // ============================================================================
 // isIntegerFloat TESTS
 // ============================================================================

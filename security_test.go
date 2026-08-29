@@ -1959,5 +1959,70 @@ func TestSecurity_EssentialSizeLimit(t *testing.T) {
 func TestSecurity_NonASCIIPath(t *testing.T) {
 	p, _ := New()
 	defer p.Close()
-	_, _ = Get(`{"café":1}`, "café")
+	v, err := Get(`{"café":1}`, "café")
+	if err != nil {
+		t.Errorf("non-ASCII property path should resolve, got %v", err)
+	}
+	if v != float64(1) {
+		t.Errorf("Get(non-ASCII path) = %v, want 1", v)
+	}
+}
+
+// TestP001WindowPrefilterEquivalence guards the scanWindowForPatterns
+// single-pass prefilter: windowContainsDangerousMatch must report true exactly
+// when at least one built-in dangerous pattern occurs case-insensitively in
+// the window (context-free — the word-boundary check stays with the ordered
+// loop). If this equivalence breaks in EITHER direction, scanning either
+// misses dangerous content (false negative) or the prefilter gains nothing
+// (always-true degeneration).
+func TestP001WindowPrefilterEquivalence(t *testing.T) {
+	corpus := []string{
+		// Clean windows: candidate first letters present, no full pattern.
+		`{"id":1,"name":"user42","email":"user42@example.com","active":true}`,
+		`{"note":"evaluate options on time; once done, proceed"}`,
+		`{"html":"bold text here"}`,
+		`{"proto_col":"x","construct":"y"}`,
+		// Pattern occurrences, various shapes and cases.
+		`{"x":"onerror"}`,
+		`{"x":"ONERROR"}`,
+		`{"x":"myonerrorx"}`, // mid-word: context check declines, pattern still occurs
+		`{"x":"<script>alert(1)</script>"}`,
+		`{"x":"<SCRIPT"}`,
+		`{"x":"javascript:alert(1)"}`,
+		`{"x":"eval(1)"}`,
+		`{"x":"new function(){}"}`,
+		`{"x":"__defineGetter__"}`,
+		`{"x":"setTimeout(x,1)"}`,
+		`{"x":"document.cookie"}`,
+		`{"x":"expression(a)"}`,
+		`{"x":"atob(ZXZhbA==)"}`,
+		`{"x":"constructor["}`,
+		`{"x":"prototype.v"}`,
+		`{"x":"__proto__"}`,
+		`{"x":"VbScRiPt:go"}`, // scattered case
+		// Edge shapes.
+		``,
+		`e`,
+		`<`,
+		`_`,
+		`onload`,
+		`{"a":"eval(`, // truncated at pattern boundary
+		strings.Repeat("o", 100) + "nerror",
+		strings.Repeat("x", 5000) + "eval(",
+	}
+
+	for _, w := range corpus {
+		// Reference: the pre-optimization semantics — any pattern found by
+		// fastIndexIgnoreCase anywhere in the window.
+		reference := false
+		for _, dp := range dangerousPatterns {
+			if fastIndexIgnoreCase(w, dp.pattern) != -1 {
+				reference = true
+				break
+			}
+		}
+		if got := windowContainsDangerousMatch(w); got != reference {
+			t.Errorf("window %q: prefilter=%v, reference(any pattern occurrence)=%v", w, got, reference)
+		}
+	}
 }

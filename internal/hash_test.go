@@ -171,31 +171,6 @@ func TestHashStringFNV1a(t *testing.T) {
 	}
 }
 
-// TestHashStringFNV1aSampled tests the sampled hash function
-func TestHashStringFNV1aSampled(t *testing.T) {
-	tests := []struct {
-		name string
-		s    string
-	}{
-		{"empty string", ""},
-		{"small string", "hello"},
-		{"medium string", makeString(2048)},
-		{"large string", makeString(8192)},
-		{"very large string", makeString(65536)},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := HashStringFNV1aSampled(tt.s)
-			// Verify deterministic behavior
-			result2 := HashStringFNV1aSampled(tt.s)
-			if result != result2 {
-				t.Errorf("HashStringFNV1aSampled is not deterministic")
-			}
-		})
-	}
-}
-
 // TestHashBytesFNV1a tests the HashBytesFNV1a function
 func TestHashBytesFNV1a(t *testing.T) {
 	tests := []struct {
@@ -217,19 +192,6 @@ func TestHashBytesFNV1a(t *testing.T) {
 				t.Errorf("HashBytesFNV1a is not deterministic")
 			}
 		})
-	}
-}
-
-// TestHashConstants verifies FNV constants
-func TestHashConstants(t *testing.T) {
-	if FNVOffsetBasis != 14695981039346656037 {
-		t.Errorf("FNVOffsetBasis = %d, want 14695981039346656037", FNVOffsetBasis)
-	}
-	if FNVPrime != 1099511628211 {
-		t.Errorf("FNVPrime = %d, want 1099511628211", FNVPrime)
-	}
-	if LargeStringHashThreshold != 4096 {
-		t.Errorf("LargeStringHashThreshold = %d, want 4096", LargeStringHashThreshold)
 	}
 }
 
@@ -261,27 +223,4 @@ func BenchmarkHashStringFNV1a(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		_ = HashStringFNV1a(s)
 	}
-}
-
-func BenchmarkHashStringFNV1aSampled_Small(b *testing.B) {
-	s := "small string"
-	for i := 0; i < b.N; i++ {
-		_ = HashStringFNV1aSampled(s)
-	}
-}
-
-func BenchmarkHashStringFNV1aSampled_Large(b *testing.B) {
-	s := makeString(8192)
-	for i := 0; i < b.N; i++ {
-		_ = HashStringFNV1aSampled(s)
-	}
-}
-
-// Helper function to create a string of given size
-func makeString(size int) string {
-	result := make([]byte, size)
-	for i := 0; i < size; i++ {
-		result[i] = byte('a' + (i % 26))
-	}
-	return string(result)
 }

@@ -448,13 +448,6 @@ func (v *testValidatorImpl) Validate(jsonStr string) error {
 	return nil
 }
 
-// testCustomEncoder implements CustomEncoder for testing
-type testCustomEncoder struct{}
-
-func (e *testCustomEncoder) Encode(value any) (string, error) {
-	return `{"custom":true}`, nil
-}
-
 // testTypeEncoder implements TypeEncoder for testing
 type testTypeEncoder struct{}
 
@@ -692,8 +685,12 @@ func TestParseEdgeCases(t *testing.T) {
 	t.Run("ParseWithConfig", func(t *testing.T) {
 		cfg := Config{MaxJSONSize: -1}
 		result, err := ParseAny(`{"key":"value"}`, cfg)
-		_ = err
-		_ = result
+		if err != nil {
+			t.Fatalf("ParseAny with auto-corrected config failed: %v", err)
+		}
+		if result == nil {
+			t.Error("ParseAny should return a parsed value")
+		}
 	})
 
 	t.Run("ParseEmptyString", func(t *testing.T) {
@@ -739,11 +736,16 @@ func TestFormatJSONStringEdgeCases(t *testing.T) {
 	p, _ := New()
 	defer p.Close()
 
-	t.Run("InvalidJSONReturnsOriginal", func(t *testing.T) {
+	t.Run("InvalidJSONIsQuotedAsScalarString", func(t *testing.T) {
+		// formatJSONString treats non-JSON input as a bare string scalar and
+		// quotes it rather than erroring.
 		result, err := p.formatJSONString("{invalid}", false)
-		// Invalid JSON may return original or error depending on implementation
-		_ = err
-		_ = result
+		if err != nil {
+			t.Fatalf("formatJSONString on invalid JSON: %v", err)
+		}
+		if result != "\"{invalid}\"" {
+			t.Errorf("formatJSONString on invalid JSON = %q, want quoted input", result)
+		}
 	})
 
 	t.Run("ValidJSON", func(t *testing.T) {
@@ -845,42 +847,10 @@ func TestPatternLevel(t *testing.T) {
 }
 
 // TestNewSegmentFunctions tests segment creation functions
+// TestNewSegmentFunctions covers the one segment constructor not already
+// asserted by the internal package tests; the other subtests (Type-only
+// checks duplicating internal tests) were removed in the FIX-001 cleanup.
 func TestNewSegmentFunctions(t *testing.T) {
-	t.Run("newPropertySegment", func(t *testing.T) {
-		seg := newPropertySegment("test")
-		if seg.Type != internal.PropertySegment {
-			t.Error("newPropertySegment should create property segment")
-		}
-	})
-
-	t.Run("newArrayIndexSegment", func(t *testing.T) {
-		seg := newArrayIndexSegment(0)
-		if seg.Type != internal.ArrayIndexSegment {
-			t.Error("newArrayIndexSegment should create array index segment")
-		}
-	})
-
-	t.Run("newArraySliceSegment", func(t *testing.T) {
-		seg := newArraySliceSegment(0, 10, 1, true, true, true)
-		if seg.Type != internal.ArraySliceSegment {
-			t.Error("newArraySliceSegment should create array slice segment")
-		}
-	})
-
-	t.Run("newWildcardSegment", func(t *testing.T) {
-		seg := newWildcardSegment()
-		if seg.Type != internal.WildcardSegment {
-			t.Error("newWildcardSegment should create wildcard segment")
-		}
-	})
-
-	t.Run("newExtractSegment", func(t *testing.T) {
-		seg := newExtractSegment("name", false)
-		if seg.Type != internal.ExtractSegment {
-			t.Error("newExtractSegment should create extract segment")
-		}
-	})
-
 	t.Run("newAppendSegment", func(t *testing.T) {
 		seg := newAppendSegment()
 		if seg.Type != internal.AppendSegment {
@@ -1633,41 +1603,6 @@ func TestMoreMethod(t *testing.T) {
 	})
 }
 
-// TestEncoderMethods tests Encoder methods
-func TestEncoderMethods(t *testing.T) {
-	t.Run("SetEscapeHTML", func(t *testing.T) {
-		var buf bytes.Buffer
-		encoder := NewEncoder(&buf)
-		encoder.SetEscapeHTML(true)
-
-		data := map[string]string{"html": "<script>"}
-		err := encoder.Encode(data)
-		if err != nil {
-			t.Errorf("Encode failed: %v", err)
-		}
-
-		if !strings.Contains(buf.String(), "\\u003c") {
-			t.Error("HTML should be escaped")
-		}
-	})
-
-	t.Run("SetIndent", func(t *testing.T) {
-		var buf bytes.Buffer
-		encoder := NewEncoder(&buf)
-		encoder.SetIndent("", "  ")
-
-		data := map[string]string{"key": "value"}
-		err := encoder.Encode(data)
-		if err != nil {
-			t.Errorf("Encode failed: %v", err)
-		}
-
-		if !strings.Contains(buf.String(), "\n") {
-			t.Error("Output should be indented")
-		}
-	})
-}
-
 // TestEncodeStringEdgeCases tests string encoding edge cases
 func TestEncodeStringEdgeCases(t *testing.T) {
 	processor, _ := New()
@@ -1972,57 +1907,6 @@ func TestEncodeStreamWithConfig(t *testing.T) {
 // ============================================================================
 // PARSER EDGE CASES TESTS
 // ============================================================================
-
-// TestParseStringEdgeCases tests parseString function edge cases
-func TestParseStringEdgeCases(t *testing.T) {
-	t.Run("EscapedCharacters", func(t *testing.T) {
-		decoder := NewDecoder(strings.NewReader(`"hello\nworld\ttab"`))
-		var result string
-		err := decoder.Decode(&result)
-		if err != nil {
-			t.Errorf("Decode failed: %v", err)
-		}
-		if !strings.Contains(result, "\n") {
-			t.Error("Result should contain newline")
-		}
-	})
-
-	t.Run("UnicodeEscape", func(t *testing.T) {
-		decoder := NewDecoder(strings.NewReader(`"\u0041"`))
-		var result string
-		err := decoder.Decode(&result)
-		if err != nil {
-			t.Errorf("Decode failed: %v", err)
-		}
-		if result != "A" {
-			t.Errorf("Result = %q, want A", result)
-		}
-	})
-
-	t.Run("EscapedQuote", func(t *testing.T) {
-		decoder := NewDecoder(strings.NewReader(`"say \"hello\""`))
-		var result string
-		err := decoder.Decode(&result)
-		if err != nil {
-			t.Errorf("Decode failed: %v", err)
-		}
-		if !strings.Contains(result, `"`) {
-			t.Error("Result should contain quote")
-		}
-	})
-
-	t.Run("EscapedBackslash", func(t *testing.T) {
-		decoder := NewDecoder(strings.NewReader(`"path\\to\\file"`))
-		var result string
-		err := decoder.Decode(&result)
-		if err != nil {
-			t.Errorf("Decode failed: %v", err)
-		}
-		if !strings.Contains(result, "\\") {
-			t.Error("Result should contain backslash")
-		}
-	})
-}
 
 // TestValuesEqualComprehensive tests valuesEqual function more comprehensively
 func TestValuesEqualComprehensive(t *testing.T) {
@@ -2540,60 +2424,6 @@ func TestParseTopLevel(t *testing.T) {
 // TOP-LEVEL FILE FUNCTIONS - Missing coverage tests
 // ============================================================================
 
-// TestLoadFromFileTopLevel tests the top-level LoadFromFile function
-func TestLoadFromFileTopLevel(t *testing.T) {
-	t.Run("ValidFile", func(t *testing.T) {
-		tempDir := t.TempDir()
-		filePath := filepath.Join(tempDir, "test.json")
-		testData := `{"name":"test","value":123}`
-
-		err := os.WriteFile(filePath, []byte(testData), 0644)
-		if err != nil {
-			t.Fatalf("Failed to write test file: %v", err)
-		}
-
-		loaded, err := LoadFromFile(filePath)
-		if err != nil {
-			t.Errorf("LoadFromFile failed: %v", err)
-		}
-		if loaded != testData {
-			t.Errorf("Loaded data = %q, want %q", loaded, testData)
-		}
-	})
-
-	t.Run("NonExistentFile", func(t *testing.T) {
-		_, err := LoadFromFile("/non/existent/file.json")
-		if err == nil {
-			t.Error("Expected error for non-existent file")
-		}
-	})
-}
-
-// TestSaveToFileTopLevel tests the top-level SaveToFile function
-func TestSaveToFileTopLevel(t *testing.T) {
-	t.Run("SaveAndLoad", func(t *testing.T) {
-		tempDir := t.TempDir()
-		filePath := filepath.Join(tempDir, "save_test.json")
-		testData := map[string]any{"name": "test", "value": 123}
-
-		cfg := DefaultConfig()
-		cfg.Pretty = false
-		err := SaveToFile(filePath, testData, cfg)
-		if err != nil {
-			t.Errorf("SaveToFile failed: %v", err)
-		}
-
-		loaded, err := LoadFromFile(filePath)
-		if err != nil {
-			t.Errorf("LoadFromFile failed: %v", err)
-		}
-
-		if !strings.Contains(loaded, `"name"`) {
-			t.Error("Loaded data should contain 'name'")
-		}
-	})
-}
-
 // TestMarshalToFileTopLevel tests the top-level MarshalToFile function
 func TestMarshalToFileTopLevel(t *testing.T) {
 	t.Run("MarshalAndLoad", func(t *testing.T) {
@@ -2688,24 +2518,24 @@ func TestArrayBoundaryConditions(t *testing.T) {
 
 // TestFastEncoderFunctions tests the fast encoder functions
 func TestFastEncoderFunctions(t *testing.T) {
-	t.Run("FastEncodeSimple", func(t *testing.T) {
+	t.Run("FastEncodeSimpleToBytes", func(t *testing.T) {
 		data := map[string]any{"key": "value", "num": 123}
-		result, ok := fastEncodeSimple(data)
+		result, ok := fastEncodeSimpleToBytes(data)
 		if !ok {
-			t.Error("fastEncodeSimple should succeed for simple data")
+			t.Error("fastEncodeSimpleToBytes should succeed for simple data")
 		}
-		if !strings.Contains(result, `"key"`) {
+		if !strings.Contains(string(result), `"key"`) {
 			t.Error("Result should contain key")
 		}
 	})
 
-	t.Run("FastEncodeSimpleWithHTMLEscape", func(t *testing.T) {
+	t.Run("FastEncodeSimpleToBytesWithHTMLEscape", func(t *testing.T) {
 		data := map[string]any{"html": "<script>"}
-		result, ok := fastEncodeSimpleWithHTMLEscape(data)
+		result, ok := fastEncodeSimpleToBytes(data)
 		if !ok {
-			t.Error("fastEncodeSimpleWithHTMLEscape should succeed")
+			t.Error("fastEncodeSimpleToBytes should succeed")
 		}
-		if !strings.Contains(result, "\\u003c") {
+		if !strings.Contains(string(result), "\\u003c") {
 			t.Error("HTML should be escaped")
 		}
 	})
@@ -2731,35 +2561,6 @@ func TestConfigValidationEdgeCases(t *testing.T) {
 		if err != nil {
 			t.Errorf("Validate of zero config should succeed: %v", err)
 		}
-	})
-}
-
-// TestResourcePoolOperations tests resource pool edge cases
-func TestResourcePoolOperations(t *testing.T) {
-	t.Run("BufferPoolOperations", func(t *testing.T) {
-		buf := *internal.GetByteSliceWithHint(1024)
-		buf = append(buf, "test"...)
-		if string(buf) != "test" {
-			t.Errorf("buffer content = %q, want test", buf)
-		}
-		internal.PutByteSlice(&buf)
-	})
-
-	t.Run("StringBuilderPoolOperations", func(t *testing.T) {
-		sb := internal.GetStringBuilder()
-		sb.WriteString("test")
-		if sb.String() != "test" {
-			t.Errorf("builder content = %q, want test", sb.String())
-		}
-		internal.PutStringBuilder(sb)
-	})
-
-	t.Run("PathSegmentsPoolOperations", func(t *testing.T) {
-		segs := internal.GetPathSegmentSlice(8)
-		if segs == nil {
-			t.Error("expected non-nil segment slice")
-		}
-		internal.PutPathSegmentSlice(segs)
 	})
 }
 

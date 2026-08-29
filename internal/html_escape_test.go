@@ -6,6 +6,14 @@ import (
 )
 
 // TestHTMLEscape tests the HTMLEscape function
+// htmlEscapeViaTo exercises HTMLEscapeTo (the standalone string variant was
+// removed as production-dead; the buffer variant implements the same rules).
+func htmlEscapeViaTo(s string) string {
+	var buf bytes.Buffer
+	HTMLEscapeTo(&buf, s)
+	return buf.String()
+}
+
 func TestHTMLEscape(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -27,46 +35,7 @@ func TestHTMLEscape(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := HTMLEscape(tt.input)
-			if result != tt.expected {
-				t.Errorf("HTMLEscape(%q) = %q, want %q", tt.input, result, tt.expected)
-			}
-		})
-	}
-}
-
-// TestHTMLEscape_NoAllocation tests that no allocation occurs when escaping is not needed
-func TestHTMLEscape_NoAllocation(t *testing.T) {
-	input := "no escaping needed here"
-	result := HTMLEscape(input)
-	// The result should be the same string (no allocation)
-	if result != input {
-		t.Errorf("Expected same string for no-escape case")
-	}
-}
-
-// TestHTMLEscapeTo tests the HTMLEscapeTo function
-func TestHTMLEscapeTo(t *testing.T) {
-	tests := []struct {
-		name     string
-		input    string
-		expected string
-	}{
-		{"empty string", "", ""},
-		{"no escaping needed", "hello", "hello"},
-		{"less than", "<", "\\u003c"},
-		{"greater than", ">", "\\u003e"},
-		{"ampersand", "&", "\\u0026"},
-		{"line separator", "\u2028", "\\u2028"},
-		{"paragraph separator", "\u2029", "\\u2029"},
-		{"all special chars", "<>&\u2028\u2029", "\\u003c\\u003e\\u0026\\u2028\\u2029"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			var buf bytes.Buffer
-			HTMLEscapeTo(&buf, tt.input)
-			result := buf.String()
+			result := htmlEscapeViaTo(tt.input)
 			if result != tt.expected {
 				t.Errorf("HTMLEscapeTo(%q) = %q, want %q", tt.input, result, tt.expected)
 			}
@@ -88,6 +57,7 @@ func TestHTMLEscapeTo_Append(t *testing.T) {
 
 // TestNeedsHTMLEscape tests the NeedsHTMLEscape function
 func TestNeedsHTMLEscape(t *testing.T) {
+	// Ported to the bytes variant (the string twin was production-dead).
 	tests := []struct {
 		name     string
 		input    string
@@ -111,9 +81,9 @@ func TestNeedsHTMLEscape(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := NeedsHTMLEscape(tt.input)
+			result := NeedsHTMLEscapeBytes([]byte(tt.input))
 			if result != tt.expected {
-				t.Errorf("NeedsHTMLEscape(%q) = %v, want %v", tt.input, result, tt.expected)
+				t.Errorf("NeedsHTMLEscapeBytes(%q) = %v, want %v", tt.input, result, tt.expected)
 			}
 		})
 	}
@@ -123,7 +93,7 @@ func TestNeedsHTMLEscape(t *testing.T) {
 func TestHTMLEscape_EdgeCases(t *testing.T) {
 	t.Run("multiple consecutive special chars", func(t *testing.T) {
 		input := "<<<>>>&&&"
-		result := HTMLEscape(input)
+		result := htmlEscapeViaTo(input)
 		expected := "\\u003c\\u003c\\u003c\\u003e\\u003e\\u003e\\u0026\\u0026\\u0026"
 		if result != expected {
 			t.Errorf("got %q, want %q", result, expected)
@@ -132,7 +102,7 @@ func TestHTMLEscape_EdgeCases(t *testing.T) {
 
 	t.Run("mixed normal and special", func(t *testing.T) {
 		input := "a < b > c & d"
-		result := HTMLEscape(input)
+		result := htmlEscapeViaTo(input)
 		expected := "a \\u003c b \\u003e c \\u0026 d"
 		if result != expected {
 			t.Errorf("got %q, want %q", result, expected)
@@ -141,7 +111,7 @@ func TestHTMLEscape_EdgeCases(t *testing.T) {
 
 	t.Run("only special chars", func(t *testing.T) {
 		input := "<>&"
-		result := HTMLEscape(input)
+		result := htmlEscapeViaTo(input)
 		expected := "\\u003c\\u003e\\u0026"
 		if result != expected {
 			t.Errorf("got %q, want %q", result, expected)
@@ -150,20 +120,6 @@ func TestHTMLEscape_EdgeCases(t *testing.T) {
 }
 
 // Benchmark tests
-func BenchmarkHTMLEscape_NoEscape(b *testing.B) {
-	s := "hello world this is a normal string without special characters"
-	for i := 0; i < b.N; i++ {
-		_ = HTMLEscape(s)
-	}
-}
-
-func BenchmarkHTMLEscape_WithEscape(b *testing.B) {
-	s := "<script>alert('XSS')</script>&hello<world>"
-	for i := 0; i < b.N; i++ {
-		_ = HTMLEscape(s)
-	}
-}
-
 func BenchmarkHTMLEscapeTo(b *testing.B) {
 	s := "<script>alert('XSS')</script>"
 	var buf bytes.Buffer
@@ -173,43 +129,9 @@ func BenchmarkHTMLEscapeTo(b *testing.B) {
 	}
 }
 
-func BenchmarkNeedsHTMLEscape(b *testing.B) {
-	s := "hello world <script>"
-	for i := 0; i < b.N; i++ {
-		_ = NeedsHTMLEscape(s)
-	}
-}
-
 // ============================================================================
 // Bytes-based HTML escape tests
 // ============================================================================
-
-func TestNeedsHTMLEscapeBytes(t *testing.T) {
-	tests := []struct {
-		name  string
-		input []byte
-		want  bool
-	}{
-		{"empty", []byte{}, false},
-		{"no escape needed", []byte("hello world 123"), false},
-		{"less than", []byte("a < b"), true},
-		{"greater than", []byte("a > b"), true},
-		{"ampersand", []byte("a & b"), true},
-		{"U+2028", []byte{0xe2, 0x80, 0xa8}, true},
-		{"U+2029", []byte{0xe2, 0x80, 0xa9}, true},
-		{"all special", []byte("<>&" + string([]byte{0xe2, 0x80, 0xa8})), true},
-		{"normal unicode", []byte("こんにちは"), false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := NeedsHTMLEscapeBytes(tt.input)
-			if got != tt.want {
-				t.Errorf("NeedsHTMLEscapeBytes(%q) = %v, want %v", tt.input, got, tt.want)
-			}
-		})
-	}
-}
 
 func TestHTMLEscapeBytes(t *testing.T) {
 	tests := []struct {

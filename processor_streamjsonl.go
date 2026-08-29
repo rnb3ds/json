@@ -306,16 +306,18 @@ feedLoop:
 	close(jobs)
 	wg.Wait()
 
-	if ctx.Err() != nil {
-		return ctx.Err()
+	// Most specific first: a genuine user-callback error must not be shadowed
+	// by a subsequent context cancellation (ctx.Err would drop the real cause).
+	if storedErr := firstErr.Load(); storedErr != nil {
+		return *storedErr
 	}
 
 	if err := scanner.Err(); err != nil {
 		return err
 	}
 
-	if storedErr := firstErr.Load(); storedErr != nil {
-		return *storedErr
+	if ctx.Err() != nil {
+		return ctx.Err()
 	}
 
 	return nil
@@ -365,9 +367,7 @@ func (p *Processor) StreamJSONLChunked(reader io.Reader, chunkSize int, fn func(
 	// The flush points reset chunk after returning their objects, so this defer
 	// only fires when we bail out with a partially filled chunk.
 	defer func() {
-		for i := range chunk {
-			iterableValuePool.Put(chunk[i])
-		}
+		releaseIterableValues(chunk)
 	}()
 
 	chunkBufSize := p.config.JSONLBufferSize
@@ -425,15 +425,11 @@ func (p *Processor) StreamJSONLChunked(reader io.Reader, chunkSize int, fn func(
 
 		if len(chunk) >= chunkSize {
 			if err := fn(chunk); err != nil {
-				for i := range chunk {
-					iterableValuePool.Put(chunk[i])
-				}
+				releaseIterableValues(chunk)
 				chunk = chunk[:0]
 				return err
 			}
-			for i := range chunk {
-				iterableValuePool.Put(chunk[i])
-			}
+			releaseIterableValues(chunk)
 			chunk = chunk[:0]
 		}
 	}
@@ -445,15 +441,11 @@ func (p *Processor) StreamJSONLChunked(reader io.Reader, chunkSize int, fn func(
 	// Process remaining chunk
 	if len(chunk) > 0 {
 		if err := fn(chunk); err != nil {
-			for i := range chunk {
-				iterableValuePool.Put(chunk[i])
-			}
+			releaseIterableValues(chunk)
 			chunk = chunk[:0]
 			return err
 		}
-		for i := range chunk {
-			iterableValuePool.Put(chunk[i])
-		}
+		releaseIterableValues(chunk)
 		chunk = chunk[:0]
 	}
 

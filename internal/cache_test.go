@@ -470,22 +470,6 @@ func TestCacheManager_Eviction(t *testing.T) {
 	}
 }
 
-func TestCacheManager_LargeKey(t *testing.T) {
-	cm := NewCacheManager(true, 100, 0)
-
-	// Create a key longer than MaxCacheKeyLength
-	largeKey := ""
-	for i := 0; i < 1500; i++ {
-		largeKey += "a"
-	}
-
-	// Should not panic with large key - the key is truncated internally
-	cm.Set(largeKey, "value")
-
-	// Note: Due to key truncation, the original large key won't match
-	// We're just testing that it doesn't panic and can handle large keys
-}
-
 func TestCacheManager_VariousTypes(t *testing.T) {
 	cm := NewCacheManager(true, 100, 0)
 

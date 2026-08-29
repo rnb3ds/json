@@ -44,7 +44,9 @@ func (p *Processor) Delete(jsonStr, path string, cfg ...Config) (result string, 
 	compactArrays := options.CompactArrays || p.config.CompactArrays
 
 	// PERFORMANCE: Fast path for simple property delete without cache or cleanup.
-	if isSimplePropertyAccess(path) && !p.config.EnableCache && len(cfg) == 0 && !cleanupNulls {
+	// compactArrays implies cleanupNulls below (empty arrays are compacted during
+	// reconstruction), so it must also opt out of this fast path.
+	if isSimplePropertyAccess(path) && !p.config.EnableCache && len(cfg) == 0 && !cleanupNulls && !compactArrays {
 		m, isObj, err := unmarshalRootObject(jsonStr)
 		if err != nil {
 			return jsonStr, newOperationPathError("delete", path, err.Error(), ErrInvalidJSON)
@@ -130,7 +132,7 @@ func (p *Processor) isArrayDeletePath(path string) bool {
 // DeleteClean(s, p, cfg) is exactly Delete(s, p, cfg') where cfg' is cfg with
 // CleanupNulls and CompactArrays forced to true.
 func (p *Processor) DeleteClean(jsonStr, path string, cfg ...Config) (string, error) {
-	cleanupOpts := mergeOptionsWithOverride(cfg, func(o *Config) {
+	cleanupOpts := p.mergeOptionsWithOverride(cfg, func(o *Config) {
 		o.CleanupNulls = true
 		o.CompactArrays = true
 	})

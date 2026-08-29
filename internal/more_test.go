@@ -587,45 +587,10 @@ func TestIsDigit(t *testing.T) {
 }
 
 // TestDeepMerge tests the DeepMerge function
-func TestDeepMerge(t *testing.T) {
-	t.Run("merge non-overlapping", func(t *testing.T) {
-		base := map[string]any{"a": 1}
-		override := map[string]any{"b": 2}
-
-		result := DeepMerge(base, override)
-		resultMap := result.(map[string]any)
-
-		if resultMap["a"] != 1 {
-			t.Errorf("a = %v, want 1", resultMap["a"])
-		}
-		if resultMap["b"] != 2 {
-			t.Errorf("b = %v, want 2", resultMap["b"])
-		}
-	})
-
-	t.Run("merge nested objects", func(t *testing.T) {
-		base := map[string]any{
-			"config": map[string]any{"a": 1, "b": 2},
-		}
-		override := map[string]any{
-			"config": map[string]any{"b": 3, "c": 4},
-		}
-
-		result := DeepMerge(base, override)
-		resultMap := result.(map[string]any)
-		config := resultMap["config"].(map[string]any)
-
-		if config["a"] != 1 {
-			t.Errorf("config.a = %v, want 1", config["a"])
-		}
-		if config["b"] != 3 {
-			t.Errorf("config.b = %v, want 3", config["b"])
-		}
-		if config["c"] != 4 {
-			t.Errorf("config.c = %v, want 4", config["c"])
-		}
-	})
-
+// TestDeepMerge_NonObjectOverride covers the one DeepMerge branch not
+// already pinned by TestDeepMerge_Objects in helpers_test.go (the two
+// duplicated subtests were removed in the FIX-001 test cleanup).
+func TestDeepMerge_NonObjectOverride(t *testing.T) {
 	t.Run("override non-object with object", func(t *testing.T) {
 		base := map[string]any{"a": 1}
 		override := map[string]any{"a": map[string]any{"b": 2}}

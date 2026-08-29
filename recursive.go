@@ -289,7 +289,10 @@ func (urp *recursiveProcessor) handleArrayIndexSegmentUnified(data any, segment 
 		results := make([]any, 0, len(container))
 		errs := make([]error, 0, 4)
 
-		for _, mapValue := range container {
+		// Deterministic order: map iteration order is randomized per iteration,
+		// so collect values in sorted key order (see sortedMapKeys).
+		for _, key := range sortedMapKeys(container) {
+			mapValue := container[key]
 			result, err := urp.handleArrayIndexSegmentUnified(mapValue, segment, segments, segmentIndex, isLastSegment, op, value, createPaths)
 			if err != nil {
 				errs = append(errs, err)
@@ -700,7 +703,9 @@ func (urp *recursiveProcessor) handleArraySliceSegmentUnified(data any, segment 
 		results := make([]any, 0, len(container))
 		errs := make([]error, 0, 4)
 
-		for _, mapValue := range container {
+		// Deterministic order: collect values in sorted key order (see sortedMapKeys).
+		for _, key := range sortedMapKeys(container) {
+			mapValue := container[key]
 			result, err := urp.handleArraySliceSegmentUnified(mapValue, segment, segments, segmentIndex, isLastSegment, op, value, createPaths)
 			if err != nil {
 				errs = append(errs, err)
@@ -1362,8 +1367,10 @@ func (urp *recursiveProcessor) handleWildcardSegmentUnified(data any, _ internal
 			case opGet:
 				// PERFORMANCE: Pre-allocate slice with capacity hint
 				results := make([]any, 0, len(container))
-				for _, val := range container {
-					results = append(results, val)
+				// Deterministic order: collect values in sorted key order
+				// (see sortedMapKeys) instead of randomized map order.
+				for _, key := range sortedMapKeys(container) {
+					results = append(results, container[key])
 				}
 				return results, nil
 			case opSet:
@@ -1386,7 +1393,9 @@ func (urp *recursiveProcessor) handleWildcardSegmentUnified(data any, _ internal
 		results := make([]any, 0, len(container))
 		errs := make([]error, 0, 4)
 
-		for _, mapValue := range container {
+		// Deterministic order: collect values in sorted key order (see sortedMapKeys).
+		for _, key := range sortedMapKeys(container) {
+			mapValue := container[key]
 			result, err := urp.processRecursivelyAtSegmentsWithOptions(mapValue, segments, segmentIndex+1, op, value, createPaths)
 			if err != nil {
 				errs = append(errs, err)

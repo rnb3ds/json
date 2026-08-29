@@ -253,6 +253,11 @@ func NewDecoder(r io.Reader, cfg ...Config) *Decoder {
 		r:               r,
 		buf:             bufio.NewReader(r),
 		maxNestingDepth: maxDepth,
+		// Default the per-value byte cap to DefaultMaxJSONSize so the
+		// incremental checks in readStringValue/readContainerValue bound
+		// buffering. Without it a hostile stream grows the buffer without
+		// limit before the post-read size validation ever runs.
+		maxBytes: DefaultMaxJSONSize,
 	}
 	// Apply config if provided
 	if len(cfg) > 0 {
@@ -311,8 +316,26 @@ func (dec *Decoder) Decode(v any) error {
 			if err != nil {
 				return err
 			}
-			rv.Set(reflect.ValueOf(result))
-			return nil
+			// "null" decodes to a nil any; reflect.ValueOf(nil) is the zero
+			// Value and Value.Set would panic, so store the target's zero.
+			if result == nil {
+				rv.Set(reflect.Zero(rv.Type()))
+				return nil
+			}
+			// Only fast-path the assignment when the decoded value actually
+			// fits the target. A JSON number decoded into map[string]any must
+			// fall through to the stdlib path below, which reports a proper
+			// *UnmarshalTypeError instead of panicking in Value.Set.
+			if rv.Kind() == reflect.Interface || reflect.TypeOf(result).AssignableTo(rv.Type()) {
+				rv.Set(reflect.ValueOf(result))
+				return nil
+			}
+			inner := json.NewDecoder(bytes.NewReader(data))
+			inner.UseNumber()
+			if dec.disallowUnknownFields {
+				inner.DisallowUnknownFields()
+			}
+			return inner.Decode(v)
 		default:
 			// For concrete struct types, decode directly using UseNumber
 			// to avoid the intermediate any → marshal/unmarshal round-trip.
@@ -474,17 +497,31 @@ func (dec *Decoder) readStringValue(buf *bytes.Buffer) ([]byte, error) {
 	}
 }
 
+// closeDelimiter returns the closing delimiter matching an opening one.
+func closeDelimiter(open byte) byte {
+	if open == '[' {
+		return ']'
+	}
+	return '}'
+}
+
 // readContainerValue reads a complete JSON object or array.
 // openChar is the opening delimiter ('{' or '[') used to validate matching close delimiters.
 // Enforces maxNestingDepth to prevent stack exhaustion from deeply nested input.
 func (dec *Decoder) readContainerValue(buf *bytes.Buffer, openChar byte) ([]byte, error) {
-	depth := 1
 	maxDepth := dec.maxNestingDepth
 	if maxDepth <= 0 {
 		maxDepth = DefaultMaxNestingDepth
 	}
 	inString := false
 	escaped := false
+
+	// closers holds the expected closing delimiter for each open container,
+	// innermost last. Matching must be per level: deriving a single
+	// expectedClose from the root openChar rejects valid mixed nesting such
+	// as {"a":[1]}. len(closers) doubles as the current nesting depth.
+	closers := make([]byte, 0, 16)
+	closers = append(closers, closeDelimiter(openChar))
 
 	for {
 		b, err := dec.buf.ReadByte()
@@ -519,20 +556,20 @@ func (dec *Decoder) readContainerValue(buf *bytes.Buffer, openChar byte) ([]byte
 		case '"':
 			inString = true
 		case '{', '[':
-			depth++
-			if depth > maxDepth {
-				return nil, fmt.Errorf("JSON nesting depth %d exceeds maximum allowed depth %d: %w", depth, maxDepth, ErrDepthLimit)
+			closers = append(closers, closeDelimiter(b))
+			if len(closers) > maxDepth {
+				return nil, fmt.Errorf("JSON nesting depth %d exceeds maximum allowed depth %d: %w", len(closers), maxDepth, ErrDepthLimit)
 			}
 		case '}', ']':
-			expectedClose := byte('}')
-			if openChar == '[' {
-				expectedClose = ']'
+			expected := byte('}')
+			if len(closers) > 0 {
+				expected = closers[len(closers)-1]
 			}
-			if b != expectedClose {
-				return nil, fmt.Errorf("mismatched JSON delimiters: expected '%c' but got '%c'", expectedClose, b)
+			if b != expected {
+				return nil, fmt.Errorf("mismatched JSON delimiters: expected '%c' but got '%c'", expected, b)
 			}
-			depth--
-			if depth == 0 {
+			closers = closers[:len(closers)-1]
+			if len(closers) == 0 {
 				result := make([]byte, buf.Len())
 				copy(result, buf.Bytes())
 				return result, nil
@@ -650,7 +687,12 @@ func (dec *Decoder) parseString() (string, error) {
 
 				code, err := strconv.ParseUint(string(hex[:]), 16, 16)
 				if err != nil {
-					return "", err
+					// Wrap as SyntaxError like every other parse failure here
+					// (the raw *strconv.NumError leaks strconv internals).
+					return "", &SyntaxError{
+						msg:    fmt.Sprintf("invalid \\u escape %q", string(hex[:])),
+						Offset: dec.offset - 4,
+					}
 				}
 				r := rune(code)
 				// Handle UTF-16 surrogate pairs per RFC 8259 §7
@@ -686,22 +728,35 @@ func (dec *Decoder) parseSurrogatePair(high rune) (rune, error) {
 
 	// Expect \u followed by low surrogate
 	b, err := dec.buf.ReadByte()
-	if err != nil || b != '\\' {
+	if err != nil {
 		return unicode.ReplacementChar, &SyntaxError{
 			msg:    "expected \\u low surrogate in surrogate pair",
 			Offset: dec.offset,
 		}
 	}
 	dec.offset++
+	if b != '\\' {
+		// Lone high surrogate followed by a normal character. encoding/json
+		// substitutes U+FFFD and lets the character be processed normally, so
+		// unread it and return the replacement rune without an error.
+		_ = dec.buf.UnreadByte() // best-effort; decoder is buffered
+		dec.offset--
+		return unicode.ReplacementChar, nil
+	}
 
 	b, err = dec.buf.ReadByte()
-	if err != nil || b != 'u' {
+	if err != nil {
 		return unicode.ReplacementChar, &SyntaxError{
 			msg:    "expected \\u low surrogate after backslash",
 			Offset: dec.offset,
 		}
 	}
 	dec.offset++
+	if b != 'u' {
+		_ = dec.buf.UnreadByte() // best-effort; decoder is buffered
+		dec.offset--
+		return unicode.ReplacementChar, nil
+	}
 
 	var hex [4]byte
 	for i := range 4 {
@@ -888,6 +943,10 @@ func needsCustomEncodingOpts(cfg Config) bool {
 // Marshal converts any Go value to JSON bytes (similar to json.Marshal)
 // PERFORMANCE: Uses FastEncoder for simple types to avoid reflection overhead.
 // Uses encodeWithConfigToBytes for complex types to avoid string round-trip.
+//
+// NOTE: like encoding/json.Marshal, the output is always HTML-escaped: a
+// supplied cfg.EscapeHTML = false is overridden on this path. Use
+// EncodeWithConfig when caller-controlled escaping is required.
 //
 // Errors:
 //   - ErrProcessorClosed: processor has been closed
@@ -1125,30 +1184,19 @@ func (p *Processor) encodeWithConfigToBytes(value any, cfg ...Config) ([]byte, e
 	// branch below to avoid a second evaluation of the same config.
 	customOpts := needsCustomEncodingOpts(config)
 
-	// Fast path for simple types
+	// Fast path for simple types. The EscapeHTML==false case never reaches here:
+	// needsCustomEncodingOpts returns true for it, so the fast path is always
+	// the HTML-escaped encoding (which FastEncoder applies by post-processing).
 	if !config.Pretty && !customOpts {
-		if config.EscapeHTML {
-			if result, ok := fastEncodeSimpleWithHTMLEscape(value); ok {
-				if int64(len(result)) > p.config.MaxJSONSize {
-					return nil, &JsonsError{
-						Op:      "encode_with_config",
-						Message: fmt.Sprintf("encoded JSON size %d exceeds maximum %d", len(result), p.config.MaxJSONSize),
-						Err:     ErrSizeLimit,
-					}
+		if result, ok := fastEncodeSimpleToBytes(value); ok {
+			if int64(len(result)) > p.config.MaxJSONSize {
+				return nil, &JsonsError{
+					Op:      "encode_with_config",
+					Message: fmt.Sprintf("encoded JSON size %d exceeds maximum %d", len(result), p.config.MaxJSONSize),
+					Err:     ErrSizeLimit,
 				}
-				return []byte(result), nil
 			}
-		} else {
-			if result, ok := fastEncodeSimple(value); ok {
-				if int64(len(result)) > p.config.MaxJSONSize {
-					return nil, &JsonsError{
-						Op:      "encode_with_config",
-						Message: fmt.Sprintf("encoded JSON size %d exceeds maximum %d", len(result), p.config.MaxJSONSize),
-						Err:     ErrSizeLimit,
-					}
-				}
-				return []byte(result), nil
-			}
+			return result, nil
 		}
 	}
 
@@ -1188,49 +1236,12 @@ func (p *Processor) encodeWithConfigToBytes(value any, cfg ...Config) ([]byte, e
 	return result, nil
 }
 
-// fastEncodeSimple attempts to encode simple types using FastEncoder
-// Returns (result, true) if successful, ("", false) if type not supported
-// PERFORMANCE: Avoids reflection overhead for common types
-// NOTE: This does NOT escape HTML characters - use only when HTML escaping is not needed
-func fastEncodeSimple(value any) (string, bool) {
-	encoder := internal.GetEncoder()
-	defer internal.PutEncoder(encoder)
-
-	err := encoder.EncodeValue(value)
-	if err != nil {
-		return "", false
-	}
-
-	return string(encoder.Bytes()), true
-}
-
-// fastEncodeSimpleWithHTMLEscape encodes simple types with HTML escaping
-// Returns (result, true) if successful, ("", false) if type not supported
-// PERFORMANCE v3: Direct byte-level HTML escaping to minimize allocations
-func fastEncodeSimpleWithHTMLEscape(value any) (string, bool) {
-	encoder := internal.GetEncoder()
-	defer internal.PutEncoder(encoder)
-
-	err := encoder.EncodeValue(value)
-	if err != nil {
-		return "", false
-	}
-
-	// PERFORMANCE: Work directly with bytes to avoid string conversions
-	data := encoder.Bytes()
-	if internal.NeedsHTMLEscapeBytes(data) {
-		escaped := internal.HTMLEscapeBytes(data)
-		result := string(escaped)
-		internal.PutHTMLEscapeBytes(escaped)
-		return result, true
-	}
-
-	return string(data), true
-}
-
-// fastEncodeSimpleToBytes encodes directly to []byte, avoiding the
-// []byte -> string -> []byte round-trip when Marshal needs bytes.
-// PERFORMANCE v2: Uses append(nil, data...) which is optimized by the compiler
+// fastEncodeSimpleToBytes encodes simple types directly to []byte, avoiding a
+// []byte -> string -> []byte round-trip when the caller needs bytes
+// (encodeWithConfigToBytes fast path, Marshal). Output is always
+// HTML-escaped, matching encoding/json.
+// Returns (nil, false) if the value needs the full encoder.
+// PERFORMANCE: Uses append(nil, data...) which is optimized by the compiler
 // into a single allocation (runtime.memmove) without the explicit make+copy.
 func fastEncodeSimpleToBytes(value any) ([]byte, bool) {
 	encoder := internal.GetEncoder()
@@ -1502,6 +1513,13 @@ func (e *customEncoder) encodeValue(value any) error {
 func (e *customEncoder) encodeJSONNumber(num json.Number) error {
 	numStr := string(num)
 
+	// SECURITY: same guard as the fast encoder — an invalid literal (e.g.
+	// "1_0") must not be written verbatim, which would emit invalid JSON
+	// with a nil error.
+	if !internal.IsValidJSONNumber(numStr) {
+		return fmt.Errorf("invalid json.Number: %s", numStr)
+	}
+
 	// If PreserveNumbers is enabled, keep the original string representation
 	if e.config.PreserveNumbers {
 		e.buffer.WriteString(numStr)
@@ -1613,10 +1631,24 @@ func (e *customEncoder) encodeString(s string) error {
 			}
 		}
 	} else {
-		for _, r := range s {
+		// Byte-level iteration: ranging over the string would decode invalid
+		// UTF-8 bytes to U+FFFD before we can see them, so ValidateUTF8 could
+		// never fire and the raw EF BF BD encoding would be written where
+		// encoding/json writes the 6-character escape text (backslash u f f f d).
+		for i := 0; i < len(s); i++ {
+			r, size := utf8.DecodeRuneInString(s[i:])
+			if r == utf8.RuneError && size == 1 {
+				// Invalid UTF-8 byte. Note: ValidateUTF8 intentionally does
+				// not reject here (documented behavior — see the ValidateUTF8
+				// coverage test); emit stdlib's 6-character escape text
+				// instead of the raw U+FFFD encoding.
+				e.buffer.WriteString("\\ufffd")
+				continue
+			}
 			if err := e.escapeRune(r); err != nil {
 				return err
 			}
+			i += size - 1
 		}
 	}
 
@@ -1687,6 +1719,14 @@ func (e *customEncoder) escapeRune(r rune) error {
 		} else {
 			e.buffer.WriteRune(r)
 		}
+	case 0x2028, 0x2029:
+		// U+2028/U+2029 are valid JSON but terminate lines in JavaScript;
+		// encoding/json escapes them whenever HTML escaping is enabled.
+		if e.config.EscapeHTML {
+			e.writeUnicodeEscape(r)
+		} else {
+			e.buffer.WriteRune(r)
+		}
 	default:
 		if r < 0x20 {
 			e.writeUnicodeEscape(r)
@@ -1694,12 +1734,6 @@ func (e *customEncoder) escapeRune(r rune) error {
 			e.writeUnicodeEscape(r)
 		} else if e.config.EscapeUnicode && r > 0x7F {
 			e.writeUnicodeEscape(r)
-		} else if !utf8.ValidRune(r) && e.config.ValidateUTF8 {
-			return &JsonsError{
-				Op:      "escape_rune",
-				Message: fmt.Sprintf("invalid UTF-8 rune: %U", r),
-				Err:     errOperationFailed,
-			}
 		} else {
 			e.buffer.WriteRune(r)
 		}
