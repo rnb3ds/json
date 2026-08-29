@@ -501,11 +501,17 @@ func (p *Processor) GetMultiple(jsonStr string, paths []string, cfg ...Config) (
 
 	options, err := p.prepareOptions(cfg...)
 	if err != nil {
+		p.incrementErrorCount() // mirrors Get's prepareOptions-failure accounting
 		return nil, err
 	}
 	defer releaseConfig(options)
 
+	// Count the operation for stats — see Set for the rationale. Get has
+	// always counted; GetMultiple previously did not.
+	p.incrementOperationCount()
+
 	if err := p.validateInputForOptions(jsonStr, options); err != nil {
+		p.incrementErrorCount()
 		return nil, err
 	}
 
@@ -516,6 +522,7 @@ func (p *Processor) GetMultiple(jsonStr string, paths []string, cfg ...Config) (
 	// Parse JSON once for all operations
 	var data any
 	if err := p.Parse(jsonStr, &data, *options); err != nil {
+		p.incrementErrorCount()
 		return nil, err
 	}
 
@@ -545,5 +552,8 @@ func (p *Processor) GetMultiple(jsonStr string, paths []string, cfg ...Config) (
 		}
 	}
 
+	if firstError != nil {
+		p.incrementErrorCount()
+	}
 	return results, firstError
 }

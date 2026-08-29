@@ -155,8 +155,12 @@ func TestHTMLEscapeBytes(t *testing.T) {
 			if string(got) != tt.want {
 				t.Errorf("HTMLEscapeBytes(%q) = %q, want %q", tt.input, string(got), tt.want)
 			}
-			// Clean up pooled buffer
-			if len(tt.input) > 0 {
+			// Clean up pooled buffer — but only for results HTMLEscapeBytes
+			// actually allocated. On the no-escape fast path (and for empty
+			// input) it returns the CALLER's slice; pooling that would insert
+			// tt.input's backing array into the pool (see PutHTMLEscapeBytes'
+			// contract note).
+			if len(tt.input) > 0 && NeedsHTMLEscapeBytes(tt.input) {
 				PutHTMLEscapeBytes(got)
 			}
 		})

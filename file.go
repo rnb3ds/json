@@ -53,10 +53,14 @@ func (p *Processor) loadFromFileAsData(filePath string, cfg ...Config) (any, err
 }
 
 // effectiveReadMaxSize returns the byte cap to apply when reading input for an
-// operation. When the caller supplies a per-call Config, its MaxJSONSize takes
-// effect (matching validateInputForOptions, so the read limit and the
-// validation limit agree); otherwise the processor's baked-in limit is used.
-// A non-positive value falls back to DefaultMaxJSONSize in both cases.
+// operation. When the caller supplies a per-call Config with a positive
+// MaxJSONSize it takes effect — which can LOOSEN a tight processor (the read
+// layer trusts the per-call limit). The validation layer
+// (validateInputForOptions) applies the raw per-call value after
+// Config.Validate clamps it, so the two agree only when the cfg's value is
+// positive; a per-call cfg with MaxJSONSize <= 0 leaves the read at the
+// processor default while validation uses the clamped value. A non-positive
+// processor limit falls back to DefaultMaxJSONSize here.
 func (p *Processor) effectiveReadMaxSize(cfg ...Config) int64 {
 	maxSize := p.config.MaxJSONSize
 	if maxSize <= 0 {
@@ -194,12 +198,16 @@ func (p *Processor) readValidatedReader(reader io.Reader, cfg ...Config) ([]byte
 // ============================================================================
 
 // preprocessDataForEncoding normalizes string/[]byte inputs to prevent double-encoding.
-func (p *Processor) preprocessDataForEncoding(data any) (any, error) {
+// cfg (when supplied) is honored by the internal parse, so a caller passing
+// AllowComments or custom size limits to SaveToFile/SaveToWriter gets the same
+// parsing rules as the encoding step — previously the parse silently used only
+// the processor's baked-in config and could reject input the cfg allows.
+func (p *Processor) preprocessDataForEncoding(data any, cfg ...Config) (any, error) {
 	switch v := data.(type) {
 	case string:
 		// Parse JSON string to prevent double-encoding
 		var parsed any
-		if err := p.Parse(v, &parsed); err != nil {
+		if err := p.Parse(v, &parsed, cfg...); err != nil {
 			return nil, &JsonsError{
 				Op:      "preprocess_data",
 				Message: "invalid JSON string input",
@@ -210,7 +218,7 @@ func (p *Processor) preprocessDataForEncoding(data any) (any, error) {
 	case []byte:
 		// Parse JSON bytes to prevent double-encoding
 		var parsed any
-		if err := p.Parse(string(v), &parsed); err != nil {
+		if err := p.Parse(string(v), &parsed, cfg...); err != nil {
 			return nil, &JsonsError{
 				Op:      "preprocess_data",
 				Message: "invalid JSON byte input",
@@ -249,6 +257,16 @@ func (p *Processor) createDirectoryIfNotExists(filePath string) error {
 // O_TRUNC and could. Existing file permissions are preserved (matching
 // os.WriteFile, which does not change perms on truncate).
 func atomicWriteFile(path string, data []byte, mode os.FileMode) error {
+	// SYMLINK PRESERVATION: os.Rename replaces the directory ENTRY, so writing
+	// to a symlinked path would destroy the link and leave the real target
+	// stale — the opposite of os.WriteFile, which followed the link and
+	// updated the target. Resolve the link first so the atomic rename lands
+	// on the target file, matching the write-through semantics callers had
+	// before atomization. (A dangling link cannot be resolved and is replaced,
+	// as os.Rename alone would.)
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		path = resolved
+	}
 	dir := filepath.Dir(path)
 	if fi, err := os.Stat(path); err == nil {
 		// Preserve existing permissions; os.WriteFile keeps them on truncate.
@@ -323,7 +341,7 @@ func (p *Processor) writeFileJSON(op, filePath string, data any, cfg ...Config) 
 	}
 
 	// Preprocess data to prevent double-encoding of string/[]byte inputs
-	processedData, err := p.preprocessDataForEncoding(data)
+	processedData, err := p.preprocessDataForEncoding(data, cfg...)
 	if err != nil {
 		return err
 	}
@@ -366,7 +384,7 @@ func (p *Processor) SaveToWriter(writer io.Writer, data any, cfg ...Config) erro
 	}
 
 	// Preprocess data to prevent double-encoding of string/[]byte inputs
-	processedData, err := p.preprocessDataForEncoding(data)
+	processedData, err := p.preprocessDataForEncoding(data, cfg...)
 	if err != nil {
 		return err
 	}
@@ -592,6 +610,25 @@ func validatePathPlatform(absPath string) error {
 
 // validatePathSymlinks checks for symlink security issues
 func validatePathSymlinks(absPath string) error {
+	// INTERMEDIATE SYMLINKS: a symlink anywhere in the directory chain
+	// redirects the eventual open() to a different physical location, and the
+	// lexical-path platform checks above never see it (e.g. /home/u/data →
+	// /etc makes /home/u/data/config.json read /etc/config.json while the
+	// lexical path passes validation). Resolve the parent directory and re-run
+	// the restricted-area checks on the physical location. Resolution errors
+	// (parent doesn't exist yet, permissions) leave nothing to validate — the
+	// leaf checks below still apply.
+	parent := filepath.Dir(absPath)
+	if resolvedParent, err := filepath.EvalSymlinks(parent); err == nil && resolvedParent != parent {
+		if runtime.GOOS != "windows" {
+			if err := validateUnixPath(resolvedParent); err != nil {
+				return err
+			}
+		} else if err := validateWindowsPath(resolvedParent); err != nil {
+			return err
+		}
+	}
+
 	info, err := os.Lstat(absPath)
 	if err != nil {
 		// File doesn't exist yet, no symlink check needed
@@ -646,8 +683,8 @@ func validateFilePathStandalone(filePath string) error {
 // validatePathFileSize checks if file size is within limits.
 // maxSize is the effective limit (processor config or per-call cfg — see
 // effectiveReadMaxSize), not always the processor's baked-in value: a per-call
-// Config can only tighten today's reads, but the two sources must agree or
-// validation rejects input the read path would accept.
+// Config with a larger MaxJSONSize loosens the read cap here, and the two
+// sources must agree or validation rejects input the read path would accept.
 func (p *Processor) validatePathFileSize(absPath string, maxSize int64) error {
 	info, err := os.Stat(absPath)
 	if err != nil {
@@ -994,11 +1031,19 @@ func (np *NDJSONProcessor) ProcessFile(filename string, fn func(lineNum int, obj
 // ProcessReader processes NDJSON from a reader.
 // Enforces per-line size limits and nesting depth checks to prevent DoS attacks.
 //
+// The JSONL config knobs apply as they do for the StreamJSONL family:
+// JSONLMaxLineSize caps a single line (falling back to MaxJSONSize, then the
+// 100MB default, for backward compatibility), JSONLMaxMemory (or MaxMemory)
+// caps total processed bytes, and JSONLSkipComments/JSONLSkipEmpty skip
+// comment and blank lines. Historically this method ignored all four knobs,
+// so the two JSONL entry points silently enforced different rules.
+//
 // Errors:
 //   - a per-line error, wrapped with the line number, when a line exceeds the
 //     nesting-depth limit or fails to parse (skipped when JSONLContinueOnErr is set)
+//   - ErrSizeLimit (wrapped) when the JSONL memory limit is exceeded
 //   - any error returned by fn, or while reading reader
-//     (including bufio.ErrTooLong when a line exceeds MaxJSONSize)
+//     (including bufio.ErrTooLong when a line exceeds the line-size limit)
 func (np *NDJSONProcessor) ProcessReader(reader io.Reader, fn func(lineNum int, obj map[string]any) error) (err error) {
 	// SAFETY (SEC-003): a panicking user callback must not crash the program.
 	defer func() {
@@ -1006,14 +1051,32 @@ func (np *NDJSONProcessor) ProcessReader(reader io.Reader, fn func(lineNum int, 
 			err = fmt.Errorf("ndjson callback panicked: %v", r)
 		}
 	}()
-	maxLineSize := np.config.MaxJSONSize
+	// Per-line cap: the dedicated JSONL knob wins; the legacy fallback chain
+	// (MaxJSONSize → 100MB) preserves the previous behavior when it is unset.
+	maxLineSize := int64(np.config.JSONLMaxLineSize)
+	if maxLineSize <= 0 {
+		maxLineSize = np.config.MaxJSONSize
+	}
 	if maxLineSize <= 0 {
 		maxLineSize = int64(DefaultMaxJSONSize)
 	}
 
+	// Total-bytes cap, mirroring StreamJSONL: JSONLMaxMemory falls back to
+	// MaxMemory; zero (the default) disables accounting entirely.
+	memLimit := np.config.JSONLMaxMemory
+	if memLimit <= 0 && np.config.MaxMemory > 0 {
+		memLimit = np.config.MaxMemory
+	}
+
 	scanner := bufio.NewScanner(reader)
-	buf := make([]byte, 0, np.bufferSize)
-	scanner.Buffer(buf, int(maxLineSize)+1)
+	// bufio.Scanner's effective token cap is max(cap(buf), max): a 64KB
+	// initial buffer would silently raise a smaller JSONLMaxLineSize to 64KB.
+	// Clamp the initial capacity so the configured line limit is what holds.
+	scanBufCap := np.bufferSize
+	if int64(scanBufCap) > maxLineSize+1 {
+		scanBufCap = int(maxLineSize) + 1
+	}
+	scanner.Buffer(make([]byte, 0, scanBufCap), int(maxLineSize)+1)
 
 	maxDepth := np.config.MaxNestingDepthSecurity
 	if maxDepth <= 0 {
@@ -1021,12 +1084,27 @@ func (np *NDJSONProcessor) ProcessReader(reader io.Reader, fn func(lineNum int, 
 	}
 
 	lineNum := 0
+	var totalBytes int64
 	for scanner.Scan() {
 		lineNum++
 		line := scanner.Bytes()
 
-		if len(line) == 0 {
+		// Config-driven skips (comments, blank lines when JSONLSkipEmpty is
+		// set), then the unconditional empty-line skip this API has always
+		// had — NDJSON files commonly contain physical blank lines.
+		if shouldSkipJSONLLineFromConfig(line, &np.config) || len(line) == 0 {
 			continue
+		}
+
+		if memLimit > 0 {
+			totalBytes += int64(len(line))
+			if totalBytes > memLimit {
+				return &JsonsError{
+					Op:      "ndjson_process",
+					Message: fmt.Sprintf("jsonl memory limit exceeded: processed %d bytes (limit %d bytes at line %d)", totalBytes, memLimit, lineNum),
+					Err:     ErrSizeLimit,
+				}
+			}
 		}
 
 		// SECURITY: Check per-line nesting depth before unmarshaling

@@ -73,8 +73,12 @@ Automatic sanitization of JSON paths to prevent injection attacks:
 // Paths are validated for:
 // - Null bytes (\x00)
 // - Excessive length (>5,000 characters)
-// - Suspicious patterns (script tags, eval, etc.)
-// - Path traversal attempts (../, ..\)
+// - Excessive depth (>100 segments)
+// - Path traversal attempts (../, ..\, URL-encoded and overlong variants)
+// - Zero-width and Unicode lookalike characters
+//
+// Note: script tags, eval(...) and similar dangerous patterns are detected in
+// JSON *content*, not in paths (see Dangerous Pattern Detection below).
 ```
 
 ### 4. Secure Caching
@@ -82,7 +86,7 @@ Automatic sanitization of JSON paths to prevent injection attacks:
 Cache operations include security measures:
 
 - **Sensitive data detection**: Automatic exclusion of sensitive data from cache
-- **Secure hashing**: Dual FNV-1a cache key generation
+- **Secure hashing**: FNV-1a cache keys with exact-input verification on every hit
 - **Cache key validation**: Prevention of cache injection attacks
 - **TTL enforcement**: Automatic expiration of cached data
 
@@ -135,7 +139,7 @@ defer processor.Close()
 // - MaxCacheSize: 256 (larger than DefaultConfig's 128)
 // - CacheTTL: 3 minutes (shorter than DefaultConfig's 5 minutes)
 // - StrictMode: true (strict validation)
-// - EnableValidation: true (forced validation)
+// - EnableValidation: true
 // - FullSecurityScan: true (disables sampling, full scan all JSON)
 
 // SECURITY NOTE: FullSecurityScan=true ensures complete content inspection
@@ -151,7 +155,7 @@ defer processor.Close()
 Create a custom configuration for specific security requirements:
 
 ```go
-config := &json.Config{
+config := json.Config{
     // Size and depth limits
     MaxJSONSize:               5 * 1024 * 1024,  // 5MB
     MaxPathDepth:              30,               // Maximum path depth
@@ -160,10 +164,10 @@ config := &json.Config{
     MaxArrayElements:          5000,             // Maximum array elements
     MaxSecurityValidationSize: 10 * 1024 * 1024, // 10MB validation limit
 
-    // Validation settings
-    EnableValidation: true,  // Enable input validation
-    StrictMode:       true,  // Enable strict mode
-    ValidateInput:    true,  // Validate all inputs
+    // Validation settings (validation is on by default; SkipValidation
+    // controls it, not these fields)
+    StrictMode:    true, // Enable strict mode
+    ValidateInput: true,
 
     // Concurrency limits
     MaxConcurrency:    20,   // Maximum concurrent operations
@@ -210,7 +214,8 @@ fmt.Printf("Full Security Scan: %v\n", config.FullSecurityScan)
 
 ### Automatic Validation
 
-All JSON inputs are automatically validated when `EnableValidation` is true:
+All JSON inputs are automatically validated. Validation is enabled by default
+and runs on every operation; set `SkipValidation: true` only for trusted input:
 
 ```go
 processor, err := json.New()
@@ -239,28 +244,36 @@ if err != nil {
 Use schema validation for strict data validation:
 
 ```go
-// Define a schema
-schema := &json.Schema{
+// Define a schema.
+// IMPORTANT: numeric and length constraints (MinLength, MaxLength, Minimum,
+// Maximum, MinItems, MaxItems, MultipleOf) are only enforced when the schema
+// is built with NewSchemaWithConfig. A plain struct literal cannot set the
+// internal "constraint present" flags, so such constraints are silently
+// skipped — build schemas with NewSchemaWithConfig (pointer fields mark a
+// constraint as explicitly set).
+minLen, maxLen := 3, 50
+zero, maxAge := 0.0, 150.0
+schema := json.NewSchemaWithConfig(json.SchemaConfig{
     Type: "object",
     Properties: map[string]*json.Schema{
-        "username": {
+        "username": json.NewSchemaWithConfig(json.SchemaConfig{
             Type:      "string",
-            MinLength: 3,
-            MaxLength: 50,
+            MinLength: &minLen,
+            MaxLength: &maxLen,
             Pattern:   "^[a-zA-Z0-9_]+$",
-        },
-        "email": {
+        }),
+        "email": json.NewSchemaWithConfig(json.SchemaConfig{
             Type:   "string",
             Format: "email",
-        },
-        "age": {
+        }),
+        "age": json.NewSchemaWithConfig(json.SchemaConfig{
             Type:    "number",
-            Minimum: 0,
-            Maximum: 150,
-        },
+            Minimum: &zero,
+            Maximum: &maxAge,
+        }),
     },
     Required: []string{"username", "email"},
-}
+})
 
 // Validate JSON against schema
 validationErrors, err := processor.ValidateSchema(jsonString, schema)
@@ -280,16 +293,16 @@ if len(validationErrors) > 0 {
 The library performs security-specific validation:
 
 ```go
-// Checks performed:
+// Checks performed on JSON input:
 // 1. JSON size limits
-// 2. Nesting depth limits
-// 3. Object key count limits
-// 4. Array element limits
-// 5. Malicious pattern detection
-// 6. Null byte detection
-// 7. Excessive string length detection
-// 8. Zero-width character detection
-// 9. Unicode normalization (NFC) for homograph attack prevention
+// 2. UTF-8 validity and BOM detection
+// 3. Nesting depth limits
+// 4. Object key count limits
+// 5. Array element limits
+// 6. Malicious pattern detection (28 built-in dangerous patterns)
+//
+// Note: zero-width character and Unicode NFC checks are applied to *paths*
+// (see Path Security below), not to JSON content.
 
 // Example: Detecting deeply nested JSON that exceeds the default depth limit
 deeplyNested := strings.Repeat(`{"a":`, 250) + `0` + strings.Repeat(`}`, 250)
@@ -340,20 +353,24 @@ processor.Get(jsonString, "../../../etc/passwd")      // ✗ Path traversal
 
 ### Path Depth Limits
 
-Prevent excessive path traversal:
+JSON paths are capped by fixed internal limits:
 
 ```go
-config := &json.Config{
-    MaxPathDepth: 20, // Maximum 20 levels deep
-}
-processor, err := json.New(config)
+processor, err := json.New()
 if err != nil {
     log.Fatal(err)
 }
 defer processor.Close()
 
-// This will fail if path depth exceeds limit
-result, err := processor.Get(jsonString, "a.b.c.d.e.f.g.h.i.j.k.l.m.n.o.p.q.r.s.t.u")
+// These will be rejected:
+// ✗ More than 100 segments (fixed MaxPathParseDepth limit)
+_, err = processor.Get(jsonString, strings.Repeat("a.", 101))
+// ✗ Longer than 5,000 characters (fixed maxPathLength limit)
+_, err = processor.Get(jsonString, strings.Repeat("a.", 5001))
+
+// Note: Config.MaxPathDepth is currently metadata only — it feeds the
+// SecurityLimits view but is NOT enforced on JSON paths. The enforced caps
+// are the fixed 100-segment parse depth and 5,000-character length above.
 ```
 
 
@@ -389,12 +406,14 @@ Access to sensitive system directories is blocked:
 
 ```go
 // Blocked paths (Unix/Linux):
-// - Directory-level: /proc/, /sys/, /dev/
-// - Specific files under /etc/: passwd, shadow, sudoers, hosts, fstab, crontab
+// - Directory-level: /dev/, /proc/, /sys/, /root/, /boot/, /var/log/,
+//   /usr/bin/, /usr/sbin/, /sbin/, /bin/
+// - Specific files under /etc/ (the /etc/ directory itself is not blocked):
+//   passwd, shadow, sudoers, hosts, fstab, crontab
 
 // Example:
 _, err := processor.LoadFromFile("/etc/passwd")
-// Returns error: "access to system directories not allowed"
+// Returns error: "access to system directory not allowed"
 ```
 
 ### File Size Limits
@@ -402,7 +421,7 @@ _, err := processor.LoadFromFile("/etc/passwd")
 File operations respect size limits:
 
 ```go
-config := &json.Config{
+config := json.Config{
     MaxJSONSize: 10 * 1024 * 1024, // 10MB limit
 }
 processor, err := json.New(config)
@@ -440,7 +459,8 @@ if err != nil {
 // 1. Validate the file path
 // 2. Check for path traversal
 // 3. Validate the data before writing
-// 4. Write the file (non-atomic: truncate-then-write via os.WriteFile)
+// 4. Write the file atomically (sibling temp file + os.Rename, so a crash
+//    mid-write never leaves a truncated file at the target path)
 ```
 
 ---
@@ -477,21 +497,25 @@ result, err := processor.Get(jsonString, "user.credentials")
 Cache keys use secure hashing:
 
 ```go
-// Cache keys are generated using dual FNV-1a hashing:
-// - All JSON sizes: two independent FNV-1a hashes (different seeds) combined
-//   with the input length into a fixed-size validationKey struct {length, h1, h2}.
-// - Conceptually "len:h1:h2", but returned as a struct (not a formatted string)
-//   to avoid a per-op heap allocation in the hot path.
-// - This provides collision resistance below 2^-64.
+// Cache keys are generated using a single FNV-1a hash plus the input length:
+// - validationKey struct {length, h1}: one FNV-1a hash
+//   (internal.HashStringFNV1a) combined with the exact input length.
+// - Returned as a fixed-size struct (not a formatted string) to avoid a
+//   per-op heap allocation in the hot path.
+// - FNV-1a is non-cryptographic and collision-constructible, so a cache hit
+//   is NEVER trusted on the key alone: isValidationCached compares the exact
+//   stored input before skipping any security check. A collision merely
+//   causes one redundant revalidation, never a false "already validated".
+// - Processor result-cache keys use the same single FNV-1a hash, formatted
+//   as "op:hash16:path[:optshash]".
 // This prevents:
-// 1. Cache key collision attacks
+// 1. False "already validated" cache hits (exact-input comparison)
 // 2. Cache timing attacks
 // 3. Information disclosure through cache keys
 
-// Key generation (all JSON sizes) — internal helpers, not part of the public API:
-h1 := internal.HashBytesFNV1a([]byte(input))
-h2 := internal.HashBytesFNV1aOffset([]byte(input))  // independent seed
-cacheKey := validationKey{length: len(input), h1: h1, h2: h2}
+// Key generation — internal helper, not part of the public API:
+h1 := internal.HashStringFNV1a(input)
+cacheKey := validationKey{length: len(input), h1: h1}
 ```
 
 ### Cache Key Validation
@@ -512,7 +536,7 @@ Cache keys are validated to prevent injection:
 Prevent memory exhaustion through cache limits:
 
 ```go
-config := &json.Config{
+config := json.Config{
     EnableCache:  true,
     MaxCacheSize: 1000,           // Maximum 1000 entries
     CacheTTL:     5 * time.Minute, // 5 minute expiration
@@ -609,11 +633,10 @@ Choose the right configuration for your environment:
 // Development environment
 devConfig := json.DefaultConfig()
 devConfig.StrictMode = false
-devConfig.EnableValidation = true
 
-// Production environment
+// Production environment (validation is always on unless SkipValidation
+// is explicitly enabled, so it needs no extra setting here)
 prodConfig := json.SecurityConfig()
-prodConfig.EnableValidation = true
 prodConfig.StrictMode = true
 
 // High-security environment (financial, healthcare, etc.)
@@ -653,24 +676,27 @@ if err != nil {
 Implement schema validation for important data:
 
 ```go
-// Define strict schema for user input
-userSchema := &json.Schema{
+// Define strict schema for user input.
+// Built with NewSchemaWithConfig so MinLength/MaxLength are enforced (see the
+// note under Schema Validation: struct-literal constraints are skipped).
+minLen, maxLen := 3, 50
+userSchema := json.NewSchemaWithConfig(json.SchemaConfig{
     Type: "object",
     Properties: map[string]*json.Schema{
-        "username": {
+        "username": json.NewSchemaWithConfig(json.SchemaConfig{
             Type:      "string",
-            MinLength: 3,
-            MaxLength: 50,
+            MinLength: &minLen,
+            MaxLength: &maxLen,
             Pattern:   "^[a-zA-Z0-9_]+$",
-        },
-        "email": {
+        }),
+        "email": json.NewSchemaWithConfig(json.SchemaConfig{
             Type:   "string",
             Format: "email",
-        },
+        }),
     },
     Required:             []string{"username", "email"},
-    AdditionalProperties: false, // Reject unknown properties
-}
+    AdditionalProperties: new(bool), // false — reject unknown properties
+})
 
 // Validate before processing
 validationErrors, err := processor.ValidateSchema(userInput, userSchema)
@@ -685,7 +711,7 @@ if err != nil || len(validationErrors) > 0 {
 Protect against resource exhaustion with concurrency limits:
 
 ```go
-config := &json.Config{
+config := json.Config{
     MaxConcurrency: 100, // Maximum concurrent operations
 }
 processor, err := json.New(config)
@@ -861,9 +887,9 @@ Use this checklist to ensure your implementation is secure:
 
 ### Configuration
 - [ ] Use `SecurityConfig()` for production environments with untrusted input
-- [ ] Set appropriate `MaxJSONSize` limits (default: 100MB, high-security: 5MB)
-- [ ] Configure `MaxPathDepth` (default: 50) and `MaxNestingDepthSecurity` (default: 200)
-- [ ] Enable `EnableValidation` and `ValidateInput` (enabled by default)
+- [ ] Set appropriate `MaxJSONSize` limits (default: 100MB, high-security: 10MB)
+- [ ] Set `MaxNestingDepthSecurity` appropriately (default: 200; JSON paths are capped by fixed limits: 5,000 chars, 100 segments)
+- [ ] Keep input validation enabled (on by default; only `SkipValidation: true` disables it — trusted input only)
 - [ ] Set reasonable `MaxConcurrency` limits (default: 50)
 - [ ] Configure cache limits with `MaxCacheSize` (default: 128) and `CacheTTL` (default: 5 minutes)
 - [ ] Enable `FullSecurityScan: true` for maximum protection with untrusted input
@@ -926,28 +952,31 @@ func ProcessUserJSON(userInput string) error {
     }
     defer processor.Close()
 
-    // Define strict schema
-    schema := &json.Schema{
+    // Define strict schema (NewSchemaWithConfig so length/range constraints
+    // are enforced — see the note under Schema Validation)
+    minLen, maxLen := 1, 100
+    zero, maxAge := 0.0, 150.0
+    schema := json.NewSchemaWithConfig(json.SchemaConfig{
         Type: "object",
         Properties: map[string]*json.Schema{
-            "name": {
+            "name": json.NewSchemaWithConfig(json.SchemaConfig{
                 Type:      "string",
-                MinLength: 1,
-                MaxLength: 100,
-            },
-            "email": {
+                MinLength: &minLen,
+                MaxLength: &maxLen,
+            }),
+            "email": json.NewSchemaWithConfig(json.SchemaConfig{
                 Type:   "string",
                 Format: "email",
-            },
-            "age": {
+            }),
+            "age": json.NewSchemaWithConfig(json.SchemaConfig{
                 Type:    "number",
-                Minimum: 0,
-                Maximum: 150,
-            },
+                Minimum: &zero,
+                Maximum: &maxAge,
+            }),
         },
         Required:             []string{"name", "email"},
-        AdditionalProperties: false,
-    }
+        AdditionalProperties: new(bool), // false — reject unknown properties
+    })
 
     // Validate against schema
     validationErrors, err := processor.ValidateSchema(userInput, schema)
@@ -975,7 +1004,7 @@ func ProcessUserJSON(userInput string) error {
 ```go
 func ProcessAPIRequests() error {
     // Configure for high volume
-    config := &json.Config{
+    config := json.Config{
         MaxJSONSize:              5 * 1024 * 1024,
         MaxPathDepth:             50,
         MaxNestingDepthSecurity:  30,
@@ -1061,21 +1090,25 @@ func LoadSecureConfig(configPath string) (*Config, error) {
         return nil, fmt.Errorf("failed to read config: %w", err)
     }
 
-    // Define config schema
-    configSchema := &json.Schema{
+    // Define config schema (NewSchemaWithConfig so the port range is
+    // enforced — see the note under Schema Validation)
+    minPort, maxPort := 1.0, 65535.0
+    configSchema := json.NewSchemaWithConfig(json.SchemaConfig{
         Type: "object",
         Properties: map[string]*json.Schema{
-            "database": {
+            "database": json.NewSchemaWithConfig(json.SchemaConfig{
                 Type: "object",
                 Properties: map[string]*json.Schema{
-                    "host": {Type: "string"},
-                    "port": {Type: "number", Minimum: 1, Maximum: 65535},
+                    "host": json.NewSchemaWithConfig(json.SchemaConfig{Type: "string"}),
+                    "port": json.NewSchemaWithConfig(json.SchemaConfig{
+                        Type: "number", Minimum: &minPort, Maximum: &maxPort,
+                    }),
                 },
                 Required: []string{"host", "port"},
-            },
+            }),
         },
         Required: []string{"database"},
-    }
+    })
 
     // Validate config structure
     validationErrors, err := processor.ValidateSchema(jsonStr, configSchema)
@@ -1340,7 +1373,9 @@ JSON Content: [====32KB Window====][overlap][====32KB Window====]...
               Pattern Scan               Pattern Scan
 
 Overlap Size = maxPatternLength + 8 bytes
-             = ~30 bytes (ensures no pattern can span windows)
+             = 24 bytes with the built-in patterns (longest is
+               "__defineGetter__"/"__defineSetter__" at 16 bytes; grows if
+               longer custom patterns are registered)
 ```
 
 #### Multi-Region Sampling
@@ -1368,19 +1403,20 @@ Overlap Size = maxPatternLength + 8 bytes
 The validation cache uses secure key generation to prevent collision attacks:
 
 ```go
-// All JSON sizes: two independent FNV-1a hashes (different seeds) combined
-// with input length into a fixed-size validationKey struct {length, h1, h2}.
-// Conceptually "len:h1:h2" but returned as a struct (not a formatted string)
-// to avoid a per-op heap allocation in the hot path.
-// Collision resistance below 2^-64.
-h1 := HashBytesFNV1a([]byte(json))
-h2 := HashBytesFNV1aOffset([]byte(json))  // different seed
-key := validationKey{length: len(json), h1: h1, h2: h2}
+// All JSON sizes: a single FNV-1a hash combined with the input length into
+// a fixed-size validationKey struct {length, h1}. A struct (not a formatted
+// string) avoids a per-op heap allocation in the hot path.
+// SECURITY: FNV-1a is non-cryptographic and collision-constructible, so a
+// cache hit is never trusted on the key alone — the exact stored input is
+// compared before any security check is skipped.
+key := validationKey{length: len(json), h1: HashStringFNV1a(json)}
 
 // Cache management:
-// - Maximum entries: configurable via MaxCacheSize (default: 128, max: 2,000)
-// - Proactive eviction at 8,000 entries (fixed threshold for the validation cache)
-// - Entry includes last access timestamp
+// - Maximum entries: ~8,000 (fixed high watermark for the validation cache,
+//   independent of MaxCacheSize — MaxCacheSize governs the processor result
+//   cache, not the validation cache)
+// - Proactive LRU eviction removes the oldest 25% at the watermark
+// - Entry includes last access timestamp and the exact validated input
 ```
 
 ### Path Traversal Protection
@@ -1509,7 +1545,7 @@ The library detects all zero-width and invisible Unicode characters:
 ```go
 // Reserved device names blocked:
 "CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$", "CLOCK$"
-"COM0"-"COM9", "LPT0"-"LPT9"
+"COM0"-"COM99", "LPT0"-"LPT99"
 
 // UNC paths blocked:
 "\\server\share", "//server/share"
@@ -1524,11 +1560,12 @@ The library detects all zero-width and invisible Unicode characters:
 #### Unix/Linux Protection
 ```go
 // Protected system directories:
-"/dev/", "/proc/", "/sys/", "/etc/",
+"/dev/", "/proc/", "/sys/",
 "/root/", "/boot/", "/var/log/",
 "/usr/bin/", "/usr/sbin/", "/sbin/", "/bin/"
 
-// Protected system files:
+// Protected system files (only these /etc/ files — the directory
+// itself is not blocked, so /etc/myconfig.json remains readable):
 "/etc/passwd", "/etc/shadow", "/etc/sudoers",
 "/etc/hosts", "/etc/fstab", "/etc/crontab"
 ```
@@ -1541,7 +1578,7 @@ const deepCopyMaxDepth = 200  // Maximum recursion depth
 
 func deepCopyValueWithDepth(data any, depth int) (any, error) {
     if depth > deepCopyMaxDepth {
-        return nil, fmt.Errorf("deep copy depth limit exceeded")
+        return nil, fmt.Errorf("deep copy depth limit exceeded: maximum depth is %d", deepCopyMaxDepth)
     }
     // ... recursive copy with depth tracking
 }
@@ -1611,7 +1648,6 @@ func (r AccessResult) AsInt() (int, error) {
 workerCount:   config.MaxConcurrency // Worker count driven by Config (default: 4); capped at the input length
 semaphorePool: chan struct{}         // Limit concurrent goroutines
 taskTracking:  atomic.Int32          // Track pending tasks
-conditionVariable: sync.Cond         // Efficient waiting
 
 // Error handling:
 atomic.CompareAndSwapInt32()   // First error wins
@@ -1620,11 +1656,12 @@ atomic.CompareAndSwapInt32()   // First error wins
 #### Cache Sharding
 ```go
 // Sharded cache for reduced lock contention:
-shardCount: dynamic             // Based on cache size and CPU count:
+shardCount: dynamic             // Based on cache size and CPU count
+                                // (rounded up to a power of 2):
                                 //   Large (>10000): max(CPU*4, 32)
                                 //   Medium (>1000): max(CPU*2, 16)
                                 //   Small (>100): max(CPU, 8)
-                                //   Tiny: max(CPU/2, 4)
+                                //   Tiny: fixed 4
 shardMask: shardCount - 1      // Fast modulo via AND
 perShardMutex: sync.RWMutex    // Fine-grained locking
 ```
@@ -1667,7 +1704,7 @@ When processing untrusted input, enable `FullSecurityScan`:
 // - Financial/healthcare data
 // - Public-facing services
 
-config := &json.Config{
+config := json.Config{
     FullSecurityScan: true,  // Full scan instead of sampling
 }
 
@@ -1683,24 +1720,23 @@ The library caches validation results to avoid redundant security scans:
 
 #### Cache Key Generation
 ```go
-// All JSON sizes: two independent FNV-1a hashes (different seeds) combined
-// with input length into a fixed-size validationKey struct {length, h1, h2}.
-// Conceptually "len:h1:h2" — length + two independent FNV-1a hashes reduce
-// collision probability below 2^-64.
-// PERFORMANCE: FNV-1a (~2ns) instead of SHA-256 (~100ns) for ~50x speedup.
-// The cache is internal-only, so a collision simply means a redundant validation.
-// Returning a fixed-size struct (rather than a formatted "len:h1:h2" string)
-// avoids a per-op heap allocation in the hot path.
+// All JSON sizes: a single FNV-1a hash (internal.HashStringFNV1a) combined
+// with the input length into a fixed-size validationKey struct {length, h1}.
+// PERFORMANCE: FNV-1a (~2ns) instead of SHA-256 (~100ns) for ~50x speedup;
+// the former second hash (HashBytesFNV1aOffset) was removed after profiling
+// showed it cost ~4% of Get CPU on large inputs.
+// SECURITY: the key alone is never trusted — isValidationCached compares the
+// exact stored input before treating an entry as validated, so a collision
+// merely causes one redundant revalidation, never a false "already validated".
+// Returning a fixed-size struct (rather than a formatted string) avoids a
+// per-op heap allocation in the hot path.
 
 // getValidationCacheKey is a method on securityValidator (internal)
 func (sv *securityValidator) getValidationCacheKey(jsonStr string) validationKey {
-    b := internal.StringToBytes(jsonStr)
-
-    // Two independent FNV-1a hashes for strong collision resistance
-    h1 := internal.HashBytesFNV1a(b)
-    h2 := internal.HashBytesFNV1aOffset(b)  // different seed
-
-    return validationKey{length: len(jsonStr), h1: h1, h2: h2}
+    return validationKey{
+        length: len(jsonStr),
+        h1:     internal.HashStringFNV1a(jsonStr),
+    }
 }
 ```
 
@@ -1721,7 +1757,7 @@ func evictLRUEntries() {
 ```
 
 #### Cache Security Guarantees
-1. **Collision Resistance**: Dual FNV-1a hashes prevent key collisions (below 2^-64)
+1. **Collision Safety**: single FNV-1a key plus exact-input comparison on every hit — a hash collision cannot skip validation
 2. **Memory Protection**: Proactive eviction at 8,000 entries prevents OOM
 3. **Timing Safety**: LRU updates are batched to reduce lock contention
 
@@ -1739,11 +1775,11 @@ For large JSON (>4KB), the library uses optimized scanning:
 │  └──────────────────────────────────────────────────────────┘  │
 │                         ↓                                       │
 │              Skip: WindowSize - OverlapSize                     │
-│              (32768 - 48 = 32720 bytes)                         │
+│              (32768 - 24 = 32744 bytes)                         │
 │                         ↓                                       │
 │  ┌──────────────────────────────────────────────────────────┐  │
 │  │              Overlapping Next Window                      │  │
-│  │         [byte 32720 ............... byte 65488]          │  │
+│  │         [byte 32744 ............... byte 65512]          │  │
 │  │    ↑ overlap ↑                                           │  │
 │  └──────────────────────────────────────────────────────────┘  │
 └────────────────────────────────────────────────────────────────┘
@@ -1772,7 +1808,9 @@ func (sv *securityValidator) hasSuspiciousCharacterDensity(jsonStr string) bool 
 ```go
 // Skip expensive checks if:
 // 1. No letters (only numbers/symbols) - safe
-// 2. No '<' or '(' characters - most XSS patterns impossible
+// 2. No indicator characters - the pre-computed set covers '<', '(', ':',
+//    '.', '_' plus the letters used by dangerous patterns (broad enough to
+//    make most XSS/injection patterns impossible)
 // 3. Low suspicious character density
 
 // Critical patterns ALWAYS fully scanned:
@@ -1798,11 +1836,14 @@ const (
 //    - Skips complex validation
 
 // 2. Slow Path: Complex paths with brackets/braces
+//    Syntax checks: bracket matching, array index/slice content validation
+//    (max index 1,000,000), segment depth limit
+//
+//    Security checks (validatePathSecurity, applied to all paths):
 //    - Null byte detection
-//    - Control character detection
-//    - Path traversal detection (../)
-//    - Template injection detection (${}, ${{
-//    - Array index validation
+//    - Path traversal detection (../, encoded/overlong variants)
+//    - Zero-width and Unicode lookalike character detection
+//    - Repeated separator detection (:::, [[[, }}})
 ```
 
 ### Zero-Width Character Detection
@@ -1847,8 +1888,8 @@ blockedPaths := []string{
 // Reserved device names:
 reservedDevices := []string{
     "CON", "PRN", "AUX", "NUL",
-    "COM0", "COM1"-"COM9",
-    "LPT0", "LPT1"-"LPT9",
+    "COM0"-"COM99",
+    "LPT0"-"LPT99",
     "CONIN$", "CONOUT$", "CLOCK$",
 }
 

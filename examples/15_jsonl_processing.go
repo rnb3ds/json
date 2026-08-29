@@ -4,7 +4,10 @@ package main
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
+	"sync/atomic"
 
 	"github.com/cybergodev/json"
 )
@@ -19,6 +22,8 @@ import (
 // - ParseJSONL and ToJSONL conversion
 // - NDJSONProcessor for file processing
 // - Processor JSONL streaming methods
+// - Package-level streaming: ForeachJSONL, StreamJSONLChunked,
+//   StreamJSONLFile, StreamJSONLParallel, StreamLinesInto[T]
 //
 // Run: go run -tags=example examples/15_jsonl_processing.go
 
@@ -37,6 +42,9 @@ func main() {
 
 	// 4. NDJSON PROCESSOR
 	demonstrateNDJSONProcessor()
+
+	// 5. PACKAGE-LEVEL STREAMING
+	demonstratePackageStreaming()
 
 	fmt.Println("\nJSONL processing examples complete!")
 }
@@ -256,4 +264,94 @@ func demonstrateNDJSONProcessor() {
 		fmt.Printf("   CollectJSONL error: %v\n", err)
 	}
 	fmt.Printf("   Collected %d items\n", len(items))
+}
+
+// LogRecord is the typed struct used by the StreamLinesInto demo below.
+type LogRecord struct {
+	Level string `json:"level"`
+	Msg   string `json:"msg"`
+}
+
+func demonstratePackageStreaming() {
+	fmt.Println("\n5. Package-Level Streaming (no Processor needed)")
+	fmt.Println("--------------------------------------------------")
+
+	jsonlData := `{"level":"info","msg":"service started"}
+{"level":"warn","msg":"slow query"}
+{"level":"error","msg":"connection failed"}
+{"level":"info","msg":"recovered"}`
+
+	// ForeachJSONL is the package-level streaming form (an alias pair of
+	// Processor.StreamJSONL). Callback contract is the same: nil continues,
+	// item.Break() stops cleanly, an error aborts and propagates.
+	err := json.ForeachJSONL(strings.NewReader(jsonlData), func(lineNum int, item *json.IterableValue) error {
+		fmt.Printf("   [%d] %-5s %s\n", lineNum, item.GetString("level"), item.GetString("msg"))
+		return nil
+	})
+	if err != nil {
+		fmt.Printf("   ForeachJSONL error: %v\n", err)
+	}
+
+	// StreamJSONLChunked processes fixed-size chunks — bounded memory for
+	// large logs.
+	fmt.Println("\n   StreamJSONLChunked (chunk size 2):")
+	err = json.StreamJSONLChunked(strings.NewReader(jsonlData), 2, func(chunk []*json.IterableValue) error {
+		levels := make([]string, 0, len(chunk))
+		for _, item := range chunk {
+			levels = append(levels, item.GetString("level"))
+		}
+		fmt.Printf("   - chunk: %v\n", levels)
+		return nil
+	})
+	if err != nil {
+		fmt.Printf("   StreamJSONLChunked error: %v\n", err)
+	}
+
+	// StreamJSONLFile streams a JSONL file directly from disk.
+	file, err := os.CreateTemp("", "example-*.jsonl")
+	if err != nil {
+		fmt.Printf("   CreateTemp error: %v\n", err)
+		return
+	}
+	defer os.Remove(file.Name())
+	if _, err := file.WriteString(jsonlData); err != nil {
+		fmt.Printf("   Write error: %v\n", err)
+		file.Close()
+		return
+	}
+	file.Close()
+
+	lineCount := 0
+	if err := json.StreamJSONLFile(file.Name(), func(lineNum int, item *json.IterableValue) error {
+		lineCount++
+		return nil
+	}); err != nil {
+		fmt.Printf("   StreamJSONLFile error: %v\n", err)
+	}
+	fmt.Printf("\n   StreamJSONLFile: %d lines from %s\n", lineCount, filepath.Base(file.Name()))
+
+	// StreamJSONLParallel fans lines out to N workers. The callback runs
+	// concurrently — shared state must be synchronized (here: atomic counter).
+	var processed atomic.Int64
+	err = json.StreamJSONLParallel(strings.NewReader(jsonlData), 2, func(lineNum int, item *json.IterableValue) error {
+		processed.Add(1)
+		return nil
+	})
+	if err != nil {
+		fmt.Printf("   StreamJSONLParallel error: %v\n", err)
+	}
+	fmt.Printf("   StreamJSONLParallel: %d lines on 2 workers\n", processed.Load())
+
+	// StreamLinesInto[T]: generic, fully typed — each line unmarshals straight
+	// into your struct and the collected results are returned.
+	records, err := json.StreamLinesInto[LogRecord](strings.NewReader(jsonlData), func(lineNum int, rec LogRecord) error {
+		_ = rec // per-line side effect (e.g. write to a typed sink)
+		return nil
+	})
+	if err != nil {
+		fmt.Printf("   StreamLinesInto error: %v\n", err)
+		return
+	}
+	fmt.Printf("   StreamLinesInto[LogRecord]: %d typed records, first=%+v\n",
+		len(records), records[0])
 }

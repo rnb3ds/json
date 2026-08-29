@@ -103,6 +103,12 @@ In addition to standard library errors, the library provides:
 | `ErrProcessorClosed` | Operation on closed processor |
 | `ErrConcurrencyLimit` | Concurrent operation count exceeds limit |
 | `ErrOperationTimeout` | Operation exceeded timeout duration |
+| `ErrInvalidJSON` | Input is not valid JSON |
+| `ErrInvalidPath` | Path has an invalid format |
+| `ErrPathNotFound` | Requested path does not exist |
+| `ErrTypeMismatch` | Value does not match the target type |
+| `ErrUnsupportedPath` | Path operation is not supported |
+| `ErrResourceExhausted` | System resources exhausted |
 
 ## Fully Compatible Interfaces
 

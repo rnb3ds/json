@@ -94,7 +94,10 @@ func HTMLEscapeBytes(data []byte) []byte {
 		return data
 	}
 
-	// Fast path: check if escaping is needed using SWAR
+	// Fast path: no escapable bytes — return the input unchanged.
+	// NOTE: the returned slice aliases the caller's memory on this path, so it
+	// must NOT be passed to PutHTMLEscapeBytes (which pools the backing array).
+	// Production callers pre-check NeedsHTMLEscapeBytes and never reach here.
 	if !NeedsHTMLEscapeBytes(data) {
 		return data
 	}
@@ -150,6 +153,12 @@ func HTMLEscapeBytes(data []byte) []byte {
 
 // PutHTMLEscapeBytes returns a byte slice obtained from HTMLEscapeBytes to the pool.
 // Call this after using the result if you don't need it anymore.
+//
+// CONTRACT: only pass slices that HTMLEscapeBytes actually allocated — i.e.
+// results of calls whose input contained escapable bytes (checked via
+// NeedsHTMLEscapeBytes). HTMLEscapeBytes returns its INPUT unchanged on the
+// no-escape fast path; pooling that slice would insert caller-owned memory
+// into the pool and the next escape would write into it (data corruption).
 func PutHTMLEscapeBytes(b []byte) {
 	if cap(b) <= MaxPoolBufferSize/4 && cap(b) > 0 {
 		// Only pool reasonably sized buffers

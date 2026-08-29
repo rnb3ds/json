@@ -3,6 +3,7 @@ package json
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -3201,8 +3202,7 @@ func TestCustomEncoderEscapeRune(t *testing.T) {
 			t.Errorf("EscapeNewlines=false should keep literal newline, got %q", result)
 		}
 		if strings.Contains(result, `\n`) {
-			// May still contain \n as literal text; check that actual newline is present
-			// and that the value contains a real newline character in the output
+			t.Errorf("EscapeNewlines=false should keep the newline literal, found escaped \\n in %q", result)
 		}
 	})
 
@@ -3382,5 +3382,69 @@ func TestProcessorValuesEqual(t *testing.T) {
 					tt.a, tt.a, tt.b, tt.b, got, tt.want)
 			}
 		})
+	}
+}
+
+// TestDeepCopySliceBranch verifies deepCopy produces deep (not shallow)
+// copies of arrays with nested containers. The copy flows through the
+// deepCopySubtree fast path (Get's cache isolation uses this). The
+// deepCopySliceWithDepth fallback branch is unreachable for []any — the fast
+// path succeeds first — see the GEN-001 dead-code finding in changes.log.
+func TestDeepCopySliceBranch(t *testing.T) {
+	original := []any{
+		1, "two", 3.5, true, nil,
+		[]any{4, map[string]any{"k": "v"}},
+		map[string]any{"nested": []any{5}},
+	}
+	copied, err := deepCopy(original)
+	if err != nil {
+		t.Fatalf("deepCopy error: %v", err)
+	}
+	arr, ok := copied.([]any)
+	if !ok {
+		t.Fatalf("deepCopy([]any) returned %T, want []any", copied)
+	}
+	if len(arr) != len(original) {
+		t.Errorf("copied length = %d, want %d", len(arr), len(original))
+	}
+
+	// Mutating the copy must not affect the original — deep, not shallow.
+	if inner, ok := arr[5].([]any); ok {
+		if m, ok := inner[1].(map[string]any); ok {
+			m["k"] = "mutated"
+		}
+	}
+	if inner, ok := original[5].([]any); ok {
+		if m, ok := inner[1].(map[string]any); ok {
+			if m["k"] != "v" {
+				t.Errorf("deepCopy is not deep: mutating the copy changed the original (k=%q)", m["k"])
+			}
+		}
+	}
+}
+
+// TestDeleteFastPathErrorBranches covers the fast-path error branches of
+// Delete (invalid JSON, missing key), reached only when caching is disabled —
+// the default config enables the cache, so these branches (and the
+// newOperationPathError context they build) were never exercised.
+func TestDeleteFastPathErrorBranches(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.EnableCache = false
+	p, err := New(cfg)
+	if err != nil {
+		t.Fatalf("New(cfg) error: %v", err)
+	}
+	defer p.Close()
+
+	if _, err := p.Delete(`{invalid`, "key"); err == nil {
+		t.Error("Delete on invalid JSON should fail")
+	} else if !errors.Is(err, ErrInvalidJSON) {
+		t.Errorf("Delete on invalid JSON: want ErrInvalidJSON, got %v", err)
+	}
+
+	if _, err := p.Delete(`{"a":1}`, "missing"); err == nil {
+		t.Error("Delete of a missing key should fail")
+	} else if !errors.Is(err, ErrPathNotFound) {
+		t.Errorf("Delete of a missing key: want ErrPathNotFound, got %v", err)
 	}
 }

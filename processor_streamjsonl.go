@@ -81,6 +81,11 @@ func (p *Processor) StreamJSONL(reader io.Reader, fn func(lineNum int, item *Ite
 	}
 
 	scanner := bufio.NewScanner(reader)
+	// Effective token cap is max(cap(buf), maxLine): clamp the initial buffer
+	// so a JSONLMaxLineSize smaller than the buffer size is actually enforced.
+	if bufSize > maxLine {
+		bufSize = maxLine
+	}
 	scanner.Buffer(make([]byte, bufSize), maxLine)
 
 	lineNum := 0
@@ -253,6 +258,10 @@ func (p *Processor) StreamJSONLParallelWithContext(ctx context.Context, reader i
 		maxDepth = DefaultMaxNestingDepth
 	}
 	scanner := bufio.NewScanner(reader)
+	// See StreamJSONL: clamp the initial buffer below the line limit.
+	if parBufSize > parMaxLine {
+		parBufSize = parMaxLine
+	}
 	scanner.Buffer(make([]byte, parBufSize), parMaxLine)
 
 feedLoop:
@@ -385,6 +394,10 @@ func (p *Processor) StreamJSONLChunked(reader io.Reader, chunkSize int, fn func(
 		maxDepth = DefaultMaxNestingDepth
 	}
 	scanner := bufio.NewScanner(reader)
+	// See StreamJSONL: clamp the initial buffer below the line limit.
+	if chunkBufSize > chunkMaxLine {
+		chunkBufSize = chunkMaxLine
+	}
 	scanner.Buffer(make([]byte, chunkBufSize), chunkMaxLine)
 
 	lineNum := 0

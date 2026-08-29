@@ -435,6 +435,13 @@ func (c *CompiledPathCache) Get(path string) (*CompiledPath, error) {
 		return result, nil
 	}
 
+	// A zero/negative-capacity cache caches nothing: skip insertion so it
+	// cannot grow without bound (every Get would insert and never evict).
+	if c.max <= 0 {
+		c.mu.Unlock()
+		return cp, nil
+	}
+
 	// Evict if at capacity using FIFO. The len(order) guard keeps a
 	// zero-capacity cache (NewCompiledPathCache(0)) from panicking on an
 	// empty slice index.

@@ -3,9 +3,11 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/cybergodev/json"
 )
@@ -18,7 +20,8 @@ import (
 // Topics covered:
 // - LoadFromFile and SaveToFile
 // - MarshalToFile and UnmarshalFromFile
-// - Automatic directory creation
+// - Reader/Writer based I/O (LoadFromReader, SaveToWriter)
+// - Iterating JSON directly from files (ForeachFile family)
 // - Pretty vs compact file output
 //
 // Run: go run -tags=example examples/10_file_operations.go
@@ -71,6 +74,12 @@ func main() {
 
 	// 5. READ-MODIFY-WRITE
 	demonstrateReadModifyWrite(tempDir)
+
+	// 6. READER/WRITER I/O
+	demonstrateReaderWriter()
+
+	// 7. FILE ITERATION
+	demonstrateFileIteration(tempDir)
 
 	fmt.Println("\nFile operations examples complete!")
 }
@@ -282,4 +291,101 @@ func demonstrateReadModifyWrite(tempDir string) {
 
 	fmt.Println("\n   Updated config:")
 	fmt.Println("   " + readFile(configPath))
+}
+
+func demonstrateReaderWriter() {
+	fmt.Println("\n6. Reader/Writer I/O (LoadFromReader / SaveToWriter)")
+	fmt.Println("------------------------------------------------------")
+
+	// LoadFromReader reads JSON from any io.Reader — network bodies, pipes,
+	// embedded assets — and returns it as a string (files: LoadFromFile).
+	r := strings.NewReader(`{"source": "reader", "port": 5432}`)
+	jsonStr, err := json.LoadFromReader(r)
+	if err != nil {
+		fmt.Printf("   LoadFromReader error: %v\n", err)
+		return
+	}
+	port := json.GetInt(jsonStr, "port", 0)
+	fmt.Printf("   LoadFromReader: source=%s, port=%d\n",
+		json.GetString(jsonStr, "source", ""), port)
+
+	// SaveToWriter encodes any value to any io.Writer — no temp file needed.
+	var buf bytes.Buffer
+	if err := json.SaveToWriter(&buf, map[string]any{"saved": "to writer", "ok": true}); err != nil {
+		fmt.Printf("   SaveToWriter error: %v\n", err)
+		return
+	}
+	fmt.Printf("   SaveToWriter: %s\n", buf.String())
+}
+
+func demonstrateFileIteration(tempDir string) {
+	fmt.Println("\n7. File Iteration (ForeachFile family)")
+	fmt.Println("----------------------------------------")
+
+	// A JSON array on disk — the ForeachFile family streams it without
+	// loading more than one element into the callback at a time.
+	usersPath := filepath.Join(tempDir, "users.json")
+	usersJSON := `[
+		{"id": 1, "name": "Alice", "active": true},
+		{"id": 2, "name": "Bob", "active": false},
+		{"id": 3, "name": "Carol", "active": true}
+	]`
+	if err := os.WriteFile(usersPath, []byte(usersJSON), 0644); err != nil {
+		fmt.Printf("   Error writing users file: %v\n", err)
+		return
+	}
+
+	// ForeachFile: iterate the top-level array element by element. Returning
+	// item.Break() stops without an error; any other error aborts and returns.
+	fmt.Println("   ForeachFile over users.json:")
+	err := json.ForeachFile(usersPath, func(key any, item *json.IterableValue) error {
+		fmt.Printf("   - [%v] id=%d name=%s\n", key, item.GetInt("id"), item.GetString("name"))
+		return nil
+	})
+	if err != nil {
+		fmt.Printf("   ForeachFile error: %v\n", err)
+	}
+
+	// ForeachFileChunked: same file, processed in fixed-size batches — the
+	// building block for bulk-loading large datasets.
+	fmt.Println("\n   ForeachFileChunked (batch size 2):")
+	err = json.ForeachFileChunked(usersPath, 2, func(chunk []*json.IterableValue) error {
+		ids := make([]int, 0, len(chunk)) // ids collected for display
+		for _, item := range chunk {
+			ids = append(ids, item.GetInt("id"))
+		}
+		fmt.Printf("   - batch: ids=%v\n", ids)
+		return nil
+	})
+	if err != nil {
+		fmt.Printf("   ForeachFileChunked error: %v\n", err)
+	}
+
+	// ForeachFileWithPath: navigate into the file's JSON first, then iterate —
+	// the file holds an object, we iterate its "users" array.
+	objectPath := filepath.Join(tempDir, "data_object.json")
+	if err := os.WriteFile(objectPath, []byte(`{"users": [{"id": 10}, {"id": 20}]}`), 0644); err != nil {
+		fmt.Printf("   Error writing object file: %v\n", err)
+		return
+	}
+	fmt.Println("\n   ForeachFileWithPath(data_object.json, \"users\"):")
+	err = json.ForeachFileWithPath(objectPath, "users", func(key any, item *json.IterableValue) error {
+		fmt.Printf("   - users[%v]: id=%d\n", key, item.GetInt("id"))
+		return nil
+	})
+	if err != nil {
+		fmt.Printf("   ForeachFileWithPath error: %v\n", err)
+	}
+
+	// ForeachFileNested: recursive walk of every value in the file.
+	count := 0
+	err = json.ForeachFileNested(usersPath, func(key any, item *json.IterableValue) error {
+		count++
+		return nil
+	})
+	if err != nil {
+		fmt.Printf("   ForeachFileNested error: %v\n", err)
+		return
+	}
+	fmt.Printf("\n   ForeachFileNested visited %d values in users.json\n", count)
 }

@@ -755,8 +755,8 @@ func (it *pooledSliceIterator) Release() {
 
 // pooledMapIterator uses pooled slices for efficient map iteration.
 // NOTE: no production callers — exercised by benchmark_test.go and
-// boundary_test.go. Candidate for removal with its tests (D-002 round 6
-// finding); kept until the maintainer decides.
+// iterator_test.go (TestPooledMapIteratorLifecycle). Candidate for removal
+// with its tests (D-002 round 6 finding); kept until the maintainer decides.
 type pooledMapIterator struct {
 	data    map[string]any
 	keys    []string

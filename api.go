@@ -371,7 +371,10 @@ var configFieldList = []configFieldAccessor{
 				return false
 			}
 			for k, v := range a.CustomTypeEncoders {
-				if bv, ok := b.CustomTypeEncoders[k]; !ok || v != bv {
+				// Type-only comparison, matching the hash: encoder values are
+				// often funcs, which are not comparable with == (a func-based
+				// TypeEncoder would panic on the interface != below).
+				if bv, ok := b.CustomTypeEncoders[k]; !ok || reflect.TypeOf(v) != reflect.TypeOf(bv) {
 					return false
 				}
 			}
@@ -447,7 +450,9 @@ var configFieldList = []configFieldAccessor{
 				return false
 			}
 			for i := range a.Hooks {
-				if a.Hooks[i] != b.Hooks[i] {
+				// Type-only comparison, matching the hash: a Hook implemented
+				// as a func type is not comparable with == (panics at runtime).
+				if reflect.TypeOf(a.Hooks[i]) != reflect.TypeOf(b.Hooks[i]) {
 					return false
 				}
 			}

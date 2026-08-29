@@ -22,6 +22,7 @@ import (
 // - StreamObjectIterator for streaming JSON objects
 // - BatchIterator for chunked processing
 // - ParallelIterator for concurrent processing
+// - NewIterator for in-memory data (works on any parsed value)
 //
 // Run: go run -tags=example examples/14_streaming_iterators.go
 
@@ -40,6 +41,9 @@ func main() {
 
 	// 4. PARALLEL ITERATOR
 	demonstrateParallelIterator()
+
+	// 5. IN-MEMORY ITERATOR
+	demonstrateMemoryIterator()
 
 	fmt.Println("\nStreaming iterator examples complete!")
 }
@@ -260,5 +264,46 @@ func demonstrateParallelIterator() {
 	sort.Strings(batchResults)
 	for _, s := range batchResults {
 		fmt.Printf("   %s\n", s)
+	}
+}
+
+func demonstrateMemoryIterator() {
+	fmt.Println("\n5. Iterator (in-memory, over parsed data)")
+	fmt.Println("--------------------------------------------")
+
+	// NewIterator walks any already-parsed value — no io.Reader needed. Pair
+	// it with ParseAny when your data is already a string or Go value.
+	data, err := json.ParseAny(`{"alpha": 1, "beta": 2, "gamma": 3}`)
+	if err != nil {
+		fmt.Printf("   ParseAny error: %v\n", err)
+		return
+	}
+
+	iter := json.NewIterator(data)
+	fmt.Println("   Iterating object values:")
+	sum := 0
+	for iter.HasNext() {
+		value, ok := iter.Next()
+		if !ok {
+			break
+		}
+		if n, ok := value.(float64); ok { // JSON numbers decode as float64
+			sum += int(n)
+		}
+		fmt.Printf("   - %v\n", value)
+	}
+	fmt.Printf("   Sum: %d\n", sum)
+
+	// Reset() clears the iterator and releases the data; ResetWith(data)
+	// re-arms it with new data so the iterator can be reused without a fresh
+	// allocation.
+	iter.ResetWith([]any{"x", "y"})
+	fmt.Println("   After ResetWith (new array):")
+	for iter.HasNext() {
+		value, ok := iter.Next()
+		if !ok {
+			break
+		}
+		fmt.Printf("   - %v\n", value)
 	}
 }

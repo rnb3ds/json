@@ -64,7 +64,7 @@ func (mc *MetricsCollector) RecordOperation(duration time.Duration, success bool
 		atomic.AddInt64(&mc.totalProcessingTime, durationNs)
 		updateMax(&mc.maxProcessingTime, durationNs)
 	}
-	// Always update min (including zero-duration ops) since initial value is 0
+	// Always update min (including zero-duration ops) since the sentinel is -1
 	updateMin(&mc.minProcessingTime, durationNs)
 
 	if memoryUsed > 0 {

@@ -61,7 +61,10 @@ func (p *Processor) ForeachWithPathAndControl(jsonStr, path string, fn func(key 
 }
 
 // ForeachReturn iterates over JSON arrays or objects and returns the modified JSON string.
-// The callback can modify IterableValue fields via Set method; changes are reflected in the result.
+// The callback can mutate the iterated containers via the value returned by
+// item.GetData() (a reference into the working copy): changes to maps/slices
+// are reflected in the marshaled result. Replacing scalars in place is not
+// possible through the IterableValue itself.
 func (p *Processor) ForeachReturn(jsonStr string, fn func(key any, item *IterableValue), cfg ...Config) (string, error) {
 	data, err := p.iterRoot(jsonStr, ".", cfg...)
 	if err != nil {
@@ -147,6 +150,18 @@ func (p *Processor) CompilePath(path string) (*CompiledPath, error) {
 func (p *Processor) GetCompiled(jsonStr string, cp *CompiledPath) (any, error) {
 	if err := p.checkClosed(); err != nil {
 		return nil, err
+	}
+
+	// Guard the parameter before navigation: a nil *CompiledPath would panic
+	// inside cp.Get (nil receiver dereferences cp.segments). The closed-
+	// processor check above returned early for this case, masking the panic
+	// in tests — on an active processor it crashed.
+	if cp == nil {
+		return nil, &JsonsError{
+			Op:      "get_compiled",
+			Message: "compiled path is nil",
+			Err:     errOperationFailed,
+		}
 	}
 
 	if err := p.validateInput(jsonStr); err != nil {

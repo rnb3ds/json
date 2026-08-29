@@ -298,6 +298,12 @@ func StreamLinesInto[T any](reader io.Reader, fn func(lineNum int, data T) error
 	}
 
 	scanner := bufio.NewScanner(reader)
+	// Effective token cap is max(cap(buf), maxLine): clamp the initial buffer
+	// so a JSONLMaxLineSize smaller than the buffer size is actually enforced
+	// (same fix as the StreamJSONL family).
+	if bufSize > maxLineSize {
+		bufSize = maxLineSize
+	}
 	scanner.Buffer(make([]byte, bufSize), maxLineSize)
 
 	lineNum := 0

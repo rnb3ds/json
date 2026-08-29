@@ -80,6 +80,13 @@ func NormalizeSlice(start, end, length int) (int, int) {
 	if start < 0 {
 		start = 0
 	}
+	if end < 0 {
+		// An end that wrapped past the array start (e.g. [0:-100] on length
+		// 5) denotes "nothing selected" — clamp so callers never observe a
+		// negative bound from a function documented to clamp out-of-range
+		// values.
+		end = 0
+	}
 	if end > length {
 		end = length
 	}
@@ -222,6 +229,13 @@ func PerformArraySliceIndices(length int, start, end, step *int) []int {
 		// yields nothing under Python semantics — not index 0. Clamping to 0
 		// would instead return [arr[0]], diverging from Python.
 		return nil
+	}
+	if endIdx < -1 {
+		// An end that wraps past the array start (e.g. [4:-10:-1] on length 5
+		// resolves to -5) means "stop at the beginning" — the same clamp
+		// applySlice (compiled_path.go) applies. Without it the loop below
+		// runs past 0 and callers index with negative values (panic).
+		endIdx = -1
 	}
 
 	rangeSize := startIdx - endIdx

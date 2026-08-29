@@ -742,3 +742,49 @@ func TestPackageLevel_ForeachFileNested(t *testing.T) {
 		t.Error("ForeachFileNested should iterate at least once")
 	}
 }
+
+// TestPackageLevel_SaveToFile covers the package-level SaveToFile wrapper.
+// The rest of this file exercises the Processor method, so the wrapper itself
+// had zero coverage (GEN-001 finding).
+func TestPackageLevel_SaveToFile(t *testing.T) {
+	tempDir := t.TempDir()
+
+	t.Run("DefaultConfig", func(t *testing.T) {
+		filePath := filepath.Join(tempDir, "pkg_default.json")
+		if err := SaveToFile(filePath, map[string]any{"name": "test", "value": 123}); err != nil {
+			t.Fatalf("SaveToFile failed: %v", err)
+		}
+		content, err := os.ReadFile(filePath)
+		if err != nil {
+			t.Fatalf("reading saved file: %v", err)
+		}
+		var back map[string]any
+		if err := json.Unmarshal(content, &back); err != nil {
+			t.Fatalf("saved content is not valid JSON: %v (content=%s)", err, content)
+		}
+		if back["name"] != "test" || back["value"] != float64(123) {
+			t.Errorf("round-trip mismatch: got %v, want name=test value=123", back)
+		}
+	})
+
+	t.Run("PrettyConfig", func(t *testing.T) {
+		filePath := filepath.Join(tempDir, "pkg_pretty.json")
+		if err := SaveToFile(filePath, map[string]any{"name": "test"}, PrettyConfig()); err != nil {
+			t.Fatalf("SaveToFile with PrettyConfig failed: %v", err)
+		}
+		content, err := os.ReadFile(filePath)
+		if err != nil {
+			t.Fatalf("reading saved file: %v", err)
+		}
+		if !strings.Contains(string(content), "\n") {
+			t.Errorf("PrettyConfig output should be multi-line, got %q", content)
+		}
+	})
+
+	t.Run("WriteError", func(t *testing.T) {
+		// Saving onto a directory path must surface the write error, not panic.
+		if err := SaveToFile(tempDir, map[string]any{"a": 1}); err == nil {
+			t.Error("SaveToFile to a directory path should fail")
+		}
+	})
+}

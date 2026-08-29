@@ -492,7 +492,7 @@ func (e *MarshalerError) Unwrap() error { return e.Err }
 // accessing this internal implementation detail. The "Marker" suffix indicates this
 // is a sentinel value for marking items, not a data container.
 //
-// IMPORTANT: Do not reassign this variable. Use IsDeletedMarker() for comparisons.
+// IMPORTANT: Do not reassign this variable. Use isDeletedMarker() for comparisons.
 var deletedMarker = &struct{}{} // deleted marker - empty struct for pointer identity
 
 // isDeletedMarker checks if a value is the deleted marker sentinel.
@@ -751,8 +751,9 @@ func (r AccessResult) AsString() (string, error) {
 	if str, ok := r.Value.(string); ok {
 		return str, nil
 	}
-	// SECURITY: Return error for non-string types instead of silent conversion
-	return "", fmt.Errorf("cannot convert %T to string: type mismatch", r.Value)
+	// SECURITY: Return error for non-string types instead of silent conversion.
+	// Wraps the ErrTypeMismatch sentinel (as documented) so errors.Is works.
+	return "", fmt.Errorf("%w: cannot convert %T to string", ErrTypeMismatch, r.Value)
 }
 
 // AsStringConverted converts the result to string using fmt.Sprintf formatting.

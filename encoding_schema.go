@@ -1,6 +1,7 @@
 package json
 
 import (
+	"encoding/json"
 	"fmt"
 	"maps"
 	"math"
@@ -172,7 +173,11 @@ func (p *Processor) validateType(value any, expectedType string) bool {
 		switch value.(type) {
 		case int, int8, int16, int32, int64,
 			uint, uint8, uint16, uint32, uint64,
-			float32, float64:
+			float32, float64,
+			Number, json.Number:
+			// Number/json.Number appear when the document was parsed with
+			// PreserveNumbers; without them EVERY number failed type checks
+			// ("expected type number, got json.Number") under that config.
 			return true
 		}
 		return false
@@ -236,7 +241,10 @@ func (p *Processor) validateArray(arr []any, schema *Schema, path string, errors
 	if schema.UniqueItems {
 		seen := make(map[string]bool)
 		for i, item := range arr {
-			itemStr := fmt.Sprintf("%v", item)
+			// Include the dynamic type in the key: %v alone collides across
+			// JSON types ([1, "1"] both render "1"), producing spurious
+			// "duplicate item" errors for distinct values.
+			itemStr := fmt.Sprintf("%T:%v", item, item)
 			if seen[itemStr] {
 				*errors = append(*errors, ValidationError{
 					Path:    fmt.Sprintf("%s[%d]", path, i),
@@ -339,6 +347,21 @@ func (p *Processor) validateNumber(value any, schema *Schema, path string, error
 		num = float64(v)
 	case float64:
 		num = v
+	case Number:
+		// PreserveNumbers parses yield the library's Number; without these
+		// cases validateNumber hit `default: return` and silently skipped
+		// minimum/maximum/multipleOf for every number in the document.
+		f, err := v.Float64()
+		if err != nil {
+			return
+		}
+		num = f
+	case json.Number:
+		f, err := v.Float64()
+		if err != nil {
+			return
+		}
+		num = f
 	default:
 		return
 	}
@@ -644,37 +667,55 @@ func (p *Processor) valuesEqual(a, b any) bool {
 		return true
 	}
 
-	// Handle numeric type conversions
-	switch va := a.(type) {
-	case int:
-		switch vb := b.(type) {
-		case int:
-			return va == vb
-		case int32:
-			return int32(va) == vb
-		case int64:
-			return int64(va) == vb
-		case float32:
-			return float32(va) == vb
-		case float64:
-			return float64(va) == vb
-		}
-	case float64:
-		switch vb := b.(type) {
-		case int:
-			return va == float64(vb)
-		case int32:
-			return va == float64(vb)
-		case int64:
-			return va == float64(vb)
-		case float32:
-			return va == float64(vb)
-		case float64:
-			return va == vb
-		}
+	// Handle numeric type conversions. The nested switch below only matched
+	// int/float64 as the LEFT operand, so an enum constant held as int64/uint/
+	// float32 never compared equal to the parsed float64 document value.
+	// Normalize both sides to float64 first.
+	fa, aok := numericAsFloat(a)
+	fb, bok := numericAsFloat(b)
+	if aok && bok {
+		return fa == fb
 	}
 
 	return false
+}
+
+// numericAsFloat converts any numeric value (including the Number/json.Number
+// forms produced by PreserveNumbers parsing) to float64.
+func numericAsFloat(v any) (float64, bool) {
+	switch n := v.(type) {
+	case int:
+		return float64(n), true
+	case int8:
+		return float64(n), true
+	case int16:
+		return float64(n), true
+	case int32:
+		return float64(n), true
+	case int64:
+		return float64(n), true
+	case uint:
+		return float64(n), true
+	case uint8:
+		return float64(n), true
+	case uint16:
+		return float64(n), true
+	case uint32:
+		return float64(n), true
+	case uint64:
+		return float64(n), true
+	case float32:
+		return float64(n), true
+	case float64:
+		return n, true
+	case Number:
+		f, err := n.Float64()
+		return f, err == nil
+	case json.Number:
+		f, err := n.Float64()
+		return f, err == nil
+	}
+	return 0, false
 }
 
 // isComparableValue reports whether v's dynamic type supports == without a

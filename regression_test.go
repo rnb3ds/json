@@ -2,6 +2,7 @@ package json
 
 import (
 	stdjson "encoding/json"
+	"io"
 	"math"
 	"strings"
 	"testing"
@@ -1059,5 +1060,510 @@ func TestD002Round6_SchemaErrorOrderDeterministic(t *testing.T) {
 		if first[i].Path != wp {
 			t.Fatalf("error %d path = %q, want %q (ascending key order)", i, first[i].Path, wp)
 		}
+	}
+}
+
+// Round 7 — operation metrics coverage + cache Delete long-key parity
+//
+// D-002 round 7 regression tests: Stats.OperationCount/ErrorCount must reflect
+// Set/SetMultiple/Delete (previously only Get incremented them), and
+// CacheManager.Delete must truncate long keys the same way Get/Set do.
+
+// TestD002Round7_MutationOpsCounted pins the metrics fix: Set/SetMultiple/
+// Delete increment OperationCount (and failures increment ErrorCount), so
+// GetStats reports all primary operations, not just reads.
+func TestD002Round7_MutationOpsCounted(t *testing.T) {
+	p, err := New(DefaultConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.Close()
+
+	const doc = `{"a":1,"b":2,"c":3}`
+	before := p.GetStats()
+
+	if _, err := p.Set(doc, "a", 10); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+	if _, err := p.SetMultiple(doc, map[string]any{"b": 20}); err != nil {
+		t.Fatalf("SetMultiple: %v", err)
+	}
+	if _, err := p.Delete(doc, "c"); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+
+	after := p.GetStats()
+	got := after.OperationCount - before.OperationCount
+	if got < 3 {
+		t.Fatalf("OperationCount delta after Set+SetMultiple+Delete = %d, want >= 3 (mutations must be counted)", got)
+	}
+
+	// Failure paths must increment ErrorCount.
+	errBefore := p.GetStats().ErrorCount
+	if _, err := p.Set(doc, "x[zz]", 1); err == nil {
+		t.Fatal("Set with invalid index: expected error")
+	}
+	if _, err := p.Delete(doc, "nope"); err == nil {
+		t.Fatal("Delete missing path: expected error")
+	}
+	errAfter := p.GetStats().ErrorCount
+	if errAfter-errBefore < 2 {
+		t.Fatalf("ErrorCount delta after two failed mutations = %d, want >= 2", errAfter-errBefore)
+	}
+}
+
+// TestD002Round7_CacheDeleteLongKey pins the CacheManager.Delete fix: keys
+// longer than MaxCacheKeyLength are stored by Set under a truncated key, so
+// Delete must apply the same truncation or the entry survives invalidation.
+func TestD002Round7_CacheDeleteLongKey(t *testing.T) {
+	cm := internal.NewCacheManager(true, 16, 0)
+	defer cm.Close()
+
+	longKey := strings.Repeat("k", 2048) // > MaxCacheKeyLength (1024)
+	cm.Set(longKey, "v")
+	if v, ok := cm.Get(longKey); !ok || v != "v" {
+		t.Fatal("setup: long-key Set/Get round trip failed")
+	}
+
+	cm.Delete(longKey)
+	if v, ok := cm.Get(longKey); ok {
+		t.Fatalf("entry survived Delete: value = %v (long-key Delete must hit the truncated stored key)", v)
+	}
+	if n := cm.EntryCount(); n != 0 {
+		t.Fatalf("EntryCount after Delete = %d, want 0", n)
+	}
+}
+
+// TestD002Round7_GetCompiledNilPath pins the GetCompiled nil guard: a nil
+// *CompiledPath on an ACTIVE processor previously panicked (the only existing
+// test used a closed processor, whose early return masked the crash).
+func TestD002Round7_GetCompiledNilPath(t *testing.T) {
+	p, err := New(DefaultConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.Close()
+
+	if _, err := p.GetCompiled(`{"a":1}`, nil); err == nil {
+		t.Fatal("GetCompiled with nil CompiledPath: expected error, got nil")
+	}
+}
+
+// TestD002Round7_ReverseSliceEndPastStart pins the PerformArraySliceIndices
+// clamp: a negative-step slice whose end wraps past the array start
+// (e.g. [4:-10:-1] on a 5-element array) previously produced negative
+// indices and panicked at the consumer ("index out of range [-1]"). Python
+// semantics: it selects down to index 0 inclusive.
+func TestD002Round7_ReverseSliceEndPastStart(t *testing.T) {
+	const doc = `{"a":[1,2,3,4,5]}`
+	p, err := New(DefaultConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.Close()
+
+	for _, tc := range []struct {
+		path string
+		want string
+	}{
+		{"a[4:-10:-1]", "[5,4,3,2,1]"}, // end wraps to -5 → clamp to -1
+		{"a[4:-7:-1]", "[5,4,3,2,1]"},  // end wraps to -2 → clamp to -1
+		{"a[4:-6:-1]", "[5,4,3,2,1]"},  // end wraps to exactly -1 (already worked)
+		{"a[-2:-100:-1]", "[4,3,2,1]"}, // negative start wraps to 3
+	} {
+		v, err := p.Get(doc, tc.path)
+		if err != nil {
+			t.Errorf("Get(%q): %v", tc.path, err)
+			continue
+		}
+		if got := d002fmt(v); got != tc.want {
+			t.Errorf("Get(%q) = %s, want %s", tc.path, got, tc.want)
+		}
+	}
+
+	// The same slice syntax must be safe on the mutation paths too — they
+	// consume the identical index list (opSet assigns, opDelete marks).
+	if _, err := p.Set(doc, "a[4:-10:-1]", 9); err != nil {
+		t.Errorf("Set reverse slice: %v", err)
+	}
+	if _, err := p.Delete(doc, "a[4:-10:-1]"); err != nil {
+		t.Errorf("Delete reverse slice: %v", err)
+	}
+}
+
+// TestD002Round7_NumberNoCfgRoundTrip pins the Number.MarshalJSON fix
+// (self-review follow-up to the round-7 PreserveNumbers routing fix): data
+// parsed with PreserveNumbers must survive re-encoding EVEN when the encode
+// call carries no Config — Marshal/Encode/package-Marshal previously went
+// through plain json.Marshal and quoted the literal ("1.10").
+func TestD002Round7_NumberNoCfgRoundTrip(t *testing.T) {
+	p, err := New(DefaultConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.Close()
+
+	cfg := DefaultConfig()
+	cfg.PreserveNumbers = true
+	var v any
+	if err := p.Parse(`{"a":1.10}`, &v, cfg); err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+
+	if b, err := p.Marshal(v); err != nil || string(b) != `{"a":1.10}` {
+		t.Errorf("Marshal no-cfg = %s, %v; want {\"a\":1.10}", b, err)
+	}
+	if s, err := p.Encode(v); err != nil || s != `{"a":1.10}` {
+		t.Errorf("Encode no-cfg = %s, %v; want {\"a\":1.10}", s, err)
+	}
+	if s, err := Marshal(v); err != nil || string(s) != `{"a":1.10}` {
+		t.Errorf("package Marshal = %s, %v; want {\"a\":1.10}", s, err)
+	}
+
+	// Invalid literals are rejected rather than written verbatim (matching
+	// the encodeJSONNumber guard and stdlib json.Number semantics).
+	if _, err := Marshal(Number("1_0")); err == nil {
+		t.Error("Marshal(Number(\"1_0\")): expected error for invalid literal")
+	}
+
+	// Fast-vs-custom asymmetry mirrors the existing stdlib json.Number design:
+	// without custom opts the (config-less) fast path honors the literal's
+	// self-description (1e3 stays 1e3, 1.10 stays 1.10); the custom encoder,
+	// which has config context, normalizes when PreserveNumbers=false
+	// (json.Number 1e3→1000, Number 1.10→1.1 — pinned by
+	// TestEncodeJSONNumber_NonPreserve for the stdlib type).
+	if s, err := p.EncodeWithConfig(Number("1.10"), DefaultConfig()); err != nil || s != `1.10` {
+		t.Errorf("fast-path literal = %s, %v; want 1.10", s, err)
+	}
+	sk := DefaultConfig()
+	sk.SortKeys = true // force the custom encoder
+	if s, err := p.EncodeWithConfig(Number("1.10"), sk); err != nil || s != `1.1` {
+		t.Errorf("custom-path normalization = %s, %v; want 1.1", s, err)
+	}
+}
+
+// TestD002Round7_DecoderTokenPathSizeLimits pins the parseString/parseNumber
+// maxBytes guards on the Token() path (self-review follow-up: round 7
+// initially only guarded parseString; parseNumber streamed digits from a
+// never-ending reader without bound).
+func TestD002Round7_DecoderTokenPathSizeLimits(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.MaxJSONSize = 256
+
+	// Unterminated string via Token().
+	d := NewDecoder(strings.NewReader(`"`+strings.Repeat("A", 4000)), cfg)
+	_, err := d.Token()
+	if err == nil || !strings.Contains(err.Error(), "exceeds maximum") {
+		t.Errorf("Token unterminated string: err = %v, want size-limit error", err)
+	}
+
+	// Endless digit run via Token() (a number never terminated by a delimiter).
+	d2 := NewDecoder(strings.NewReader(strings.Repeat("1", 4000)), cfg)
+	_, err = d2.Token()
+	if err == nil || !strings.Contains(err.Error(), "exceeds maximum") {
+		t.Errorf("Token endless number: err = %v, want size-limit error", err)
+	}
+
+	// Legitimate small tokens still parse through the same paths.
+	d3 := NewDecoder(strings.NewReader(`123`), cfg)
+	tok, err := d3.Token()
+	if err != nil || asStr(tok) != "123" {
+		t.Errorf("Token small number = %#v, %v; want 123", tok, err)
+	}
+}
+
+// TestD002Round7_NDJSONHonorsJSONLCfg pins the NDJSONProcessor.ProcessReader
+// fix: the JSONL config knobs (skip comments/empty, per-line and total size
+// limits) are honored as they are by the StreamJSONL family. Previously
+// ProcessReader ignored all four, so the two JSONL entry points silently
+// enforced different rules.
+func TestD002Round7_NDJSONHonorsJSONLCfg(t *testing.T) {
+	// Comments skipped when JSONLSkipComments is set.
+	cfg := DefaultConfig()
+	cfg.JSONLSkipComments = true
+	np := NewNDJSONProcessor(cfg)
+	var lines []int
+	err := np.ProcessReader(strings.NewReader("# header\n{\"a\":1}\n"), func(n int, _ map[string]any) error {
+		lines = append(lines, n)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("ProcessReader comments: %v", err)
+	}
+	if len(lines) != 1 || lines[0] != 2 {
+		t.Fatalf("comment skip: got lines %v, want [2] (comment on line 1 skipped, line numbers preserved)", lines)
+	}
+
+	// JSONLMaxMemory caps total processed bytes.
+	memCfg := DefaultConfig()
+	memCfg.JSONLMaxMemory = 20
+	npMem := NewNDJSONProcessor(memCfg)
+	err = npMem.ProcessReader(strings.NewReader("{\"aaaa\":1}\n{\"bbbb\":2}\n{\"cccc\":3}\n"), func(int, map[string]any) error {
+		return nil
+	})
+	if err == nil || !strings.Contains(err.Error(), "memory limit") {
+		t.Fatalf("JSONLMaxMemory not enforced: got %v, want memory-limit error", err)
+	}
+
+	// JSONLMaxLineSize caps a single line (falls back to MaxJSONSize unset).
+	lineCfg := DefaultConfig()
+	lineCfg.JSONLMaxLineSize = 10
+	npLine := NewNDJSONProcessor(lineCfg)
+	var seen int
+	err = npLine.ProcessReader(strings.NewReader("{\"aaaaaaaaaaaa\":1}\n"), func(int, map[string]any) error {
+		seen++
+		return nil
+	})
+	if err == nil || !strings.Contains(err.Error(), "too long") {
+		t.Fatalf("JSONLMaxLineSize not enforced: got %v, want bufio.ErrTooLong", err)
+	}
+	if seen != 0 {
+		t.Fatalf("oversized line should not reach the callback")
+	}
+
+	// Backward compatibility: with no knobs set, a >1MB line still parses
+	// (legacy MaxJSONSize default), and empty lines are still skipped.
+	npDefault := NewNDJSONProcessor()
+	count := 0
+	err = npDefault.ProcessReader(strings.NewReader("\n{\"a\":1}\n\n"), func(int, map[string]any) error {
+		count++
+		return nil
+	})
+	if err != nil || count != 1 {
+		t.Fatalf("default behavior changed: err=%v count=%d (want nil, 1)", err, count)
+	}
+}
+
+// TestD002Round7_PreserveNumbersRoundTrip pins the needsCustomEncodingOpts fix:
+// with PreserveNumbers set, EncodeWithConfig must route through the custom
+// encoder so the library's Number type survives as a JSON number literal
+// (previously both fast paths used plain json.Marshal and emitted "1.10").
+func TestD002Round7_PreserveNumbersRoundTrip(t *testing.T) {
+	p, err := New(DefaultConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.Close()
+
+	cfg := DefaultConfig()
+	cfg.PreserveNumbers = true
+	var v any
+	if err := p.Parse(`{"a":1.10,"big":123456789012345678901234567890}`, &v, cfg); err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	out, err := p.EncodeWithConfig(v, cfg)
+	if err != nil {
+		t.Fatalf("EncodeWithConfig: %v", err)
+	}
+	want := `{"a":1.10,"big":123456789012345678901234567890}`
+	if out != want {
+		t.Fatalf("round-trip = %s, want %s (number literals must not become quoted strings)", out, want)
+	}
+}
+
+// TestD002Round7_CustomEncoderStdlibCompat pins three custom-encoder fixes:
+// (a) non-string map keys are formatted by kind, not reflect.Value.String()'s
+//
+//	"<T Value>" placeholder; (b) []byte encodes as a base64 string, not a
+//	byte-number array; (c) CustomEscapes/DisableEscaping apply to struct
+//	string fields, not only to map values.
+func TestD002Round7_CustomEncoderStdlibCompat(t *testing.T) {
+	p, err := New(DefaultConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.Close()
+
+	opts := DefaultConfig()
+	opts.SortKeys = true
+
+	// (a) int-keyed map: encoding/json emits {"1":"one","2":"two"}.
+	out, err := p.EncodeWithConfig(map[int]string{2: "two", 1: "one"}, opts)
+	if err != nil {
+		t.Fatalf("int-keyed map: %v", err)
+	}
+	if out != `{"1":"one","2":"two"}` {
+		t.Fatalf("int-keyed map = %s, want {\"1\":\"one\",\"2\":\"two\"} (keys destroyed by <int Value> placeholder)", out)
+	}
+
+	// (b) []byte: encoding/json emits a base64 string.
+	out, err = p.EncodeWithConfig(struct{ Data []byte }{[]byte("hi")}, opts)
+	if err != nil {
+		t.Fatalf("[]byte struct: %v", err)
+	}
+	if out != `{"Data":"aGk="}` {
+		t.Fatalf("[]byte struct = %s, want {\"Data\":\"aGk=\"} (base64), not a number array", out)
+	}
+
+	// (c) CustomEscapes on struct fields. Escape 'x' as the 6-char x
+	// sequence, built at runtime so no source channel can mangle the literal.
+	esc := string([]byte{0x5c, 'u', '0', '0', '7', '8'}) // x
+	cc := DefaultConfig()
+	cc.CustomEscapes = map[rune]string{'x': esc}
+	outMap, err := p.EncodeWithConfig(map[string]any{"s": "axb"}, cc)
+	if err != nil {
+		t.Fatalf("map CustomEscapes: %v", err)
+	}
+	want := `{"s":"a` + esc + `b"}`
+	outStruct, err := p.EncodeWithConfig(struct{ S string }{"axb"}, cc)
+	if err != nil {
+		t.Fatalf("struct CustomEscapes: %v", err)
+	}
+	if outMap != want {
+		t.Fatalf("map CustomEscapes = %s, want %s", outMap, want)
+	}
+	if outStruct != `{"S":"a`+esc+`b"}` {
+		t.Fatalf("struct CustomEscapes = %s, want the escape applied to the field value too", outStruct)
+	}
+
+	// (c2) DisableEscaping on struct fields (previously stdlib < escaped).
+	dd := DefaultConfig()
+	dd.DisableEscaping = true
+	outStruct, err = p.EncodeWithConfig(struct{ S string }{"a<b"}, dd)
+	if err != nil {
+		t.Fatalf("struct DisableEscaping: %v", err)
+	}
+	if outStruct != `{"S":"a<b"}` {
+		t.Fatalf("struct DisableEscaping = %s, want {\"S\":\"a<b\"} (no stdlib escaping)", outStruct)
+	}
+}
+
+// TestD002Round7_PrettyAllNullMap pins the encodeMap closing-indent fix: with
+// IncludeNulls=false filtering out every value, a pretty map must render {}
+// (previously a dangling indent-only line appeared inside the braces).
+func TestD002Round7_PrettyAllNullMap(t *testing.T) {
+	p, err := New(DefaultConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.Close()
+
+	cfg := DefaultConfig()
+	cfg.Pretty = true
+	cfg.IncludeNulls = false
+	out, err := p.EncodeWithConfig(map[string]any{"a": nil}, cfg)
+	if err != nil {
+		t.Fatalf("EncodeWithConfig: %v", err)
+	}
+	if out != "{}" {
+		t.Fatalf("pretty all-null map = %q, want \"{}\"", out)
+	}
+}
+
+// TestD002Round7_MarshalRespectsSizeLimit pins the Marshal no-cfg fix: the
+// fast path must enforce the processor's MaxJSONSize like every other encode
+// path (previously only the with-cfg form rejected oversized output).
+func TestD002Round7_MarshalRespectsSizeLimit(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.MaxJSONSize = 10
+	p, err := New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.Close()
+
+	long := strings.Repeat("a", 50)
+	if _, err := p.Marshal(long); err == nil {
+		t.Fatal("Marshal without cfg: expected ErrSizeLimit for oversized output")
+	}
+	if _, err := p.Marshal(long, DefaultConfig()); err == nil {
+		t.Fatal("Marshal with cfg: expected ErrSizeLimit for oversized output")
+	}
+}
+
+// TestD002Round7_SchemaPreserveNumbers pins the schema fixes: with
+// PreserveNumbers on, numbers must pass "number" type checks, honor
+// minimum/maximum, and enum values must compare equal across numeric kinds.
+func TestD002Round7_SchemaPreserveNumbers(t *testing.T) {
+	pcfg := DefaultConfig()
+	pcfg.PreserveNumbers = true
+
+	schema := &Schema{
+		Type: "object",
+		Properties: map[string]*Schema{
+			"n": {Type: "number", Minimum: 0, Maximum: 10},
+		},
+	}
+	// The has* flags are normally set by NewSchemaWithConfig (pointer-based
+	// optional fields); set them directly as types_test.go does.
+	schema.Properties["n"].hasMinimum = true
+	schema.Properties["n"].hasMaximum = true
+	verrs, err := ValidateSchema(`{"n":5}`, schema, pcfg)
+	if err != nil {
+		t.Fatalf("ValidateSchema: %v", err)
+	}
+	if len(verrs) != 0 {
+		t.Fatalf("number misvalidated under PreserveNumbers: %v (want no errors)", verrs)
+	}
+
+	// Range enforcement must also work for Number values.
+	verrs, err = ValidateSchema(`{"n":50}`, schema, pcfg)
+	if err != nil {
+		t.Fatalf("ValidateSchema: %v", err)
+	}
+	if len(verrs) != 1 {
+		t.Fatalf("range not enforced under PreserveNumbers: %v (want 1 max-exceeded error)", verrs)
+	}
+
+	// Enum comparison across numeric kinds (int64 const vs float64 data).
+	enumSchema := &Schema{
+		Type: "object",
+		Properties: map[string]*Schema{
+			"n": {Type: "number", Enum: []any{int64(5)}},
+		},
+	}
+	verrs, err = ValidateSchema(`{"n":5}`, enumSchema, DefaultConfig())
+	if err != nil {
+		t.Fatalf("ValidateSchema enum: %v", err)
+	}
+	if len(verrs) != 0 {
+		t.Fatalf("int64 enum vs float64 value not compared equal: %v", verrs)
+	}
+}
+
+// TestD002Round7_SchemaUniqueItemsTypeAware pins the UniqueItems key fix:
+// values that differ in JSON type ([1, "1"]) must not be reported as
+// duplicates.
+func TestD002Round7_SchemaUniqueItemsTypeAware(t *testing.T) {
+	schema := &Schema{Type: "array", UniqueItems: true}
+	verrs, err := ValidateSchema(`[1,"1",true,"true"]`, schema)
+	if err != nil {
+		t.Fatalf("ValidateSchema: %v", err)
+	}
+	if len(verrs) != 0 {
+		t.Fatalf("type-distinct values reported as duplicates: %v", verrs)
+	}
+	verrs, err = ValidateSchema(`[1,1]`, schema)
+	if err != nil {
+		t.Fatalf("ValidateSchema: %v", err)
+	}
+	if len(verrs) != 1 {
+		t.Fatalf("real duplicates must still be caught: %v", verrs)
+	}
+}
+
+// TestD002Round7_DecoderUnpairedLowSurrogate pins the parseSurrogatePair fix:
+// an unpaired low surrogate (\uDC00) must substitute U+FFFD without error,
+// matching encoding/json (previously a hard SyntaxError).
+func TestD002Round7_DecoderUnpairedLowSurrogate(t *testing.T) {
+	// Built at runtime: "\uDC00" as raw source would be an invalid Go escape.
+	doc := `"` + string([]byte{0x5c, 'u', 'D', 'C', '0', '0'}) + `"`
+	var got Token
+	d := NewDecoder(strings.NewReader(doc))
+	for {
+		tok, err := d.Token()
+		if tok != nil {
+			got = tok
+		}
+		if err != nil {
+			if err != io.EOF {
+				t.Fatalf("Token on unpaired low surrogate: %v (want U+FFFD substitution, no error)", err)
+			}
+			break
+		}
+	}
+	s, ok := got.(string)
+	if !ok || s != string(rune(0xFFFD)) {
+		t.Fatalf("token = %#v, want U+FFFD string", got)
 	}
 }

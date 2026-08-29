@@ -84,7 +84,7 @@ func demonstrateGetTyped(partialData, completeData string) {
 }
 
 func demonstratePracticalCases() {
-	fmt.Println("\n3. Practical Use Cases")
+	fmt.Println("\n2. Practical Use Cases")
 	fmt.Println("-----------------------")
 
 	// Use case 1: Configuration with sensible defaults

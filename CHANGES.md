@@ -4,6 +4,78 @@ All notable changes to the cybergodev/json library will be documented in this fi
 
 ---
 
+## v1.5.1 - Correctness, Determinism, Security & Performance (2026-08-30)
+
+> Sweep of encoding correctness (`PreserveNumbers`, streaming decoder, custom encoder), deterministic output ordering, security-scan and path-symlink hardening, plus profiled performance work. Non-breaking.
+
+### Breaking Changes
+
+- None — no exported symbol removed or signature changed; behavioral tightening only where it aligns with documented contracts
+- `Marshal` without cfg now enforces `MaxJSONSize` (was unchecked), and map-derived result/callback order is now deterministic (ascending key order, previously random per run)
+
+### Fixed
+
+- `PreserveNumbers` round-trips: `Marshal`/`EncodeWithConfig` emit raw number literals — library `Number` gained `MarshalJSON` (several paths emitted quoted `"1.10"`)
+- Non-string map keys no longer collapse to the same `"<T Value>"` placeholder — formatted per kind and sorted (`encoding/json` semantics)
+- `[]byte` values encode as base64 strings (was a numeric byte array like `[104,105]`)
+- `CustomEscapes`/`DisableEscaping` now apply to struct values too (previously only map values)
+- Pretty-printed maps whose values are all filtered out no longer emit dangling indent lines
+- FastEncoder rejects `NaN`/`±Inf`, encodes `nil` containers as `null`, validates `json.Number` literals, and bounds container nesting depth
+- Streaming `Decoder` accepts mixed nesting (`{"a":[1]}`) via a per-level closer stack
+- `Decoder.Decode` with `UseNumber` no longer panics on `null` or number-into-map/slice targets — proper `UnmarshalTypeError`
+- Unpaired surrogates substitute U+FFFD (stdlib parity); offset accounting, literal error `Offset`s, and `NewDecoder` default `maxBytes` fixed
+- `escapeRune` escapes U+2028/U+2029 under `EscapeHTML` and emits stdlib's `�` text for invalid UTF-8
+- Token-path `parseString`/`parseNumber` enforce per-byte size limits (a hostile reader could grow the buffer unboundedly)
+- Schema validation works under `PreserveNumbers` — type checks, min/max/multipleOf, and cross-kind enum equality all handle `Number`
+- `UniqueItems` no longer flags `[1,"1"]` as duplicates (dedup keys are type-qualified)
+- Negative-step slices clamp `end` — `a[4:-10:-1]` previously panicked on Get/Set/Delete
+- Cache `Delete` removes entries whose keys exceed `MaxCacheKeyLength` (Set/Get truncated keys, Delete didn't)
+- `GetCompiled` returns an error on a nil `*CompiledPath` (was a panic)
+- `GetTyped` no longer panics comparing func-bearing `Hooks`/`CustomTypeEncoders` configs
+- `SetCreate`/`SetMultipleCreate`/`DeleteClean` inherit the processor's config — security limits were silently reset to defaults
+- `Delete` fast path no longer skips array cleanup when `CompactArrays` is set
+- `getProcessorWithConfig` no longer serves a cached wrong `CustomPathParser` (the config hash could not distinguish parsers)
+- `Set`/`SetMultiple`/`Delete`/`GetMultiple` increment operation/error stats — `GetStats` previously showed zero write operations
+- `IsClosed` reports true during the closing window (the registry kept handing out processors whose ops failed)
+- Parallel `Filter` preserves input order; worker errors are no longer shadowed by `ctx.Err()`; chunk data is released to pools
+- `IterableValue.Release()` guards against double-put when released inside a callback
+- `ParseJSONL`/`ToJSONL`/`StreamLinesInto` use the default/global processor when no cfg is given (as documented)
+- `AccessResult.AsString` wraps `ErrTypeMismatch` so `errors.Is` works as documented
+- Health check reads memory stats directly before any recorded operation (previously reported Healthy prematurely)
+- Numeric conversions: platform-dependent float→int bounds fixed; `GetFloat` returns the documented default on NaN/Inf tokens; `Number("0.0")` counts as zero
+- `IndexIgnoreCase` ASCII folding no longer rewrites non-letter bytes (`'['` matched `'{'`)
+- `MarshalToFile` honors all encoding options (`Indent`/`Prefix`/`EscapeHTML` were silently dropped)
+- `SaveToFile`/`SaveToWriter` pass cfg into comment/whitespace preprocessing (options were ignored)
+- File-size validation honors per-call `cfg.MaxJSONSize` and no longer applies to write targets (overwriting a large existing file failed with `ErrSizeLimit`)
+- `JSONLMaxLineSize` values below 64KB are now effective — the 64KB bufio initial buffer swallowed the limit (5 scan sites)
+- `NDJSONProcessor.ProcessReader` honors the JSONL config knobs (line size, memory, comments) instead of ignoring them
+- Atomic writes follow the leaf symlink (restores `os.WriteFile` semantics)
+
+### Security
+
+- Custom dangerous patterns containing uppercase letters now match — previously never detected at all
+- Custom patterns longer than the built-in window overlap no longer escape detection at rolling-window boundaries
+- `cachedMaxPatternLen` recompute race fixed — concurrent registry writes could leave a stale, too-small overlap
+- `validatePathSymlinks` resolves intermediate directory symlinks before the restricted-dir check (lexical check was bypassable)
+- `sanitizePath` redacts before truncating — long paths previously skipped sensitive-pattern checks; slow-op success logs are sanitized too
+
+### Changed
+
+- Map-derived order is deterministic everywhere: `Get` wildcard/distributed results, `Foreach*` callbacks, `Iterator` traversal, `SetMultiple` application, and schema error lists follow ascending key order
+- Iterator keys are no longer interned — transient one-shot keys were pinning a 10MB process cache and taking its lock
+- Examples: all 17 examples extended — uncovered package-level APIs 40 → 10 (remaining are deprecated or Processor-mirrored)
+- Test coverage raised (main 80.5% → 81.4%, internal 84.5% → 87.6%); D-002 regression files consolidated 4 → 1
+
+### Performance
+
+- `Marshal`/`EncodeWithConfig`/`ToJSONL` fast path emits `[]byte` in a single copy (was a string→[]byte double copy per encode)
+- Validation hashing halved to one full-input scan per operation (cached `Get`: 3 → 2); exact-input comparison still guards identity
+- Clean security windows skip per-pattern scanning via a first-char bucket prefilter — detection stays byte-identical
+- Maps with ≤1 key encode with zero allocation (`iter.Seq2` range-over-func; multi-key paths keep the existing sort)
+- `SetMultiple` drops a defensive deep-copy of just-parsed data; the per-processor path-segment cache now delegates to the process-level one
+
+---
+
 ## v1.5.0 - API Unification, Correctness, Security & Performance (2026-07-15)
 
 > Major effort: package-level ↔ Processor API mirror completed, per-call config enforced everywhere, encoding/json compatibility hardened, broad correctness and performance work. Non-breaking.

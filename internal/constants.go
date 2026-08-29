@@ -27,5 +27,9 @@ const (
 
 	// Buffer pool limits (for []byte)
 	MinPoolBufferSize = 256   // Minimum capacity to pool (smaller buffers not worth pooling)
-	MaxPoolBufferSize = 32768 // Maximum capacity to pool (32KB - larger buffers discarded)
+	MaxPoolBufferSize = 32768 // Upper bound on pooled byte-slice capacity. The
+	// encoder and HTML-escape pools retain only up to MaxPoolBufferSize/4
+	// (8KB) — escaping/encoding outputs of the full 32KB are discarded — and
+	// the string-builder pool uses an unrelated 16KB cutoff. Tune the per-pool
+	// divisors where the pools are defined, not here.
 )

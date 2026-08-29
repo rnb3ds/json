@@ -2742,3 +2742,207 @@ func TestBatchIterator(t *testing.T) {
 		}
 	})
 }
+
+// TestIteratorReset verifies Reset clears iteration state and cached map keys,
+// leaving an iterator that yields nothing until ResetWith supplies new data.
+func TestIteratorReset(t *testing.T) {
+	it := NewIterator(map[string]any{"a": 1, "b": 2})
+
+	// Consume one element so initKeysOnce caches the key slice.
+	if _, ok := it.Next(); !ok {
+		t.Fatal("first Next() on fresh iterator should succeed")
+	}
+	if len(it.keys) == 0 {
+		t.Fatal("map iteration should have cached keys after first Next()")
+	}
+
+	it.Reset()
+
+	if it.data != nil || it.position != 0 || it.keys != nil {
+		t.Errorf("Reset should clear data/position/keys, got data=%v position=%d keys=%v",
+			it.data, it.position, it.keys)
+	}
+	if it.HasNext() {
+		t.Error("HasNext after Reset should be false")
+	}
+	if _, ok := it.Next(); ok {
+		t.Error("Next after Reset should return ok=false")
+	}
+}
+
+// TestIteratorResetWith verifies iterator reuse on new data and, critically,
+// that the sync.Once reset makes initKeysOnce re-collect keys for the new map
+// instead of serving stale keys from the previous structure.
+func TestIteratorResetWith(t *testing.T) {
+	it := NewIterator(map[string]any{"a": 1, "b": 2, "c": 3})
+	for it.HasNext() {
+		it.Next()
+	}
+
+	// Reuse on an array: keys stay unused, elements come in order.
+	it.ResetWith([]any{"x", "y"})
+	var got []any
+	for it.HasNext() {
+		v, ok := it.Next()
+		if !ok {
+			t.Fatal("Next returned ok=false while HasNext was true")
+		}
+		got = append(got, v)
+	}
+	if len(got) != 2 || got[0] != "x" || got[1] != "y" {
+		t.Errorf("ResetWith(array) iteration = %v, want [x y]", got)
+	}
+
+	// Reuse on a different map: keys must be re-initialized for the new data.
+	it.ResetWith(map[string]any{"k": 42})
+	if v, ok := it.Next(); !ok || v != 42 {
+		t.Errorf("ResetWith(map) first Next = (%v, %v), want (42, true)", v, ok)
+	}
+	if len(it.keys) != 1 || it.keys[0] != "k" {
+		t.Errorf("ResetWith should re-collect keys for the new map, got %v", it.keys)
+	}
+	if it.HasNext() {
+		t.Error("single-key map should be exhausted after one Next()")
+	}
+}
+
+// TestForeachReturn covers the package-level ForeachReturn wrapper: iteration
+// over top-level keys, the documented contract that mutations to an item's
+// underlying data are reflected in the returned string, and the invalid-JSON
+// error path.
+func TestForeachReturn(t *testing.T) {
+	jsonStr := `{"items":[1,2,3],"meta":{"name":"list"}}`
+
+	count := 0
+	result, err := ForeachReturn(jsonStr, func(key any, item *IterableValue) {
+		count++
+		if key == "meta" {
+			// IterableValue is read-only; mutate the object it wraps.
+			if m, ok := item.GetData().(map[string]any); ok {
+				m["name"] = "renamed"
+			}
+		}
+	})
+	if err != nil {
+		t.Fatalf("ForeachReturn error: %v", err)
+	}
+	if count != 2 {
+		t.Errorf("callback ran %d times, want 2 (top-level keys)", count)
+	}
+	if result == "" {
+		t.Fatal("ForeachReturn should return a non-empty JSON string")
+	}
+	var check map[string]any
+	if err := json.Unmarshal([]byte(result), &check); err != nil {
+		t.Fatalf("ForeachReturn result is not valid JSON: %v (result=%s)", err, result)
+	}
+	meta, ok := check["meta"].(map[string]any)
+	if !ok || meta["name"] != "renamed" {
+		t.Errorf(`result["meta"]["name"] = %v, want "renamed" (mutation not reflected)`, check["meta"])
+	}
+	if items, ok := check["items"].([]any); !ok || len(items) != 3 {
+		t.Errorf(`result["items"] = %v, want the original 3-element array`, check["items"])
+	}
+
+	if _, err := ForeachReturn(`{invalid`, func(key any, item *IterableValue) {}); err == nil {
+		t.Error("ForeachReturn on invalid JSON should return an error")
+	} else if !errors.Is(err, ErrInvalidJSON) {
+		t.Errorf("ForeachReturn on invalid JSON should wrap ErrInvalidJSON, got %v", err)
+	}
+}
+
+// TestPooledSliceIteratorLifecycle covers Next/Value/Index progression and
+// Release semantics for the pooled slice iterator. It previously had no
+// correctness coverage — benchmarks exercised it, but benchmarks are not
+// correctness tests, so a lifecycle regression would have gone unnoticed.
+func TestPooledSliceIteratorLifecycle(t *testing.T) {
+	data := []any{10, "twenty", 30.5, nil}
+	it := newPooledSliceIterator(data)
+
+	values := make([]any, 0, len(data))
+	indices := make([]int, 0, len(data))
+	for it.Next() {
+		values = append(values, it.Value())
+		indices = append(indices, it.Index())
+	}
+	if len(values) != len(data) {
+		t.Fatalf("iterated %d elements, want %d", len(values), len(data))
+	}
+	for i := range data {
+		if values[i] != data[i] {
+			t.Errorf("Value() at step %d = %v, want %v", i, values[i], data[i])
+		}
+		if indices[i] != i {
+			t.Errorf("Index() at step %d = %d, want %d", i, indices[i], i)
+		}
+	}
+	if it.Next() {
+		t.Error("Next after exhaustion should return false")
+	}
+
+	it.Release()
+	if it.data != nil || it.current != nil || it.index != -1 {
+		t.Errorf("Release should clear iterator state, got data=%v current=%v index=%d",
+			it.data, it.current, it.index)
+	}
+
+	// A recycled iterator (sync.Pool may hand back the released instance on
+	// this same goroutine) must start from a clean state on new data.
+	it2 := newPooledSliceIterator([]any{"only"})
+	if !it2.Next() || it2.Value() != "only" || it2.Index() != 0 {
+		t.Errorf("recycled iterator should iterate new data from index 0, got value=%v index=%d",
+			it2.Value(), it2.Index())
+	}
+	if it2.Next() {
+		t.Error("recycled iterator should be exhausted after its single element")
+	}
+	it2.Release()
+}
+
+// TestPooledMapIteratorLifecycle covers sorted-key iteration, Key/Value
+// accessors, Release cleanup, and reuse of the recycled keys slice. The type
+// has no production callers (see the note on pooledMapIterator), so this test
+// is its only correctness coverage.
+func TestPooledMapIteratorLifecycle(t *testing.T) {
+	m := map[string]any{"c": 3, "a": 1, "b": 2}
+	it := newPooledMapIterator(m)
+
+	var keys []string
+	for it.Next() {
+		keys = append(keys, it.Key())
+		if it.Value() != m[it.Key()] {
+			t.Errorf("Value() for key %q = %v, want %v", it.Key(), it.Value(), m[it.Key()])
+		}
+	}
+	want := []string{"a", "b", "c"} // keys are sorted for deterministic iteration
+	if len(keys) != len(want) {
+		t.Fatalf("iterated keys %v, want %v", keys, want)
+	}
+	for i := range want {
+		if keys[i] != want[i] {
+			t.Errorf("key order not sorted: %v, want %v", keys, want)
+			break
+		}
+	}
+	if it.Next() {
+		t.Error("Next after exhaustion should return false")
+	}
+
+	it.Release()
+	if it.data != nil || it.key != "" || it.current != nil || it.index != -1 {
+		t.Errorf("Release should clear iterator state, got data=%v key=%q current=%v index=%d",
+			it.data, it.key, it.current, it.index)
+	}
+
+	// Reuse with a larger map: the recycled keys slice must repopulate fully.
+	big := map[string]any{"k4": 4, "k1": 1, "k2": 2, "k3": 3}
+	it2 := newPooledMapIterator(big)
+	count := 0
+	for it2.Next() {
+		count++
+	}
+	if count != len(big) {
+		t.Errorf("recycled iterator yielded %d pairs, want %d", count, len(big))
+	}
+	it2.Release()
+}

@@ -34,7 +34,7 @@ func TestA2EncoderEquivalence(t *testing.T) {
 	}
 	seven := 7
 	values := []any{
-		nil, true, 0, -1, 42, 1e21, -0.0, 0.1, 1e-7, math.MaxInt64,
+		nil, true, 0, -1, 42, 1e21, math.Copysign(0, -1), 0.1, 1e-7, math.MaxInt64,
 		"", "plain", "<script>&</script>", ls, inv, "emoji:" + string(rune(0x1F600)),
 		[]any{}, map[string]any{}, []any(nil), map[string]any(nil),
 		[]int{1, 2, 3}, map[string]any{"a": 1, "b": []any{"x", "y"}},

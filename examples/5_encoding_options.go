@@ -3,6 +3,7 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 
 	"github.com/cybergodev/json"
@@ -21,6 +22,7 @@ import (
 // - Omit empty values
 // - Custom escape sequences
 // - Pretty vs compact formatting
+// - encoding/json parity helpers (HTMLEscape, Indent)
 //
 // Run: go run -tags=example examples/5_encoding_options.go
 
@@ -74,6 +76,9 @@ func main() {
 
 	// 8. ENCODE METHODS
 	demonstrateEncodeMethods()
+
+	// 9. ENCODING/JSON PARITY HELPERS
+	demonstrateParityHelpers()
 
 	fmt.Println("\nEncoding options complete!")
 }
@@ -372,4 +377,27 @@ func demonstrateEncodeMethods() {
 	}
 	fmt.Println("\n   EncodeWithConfig with custom config (4-space indent):")
 	fmt.Println(custom)
+}
+
+func demonstrateParityHelpers() {
+	fmt.Println("\n9. encoding/json Parity Helpers (HTMLEscape / Indent)")
+	fmt.Println("-------------------------------------------------------")
+
+	// HTMLEscape rewrites <, >, &, U+2028/U+2029 into \u<hex> escapes —
+	// the same contract as encoding/json.HTMLEscape, writing to a buffer.
+	src := []byte(`{"msg": "<b>bold</b> & \"quoted\""}`)
+	var escaped bytes.Buffer
+	json.HTMLEscape(&escaped, src)
+	fmt.Printf("   HTMLEscape:  %s\n", escaped.String())
+
+	// Indent reformats already-encoded JSON with a custom prefix + indent —
+	// the same contract as encoding/json.Indent.
+	compact := []byte(`{"server":{"host":"localhost","port":8080},"debug":false}`)
+	var indented bytes.Buffer
+	if err := json.Indent(&indented, compact, "// ", "  "); err != nil {
+		fmt.Printf("   Indent error: %v\n", err)
+		return
+	}
+	fmt.Println("   Indent (prefix \"// \", 2 spaces):")
+	fmt.Println(indented.String())
 }

@@ -1,6 +1,7 @@
 package json
 
 import (
+	"errors"
 	"fmt"
 	"maps"
 	"slices"
@@ -16,12 +17,23 @@ import (
 func (p *Processor) Set(jsonStr, path string, value any, cfg ...Config) (result string, err error) {
 	options, err := p.prepareOperation(jsonStr, path, cfg...)
 	if err != nil {
+		// Match Get's accounting: lifecycle rejections (closed processor,
+		// concurrency limit) are not operation errors, but option and
+		// input/path validation failures are.
+		if !errors.Is(err, ErrProcessorClosed) && !errors.Is(err, ErrConcurrencyLimit) {
+			p.incrementErrorCount()
+		}
 		return jsonStr, err
 	}
 	// Release in reverse-acquire order: options first, then governance slot.
 	// Defers run LIFO, so endGovernedOp (registered first) runs last.
 	defer p.endGovernedOp()
 	defer releaseConfig(options)
+
+	// Count the operation for stats. Get has always incremented the counters;
+	// mutations previously went unreported, so GetStats() undercounted every
+	// write. Failure paths below increment the error counter, as Get does.
+	p.incrementOperationCount()
 
 	// Run registered hooks around the operation. A Before hook may abort; an
 	// After hook may observe or transform the result/error. Registered last so
@@ -38,6 +50,7 @@ func (p *Processor) Set(jsonStr, path string, value any, cfg ...Config) (result 
 			StartTime: time.Now(),
 		}
 		if hookErr := hc.executeBefore(hookCtx); hookErr != nil {
+			p.incrementErrorCount()
 			return jsonStr, hookErr
 		}
 		defer func() {
@@ -47,6 +60,7 @@ func (p *Processor) Set(jsonStr, path string, value any, cfg ...Config) (result 
 
 	data, err := p.parseJSON(jsonStr, "set", path, options)
 	if err != nil {
+		p.incrementErrorCount()
 		return jsonStr, err
 	}
 
@@ -68,6 +82,7 @@ func (p *Processor) Set(jsonStr, path string, value any, cfg ...Config) (result 
 	// Set the value at the specified path
 	err = p.setValueAtPathWithOptions(data, path, value, createPaths)
 	if err != nil {
+		p.incrementErrorCount()
 		// Return original data and detailed error information
 		var setError *JsonsError
 		if _, ok := err.(*rootDataTypeConversionError); ok && createPaths {
@@ -96,6 +111,7 @@ func (p *Processor) Set(jsonStr, path string, value any, cfg ...Config) (result 
 	// double allocation (bytes -> string) and leverage optimized encoder pools
 	result, err = internal.FastMarshalToString(data)
 	if err != nil {
+		p.incrementErrorCount()
 		// Return original data if marshaling fails
 		return jsonStr, &JsonsError{
 			Op:      "set",
@@ -130,9 +146,15 @@ func (p *Processor) SetMultiple(jsonStr string, updates map[string]any, cfg ...C
 	// Prepare options
 	options, err := p.prepareOptions(cfg...)
 	if err != nil {
+		p.incrementErrorCount() // mirrors Get's prepareOptions-failure accounting
 		return jsonStr, err
 	}
 	defer releaseConfig(options)
+
+	// Count the operation for stats — see Set for the rationale (mutations
+	// previously went unreported, undercounting GetStats). Error returns below
+	// increment the error counter, as Get does.
+	p.incrementOperationCount()
 
 	// Validate JSON input. Honor SkipValidation (essential DoS checks only) to
 	// stay consistent with Set/Delete, which route through validateOperationInput.
@@ -140,10 +162,12 @@ func (p *Processor) SetMultiple(jsonStr string, updates map[string]any, cfg ...C
 	// ignoring SkipValidation — a behavioral divergence from Set.
 	if options.SkipValidation {
 		if err := p.validateInputEssential(jsonStr); err != nil {
+			p.incrementErrorCount()
 			return jsonStr, err
 		}
 	} else {
 		if err := p.validateInputForOptions(jsonStr, options); err != nil {
+			p.incrementErrorCount()
 			return jsonStr, err
 		}
 	}
@@ -166,6 +190,7 @@ func (p *Processor) SetMultiple(jsonStr string, updates map[string]any, cfg ...C
 			pathErr = p.validatePath(path)
 		}
 		if pathErr != nil {
+			p.incrementErrorCount()
 			return jsonStr, &JsonsError{
 				Op:      "set_multiple",
 				Path:    path,
@@ -179,6 +204,7 @@ func (p *Processor) SetMultiple(jsonStr string, updates map[string]any, cfg ...C
 	var data any
 	err = p.Parse(jsonStr, &data, *options)
 	if err != nil {
+		p.incrementErrorCount()
 		return jsonStr, &JsonsError{
 			Op:      "set_multiple",
 			Message: fmt.Sprintf("failed to parse JSON: %v", err),
@@ -225,6 +251,7 @@ func (p *Processor) SetMultiple(jsonStr string, updates map[string]any, cfg ...C
 					Err:     err,
 				}
 				if !options.ContinueOnError {
+					p.incrementErrorCount()
 					return jsonStr, lastError
 				}
 			} else {
@@ -235,6 +262,7 @@ func (p *Processor) SetMultiple(jsonStr string, updates map[string]any, cfg ...C
 					Err:     err,
 				}
 				if !options.ContinueOnError {
+					p.incrementErrorCount()
 					return jsonStr, lastError
 				}
 			}
@@ -245,6 +273,7 @@ func (p *Processor) SetMultiple(jsonStr string, updates map[string]any, cfg ...C
 
 	// If no updates were successful and we have errors, return original data and error
 	if successCount == 0 && lastError != nil {
+		p.incrementErrorCount()
 		return jsonStr, &JsonsError{
 			Op:      "set_multiple",
 			Message: fmt.Sprintf("all %d updates failed, last error: %v", len(updates), lastError),
@@ -261,6 +290,7 @@ func (p *Processor) SetMultiple(jsonStr string, updates map[string]any, cfg ...C
 	// PERFORMANCE: Use FastMarshalToString instead of json.Marshal
 	result, err := internal.FastMarshalToString(data)
 	if err != nil {
+		p.incrementErrorCount()
 		// Return original data if marshaling fails
 		return jsonStr, &JsonsError{
 			Op:      "set_multiple",

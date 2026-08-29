@@ -12,9 +12,9 @@ import (
 
 const (
 	// Pool size thresholds
-	smallSliceSize  = 8
-	mediumSliceSize = 32
-	largeSliceSize  = 128
+	// largeSliceSize is the hint above which path-segment slices are allocated
+	// directly instead of from a pool.
+	largeSliceSize = 128
 )
 
 // ----------------------------------------------------------------------------
@@ -84,7 +84,10 @@ var (
 func GetPathSegmentSlice(hint int) *[]PathSegment {
 	// SECURITY: For hints larger than pool capacity, allocate directly — a
 	// pooled cap-16 slice would immediately regrow and be dropped at Put
-	// (cap > 32 is not pooled), churning allocations for deep paths.
+	// (cap > 32 is not pooled), churning allocations for deep paths. Hints in
+	// (16, largeSliceSize] still take the cap-16 large pool and may regrow by
+	// append; the threshold trades that churn against extra pooling, and the
+	// only production caller today passes 8.
 	if hint > largeSliceSize {
 		s := make([]PathSegment, 0, hint)
 		return &s

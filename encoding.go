@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -13,7 +14,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"time"
 	"unicode"
 	"unicode/utf16"
 	"unicode/utf8"
@@ -53,6 +53,25 @@ func (n Number) Float64() (float64, error) {
 // Int64 returns the number as an int64.
 func (n Number) Int64() (int64, error) {
 	return strconv.ParseInt(string(n), 10, 64)
+}
+
+// MarshalJSON emits the number literal unchanged (unquoted), matching how
+// encoding/json treats its own json.Number. Without this method every
+// stdlib-marshal path — Marshal/Encode without cfg, the fast encoder's
+// fallback, internal.MarshalJSONToBytes — serialized Number as a QUOTED
+// string ("1.10"), corrupting round-trips for data parsed with
+// PreserveNumbers and later re-encoded without a per-call Config.
+//
+// Config-less paths therefore honor the literal verbatim; the custom encoder
+// (which has config context) still normalizes when PreserveNumbers=false —
+// the same fast-vs-custom split stdlib json.Number already exhibits
+// (json.Number("1e3") encodes as 1e3 on the fast path, 1000 via the custom
+// encoder). An invalid literal is rejected rather than written verbatim.
+func (n Number) MarshalJSON() ([]byte, error) {
+	if !internal.IsValidJSONNumber(string(n)) {
+		return nil, fmt.Errorf("json: invalid number literal %q", string(n))
+	}
+	return []byte(n), nil
 }
 
 // isSpace reports whether the character is a JSON whitespace character.
@@ -396,6 +415,10 @@ func (dec *Decoder) More() bool {
 		if _, err := dec.buf.ReadByte(); err != nil {
 			return false
 		}
+		// Consume bookkeeping: every other read path advances dec.offset per
+		// byte; skipping it here made InputOffset under-report and skewed
+		// later SyntaxError offsets by the number of bytes More() swallowed.
+		dec.offset++
 		b, err = dec.buf.Peek(1)
 		if err != nil {
 			return false
@@ -650,6 +673,13 @@ func (dec *Decoder) parseString() (string, error) {
 			return "", err
 		}
 		dec.offset++
+		// Enforce the stream size limit on every byte so an unterminated
+		// string from a never-ending reader cannot grow the pooled buffer
+		// without bound (mirrors readStringValue; every other read path in
+		// this decoder already checks maxBytes per byte).
+		if dec.maxBytes > 0 && int64(buf.Len()) > dec.maxBytes {
+			return "", fmt.Errorf("streaming value size %d exceeds maximum allowed %d bytes: %w", buf.Len(), dec.maxBytes, ErrSizeLimit)
+		}
 
 		if b == '"' {
 			return buf.String(), nil
@@ -719,11 +749,13 @@ func (dec *Decoder) parseString() (string, error) {
 // When a high surrogate (U+D800-U+DBFF) is encountered, it reads the expected
 // low surrogate (\uDC00-\uDFFF) and returns the decoded Unicode code point.
 func (dec *Decoder) parseSurrogatePair(high rune) (rune, error) {
-	if high < 0xD800 || high > 0xDBFF {
-		return unicode.ReplacementChar, &SyntaxError{
-			msg:    "invalid UTF-16 high surrogate",
-			Offset: dec.offset,
-		}
+	if high >= 0xDC00 && high <= 0xDFFF {
+		// An unpaired LOW surrogate: the \uXXXX sequence is already fully
+		// consumed, so substitute U+FFFD and continue — matching encoding/json,
+		// which accepts lone surrogates of either half with a replacement
+		// char. (Previously this returned a hard error whose message even
+		// said "high surrogate".)
+		return unicode.ReplacementChar, nil
 	}
 
 	// Expect \u followed by low surrogate
@@ -789,7 +821,7 @@ func (dec *Decoder) parseSurrogatePair(high rune) (rune, error) {
 func (dec *Decoder) parseBoolean(first byte) (bool, error) {
 	if first == 't' {
 		expected := "rue"
-		for i, expected_char := range expected {
+		for _, expected_char := range expected {
 			b, err := dec.buf.ReadByte()
 			if err != nil {
 				return false, err
@@ -797,8 +829,9 @@ func (dec *Decoder) parseBoolean(first byte) (bool, error) {
 			dec.offset++
 			if b != byte(expected_char) {
 				return false, &SyntaxError{
-					msg:    fmt.Sprintf("invalid character '%c' in literal true (expecting '%c')", b, expected_char),
-					Offset: dec.offset - int64(i) - 2,
+					msg: fmt.Sprintf("invalid character '%c' in literal true (expecting '%c')", b, expected_char),
+					// Offset includes the offending byte, matching encoding/json.
+					Offset: dec.offset,
 				}
 			}
 		}
@@ -806,7 +839,7 @@ func (dec *Decoder) parseBoolean(first byte) (bool, error) {
 	}
 
 	expected := "alse"
-	for i, expected_char := range expected {
+	for _, expected_char := range expected {
 		b, err := dec.buf.ReadByte()
 		if err != nil {
 			return false, err
@@ -814,8 +847,9 @@ func (dec *Decoder) parseBoolean(first byte) (bool, error) {
 		dec.offset++
 		if b != byte(expected_char) {
 			return false, &SyntaxError{
-				msg:    fmt.Sprintf("invalid character '%c' in literal false (expecting '%c')", b, expected_char),
-				Offset: dec.offset - int64(i) - 2,
+				msg: fmt.Sprintf("invalid character '%c' in literal false (expecting '%c')", b, expected_char),
+				// Offset includes the offending byte, matching encoding/json.
+				Offset: dec.offset,
 			}
 		}
 	}
@@ -824,7 +858,7 @@ func (dec *Decoder) parseBoolean(first byte) (bool, error) {
 
 func (dec *Decoder) parseNull() (any, error) {
 	expected := "ull"
-	for i, expectedChar := range expected {
+	for _, expectedChar := range expected {
 		b, err := dec.buf.ReadByte()
 		if err != nil {
 			return nil, err
@@ -832,8 +866,9 @@ func (dec *Decoder) parseNull() (any, error) {
 		dec.offset++
 		if b != byte(expectedChar) {
 			return nil, &SyntaxError{
-				msg:    fmt.Sprintf("invalid character '%c' in literal null (expecting '%c')", b, expectedChar),
-				Offset: dec.offset - int64(i) - 2,
+				msg: fmt.Sprintf("invalid character '%c' in literal null (expecting '%c')", b, expectedChar),
+				// Offset includes the offending byte, matching encoding/json.
+				Offset: dec.offset,
 			}
 		}
 	}
@@ -865,6 +900,12 @@ func (dec *Decoder) parseNumber(first byte) (any, error) {
 		}
 		dec.offset++
 		buf.WriteByte(actual)
+		// Enforce the stream size limit on every byte so a hostile reader
+		// streaming digits forever cannot grow the buffer without bound
+		// (mirrors readStringValue/parseString).
+		if dec.maxBytes > 0 && int64(buf.Len()) > dec.maxBytes {
+			return nil, fmt.Errorf("streaming value size %d exceeds maximum allowed %d bytes: %w", buf.Len(), dec.maxBytes, ErrSizeLimit)
+		}
 	}
 
 	numStr := buf.String()
@@ -937,7 +978,12 @@ func needsCustomEncodingOpts(cfg Config) bool {
 		cfg.SortKeys ||
 		!cfg.EscapeHTML || // When false, need custom encoding to NOT escape (std lib escapes by default)
 		cfg.FloatPrecision >= 0 ||
-		!cfg.IncludeNulls
+		!cfg.IncludeNulls ||
+		// PreserveNumbers yields the library's Number type (a string-kind named
+		// type). Both fast paths serialize it with plain json.Marshal, which
+		// emits a QUOTED string and corrupts the round-trip (1.10 → "1.10").
+		// The custom encoder's encodeJSONNumber branch preserves the literal.
+		cfg.PreserveNumbers
 }
 
 // Marshal converts any Go value to JSON bytes (similar to json.Marshal)
@@ -963,6 +1009,16 @@ func (p *Processor) Marshal(value any, cfg ...Config) ([]byte, error) {
 	// Encodes directly to []byte to avoid string round-trip
 	if len(cfg) == 0 {
 		if result, ok := fastEncodeSimpleToBytes(value); ok {
+			// Same MaxJSONSize enforcement as encodeWithConfigToBytes' fast
+			// path — previously this early return skipped it, so Marshal
+			// without cfg accepted output the with-cfg form rejects.
+			if int64(len(result)) > p.config.MaxJSONSize {
+				return nil, &JsonsError{
+					Op:      "marshal",
+					Message: fmt.Sprintf("encoded JSON size %d exceeds maximum %d", len(result), p.config.MaxJSONSize),
+					Err:     ErrSizeLimit,
+				}
+			}
 			return result, nil
 		}
 	}
@@ -1394,6 +1450,18 @@ func (e *customEncoder) encodeValue(value any) error {
 		v = v.Elem()
 	}
 
+	// Handle json.Number and the library's Number BEFORE the Marshaler checks:
+	// Number.MarshalJSON (added so stdlib-marshal paths emit the raw literal)
+	// makes the value satisfy the marshaler interface, which would bypass the
+	// PreserveNumbers=false normalization below and change this encoder's
+	// behavior for mixed-config round-trips.
+	if jsonNum, ok := value.(json.Number); ok {
+		return e.encodeJSONNumber(jsonNum)
+	}
+	if num, ok := value.(Number); ok {
+		return e.encodeJSONNumber(json.Number(num))
+	}
+
 	// Check if the value implements json.Marshaler (value-receiver) first.
 	if marshaler, ok := value.(marshaler); ok {
 		data, err := marshaler.MarshalJSON()
@@ -1452,27 +1520,9 @@ func (e *customEncoder) encodeValue(value any) error {
 		}
 	}
 
-	// Handle json.Number type specially to preserve original format
-	if jsonNum, ok := value.(json.Number); ok {
-		return e.encodeJSONNumber(jsonNum)
-	}
-	// Handle the library's Number type (type Number string). It is a distinct
-	// named type not matched by `case string` below; without this it falls
-	// through to reflect.String and is emitted as a quoted JSON string,
-	// corrupting the PreserveNumbers round-trip for map/slice/struct targets
-	// (Parse/Unmarshal into *map[string]any etc. would yield string values).
-	if num, ok := value.(Number); ok {
-		return e.encodeJSONNumber(json.Number(num))
-	}
-
-	// Handle time.Time type specially to convert to RFC3339Nano string,
-	// matching encoding/json (which preserves sub-second precision).
-	if timeVal, ok := value.(time.Time); ok {
-		return e.encodeString(timeVal.Format(time.RFC3339Nano))
-	}
-	if timeVal, ok := v.Interface().(time.Time); ok {
-		return e.encodeString(timeVal.Format(time.RFC3339Nano))
-	}
+	// (No time.Time special case: time.Time implements MarshalJSON with a
+	// value receiver, so the marshaler checks above always handle it first —
+	// the former special-case branches here were unreachable dead code.)
 
 	switch v.Kind() {
 	case reflect.Bool:
@@ -1489,7 +1539,18 @@ func (e *customEncoder) encodeValue(value any) error {
 		return e.encodeFloat(v.Float(), v.Type().Bits())
 	case reflect.String:
 		return e.encodeString(v.String())
-	case reflect.Array, reflect.Slice:
+	case reflect.Slice:
+		if v.Type().Elem().Kind() == reflect.Uint8 {
+			// encoding/json encodes []byte as a base64 string; the previous
+			// fall-through to encodeArray emitted a byte-number array
+			// ([104,105]), silently changing the output shape whenever any
+			// custom option routed values through this encoder. Arrays
+			// ([N]byte) are intentionally NOT base64'd — stdlib only
+			// special-cases slices.
+			return e.encodeString(base64.StdEncoding.EncodeToString(v.Bytes()))
+		}
+		return e.encodeArray(v)
+	case reflect.Array:
 		return e.encodeArray(v)
 	case reflect.Map:
 		return e.encodeMap(v)
@@ -1776,6 +1837,41 @@ func (e *customEncoder) encodeArray(v reflect.Value) error {
 	return nil
 }
 
+// formatMapKey renders a map key as the JSON property name encoding/json
+// would use: string-kind keys verbatim, integer kinds in decimal, bool as
+// true/false, interface keys by their element, and TextMarshaler via its
+// text form. reflect.Value.String() cannot be used — for any non-String kind
+// it returns the "<T Value>" placeholder, which destroyed every non-string
+// key (map[int]string{1,2} → two identical "<int Value>" keys).
+func formatMapKey(k reflect.Value) string {
+	if k.Kind() == reflect.Interface {
+		k = k.Elem()
+	}
+	switch k.Kind() {
+	case reflect.String:
+		return k.String()
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		return strconv.FormatInt(k.Int(), 10)
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
+		return strconv.FormatUint(k.Uint(), 10)
+	case reflect.Bool:
+		if k.Bool() {
+			return "true"
+		}
+		return "false"
+	}
+	if k.CanInterface() {
+		if tm, ok := k.Interface().(encoding.TextMarshaler); ok {
+			if text, err := tm.MarshalText(); err == nil {
+				return string(text)
+			}
+		}
+	}
+	// Exotic key kinds (floats, complex...) — encoding/json rejects these;
+	// approximate with the old placeholder rather than erroring here.
+	return k.String()
+}
+
 func (e *customEncoder) encodeMap(v reflect.Value) error {
 	// encoding/json emits null for a nil map (distinct from {} for an empty
 	// non-nil map). Match that so callers can distinguish "absent" from "empty".
@@ -1787,16 +1883,25 @@ func (e *customEncoder) encodeMap(v reflect.Value) error {
 	e.depth++
 
 	keys := v.MapKeys()
-	// encoding/json always sorts object keys; match it regardless of SortKeys.
-	// Go maps have no insertion order, so unsorted output is nondeterministic
-	// and never useful — sorting makes the output stable and stdlib-compatible.
-	sort.Slice(keys, func(i, j int) bool {
-		return keys[i].String() < keys[j].String()
+	// Pre-render property names once (formatMapKey is not free) and sort the
+	// key/name pairs by name. encoding/json always sorts object keys; match it
+	// regardless of SortKeys — Go maps have no insertion order, so unsorted
+	// output is nondeterministic and never useful.
+	type kvPair struct {
+		key  reflect.Value
+		name string
+	}
+	pairs := make([]kvPair, len(keys))
+	for i, key := range keys {
+		pairs[i] = kvPair{key: key, name: formatMapKey(key)}
+	}
+	sort.Slice(pairs, func(i, j int) bool {
+		return pairs[i].name < pairs[j].name
 	})
 
 	first := true
-	for _, key := range keys {
-		value := v.MapIndex(key)
+	for _, pair := range pairs {
+		value := v.MapIndex(pair.key)
 
 		if !e.config.IncludeNulls && (value.Interface() == nil || (value.Kind() == reflect.Pointer && value.IsNil())) {
 			continue
@@ -1811,7 +1916,7 @@ func (e *customEncoder) encodeMap(v reflect.Value) error {
 			e.writeIndent()
 		}
 
-		if err := e.encodeString(key.String()); err != nil {
+		if err := e.encodeString(pair.name); err != nil {
 			return err
 		}
 
@@ -1826,7 +1931,10 @@ func (e *customEncoder) encodeMap(v reflect.Value) error {
 	}
 
 	e.depth--
-	if e.config.Pretty && len(keys) > 0 {
+	// `first` (post-filter), not len(keys): when IncludeNulls=false removes
+	// every value, the pre-filter length would still write a dangling
+	// indent-only line inside the braces ({\n  \n} instead of {}).
+	if e.config.Pretty && !first {
 		e.writeIndent()
 	}
 	e.buffer.WriteByte('}')
@@ -1835,10 +1943,15 @@ func (e *customEncoder) encodeMap(v reflect.Value) error {
 }
 
 func (e *customEncoder) encodeStruct(v reflect.Value) error {
-	// Use custom encoding when any of these advanced features are enabled
+	// Use custom encoding when any of these advanced features are enabled.
+	// CustomEscapes and DisableEscaping must be listed too: both force the
+	// custom encoder at the routing level (needsCustomEncodingOpts), and
+	// falling through to json.Marshal here silently applied stdlib escaping
+	// to struct string fields while map values honored the config.
 	if !e.config.IncludeNulls || e.config.SortKeys || !e.config.EscapeHTML ||
 		e.config.FloatPrecision >= 0 || !e.config.EscapeNewlines || !e.config.EscapeTabs ||
-		e.config.EscapeSlash || e.config.EscapeUnicode {
+		e.config.EscapeSlash || e.config.EscapeUnicode ||
+		e.config.CustomEscapes != nil || e.config.DisableEscaping {
 		return e.encodeStructCustom(v)
 	}
 
