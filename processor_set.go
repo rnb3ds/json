@@ -1,7 +1,10 @@
 package json
 
 import (
+	"errors"
 	"fmt"
+	"maps"
+	"slices"
 	"time"
 
 	"github.com/cybergodev/json/internal"
@@ -14,12 +17,23 @@ import (
 func (p *Processor) Set(jsonStr, path string, value any, cfg ...Config) (result string, err error) {
 	options, err := p.prepareOperation(jsonStr, path, cfg...)
 	if err != nil {
+		// Match Get's accounting: lifecycle rejections (closed processor,
+		// concurrency limit) are not operation errors, but option and
+		// input/path validation failures are.
+		if !errors.Is(err, ErrProcessorClosed) && !errors.Is(err, ErrConcurrencyLimit) {
+			p.incrementErrorCount()
+		}
 		return jsonStr, err
 	}
 	// Release in reverse-acquire order: options first, then governance slot.
 	// Defers run LIFO, so endGovernedOp (registered first) runs last.
 	defer p.endGovernedOp()
 	defer releaseConfig(options)
+
+	// Count the operation for stats. Get has always incremented the counters;
+	// mutations previously went unreported, so GetStats() undercounted every
+	// write. Failure paths below increment the error counter, as Get does.
+	p.incrementOperationCount()
 
 	// Run registered hooks around the operation. A Before hook may abort; an
 	// After hook may observe or transform the result/error. Registered last so
@@ -36,6 +50,7 @@ func (p *Processor) Set(jsonStr, path string, value any, cfg ...Config) (result 
 			StartTime: time.Now(),
 		}
 		if hookErr := hc.executeBefore(hookCtx); hookErr != nil {
+			p.incrementErrorCount()
 			return jsonStr, hookErr
 		}
 		defer func() {
@@ -45,6 +60,7 @@ func (p *Processor) Set(jsonStr, path string, value any, cfg ...Config) (result 
 
 	data, err := p.parseJSON(jsonStr, "set", path, options)
 	if err != nil {
+		p.incrementErrorCount()
 		return jsonStr, err
 	}
 
@@ -66,6 +82,7 @@ func (p *Processor) Set(jsonStr, path string, value any, cfg ...Config) (result 
 	// Set the value at the specified path
 	err = p.setValueAtPathWithOptions(data, path, value, createPaths)
 	if err != nil {
+		p.incrementErrorCount()
 		// Return original data and detailed error information
 		var setError *JsonsError
 		if _, ok := err.(*rootDataTypeConversionError); ok && createPaths {
@@ -94,6 +111,7 @@ func (p *Processor) Set(jsonStr, path string, value any, cfg ...Config) (result 
 	// double allocation (bytes -> string) and leverage optimized encoder pools
 	result, err = internal.FastMarshalToString(data)
 	if err != nil {
+		p.incrementErrorCount()
 		// Return original data if marshaling fails
 		return jsonStr, &JsonsError{
 			Op:      "set",
@@ -128,9 +146,15 @@ func (p *Processor) SetMultiple(jsonStr string, updates map[string]any, cfg ...C
 	// Prepare options
 	options, err := p.prepareOptions(cfg...)
 	if err != nil {
+		p.incrementErrorCount() // mirrors Get's prepareOptions-failure accounting
 		return jsonStr, err
 	}
 	defer releaseConfig(options)
+
+	// Count the operation for stats — see Set for the rationale (mutations
+	// previously went unreported, undercounting GetStats). Error returns below
+	// increment the error counter, as Get does.
+	p.incrementOperationCount()
 
 	// Validate JSON input. Honor SkipValidation (essential DoS checks only) to
 	// stay consistent with Set/Delete, which route through validateOperationInput.
@@ -138,10 +162,12 @@ func (p *Processor) SetMultiple(jsonStr string, updates map[string]any, cfg ...C
 	// ignoring SkipValidation — a behavioral divergence from Set.
 	if options.SkipValidation {
 		if err := p.validateInputEssential(jsonStr); err != nil {
+			p.incrementErrorCount()
 			return jsonStr, err
 		}
 	} else {
 		if err := p.validateInputForOptions(jsonStr, options); err != nil {
+			p.incrementErrorCount()
 			return jsonStr, err
 		}
 	}
@@ -150,7 +176,13 @@ func (p *Processor) SetMultiple(jsonStr string, updates map[string]any, cfg ...C
 	// matching validateOperationInput's policy — so a malformed index can never
 	// silently corrupt data even under SkipValidation. Under SkipValidation the
 	// cheaper syntax-only internal.ValidatePath is used, as in the single-path path.
-	for path := range updates {
+	// Iterate paths in sorted order (see sortedMapKeys): map iteration order
+	// is randomized per call, which made the FIRST reported invalid path —
+	// and therefore the returned error — nondeterministic.
+	// The sorted path slice is computed once and reused by the application
+	// loop below (it previously sorted the same keys a second time).
+	sortedPaths := slices.Sorted(maps.Keys(updates))
+	for _, path := range sortedPaths {
 		var pathErr error
 		if options.SkipValidation {
 			pathErr = internal.ValidatePath(path)
@@ -158,6 +190,7 @@ func (p *Processor) SetMultiple(jsonStr string, updates map[string]any, cfg ...C
 			pathErr = p.validatePath(path)
 		}
 		if pathErr != nil {
+			p.incrementErrorCount()
 			return jsonStr, &JsonsError{
 				Op:      "set_multiple",
 				Path:    path,
@@ -171,6 +204,7 @@ func (p *Processor) SetMultiple(jsonStr string, updates map[string]any, cfg ...C
 	var data any
 	err = p.Parse(jsonStr, &data, *options)
 	if err != nil {
+		p.incrementErrorCount()
 		return jsonStr, &JsonsError{
 			Op:      "set_multiple",
 			Message: fmt.Sprintf("failed to parse JSON: %v", err),
@@ -178,15 +212,12 @@ func (p *Processor) SetMultiple(jsonStr string, updates map[string]any, cfg ...C
 		}
 	}
 
-	// Create a deep copy of the data for modification attempts
-	dataCopy, copyErr := deepCopy(data)
-	if copyErr != nil {
-		return jsonStr, &JsonsError{
-			Op:      "set_multiple",
-			Message: fmt.Sprintf("failed to create data copy: %v", copyErr),
-			Err:     copyErr,
-		}
-	}
+	// The parsed data is modified directly, without a deep copy — the same
+	// contract Set documents. p.Parse always builds a fresh tree via
+	// json.Unmarshal, so no cached parse result (Get's "parse:" entries) is
+	// ever shared with this scope, and on failure the original jsonStr is
+	// returned unchanged. The former defensive deepCopy doubled the memory
+	// traffic of every SetMultiple call for no isolation benefit.
 
 	// Determine if we should create paths. A per-call Config (when supplied)
 	// fully overrides the processor's setting — including disabling CreatePaths
@@ -198,12 +229,18 @@ func (p *Processor) SetMultiple(jsonStr string, updates map[string]any, cfg ...C
 		createPaths = options.CreatePaths
 	}
 
-	// Apply all updates on the copy
+	// Apply all updates on the parsed data
 	var lastError error
 	successCount := 0
 
-	for path, value := range updates {
-		err := p.setValueAtPathWithOptions(dataCopy, path, value, createPaths)
+	// Sorted application order (see sortedMapKeys): updates are applied
+	// sequentially to the same tree, so with overlapping keys (e.g. "a" and
+	// "a.b") the final document previously depended on random map order.
+	// Ascending order is deterministic: "a" is set before "a.b", so the
+	// deeper path always lands in the freshly created container.
+	for _, path := range sortedPaths {
+		value := updates[path]
+		err := p.setValueAtPathWithOptions(data, path, value, createPaths)
 		if err != nil {
 			// Handle root data type conversion errors
 			if _, ok := err.(*rootDataTypeConversionError); ok && createPaths {
@@ -214,6 +251,7 @@ func (p *Processor) SetMultiple(jsonStr string, updates map[string]any, cfg ...C
 					Err:     err,
 				}
 				if !options.ContinueOnError {
+					p.incrementErrorCount()
 					return jsonStr, lastError
 				}
 			} else {
@@ -224,6 +262,7 @@ func (p *Processor) SetMultiple(jsonStr string, updates map[string]any, cfg ...C
 					Err:     err,
 				}
 				if !options.ContinueOnError {
+					p.incrementErrorCount()
 					return jsonStr, lastError
 				}
 			}
@@ -234,6 +273,7 @@ func (p *Processor) SetMultiple(jsonStr string, updates map[string]any, cfg ...C
 
 	// If no updates were successful and we have errors, return original data and error
 	if successCount == 0 && lastError != nil {
+		p.incrementErrorCount()
 		return jsonStr, &JsonsError{
 			Op:      "set_multiple",
 			Message: fmt.Sprintf("all %d updates failed, last error: %v", len(updates), lastError),
@@ -248,8 +288,9 @@ func (p *Processor) SetMultiple(jsonStr string, updates map[string]any, cfg ...C
 
 	// Convert modified data back to JSON string
 	// PERFORMANCE: Use FastMarshalToString instead of json.Marshal
-	result, err := internal.FastMarshalToString(dataCopy)
+	result, err := internal.FastMarshalToString(data)
 	if err != nil {
+		p.incrementErrorCount()
 		// Return original data if marshaling fails
 		return jsonStr, &JsonsError{
 			Op:      "set_multiple",
@@ -269,7 +310,7 @@ func (p *Processor) SetMultiple(jsonStr string, updates map[string]any, cfg ...C
 //
 //	result, err := processor.SetCreate(data, "users[0].profile.name", "Alice")
 func (p *Processor) SetCreate(jsonStr, path string, value any, cfg ...Config) (string, error) {
-	addOpts := mergeOptionsWithOverride(cfg, func(o *Config) {
+	addOpts := p.mergeOptionsWithOverride(cfg, func(o *Config) {
 		o.CreatePaths = true
 	})
 	return p.Set(jsonStr, path, value, addOpts)
@@ -283,7 +324,7 @@ func (p *Processor) SetCreate(jsonStr, path string, value any, cfg ...Config) (s
 //
 //	result, err := processor.SetMultipleCreate(data, map[string]any{"user.name": "Alice", "user.age": 30})
 func (p *Processor) SetMultipleCreate(jsonStr string, updates map[string]any, cfg ...Config) (string, error) {
-	addOpts := mergeOptionsWithOverride(cfg, func(o *Config) {
+	addOpts := p.mergeOptionsWithOverride(cfg, func(o *Config) {
 		o.CreatePaths = true
 	})
 	return p.SetMultiple(jsonStr, updates, addOpts)

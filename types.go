@@ -267,9 +267,7 @@ func (c *Config) AddDangerousPattern(pattern DangerousPattern) {
 // This is a performance optimization for scenarios where the same JSON is queried multiple times.
 // OPTIMIZED: Pre-parsing avoids repeated JSON parsing overhead for repeated queries.
 type ParsedJSON struct {
-	data      any
-	hash      uint64
-	processor *Processor
+	data any
 }
 
 // Data returns the underlying parsed data
@@ -281,14 +279,14 @@ func (p *ParsedJSON) Data() any {
 }
 
 // Release releases resources held by ParsedJSON.
-// After calling Release, Data() returns nil and the processor reference is cleared.
-// Call this when finished with a pre-parsed JSON document to allow GC of the processor.
+// After calling Release, Data() returns nil.
+// Call this when finished with a pre-parsed JSON document so the parsed tree
+// can be garbage-collected even while the ParsedJSON itself is still referenced.
 func (p *ParsedJSON) Release() {
 	if p == nil {
 		return
 	}
 	p.data = nil
-	p.processor = nil
 }
 
 // Stats provides processor performance statistics
@@ -494,7 +492,7 @@ func (e *MarshalerError) Unwrap() error { return e.Err }
 // accessing this internal implementation detail. The "Marker" suffix indicates this
 // is a sentinel value for marking items, not a data container.
 //
-// IMPORTANT: Do not reassign this variable. Use IsDeletedMarker() for comparisons.
+// IMPORTANT: Do not reassign this variable. Use isDeletedMarker() for comparisons.
 var deletedMarker = &struct{}{} // deleted marker - empty struct for pointer identity
 
 // isDeletedMarker checks if a value is the deleted marker sentinel.
@@ -753,8 +751,9 @@ func (r AccessResult) AsString() (string, error) {
 	if str, ok := r.Value.(string); ok {
 		return str, nil
 	}
-	// SECURITY: Return error for non-string types instead of silent conversion
-	return "", fmt.Errorf("cannot convert %T to string: type mismatch", r.Value)
+	// SECURITY: Return error for non-string types instead of silent conversion.
+	// Wraps the ErrTypeMismatch sentinel (as documented) so errors.Is works.
+	return "", fmt.Errorf("%w: cannot convert %T to string", ErrTypeMismatch, r.Value)
 }
 
 // AsStringConverted converts the result to string using fmt.Sprintf formatting.

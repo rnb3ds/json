@@ -232,7 +232,7 @@ json.ForeachWithPath(data, basePath, func(key any, item *json.IterableValue) {
 | `ForeachWithPath(data, path, callback)` | Path-specific iteration | Specific JSON subset |
 | `ForeachWithPathAndControl(data, path, callback)` | With flow control | Early termination |
 | `ForeachWithPathAndIterator(data, path, callback)` | With path tracking | Path-aware iteration |
-| `ForeachReturn(data, callback)` | Returns original JSON string | Read-only iteration |
+| `ForeachReturn(data, callback)` | Returns re-encoded string reflecting mutations | Iteration with in-place edits |
 | `ForeachWithError(data, path, callback)` | Error-returning callback | Error-aware iteration |
 | `ForeachNestedWithError(data, callback)` | Recursive with errors | Nested error-aware iteration |
 | `ForeachFile(path, callback)` | File-based iteration | Large file processing |
@@ -425,15 +425,21 @@ fmt.Printf("Health status: %v\n", health.Healthy)
 ### JSON Schema Validation
 
 ```go
-schema := &json.Schema{
+// NOTE: length/range constraints (MinLength, MaxLength, Minimum, Maximum,
+// MinItems, MaxItems, MultipleOf) are enforced only when the schema is built
+// with NewSchemaWithConfig — a struct literal cannot set the internal
+// "constraint present" flags, so such constraints are silently skipped.
+minLen, maxLen := 1, 100
+zero, maxAge := 0.0, 150.0
+schema := json.NewSchemaWithConfig(json.SchemaConfig{
     Type: "object",
     Properties: map[string]*json.Schema{
-        "name": {Type: "string", MinLength: 1, MaxLength: 100},
-        "age":  {Type: "number", Minimum: 0, Maximum: 150},
-        "email": {Type: "string", Format: "email"},
+        "name":  json.NewSchemaWithConfig(json.SchemaConfig{Type: "string", MinLength: &minLen, MaxLength: &maxLen}),
+        "age":   json.NewSchemaWithConfig(json.SchemaConfig{Type: "number", Minimum: &zero, Maximum: &maxAge}),
+        "email": json.NewSchemaWithConfig(json.SchemaConfig{Type: "string", Format: "email"}),
     },
     Required: []string{"name", "age"},
-}
+})
 
 processor, err := json.New(json.DefaultConfig())
 if err != nil {
@@ -457,9 +463,10 @@ if json.Valid([]byte(jsonStr)) {
     fmt.Println("Valid JSON")
 }
 
-// Note: isValidJSON and isValidPath are unexported (internal).
+// Note: isValidJSON is unexported (internal).
 // Use json.Valid([]byte(jsonStr)) for public JSON validation.
-// Path operations validate paths internally before execution.
+// Path operations validate paths internally before execution
+// (there is no public path-validation function).
 ```
 
 ---

@@ -195,9 +195,11 @@ type Number string
 func (n Number) String() string
 func (n Number) Float64() (float64, error)
 func (n Number) Int64() (int64, error)
+func (n Number) MarshalJSON() ([]byte, error)
 
 type Token any
 type Delim rune
+func (d Delim) String() string
 ```
 
 `Number` represents a JSON number literal, preserving exact representation. `Token` holds a value of one of these types: `Delim`, `bool`, `float64`, `Number`, `string`, or `nil`. `Delim` represents one of the four JSON delimiters `[ ] { }`.
@@ -466,7 +468,7 @@ result, err := json.Set(data, "numbers[+]", moreItems)
 **Comparison with old approach:**
 ```go
 // OLD WAY: 3 operations
-members, _ := json.GetArray(data, "users")           // Step 1: Get
+members := json.GetArray(data, "users")              // Step 1: Get
 members = append(members, newUser)                   // Step 2: Append
 result, _ := json.Set(data, "users", members)        // Step 3: Set back
 
@@ -904,7 +906,7 @@ Recursively iterates through all nested levels.
 func ForeachWithPathAndControl(jsonStr, path string, fn func(key any, value any) IteratorControl, cfg ...Config) error
 ```
 
-Iterates with early termination support using internal `IteratorControl` type.
+Iterates with early termination support using the exported `IteratorControl` type.
 
 **Note:** For user-facing iteration with control, prefer `ForeachWithPath` with `IterableValue`:
 
@@ -926,9 +928,9 @@ json.ForeachWithPath(data, "users", func(key any, item *json.IterableValue) {
 func ForeachReturn(jsonStr string, fn func(key any, item *IterableValue), cfg ...Config) (string, error)
 ```
 
-Iterates over JSON and returns the JSON string. Both the package-level function and the Processor method deep-copy the data, run the callback, and re-encode the result, so the returned string is a re-encoded copy that reflects any mutations made through the callback's `*IterableValue`.
+Iterates over JSON and returns the JSON string. Both the package-level function and the Processor method deep-copy the data, run the callback, and re-encode the result, so the returned string reflects mutations made in the callback through the container returned by `item.GetData()` (e.g., mutating the underlying map/slice). `*IterableValue` itself exposes no setter methods.
 
-**Note:** The callback receives data for reading. Use `json.Set()` for modifications.
+**Note:** For explicit path-based modifications, use `json.Set()`.
 
 ---
 
@@ -1234,14 +1236,20 @@ Validates JSON data against a schema.
 
 **Example:**
 ```go
-schema := &json.Schema{
+// Build schemas with NewSchemaWithConfig: length/range constraints
+// (MinLength, MaxLength, Minimum, Maximum, MinItems, MaxItems, MultipleOf)
+// are enforced only via its pointer fields — a struct literal cannot set the
+// internal "constraint present" flags, so such constraints are silently
+// skipped.
+minLen, zero := 1, 0.0
+schema := json.NewSchemaWithConfig(json.SchemaConfig{
     Type: "object",
     Properties: map[string]*json.Schema{
-        "name": {Type: "string", MinLength: 1},
-        "age":  {Type: "number", Minimum: 0},
+        "name": json.NewSchemaWithConfig(json.SchemaConfig{Type: "string", MinLength: &minLen}),
+        "age":  json.NewSchemaWithConfig(json.SchemaConfig{Type: "number", Minimum: &zero}),
     },
     Required: []string{"name"},
-}
+})
 errors, err := json.ValidateSchema(data, schema)
 ```
 
@@ -1255,7 +1263,7 @@ errors, err := json.ValidateSchema(data, schema)
 
 ### IsValidPath
 
-> **Note:** This function is unexported (`isValidPath`). Use path operations which validate paths internally.
+> **Note:** No `isValidPath` helper exists in this package (not even unexported). JSON paths are validated internally before every operation — syntax, bracket and array-index checks, depth/length limits, and security checks (null bytes, traversal, zero-width characters). There is no public path-validation function; `json.Valid([]byte(jsonStr))` validates JSON *content*, not paths.
 
 ---
 
@@ -1701,9 +1709,9 @@ func (p *Processor) Delete(jsonStr, path string, cfg ...Config) (string, error)
 func (p *Processor) DeleteClean(jsonStr, path string, cfg ...Config) (string, error)
 
 // Encoding/Decoding
-func (p *Processor) Marshal(v any, cfg ...Config) ([]byte, error)
-func (p *Processor) Unmarshal(data []byte, v any, cfg ...Config) error
-func (p *Processor) MarshalIndent(v any, prefix, indent string, cfg ...Config) ([]byte, error)
+func (p *Processor) Marshal(value any, cfg ...Config) ([]byte, error)
+func (p *Processor) Unmarshal(data []byte, value any, cfg ...Config) error
+func (p *Processor) MarshalIndent(value any, prefix, indent string, cfg ...Config) ([]byte, error)
 func (p *Processor) Encode(value any, cfg ...Config) (string, error)
 func (p *Processor) EncodeWithConfig(value any, cfg ...Config) (string, error)
 func (p *Processor) EncodePretty(value any, cfg ...Config) (string, error)
@@ -1736,20 +1744,20 @@ func (p *Processor) GetStats() Stats
 func (p *Processor) GetHealthStatus() HealthStatus
 
 // Iteration
-func (p *Processor) Foreach(jsonStr string, fn func(key any, item *IterableValue))
-func (p *Processor) ForeachWithPath(jsonStr, path string, fn func(key any, item *IterableValue)) error
-func (p *Processor) ForeachWithPathAndControl(jsonStr, path string, fn func(key any, value any) IteratorControl) error
-func (p *Processor) ForeachWithPathAndIterator(jsonStr, path string, fn func(key any, item *IterableValue, currentPath string) IteratorControl) error
-func (p *Processor) ForeachReturn(jsonStr string, fn func(key any, item *IterableValue)) (string, error)
-func (p *Processor) ForeachNested(jsonStr string, fn func(key any, item *IterableValue))
-func (p *Processor) ForeachWithError(jsonStr, path string, fn func(key any, item *IterableValue) error) error
-func (p *Processor) ForeachNestedWithError(jsonStr string, fn func(key any, item *IterableValue) error) error
+func (p *Processor) Foreach(jsonStr string, fn func(key any, item *IterableValue), cfg ...Config)
+func (p *Processor) ForeachWithPath(jsonStr, path string, fn func(key any, item *IterableValue), cfg ...Config) error
+func (p *Processor) ForeachWithPathAndControl(jsonStr, path string, fn func(key any, value any) IteratorControl, cfg ...Config) error
+func (p *Processor) ForeachWithPathAndIterator(jsonStr, path string, fn func(key any, item *IterableValue, currentPath string) IteratorControl, cfg ...Config) error
+func (p *Processor) ForeachReturn(jsonStr string, fn func(key any, item *IterableValue), cfg ...Config) (string, error)
+func (p *Processor) ForeachNested(jsonStr string, fn func(key any, item *IterableValue), cfg ...Config)
+func (p *Processor) ForeachWithError(jsonStr, path string, fn func(key any, item *IterableValue) error, cfg ...Config) error
+func (p *Processor) ForeachNestedWithError(jsonStr string, fn func(key any, item *IterableValue) error, cfg ...Config) error
 
 // File Iteration
-func (p *Processor) ForeachFile(filePath string, fn func(key any, item *IterableValue) error) error
-func (p *Processor) ForeachFileWithPath(filePath, path string, fn func(key any, item *IterableValue) error) error
-func (p *Processor) ForeachFileChunked(filePath string, chunkSize int, fn func(chunk []*IterableValue) error) error
-func (p *Processor) ForeachFileNested(filePath string, fn func(key any, item *IterableValue) error) error
+func (p *Processor) ForeachFile(filePath string, fn func(key any, item *IterableValue) error, cfg ...Config) error
+func (p *Processor) ForeachFileWithPath(filePath, path string, fn func(key any, item *IterableValue) error, cfg ...Config) error
+func (p *Processor) ForeachFileChunked(filePath string, chunkSize int, fn func(chunk []*IterableValue) error, cfg ...Config) error
+func (p *Processor) ForeachFileNested(filePath string, fn func(key any, item *IterableValue) error, cfg ...Config) error
 
 // JSONL Streaming
 func (p *Processor) StreamJSONL(reader io.Reader, fn func(lineNum int, item *IterableValue) error) error
@@ -2030,7 +2038,7 @@ func (it *BatchIterator) CurrentIndex() int
 func (it *BatchIterator) Remaining() int
 ```
 
-Processes arrays in batches for efficient bulk operations. When `Config` is provided, `Config.MaxBatchSize` is used as the batch size.
+Processes arrays in batches for efficient bulk operations. The batch size is `Config.MaxBatchSize` (default: 2,000); when no `Config` is provided, `DefaultConfig()` supplies it.
 
 **Example:**
 ```go
@@ -2064,9 +2072,10 @@ A processor for NDJSON/JSONL files with line-by-line processing.
 type ParsedJSON struct { /* unexported fields */ }
 
 func (p *ParsedJSON) Data() any
+func (p *ParsedJSON) Release()
 ```
 
-A pre-parsed JSON document for reuse across multiple operations. Create with `Processor.PreParse`, then use `Processor.GetFromParsed` and `Processor.SetFromParsed` for efficient repeated access.
+A pre-parsed JSON document for reuse across multiple operations. Create with `Processor.PreParse`, then use `Processor.GetFromParsed` and `Processor.SetFromParsed` for efficient repeated access. Call `Release()` when done to return the value to the internal pool.
 
 **PreParse Example:**
 ```go

@@ -25,12 +25,14 @@ func NeedsDotBeforeByte(prevChar byte) bool {
 		prevChar == '_' || prevChar == ']' || prevChar == '}'
 }
 
-// NeedsDotBefore determines if a dot should be inserted before a character
+// NeedsDotBefore determines if a dot should be inserted before a character.
+// Delegates to the byte predicate: every accepted character is ASCII, so the
+// two forms cannot diverge if one is ever extended.
 func NeedsDotBefore(prevChar rune) bool {
-	return (prevChar >= 'a' && prevChar <= 'z') ||
-		(prevChar >= 'A' && prevChar <= 'Z') ||
-		(prevChar >= '0' && prevChar <= '9') ||
-		prevChar == '_' || prevChar == ']' || prevChar == '}'
+	if prevChar >= 0 && prevChar <= 0x7F {
+		return NeedsDotBeforeByte(byte(prevChar))
+	}
+	return false
 }
 
 // PreprocessPath adds dots before brackets/braces where needed

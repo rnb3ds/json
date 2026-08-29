@@ -1351,36 +1351,6 @@ func TestEncoding_EncodeStruct(t *testing.T) {
 	})
 }
 
-// TestEncoding_EncodeJSONNumber tests encodeJSONNumber paths (table-driven).
-func TestEncoding_EncodeJSONNumber(t *testing.T) {
-	p, _ := New()
-	defer p.Close()
-
-	tests := []struct {
-		name     string
-		preserve bool // Config.PreserveNumbers
-		num      string
-	}{
-		{"preserve numbers", true, "3.14159"},
-		{"integer number", false, "42"},
-		{"float number", false, "3.14"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			cfg := DefaultConfig()
-			cfg.PreserveNumbers = tt.preserve
-			result, err := p.EncodeWithConfig(map[string]any{"num": json.Number(tt.num)}, cfg)
-			if err != nil {
-				t.Fatalf("EncodeWithConfig error: %v", err)
-			}
-			if !strings.Contains(result, tt.num) {
-				t.Errorf("result %q should contain %q", result, tt.num)
-			}
-		})
-	}
-}
-
 // ---------------------------------------------------------------------------
 // FIX-001: encoding boundary & error-path coverage
 // ---------------------------------------------------------------------------

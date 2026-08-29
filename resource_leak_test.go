@@ -465,27 +465,6 @@ func TestConcurrentProcessorOperations(t *testing.T) {
 // RESOURCE MANAGER COUNTER TESTS
 // ============================================================================
 
-// TestResourceManagerMapCounter verifies that map pool operations work correctly
-func TestResourceManagerMapCounter(t *testing.T) {
-	// Get and return maps from pool - should not panic
-	for i := 0; i < 10; i++ {
-		m := internal.GetStreamingMap(8)
-		internal.PutStreamingMap(m)
-	}
-
-	// Put nil map - should not panic
-	internal.PutStreamingMap(nil)
-
-	// Put large map - should not panic
-	largeMap := make(map[string]any, 100)
-	for i := 0; i < 100; i++ {
-		largeMap[fmt.Sprintf("key%d", i)] = i
-	}
-	m := internal.GetStreamingMap(8)
-	_ = m
-	internal.PutStreamingMap(largeMap)
-}
-
 // ============================================================================
 // PARALLEL ITERATOR CLOSE TESTS
 // ============================================================================
@@ -1101,21 +1080,23 @@ func TestGovernance_StreamJSONLParallelUnderLimit(t *testing.T) {
 		sb.WriteString("}\n")
 	}
 
-	count := 0
+	// The callback runs concurrently on the worker pool, so the counter must
+	// be atomic (a plain int raced and lost updates under -race).
+	var count atomic.Int64
 	err = p.StreamJSONLParallelWithContext(
 		context.Background(),
 		strings.NewReader(sb.String()),
 		4,
 		func(lineNum int, item *IterableValue) error {
-			count++
+			count.Add(1)
 			return nil
 		},
 	)
 	if err != nil {
 		t.Fatalf("StreamJSONLParallelWithContext under MaxConcurrency=1: %v", err)
 	}
-	if count != 20 {
-		t.Fatalf("expected 20 lines, got %d", count)
+	if count.Load() != 20 {
+		t.Fatalf("expected 20 lines, got %d", count.Load())
 	}
 }
 

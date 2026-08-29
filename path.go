@@ -283,11 +283,6 @@ func (p *Processor) splitPath(path string, segments []internal.PathSegment) []in
 	return internal.SplitPathIntoSegments(processedPath, segments)
 }
 
-// preprocessPath preprocesses a path string (exported for testing)
-func (p *Processor) preprocessPath(path string, sb *strings.Builder) string {
-	return internal.PreprocessPath(path, sb)
-}
-
 func (p *Processor) parsePath(path string) ([]string, error) {
 	if path == "" {
 		return []string{}, nil
@@ -312,16 +307,6 @@ func (p *Processor) parsePath(path string) ([]string, error) {
 
 func (p *Processor) handleDistributedOperation(data any, segments []internal.PathSegment) (any, error) {
 	return p.getValueWithDistributedOperation(data, internal.ReconstructPath(segments))
-}
-
-// parseArraySegment parses array access segments like [0], [1:3], etc.
-func (p *Processor) parseArraySegment(part string, segments []internal.PathSegment) []internal.PathSegment {
-	return internal.ParseArraySegment(part, segments)
-}
-
-// parseExtractionSegment parses extraction segments like {key}, {flat:key}, etc.
-func (p *Processor) parseExtractionSegment(part string, segments []internal.PathSegment) []internal.PathSegment {
-	return internal.ParseExtractionSegment(part, segments)
 }
 
 func (p *Processor) navigateToPath(data any, path string) (any, error) {

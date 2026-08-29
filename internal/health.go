@@ -100,8 +100,12 @@ func (hc *HealthChecker) checkMemoryUsage() CheckResult {
 	var alloc uint64
 	if hc.metrics != nil {
 		alloc = hc.metrics.GetMetrics().RuntimeMemStats.Alloc
-	} else {
-		// Fallback: direct read when no metrics collector available
+	}
+	if alloc == 0 {
+		// Fallback: direct read when no metrics collector is available, or
+		// when the collector exists but has not recorded an operation yet
+		// (RuntimeMemStats is only refreshed inside RecordOperation) — the
+		// cached zero would otherwise report Healthy regardless of actual usage.
 		var memStats runtime.MemStats
 		runtime.ReadMemStats(&memStats)
 		alloc = memStats.Alloc

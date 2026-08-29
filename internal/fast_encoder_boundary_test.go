@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"math"
 	"reflect"
-	"strings"
 	"testing"
 	"time"
 )
@@ -64,32 +63,6 @@ func TestIsEmptyValue(t *testing.T) {
 }
 
 func ptrInt(n int) *int { return &n }
-
-// --- SetHTMLEscape + EncodeString (fast_encoder.go:255/262, 0% coverage) ---
-
-func TestFastEncoder_SetHTMLEscape(t *testing.T) {
-	t.Run("html_escaped", func(t *testing.T) {
-		e := GetEncoder()
-		defer PutEncoder(e)
-		e.SetHTMLEscape(true)
-		e.EncodeString("<a>&")
-		out := string(e.buf)
-		// HTML-special chars must be escaped as \u00XX, not emitted raw.
-		if !strings.Contains(out, `<`) || !strings.Contains(out, `&`) {
-			t.Errorf("expected HTML-escaped output, got %q", out)
-		}
-	})
-	t.Run("raw_when_disabled", func(t *testing.T) {
-		e := GetEncoder()
-		defer PutEncoder(e)
-		e.SetHTMLEscape(false)
-		e.EncodeString("<a>")
-		out := string(e.buf)
-		if !strings.Contains(out, "<a>") {
-			t.Errorf("expected raw <a> when HTML escape disabled, got %q", out)
-		}
-	})
-}
 
 // --- FastParseFloat special-value rejection (fast_encoder.go:1298, 69%) ---
 

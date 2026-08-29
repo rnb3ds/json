@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"iter"
 	"math"
 	"reflect"
 	"sort"
@@ -14,19 +15,40 @@ import (
 	"unicode/utf8"
 )
 
-// sortedMapKeys returns the keys of m in lexicographic order.
+// SortedEntries iterates the entries of m in lexicographic key order.
 //
 // encoding/json always emits object keys sorted; the fast encoder matches
 // that so its output is deterministic and byte-compatible with the standard
 // library (a map[string]any round-trip must not depend on Go's random map
 // iteration order).
-func sortedMapKeys[V any](m map[string]V) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
+//
+// PERFORMANCE: maps with at most one entry are ranged directly — no key slice
+// is allocated or sorted. Profiling (P-001) showed that allocation was ~10%
+// of ALL allocated objects on the Set path, where the encoded result object
+// is very often a single-key map. Multi-entry maps keep the classic
+// collect-and-sort loop; range-over-func compiles the caller's loop body
+// inline, so the multi-key path costs the same as a plain loop.
+func SortedEntries[V any](m map[string]V) iter.Seq2[string, V] {
+	return func(yield func(string, V) bool) {
+		if len(m) <= 1 {
+			for k, v := range m {
+				if !yield(k, v) {
+					return
+				}
+			}
+			return
+		}
+		keys := make([]string, 0, len(m))
+		for k := range m {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			if !yield(k, m[k]) {
+				return
+			}
+		}
 	}
-	sort.Strings(keys)
-	return keys
 }
 
 // ============================================================================
@@ -57,8 +79,37 @@ var needsEscapeTable = [256]bool{
 
 // FastEncoder provides fast JSON encoding without reflection for common types
 type FastEncoder struct {
-	buf        []byte
-	htmlEscape bool // SECURITY: When true, escape <, >, & to \u003c, \u003e, \u0026
+	buf []byte
+	// depth tracks container nesting (set by EncodeMap/EncodeArray) so a
+	// self-referential value (m["self"] = m) errors out instead of recursing
+	// until the goroutine stack is exhausted - a fatal, unrecoverable crash.
+	depth int
+}
+
+// maxEncodeDepth bounds container nesting during encoding. MaxNestingDepth is
+// the package-wide limit applied to decoding; encoding uses the same bound.
+const maxEncodeDepth = MaxNestingDepth
+
+// enterContainer increments the nesting depth and reports an error once it
+// exceeds maxEncodeDepth (a possible reference cycle). leaveContainer pairs
+// with it on the way out.
+func (e *FastEncoder) enterContainer() error {
+	e.depth++
+	if e.depth > maxEncodeDepth {
+		e.depth--
+		return fmt.Errorf("json: unsupported value: nesting exceeds maximum depth %d (possible reference cycle)", maxEncodeDepth)
+	}
+	return nil
+}
+
+// leaveContainer decrements the nesting depth set by enterContainer.
+func (e *FastEncoder) leaveContainer() {
+	e.depth--
+}
+
+// writeNull emits a JSON null literal.
+func (e *FastEncoder) writeNull() {
+	e.buf = append(e.buf, "null"...)
 }
 
 // encoderPool pools encoder objects to reduce allocations
@@ -94,7 +145,7 @@ var largeEncoderPool = sync.Pool{
 func GetEncoder() *FastEncoder {
 	e := encoderPool.Get().(*FastEncoder)
 	e.buf = e.buf[:0]
-	e.htmlEscape = false
+	e.depth = 0
 	return e
 }
 
@@ -113,7 +164,7 @@ func GetEncoderWithSize(hint int) *FastEncoder {
 		e = largeEncoderPool.Get().(*FastEncoder)
 	}
 	e.buf = e.buf[:0]
-	e.htmlEscape = false
+	e.depth = 0
 	return e
 }
 
@@ -182,40 +233,116 @@ func (e *FastEncoder) EncodeValue(v any) error {
 	case uint64:
 		e.EncodeUint(val)
 	case float32:
+		// encoding/json rejects non-finite floats; EncodeFloat would silently
+		// emit null, so reject here to keep the fast path stdlib-compatible.
+		if math.IsNaN(float64(val)) || math.IsInf(float64(val), 0) {
+			return errUnsupportedFloat(float64(val), 32)
+		}
 		e.EncodeFloat(float64(val), 32)
 	case float64:
+		if math.IsNaN(val) || math.IsInf(val, 0) {
+			return errUnsupportedFloat(val, 64)
+		}
 		e.EncodeFloat(val, 64)
 	case bool:
 		e.EncodeBool(val)
 	case time.Time:
 		e.EncodeTime(val)
 	case []byte:
+		// encoding/json emits null for a nil slice, distinct from "" for an
+		// empty non-nil one.
+		if val == nil {
+			e.writeNull()
+			return nil
+		}
 		e.EncodeBase64(val)
 	case map[string]any:
+		if val == nil {
+			e.writeNull()
+			return nil
+		}
 		return e.EncodeMap(val)
 	case map[string]string:
+		if val == nil {
+			e.writeNull()
+			return nil
+		}
 		return e.EncodeMapStringString(val)
 	case map[string]int:
+		if val == nil {
+			e.writeNull()
+			return nil
+		}
 		return e.EncodeMapStringInt(val)
 	case map[string]int64:
+		if val == nil {
+			e.writeNull()
+			return nil
+		}
 		return e.EncodeMapStringInt64(val)
 	case map[string]float64:
+		if val == nil {
+			e.writeNull()
+			return nil
+		}
 		return e.EncodeMapStringFloat64(val)
 	case []any:
+		if val == nil {
+			e.writeNull()
+			return nil
+		}
 		return e.EncodeArray(val)
 	case []string:
+		if val == nil {
+			e.writeNull()
+			return nil
+		}
 		e.EncodeStringSlice(val)
 	case []int:
+		if val == nil {
+			e.writeNull()
+			return nil
+		}
 		e.EncodeIntSlice(val)
 	case []int32:
+		if val == nil {
+			e.writeNull()
+			return nil
+		}
 		e.EncodeInt32Slice(val)
 	case []int64:
+		if val == nil {
+			e.writeNull()
+			return nil
+		}
 		e.EncodeInt64Slice(val)
 	case []uint64:
+		if val == nil {
+			e.writeNull()
+			return nil
+		}
 		e.EncodeUint64Slice(val)
 	case []float32:
+		if val == nil {
+			e.writeNull()
+			return nil
+		}
+		for _, f := range val {
+			if math.IsNaN(float64(f)) || math.IsInf(float64(f), 0) {
+				return errUnsupportedFloat(float64(f), 32)
+			}
+		}
 		e.EncodeFloat32Slice(val)
 	case []float64:
+		if val == nil {
+			e.writeNull()
+			return nil
+		}
+		for _, f := range val {
+			if math.IsNaN(f) || math.IsInf(f, 0) {
+				return errUnsupportedFloat(f, 64)
+			}
+		}
 		e.EncodeFloatSlice(val)
 	case json.Number:
 		// SECURITY: Validate json.Number content before appending
@@ -227,7 +354,18 @@ func (e *FastEncoder) EncodeValue(v any) error {
 	case json.RawMessage:
 		// SECURITY: Validate RawMessage is valid JSON before appending
 		// This prevents malformed JSON from corrupting the output
-		if len(val) > 0 && !json.Valid(val) {
+		//
+		// Match encoding/json: a nil RawMessage encodes as null; an empty
+		// non-nil one is an error (appending zero bytes would emit invalid
+		// JSON such as {"a":}).
+		if len(val) == 0 {
+			if val == nil {
+				e.buf = append(e.buf, "null"...)
+				return nil
+			}
+			return fmt.Errorf("json: error calling MarshalJSON for type json.RawMessage: unexpected end of JSON input")
+		}
+		if !json.Valid(val) {
 			return fmt.Errorf("invalid json.RawMessage: not valid JSON")
 		}
 		e.buf = append(e.buf, val...)
@@ -247,13 +385,6 @@ func (e *FastEncoder) encodeSlow(v any) error {
 	}
 	e.buf = append(e.buf, data...)
 	return nil
-}
-
-// SetHTMLEscape enables or disables HTML-safe escaping for this encoder.
-// SECURITY: When enabled, <, >, & are escaped to \u003c, \u003e, \u0026.
-// This prevents XSS when JSON output is embedded in HTML contexts.
-func (e *FastEncoder) SetHTMLEscape(enabled bool) {
-	e.htmlEscape = enabled
 }
 
 // EncodeString encodes a JSON string
@@ -417,24 +548,6 @@ func (e *FastEncoder) escapeString(s string) {
 			}
 			// Valid multi-byte UTF-8 - skip entire rune
 			i += size
-			continue
-		}
-
-		// SECURITY: Escape HTML characters when htmlEscape is enabled
-		if e.htmlEscape && (c == '<' || c == '>' || c == '&') {
-			if start < i {
-				e.buf = append(e.buf, s[start:i]...)
-			}
-			switch c {
-			case '<':
-				e.buf = append(e.buf, `\u003c`...)
-			case '>':
-				e.buf = append(e.buf, `\u003e`...)
-			case '&':
-				e.buf = append(e.buf, `\u0026`...)
-			}
-			i++
-			start = i
 			continue
 		}
 
@@ -774,6 +887,12 @@ func isIntegerFloat(f float64) bool {
 	return f == float64(int64(f)) && f <= 9007199254740992
 }
 
+// errUnsupportedFloat mirrors encoding/json's UnsupportedValueError message
+// for NaN/±Inf, which cannot be represented in JSON.
+func errUnsupportedFloat(f float64, bits int) error {
+	return fmt.Errorf("json: unsupported value: %s", strconv.FormatFloat(f, 'g', -1, bits))
+}
+
 // EncodeFloat encodes a floating point number
 // PERFORMANCE: Uses pre-computed common values and fast integer conversion
 // SECURITY: Special values (NaN, Inf) are encoded as null for JSON compatibility
@@ -894,6 +1013,11 @@ func (e *FastEncoder) EncodeBool(b bool) {
 // EncodeMap encodes a map[string]any
 // PERFORMANCE v2: Pre-allocates buffer capacity based on map size estimate
 func (e *FastEncoder) EncodeMap(m map[string]any) error {
+	if err := e.enterContainer(); err != nil {
+		return err
+	}
+	defer e.leaveContainer()
+
 	// PERFORMANCE v2: Pre-grow buffer to reduce reallocations
 	// Estimate: each entry needs ~32 bytes on average (key + value + quotes + colon + comma)
 	needed := len(m) * 32
@@ -905,7 +1029,7 @@ func (e *FastEncoder) EncodeMap(m map[string]any) error {
 	first := true
 
 	// Sorted iteration keeps output deterministic and encoding/json-compatible.
-	for _, k := range sortedMapKeys(m) {
+	for k, v := range SortedEntries(m) {
 		if !first {
 			e.buf = append(e.buf, ',')
 		}
@@ -914,7 +1038,7 @@ func (e *FastEncoder) EncodeMap(m map[string]any) error {
 		e.EncodeString(k)
 		e.buf = append(e.buf, ':')
 
-		if err := e.EncodeValue(m[k]); err != nil {
+		if err := e.EncodeValue(v); err != nil {
 			return err
 		}
 	}
@@ -934,7 +1058,7 @@ func (e *FastEncoder) EncodeMapStringString(m map[string]string) error {
 	e.buf = append(e.buf, '{')
 	first := true
 
-	for _, k := range sortedMapKeys(m) {
+	for k, v := range SortedEntries(m) {
 		if !first {
 			e.buf = append(e.buf, ',')
 		}
@@ -942,7 +1066,7 @@ func (e *FastEncoder) EncodeMapStringString(m map[string]string) error {
 
 		e.EncodeString(k)
 		e.buf = append(e.buf, ':')
-		e.EncodeString(m[k])
+		e.EncodeString(v)
 	}
 
 	e.buf = append(e.buf, '}')
@@ -960,7 +1084,7 @@ func (e *FastEncoder) EncodeMapStringInt(m map[string]int) error {
 	e.buf = append(e.buf, '{')
 	first := true
 
-	for _, k := range sortedMapKeys(m) {
+	for k, v := range SortedEntries(m) {
 		if !first {
 			e.buf = append(e.buf, ',')
 		}
@@ -968,7 +1092,7 @@ func (e *FastEncoder) EncodeMapStringInt(m map[string]int) error {
 
 		e.EncodeString(k)
 		e.buf = append(e.buf, ':')
-		e.EncodeInt(int64(m[k]))
+		e.EncodeInt(int64(v))
 	}
 
 	e.buf = append(e.buf, '}')
@@ -978,6 +1102,11 @@ func (e *FastEncoder) EncodeMapStringInt(m map[string]int) error {
 // EncodeArray encodes a []any
 // PERFORMANCE v2: Pre-allocates buffer capacity based on array size estimate
 func (e *FastEncoder) EncodeArray(arr []any) error {
+	if err := e.enterContainer(); err != nil {
+		return err
+	}
+	defer e.leaveContainer()
+
 	// PERFORMANCE: Pre-grow buffer to reduce reallocations for large arrays
 	n := len(arr)
 	if n > 8 {
@@ -1146,7 +1275,7 @@ func (e *FastEncoder) EncodeMapStringInt64(m map[string]int64) error {
 	e.buf = append(e.buf, '{')
 	first := true
 
-	for _, k := range sortedMapKeys(m) {
+	for k, v := range SortedEntries(m) {
 		if !first {
 			e.buf = append(e.buf, ',')
 		}
@@ -1154,7 +1283,7 @@ func (e *FastEncoder) EncodeMapStringInt64(m map[string]int64) error {
 
 		e.EncodeString(k)
 		e.buf = append(e.buf, ':')
-		e.EncodeInt(m[k])
+		e.EncodeInt(v)
 	}
 
 	e.buf = append(e.buf, '}')
@@ -1172,7 +1301,7 @@ func (e *FastEncoder) EncodeMapStringFloat64(m map[string]float64) error {
 	e.buf = append(e.buf, '{')
 	first := true
 
-	for _, k := range sortedMapKeys(m) {
+	for k, v := range SortedEntries(m) {
 		if !first {
 			e.buf = append(e.buf, ',')
 		}
@@ -1180,7 +1309,7 @@ func (e *FastEncoder) EncodeMapStringFloat64(m map[string]float64) error {
 
 		e.EncodeString(k)
 		e.buf = append(e.buf, ':')
-		e.EncodeFloat(m[k], 64)
+		e.EncodeFloat(v, 64)
 	}
 
 	e.buf = append(e.buf, '}')

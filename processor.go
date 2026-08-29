@@ -184,8 +184,9 @@ func releaseConfig(cfg *Config) {
 		// nil, or the shared immutable default — never pool/mutate the singleton.
 		return
 	}
-	// Clear only reference-type fields to prevent data leaks.
-	// Value fields (bool, int, string, time.Duration) don't need clearing.
+	// Clear reference-type fields to prevent data leaks, plus the string
+	// fields Indent/Prefix so their backing data is released too. Other value
+	// fields (bool, int, time.Duration) don't need clearing.
 	cfg.CustomEscapes = nil
 	cfg.CustomEncoder = nil
 	cfg.CustomTypeEncoders = nil
@@ -218,14 +219,16 @@ func (p *Processor) prepareOptions(cfg ...Config) (*Config, error) {
 }
 
 // mergeOptionsWithOverride creates a new Config with overrides applied.
-// Returns a Config value (not pointer) to prevent accidental mutation
-// and encourage the caller to work with their own copy.
-func mergeOptionsWithOverride(opts []Config, override func(*Config)) Config {
+// When opts is supplied it clones opts[0]; otherwise it starts from the
+// processor's own configuration, so the convenience wrappers (SetCreate,
+// SetMultipleCreate, DeleteClean) preserve the processor's baked-in limits and
+// security settings instead of silently replacing them with DefaultConfig.
+func (p *Processor) mergeOptionsWithOverride(opts []Config, override func(*Config)) Config {
 	var result Config
 	if len(opts) > 0 {
 		result = *(&opts[0]).Clone()
 	} else {
-		result = DefaultConfig()
+		result = *p.config.Clone()
 	}
 	override(&result)
 	return result

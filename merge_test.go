@@ -150,26 +150,6 @@ func TestMergeJSON_NonObject(t *testing.T) {
 // MergeJSON with Mode TESTS
 // ============================================================================
 
-func TestMergeJSON_UnionMode(t *testing.T) {
-	base := `{"a": 1, "b": 2}`
-	override := `{"b": 3, "c": 4}`
-
-	result, err := MergeJSON(base, override, mergeModeConfig(MergeUnion))
-	if err != nil {
-		t.Fatalf("MergeJSON() error: %v", err)
-	}
-
-	resultMap := parseResult(t, result)
-
-	// Union: all keys, overridden values
-	if len(resultMap) != 3 {
-		t.Errorf("expected 3 keys, got %d", len(resultMap))
-	}
-	if !numericEqual(resultMap["b"], 3) {
-		t.Errorf("expected b=3, got %v", resultMap["b"])
-	}
-}
-
 func TestMergeJSON_IntersectionMode(t *testing.T) {
 	tests := []struct {
 		name         string

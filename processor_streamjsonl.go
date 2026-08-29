@@ -81,6 +81,11 @@ func (p *Processor) StreamJSONL(reader io.Reader, fn func(lineNum int, item *Ite
 	}
 
 	scanner := bufio.NewScanner(reader)
+	// Effective token cap is max(cap(buf), maxLine): clamp the initial buffer
+	// so a JSONLMaxLineSize smaller than the buffer size is actually enforced.
+	if bufSize > maxLine {
+		bufSize = maxLine
+	}
 	scanner.Buffer(make([]byte, bufSize), maxLine)
 
 	lineNum := 0
@@ -253,6 +258,10 @@ func (p *Processor) StreamJSONLParallelWithContext(ctx context.Context, reader i
 		maxDepth = DefaultMaxNestingDepth
 	}
 	scanner := bufio.NewScanner(reader)
+	// See StreamJSONL: clamp the initial buffer below the line limit.
+	if parBufSize > parMaxLine {
+		parBufSize = parMaxLine
+	}
 	scanner.Buffer(make([]byte, parBufSize), parMaxLine)
 
 feedLoop:
@@ -306,16 +315,18 @@ feedLoop:
 	close(jobs)
 	wg.Wait()
 
-	if ctx.Err() != nil {
-		return ctx.Err()
+	// Most specific first: a genuine user-callback error must not be shadowed
+	// by a subsequent context cancellation (ctx.Err would drop the real cause).
+	if storedErr := firstErr.Load(); storedErr != nil {
+		return *storedErr
 	}
 
 	if err := scanner.Err(); err != nil {
 		return err
 	}
 
-	if storedErr := firstErr.Load(); storedErr != nil {
-		return *storedErr
+	if ctx.Err() != nil {
+		return ctx.Err()
 	}
 
 	return nil
@@ -365,9 +376,7 @@ func (p *Processor) StreamJSONLChunked(reader io.Reader, chunkSize int, fn func(
 	// The flush points reset chunk after returning their objects, so this defer
 	// only fires when we bail out with a partially filled chunk.
 	defer func() {
-		for i := range chunk {
-			iterableValuePool.Put(chunk[i])
-		}
+		releaseIterableValues(chunk)
 	}()
 
 	chunkBufSize := p.config.JSONLBufferSize
@@ -385,6 +394,10 @@ func (p *Processor) StreamJSONLChunked(reader io.Reader, chunkSize int, fn func(
 		maxDepth = DefaultMaxNestingDepth
 	}
 	scanner := bufio.NewScanner(reader)
+	// See StreamJSONL: clamp the initial buffer below the line limit.
+	if chunkBufSize > chunkMaxLine {
+		chunkBufSize = chunkMaxLine
+	}
 	scanner.Buffer(make([]byte, chunkBufSize), chunkMaxLine)
 
 	lineNum := 0
@@ -425,15 +438,11 @@ func (p *Processor) StreamJSONLChunked(reader io.Reader, chunkSize int, fn func(
 
 		if len(chunk) >= chunkSize {
 			if err := fn(chunk); err != nil {
-				for i := range chunk {
-					iterableValuePool.Put(chunk[i])
-				}
+				releaseIterableValues(chunk)
 				chunk = chunk[:0]
 				return err
 			}
-			for i := range chunk {
-				iterableValuePool.Put(chunk[i])
-			}
+			releaseIterableValues(chunk)
 			chunk = chunk[:0]
 		}
 	}
@@ -445,15 +454,11 @@ func (p *Processor) StreamJSONLChunked(reader io.Reader, chunkSize int, fn func(
 	// Process remaining chunk
 	if len(chunk) > 0 {
 		if err := fn(chunk); err != nil {
-			for i := range chunk {
-				iterableValuePool.Put(chunk[i])
-			}
+			releaseIterableValues(chunk)
 			chunk = chunk[:0]
 			return err
 		}
-		for i := range chunk {
-			iterableValuePool.Put(chunk[i])
-		}
+		releaseIterableValues(chunk)
 		chunk = chunk[:0]
 	}
 

@@ -20,6 +20,7 @@ import (
 // - Error suggestions for common issues
 // - Retry logic for recoverable errors
 // - Error wrapping with context
+// - Client-safe errors (SafeError) and path redaction (RedactedPath)
 //
 // Run: go run -tags=example examples/4_error_handling.go
 
@@ -41,6 +42,9 @@ func main() {
 
 	// 5. ERROR WRAPPING
 	demonstrateErrorWrapping()
+
+	// 6. CLIENT-SAFE ERRORS
+	demonstrateClientSafeErrors()
 
 	fmt.Println("\nError handling complete!")
 }
@@ -193,5 +197,28 @@ func demonstrateErrorWrapping() {
 	// Error matching with errors.Is
 	if errors.Is(wrapped1, json.ErrPathNotFound) {
 		fmt.Println("   ✓ Error matches using errors.Is()")
+	}
+}
+
+func demonstrateClientSafeErrors() {
+	fmt.Println("\n6. Client-Safe Errors (SafeError / RedactedPath)")
+	fmt.Println("--------------------------------------------------")
+
+	// A failed operation's Error() can embed the full path and internal
+	// structure — fine for logs, wrong for HTTP responses (CWE-209). Use a
+	// missing path so the operation actually fails; note how the full message
+	// quotes the path, while SafeError reduces it to the bare reason.
+	sensitiveJSON := `{"user": {"password": "hunter2"}}`
+	_, err := json.Get(sensitiveJSON, "user.payment.secret")
+	if err != nil {
+		fmt.Printf("   Full error (for logs):      %v\n", err)
+		fmt.Printf("   SafeError (for API reply):  %s\n", json.SafeError(err))
+	}
+
+	// RedactedPath masks a path for safe logging. Every non-empty path is fully
+	// masked to "***" so no segment can leak, regardless of length.
+	paths := []string{"user.email", "payments[3].card_number"}
+	for _, p := range paths {
+		fmt.Printf("   RedactedPath(%q): %q\n", p, json.RedactedPath(p))
 	}
 }

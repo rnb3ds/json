@@ -1969,9 +1969,17 @@ func TestRecursive_ArrayIndex_Boundary(t *testing.T) {
 			t.Errorf("after slice delete got %v, want [2 3]", v)
 		}
 	})
-	t.Run("distributed_oob_set_no_panic", func(t *testing.T) {
-		// Distributed set on a slice of slices with an OOB index must not panic.
-		_, _ = Set(`{"items":[[1,2],[3,4]]}`, "items[5]", 99)
+	t.Run("distributed_oob_set_extends_with_nulls", func(t *testing.T) {
+		// Distributed set on a slice with an OOB index extends with nulls
+		// rather than panicking or erroring.
+		result, err := Set(`{"items":[[1,2],[3,4]]}`, "items[5]", 99)
+		if err != nil {
+			t.Fatalf("OOB distributed set: %v", err)
+		}
+		want := `{"items":[[1,2],[3,4],null,null,null,99]}`
+		if result != want {
+			t.Errorf("OOB distributed set = %s, want %s", result, want)
+		}
 	})
 }
 

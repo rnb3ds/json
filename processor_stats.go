@@ -342,10 +342,12 @@ func (p *Processor) logOperation(ctx context.Context, operation, path string, du
 		return
 	}
 
-	// Use modern structured logging with typed attributes
+	// Use modern structured logging with typed attributes. The path is
+	// sanitized exactly as logError does — a successful slow operation on
+	// "users.admin.password" must not leak the sensitive key into logs.
 	commonAttrs := []slog.Attr{
 		slog.String("operation", operation),
-		slog.String("path", path),
+		slog.String("path", sanitizePath(path)),
 		slog.Int64("duration_ms", duration.Milliseconds()),
 		slog.Int64("operation_count", atomic.LoadInt64(&p.metrics.operationCount)),
 		slog.String("processor_id", p.getProcessorID()),
@@ -446,17 +448,18 @@ func (p *Processor) validatePath(path string) error {
 
 // sanitizePath removes potentially sensitive information from paths
 func sanitizePath(path string) string {
-	if len(path) > 100 {
-		return truncateString(path, 100)
-	}
-	// Remove potential sensitive patterns but keep structure
-	// Use case-insensitive matching for better security
+	// Redact BEFORE truncating: the length check previously returned first,
+	// so a >100-character path containing "password" etc. was logged with the
+	// sensitive segment still inside the truncated prefix.
 	lowerPath := strings.ToLower(path)
 	// Use package-level sensitivePatterns from security.go for consistency
 	for _, pattern := range sensitivePatterns {
 		if strings.Contains(lowerPath, pattern) {
 			return "[REDACTED_PATH]"
 		}
+	}
+	if len(path) > 100 {
+		return truncateString(path, 100)
 	}
 	return path
 }

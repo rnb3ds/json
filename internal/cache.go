@@ -501,6 +501,13 @@ func (cm *CacheManager) Delete(key string) {
 		return
 	}
 
+	// SECURITY: Normalize long keys identically to Set/Get (see Get's comment
+	// for the shard-mismatch rationale). The entry lives under the truncated
+	// key, so deleting the raw key would miss it and leave a stale entry.
+	if len(key) > MaxCacheKeyLength {
+		key = truncateCacheKey(key)
+	}
+
 	shard := cm.getShard(key)
 	shard.mu.Lock()
 	defer shard.mu.Unlock()

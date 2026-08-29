@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"strconv"
 	"sync"
-	"unicode/utf8"
 	"unsafe"
 )
 
@@ -46,25 +45,6 @@ var (
 			return buf
 		},
 	}
-	// PERFORMANCE: Tiered byte slice pools for better size matching
-	smallByteSlicePool = sync.Pool{
-		New: func() any {
-			b := make([]byte, 0, 256)
-			return &b
-		},
-	}
-	mediumByteSlicePool = sync.Pool{
-		New: func() any {
-			b := make([]byte, 0, 1024)
-			return &b
-		},
-	}
-	largeByteSlicePool = sync.Pool{
-		New: func() any {
-			b := make([]byte, 0, 8192)
-			return &b
-		},
-	}
 )
 
 // GetEncoderBuffer gets a buffer from the pool
@@ -85,46 +65,6 @@ func PutEncoderBuffer(buf *bytes.Buffer) {
 	}
 }
 
-// GetByteSliceWithHint gets a byte slice with appropriate capacity hint
-// PERFORMANCE: Uses tiered pools for better memory management
-func GetByteSliceWithHint(hint int) *[]byte {
-	var b *[]byte
-	switch {
-	case hint <= 256:
-		b = smallByteSlicePool.Get().(*[]byte)
-	case hint <= 1024:
-		b = mediumByteSlicePool.Get().(*[]byte)
-	case hint <= 8192:
-		b = largeByteSlicePool.Get().(*[]byte)
-	default:
-		// For very large hints, allocate directly
-		newSlice := make([]byte, 0, hint)
-		return &newSlice
-	}
-	*b = (*b)[:0]
-	return b
-}
-
-// PutByteSlice returns a byte slice to the pool
-func PutByteSlice(b *[]byte) {
-	if b == nil {
-		return
-	}
-	c := cap(*b)
-	if c > MaxPoolBufferSize {
-		return // Don't pool very large slices
-	}
-	*b = (*b)[:0]
-	switch {
-	case c <= 256:
-		smallByteSlicePool.Put(b)
-	case c <= 1024:
-		mediumByteSlicePool.Put(b)
-	case c <= 8192:
-		largeByteSlicePool.Put(b)
-	}
-}
-
 // StringToBytes converts a string to a byte slice without allocation.
 // The returned slice shares memory with the input string.
 //
@@ -134,31 +74,6 @@ func PutByteSlice(b *[]byte) {
 // modifying a validated JSON string after validation passes — TOCTOU).
 func StringToBytes(s string) []byte {
 	return unsafe.Slice(unsafe.StringData(s), len(s))
-}
-
-// ContainsAnyByte checks if string contains any of the specified bytes
-// This is faster than strings.ContainsAny for single-byte character sets
-func ContainsAnyByte(s, chars string) bool {
-	for i := 0; i < len(s); i++ {
-		for j := 0; j < len(chars); j++ {
-			if s[i] == chars[j] {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-// IsValidNumberString checks if a string represents a valid number
-func IsValidNumberString(s string) bool {
-	if s == "" {
-		return false
-	}
-
-	// Use json.Number to validate
-	num := json.Number(s)
-	_, err := num.Float64()
-	return err == nil
 }
 
 // ParseIntFast parses a string as an integer without using strconv
@@ -258,130 +173,6 @@ func IntToStringFast(n int) string {
 		return smallIntStrings[n]
 	}
 	return strconv.Itoa(n)
-}
-
-// EncodeFast attempts to encode a primitive value directly to a buffer
-// PERFORMANCE: Inline encoding for primitives avoids reflection and allocations
-// Returns true if the value was encoded, false if it needs standard encoding
-func EncodeFast(v any, buf *bytes.Buffer) bool {
-	return EncodeFastWithHTMLEscape(v, buf, false)
-}
-
-// EncodeFastWithHTMLEscape encodes a primitive value with optional HTML escaping.
-// SECURITY: When htmlEscape is true, string values have <, >, & escaped to prevent XSS.
-func EncodeFastWithHTMLEscape(v any, buf *bytes.Buffer, htmlEscape bool) bool {
-	switch val := v.(type) {
-	case nil:
-		buf.WriteString("null")
-		return true
-	case bool:
-		if val {
-			buf.WriteString("true")
-		} else {
-			buf.WriteString("false")
-		}
-		return true
-	case int:
-		buf.WriteString(IntToStringFast(val))
-		return true
-	case int8:
-		buf.WriteString(strconv.FormatInt(int64(val), 10))
-		return true
-	case int16:
-		buf.WriteString(strconv.FormatInt(int64(val), 10))
-		return true
-	case int32:
-		buf.WriteString(strconv.FormatInt(int64(val), 10))
-		return true
-	case int64:
-		buf.WriteString(strconv.FormatInt(val, 10))
-		return true
-	case uint:
-		buf.WriteString(strconv.FormatUint(uint64(val), 10))
-		return true
-	case uint8:
-		buf.WriteString(strconv.FormatUint(uint64(val), 10))
-		return true
-	case uint16:
-		buf.WriteString(strconv.FormatUint(uint64(val), 10))
-		return true
-	case uint32:
-		buf.WriteString(strconv.FormatUint(uint64(val), 10))
-		return true
-	case uint64:
-		buf.WriteString(strconv.FormatUint(val, 10))
-		return true
-	case float32:
-		buf.WriteString(strconv.FormatFloat(float64(val), 'f', -1, 32))
-		return true
-	case float64:
-		buf.WriteString(strconv.FormatFloat(val, 'f', -1, 64))
-		return true
-	case string:
-		buf.WriteByte('"')
-		writeEscapedStringFast(buf, val, htmlEscape)
-		buf.WriteByte('"')
-		return true
-	}
-	return false
-}
-
-// writeEscapedStringFast writes an escaped JSON string to the buffer
-// PERFORMANCE: Optimized escape handling without allocations
-// SECURITY: Validates UTF-8 encoding for non-ASCII characters (RFC 8259 compliance).
-// Escapes HTML characters (<, >, &) when htmlEscape is enabled.
-func writeEscapedStringFast(buf *bytes.Buffer, s string, htmlEscape bool) {
-	for i := 0; i < len(s); i++ {
-		c := s[i]
-		switch c {
-		case '"':
-			buf.WriteString(`\"`)
-		case '\\':
-			buf.WriteString(`\\`)
-		case '\b':
-			buf.WriteString(`\b`)
-		case '\f':
-			buf.WriteString(`\f`)
-		case '\n':
-			buf.WriteString(`\n`)
-		case '\r':
-			buf.WriteString(`\r`)
-		case '\t':
-			buf.WriteString(`\t`)
-		default:
-			if c < 0x20 {
-				buf.WriteString(`\u00`)
-				buf.WriteByte(hexChars[c>>4])
-				buf.WriteByte(hexChars[c&0x0F])
-			} else if c >= 0x80 {
-				// SECURITY: Validate UTF-8 for non-ASCII characters
-				// RFC 8259 requires JSON strings to be valid UTF-8
-				r, size := utf8.DecodeRuneInString(s[i:])
-				if r == utf8.RuneError && size == 1 {
-					// Invalid UTF-8 sequence - replace with replacement character
-					buf.WriteString(`\ufffd`)
-				} else {
-					// Valid UTF-8, write all bytes of the rune directly
-					buf.WriteString(s[i : i+size])
-					i += size - 1 // Skip remaining bytes of this rune
-				}
-			} else if htmlEscape {
-				// SECURITY: Escape HTML characters to prevent XSS
-				switch c {
-				case '<':
-					buf.WriteString(`\u003c`)
-				case '>':
-					buf.WriteString(`\u003e`)
-				case '&':
-					buf.WriteString(`\u0026`)
-				default:
-					buf.WriteByte(c)
-				}
-			} else {
-				buf.WriteByte(c)
-			}
-		}
-	}
 }
 
 // hexChars contains hex characters for escape sequences

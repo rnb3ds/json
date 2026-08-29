@@ -19,6 +19,9 @@ import (
 // - ForeachNested for recursive iteration
 // - IterableValue API methods
 // - IteratorControl for flow control
+// - Mutation with ForeachReturn
+// - Error-returning variants (ForeachWithError, ForeachNestedWithError)
+// - Per-element paths with ForeachWithPathAndIterator
 //
 // Run: go run -tags=example examples/9_iterator_functions.go
 
@@ -72,6 +75,15 @@ func main() {
 
 	// 5. TRANSFORMATION
 	demonstrateTransformation(sampleData)
+
+	// 6. MUTATION WITH FOREACHRETURN
+	demonstrateMutation(sampleData)
+
+	// 7. ERROR-RETURNING VARIANTS
+	demonstrateErrorIterators(sampleData)
+
+	// 8. PER-ELEMENT PATHS
+	demonstratePathIteration(sampleData)
 
 	fmt.Println("\nIterator functions examples complete!")
 }
@@ -310,4 +322,90 @@ func demonstrateTransformation(data string) {
 	if err != nil {
 		fmt.Printf("   Error: %v\n", err)
 	}
+}
+
+func demonstrateMutation(data string) {
+	fmt.Println("\n6. Mutation with ForeachReturn")
+	fmt.Println("----------------------------------")
+
+	// ForeachReturn re-marshals the iterated data after the callback, so
+	// mutations made through item.GetData() — a reference to the working
+	// copy — show up in the returned JSON. IterableValue itself is read-only
+	// (no Set), so the pattern is: assert GetData() to map/slice and write
+	// through it. Replacing a top-level scalar in place is not possible.
+	result, err := json.ForeachReturn(data, func(key any, item *json.IterableValue) {
+		switch key {
+		case "settings": // flip a nested map entry
+			if settings, ok := item.GetData().(map[string]any); ok {
+				settings["theme"] = "light"
+			}
+		case "users": // stamp every array element
+			if users, ok := item.GetData().([]any); ok {
+				for _, u := range users {
+					if m, ok := u.(map[string]any); ok {
+						m["active"] = true
+					}
+				}
+			}
+		}
+	})
+	if err != nil {
+		fmt.Printf("   Error: %v\n", err)
+		return
+	}
+	theme := json.GetString(result, "settings.theme", "")
+	fmt.Printf("   settings.theme after mutation: %s\n", theme)
+	fmt.Printf("   users[1].active after mutation: %t\n", json.GetBool(result, "users[1].active", false))
+}
+
+func demonstrateErrorIterators(data string) {
+	fmt.Println("\n7. Error-Returning Variants")
+	fmt.Println("------------------------------")
+
+	// ForeachWithError: the callback returns an error to control iteration.
+	// item.Break() stops WITHOUT reporting an error; any other error stops
+	// and propagates. (Plain Foreach callbacks cannot stop or fail.)
+	stoppedAt := ""
+	err := json.ForeachWithError(data, "users", func(key any, item *json.IterableValue) error {
+		if !item.GetBool("active") {
+			stoppedAt = item.GetString("name")
+			return item.Break() // stop, err stays nil
+		}
+		return nil // continue
+	})
+	fmt.Printf("   ForeachWithError: err=%v, stopped at %q via Break()\n", err, stoppedAt)
+
+	// ForeachNestedWithError: recursive traversal with the same contract —
+	// a non-Break error aborts the whole walk and is returned to the caller.
+	err = json.ForeachNestedWithError(data, func(key any, item *json.IterableValue) error {
+		if s, ok := item.GetData().(string); ok && s == "dark" {
+			return fmt.Errorf("unexpected theme %q at key %v", s, key)
+		}
+		return nil
+	})
+	fmt.Printf("   ForeachNestedWithError propagated: %v\n", err)
+}
+
+func demonstratePathIteration(data string) {
+	fmt.Println("\n8. Per-Element Paths (ForeachWithPathAndIterator)")
+	fmt.Println("---------------------------------------------------")
+
+	// Like ForeachWithPathAndControl, but the callback receives an
+	// IterableValue AND the path of the current element (relative to the
+	// iterated path — "[0]", "[1]", ... for arrays), plus IteratorControl.
+	count := 0
+	err := json.ForeachWithPathAndIterator(data, "users", func(key any, item *json.IterableValue, currentPath string) json.IteratorControl {
+		fmt.Printf("   - path %-4s name=%-8s (active=%t)\n",
+			currentPath, item.GetString("name"), item.GetBool("active"))
+		count++
+		if count >= 2 {
+			return json.IteratorBreak
+		}
+		return json.IteratorContinue
+	})
+	if err != nil {
+		fmt.Printf("   Error: %v\n", err)
+		return
+	}
+	fmt.Printf("   Visited %d elements before IteratorBreak\n", count)
 }

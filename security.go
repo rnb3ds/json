@@ -36,11 +36,12 @@ const (
 	securityMaxTotalBrackets = 1000000
 
 	// securityMaxConsecutiveOpens is the maximum consecutive opening brackets (100)
-	// Detects anomalypatterns that could indicate attacks
+	// Detects anomaly patterns that could indicate attacks
 	securityMaxConsecutiveOpens = 100
 
-	// securityCacheHighWatermark is the cache size threshold for LRU eviction (8000 = 80% of 10000)
-	// Triggers proactive cleanup to prevent memory spikes
+	// securityCacheHighWatermark is the entry-count high watermark for LRU
+	// eviction of the validation cache. Inserting at/above it evicts the oldest
+	// 25% first, which also bounds the cache at ~8000 entries.
 	securityCacheHighWatermark = 8000
 
 	// securityLocalDensityThreshold is the maximum allowed suspicious character density in sample regions (0.5%)
@@ -107,6 +108,47 @@ var criticalPatterns = []dangerousPattern{
 	{"prototype.", "prototype manipulation"},
 }
 
+// dangerousPatternGroups buckets dangerousPatterns by their case-folded first
+// byte. Computed once at init: dangerousPatterns is never mutated after
+// declaration. Drives windowContainsDangerousMatch's single-pass prefilter.
+var dangerousPatternGroups [256][]dangerousPattern
+
+func init() {
+	for _, dp := range dangerousPatterns {
+		if len(dp.pattern) == 0 {
+			continue
+		}
+		c := internal.FoldLowerASCII(dp.pattern[0])
+		dangerousPatternGroups[c] = append(dangerousPatternGroups[c], dp)
+	}
+}
+
+// windowContainsDangerousMatch reports whether any built-in dangerous pattern
+// occurs (case-insensitively) anywhere in window.
+//
+// It is a conservative EXISTENCE prefilter for scanWindowForPatterns: the
+// word-context refinement is deliberately ignored, so whenever it returns
+// false, no built-in pattern can trigger an error and the per-pattern loop can
+// be skipped entirely. One pass over the window replaces one full
+// fastIndexIgnoreCase scan per pattern (~27 on the default set) — profiling
+// (P-001) attributed a large share of first-time validation cost to those
+// repeated scans on every input that was not yet in the validation cache.
+//
+// Custom and globally-registered patterns are NOT covered here; they keep
+// their own per-window scan.
+func windowContainsDangerousMatch(window string) bool {
+	for i := 0; i < len(window); i++ {
+		group := dangerousPatternGroups[internal.FoldLowerASCII(window[i])]
+		for _, dp := range group {
+			end := i + len(dp.pattern)
+			if end <= len(window) && internal.IsMatchPatternIgnoreCase(window[i:end], dp.pattern) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // =============================================================================
 // Global Pattern Registry
 // =============================================================================
@@ -128,6 +170,12 @@ func (r *patternRegistry) Add(pattern DangerousPattern) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.patterns[pattern.Pattern] = pattern
+	// P-002 RACE FIX: invalidate cachedMaxPatternLen while holding the write
+	// lock. recomputeMaxPatternLen reads the registry and publishes its result
+	// under RLock, so the lock pair prevents recompute from overwriting a newer
+	// invalidation with a stale length (last-writer-wins race that briefly left
+	// the rolling-window overlap too small for globally-registered patterns).
+	atomic.StoreInt64(&cachedMaxPatternLen, 0)
 }
 
 // Remove unregisters a pattern by its pattern string.
@@ -135,6 +183,7 @@ func (r *patternRegistry) Remove(pattern string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	delete(r.patterns, pattern)
+	atomic.StoreInt64(&cachedMaxPatternLen, 0) // invalidate under the write lock (see Add)
 }
 
 // List returns all registered patterns.
@@ -166,6 +215,7 @@ func (r *patternRegistry) Clear() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.patterns = make(map[string]DangerousPattern)
+	atomic.StoreInt64(&cachedMaxPatternLen, 0) // invalidate under the write lock (see Add)
 }
 
 // RegisterDangerousPattern adds a pattern to the global registry.
@@ -180,13 +230,11 @@ func (r *patternRegistry) Clear() {
 //	})
 func RegisterDangerousPattern(pattern DangerousPattern) {
 	globalPatternRegistry.Add(pattern)
-	atomic.StoreInt64(&cachedMaxPatternLen, 0) // Invalidate cache
 }
 
 // UnregisterDangerousPattern removes a pattern from the global registry.
 func UnregisterDangerousPattern(pattern string) {
 	globalPatternRegistry.Remove(pattern)
-	atomic.StoreInt64(&cachedMaxPatternLen, 0) // Invalidate cache
 }
 
 // ListDangerousPatterns returns all registered custom patterns.
@@ -198,7 +246,6 @@ func ListDangerousPatterns() []DangerousPattern {
 // Use with caution - this does not affect built-in patterns.
 func clearDangerousPatterns() {
 	globalPatternRegistry.Clear()
-	atomic.StoreInt64(&cachedMaxPatternLen, 0) // Invalidate cache
 }
 
 // getDefaultPatterns returns the built-in dangerous patterns as DangerousPattern values.
@@ -253,7 +300,14 @@ func maxDangerousPatternLen() int {
 // cachedMaxPatternLen caches the result of maxDangerousPatternLen
 var cachedMaxPatternLen int64
 
-// recomputeMaxPatternLen recalculates and caches the max pattern length
+// recomputeMaxPatternLen recalculates and caches the max pattern length.
+//
+// P-002 RACE FIX: the registry read and the result Store happen under the same
+// RLock, and Add/Remove/Clear invalidate under the write lock. RLock excludes
+// the write lock, so a concurrent registration cannot interleave between this
+// read and this Store — the previous unlocked form let recompute overwrite a
+// newer invalidation with a stale (smaller) length, shrinking the rolling-window
+// overlap until the next registration event.
 func recomputeMaxPatternLen() int {
 	maxLen := 0
 	for _, dp := range dangerousPatterns {
@@ -261,12 +315,14 @@ func recomputeMaxPatternLen() int {
 			maxLen = len(dp.pattern)
 		}
 	}
-	for _, p := range globalPatternRegistry.List() {
+	globalPatternRegistry.mu.RLock()
+	for _, p := range globalPatternRegistry.patterns {
 		if len(p.Pattern) > maxLen {
 			maxLen = len(p.Pattern)
 		}
 	}
 	atomic.StoreInt64(&cachedMaxPatternLen, int64(maxLen))
+	globalPatternRegistry.mu.RUnlock()
 	return maxLen
 }
 
@@ -323,13 +379,12 @@ type validationCacheEntry struct {
 }
 
 // validationKey is the map key for the validation cache. It is a fixed-size,
-// comparable value (length + two independent FNV-1a hashes), so constructing it
-// allocates nothing — unlike the previous "len:h1:h2" string key, which
-// allocated ~50 bytes on every operation.
+// comparable value (length + one FNV-1a hash), so constructing it allocates
+// nothing — unlike the previous "len:h1:h2" string key, which allocated ~50
+// bytes on every operation.
 type validationKey struct {
 	length int
 	h1     uint64
-	h2     uint64
 }
 
 // securityValidator provides comprehensive security validation for JSON processing.
@@ -352,6 +407,12 @@ type securityValidator struct {
 	// is set, since they are explicitly opted in by the caller. Globally
 	// registered patterns (globalPatternRegistry) are scanned live as well.
 	additionalPatterns []dangerousPattern
+	// maxCustomPatternLen is the length of the longest additional pattern.
+	// The rolling-window overlap must cover it: a custom pattern longer than
+	// the built-in overlap could otherwise straddle a scan-window boundary,
+	// be contained in no window, and evade detection entirely (regression
+	// test: TestD002Round6_CustomPatternStraddlesWindowBoundary).
+	maxCustomPatternLen int
 	// Composed validators for separation of concerns
 	// Cache for validation results
 	validationCache map[validationKey]*validationCacheEntry
@@ -372,6 +433,11 @@ func newSecurityValidator(maxJSONSize int64, maxPathLength, maxNestingDepth int,
 		disableDefaultPatterns: disableDefaultPatterns,
 		additionalPatterns:     additionalPatterns,
 		validationCache:        make(map[validationKey]*validationCacheEntry, 256),
+	}
+	for _, dp := range additionalPatterns {
+		if len(dp.pattern) > sv.maxCustomPatternLen {
+			sv.maxCustomPatternLen = len(dp.pattern)
+		}
 	}
 	return sv
 }
@@ -489,19 +555,24 @@ func (sv *securityValidator) ValidateJSONInput(jsonStr string) error {
 // getValidationCacheKey computes and returns the cache key for a JSON string.
 // PERFORMANCE: Uses FNV-1a (~2ns) instead of SHA-256 (~100ns) for ~50x speedup.
 // The cache is internal-only (not exposed to callers), so FNV-1a's collision
-// resistance is sufficient — a collision simply means a redundant validation.
-// SECURITY: The validationKey combines length + two independent FNV hashes
-// (different seeds) to reduce collision probability below 2^-64. Returning a
-// fixed-size struct (rather than a formatted "len:h1:h2" string) avoids a per-op
-// heap allocation in the hot path.
+// resistance is sufficient.
+//
+// SECURITY: h1 is the same hash value Processor cache keys use
+// (internal.HashStringFNV1a, see hashStringToUint64). A single hash is enough
+// here because a cache hit is NEVER trusted on the key alone —
+// isValidationCached compares the exact stored input before skipping any
+// security check, so a collision merely causes one redundant revalidation,
+// never a false "already validated". The former second independent hash
+// (HashBytesFNV1aOffset) only reduced the frequency of that harmless event,
+// at the cost of a second full scan of every input on every operation
+// (~4% of Get CPU on large inputs; see P-001 pprof).
+//
+// Returning a fixed-size struct (rather than a formatted string) avoids a
+// per-op heap allocation in the hot path.
 func (sv *securityValidator) getValidationCacheKey(jsonStr string) validationKey {
-	b := internal.StringToBytes(jsonStr)
-
-	// Two independent FNV-1a hashes for strong collision resistance
 	return validationKey{
 		length: len(jsonStr),
-		h1:     internal.HashBytesFNV1a(b),
-		h2:     internal.HashBytesFNV1aOffset(b),
+		h1:     internal.HashStringFNV1a(jsonStr),
 	}
 }
 
@@ -626,7 +697,7 @@ func (sv *securityValidator) validateJSONSecurity(jsonStr string) error {
 	}
 
 	// Fast path: for small JSON strings, use the original approach
-	// For large JSON strings (>4KB), use a samplingapproach
+	// For large JSON strings (>4KB), use a sampling approach
 	if len(jsonStr) < securitySmallJSONThreshold {
 		return sv.validateJSONSecurityFull(jsonStr)
 	}
@@ -736,8 +807,16 @@ func (sv *securityValidator) hasIndicatorChars(jsonStr string) bool {
 func (sv *securityValidator) scanWithRollingWindow(jsonStr string) error {
 	jsonLen := len(jsonStr)
 
-	// Add safety margin to the pre-computed max pattern length
+	// Add safety margin to the pre-computed max pattern length.
+	// SECURITY: the overlap must also cover config-supplied custom patterns
+	// (maxCustomPatternLen) — maxDangerousPatternLen only knows the built-in
+	// and globally-registered patterns, so a longer custom pattern could
+	// otherwise straddle a window boundary and never be fully contained in
+	// any window.
 	overlapSize := maxDangerousPatternLen() + 8
+	if sv.maxCustomPatternLen+8 > overlapSize {
+		overlapSize = sv.maxCustomPatternLen + 8
+	}
 
 	// Window size tuned for cache efficiency
 	windowSize := securityScanWindowSize
@@ -790,10 +869,16 @@ func (sv *securityValidator) scanWindowForPatterns(window string) error {
 		return sv.scanCustomPatterns(window)
 	}
 
-	for _, dp := range dangerousPatterns {
-		if idx := fastIndexIgnoreCase(window, dp.pattern); idx != -1 {
-			if sv.isDangerousContextIgnoreCase(window, idx, len(dp.pattern)) {
-				return newSecurityError("validate_json_security", fmt.Sprintf("dangerous pattern: %s", dp.name))
+	// Single-pass existence prefilter (see windowContainsDangerousMatch): a
+	// window where no built-in pattern occurs at all skips the ~27-pattern
+	// scan loop. On a hit, the ordered loop below still selects the exact
+	// same error as before — same pattern order, same context check.
+	if windowContainsDangerousMatch(window) {
+		for _, dp := range dangerousPatterns {
+			if idx := fastIndexIgnoreCase(window, dp.pattern); idx != -1 {
+				if sv.isDangerousContextIgnoreCase(window, idx, len(dp.pattern)) {
+					return newSecurityError("validate_json_security", fmt.Sprintf("dangerous pattern: %s", dp.name))
+				}
 			}
 		}
 	}
@@ -897,35 +982,38 @@ func (sv *securityValidator) hasSuspiciousCharacterDensity(jsonStr string) bool 
 	return overallDensity > securityOverallDensityThreshold
 }
 
+// patternFragments holds partial dangerous patterns that might indicate an
+// attempt to hide malicious code. Package-level to avoid allocating the
+// ~40-element slice on every call (hasPatternFragments runs per validation
+// of every large JSON input).
+var patternFragments = []string{
+	// JavaScript execution
+	"script", "eval", "function", "settimeout", "setinterval",
+	// Prototype manipulation
+	"proto", "constructor", "prototype",
+	// DOM access
+	"document", "window", "innerhtml", "outerhtml",
+	// Event handlers (comprehensive)
+	"onload", "onerror", "onclick", "onmouse", "onkey", "onfocus", "onblur",
+	"onchange", "onsubmit", "onreset", "onscroll", "onwheel", "ondrag",
+	// Code execution
+	"import(", "require(", "new func",
+	// Security-sensitive
+	"cookie", "token", "secret", "password", "credential",
+	// Encoding bypass attempts
+	"fromcharcode", "atob(", "btoa(", "escape(", "unescape(",
+	// CSS expression injection
+	"expression(", "url(", "behavior:",
+	// Data URLs
+	"data:", "javascript:", "vbscript:",
+}
+
 // hasPatternFragments checks for partial dangerous patterns that might indicate
 // an attempt to hide malicious code
 // SECURITY FIX: Expanded fragment list for better detection coverage
 func (sv *securityValidator) hasPatternFragments(jsonStr string) bool {
 	// Check for partial patterns that might be completed elsewhere
-	// SECURITY FIX: Expanded list to catch more attack variants
-	fragments := []string{
-		// JavaScript execution
-		"script", "eval", "function", "settimeout", "setinterval",
-		// Prototype manipulation
-		"proto", "constructor", "prototype",
-		// DOM access
-		"document", "window", "innerhtml", "outerhtml",
-		// Event handlers (comprehensive)
-		"onload", "onerror", "onclick", "onmouse", "onkey", "onfocus", "onblur",
-		"onchange", "onsubmit", "onreset", "onscroll", "onwheel", "ondrag",
-		// Code execution
-		"import(", "require(", "new func",
-		// Security-sensitive
-		"cookie", "token", "secret", "password", "credential",
-		// Encoding bypass attempts
-		"fromcharcode", "atob(", "btoa(", "escape(", "unescape(",
-		// CSS expression injection
-		"expression(", "url(", "behavior:",
-		// Data URLs
-		"data:", "javascript:", "vbscript:",
-	}
-
-	for _, frag := range fragments {
+	for _, frag := range patternFragments {
 		if fastIndexIgnoreCase(jsonStr, frag) != -1 {
 			return true
 		}
@@ -1228,11 +1316,10 @@ func (sv *securityValidator) validateNestingDepth(jsonStr string) error {
 				}
 			case '}', ']':
 				depth--
-			case byte(0x5c):
-				if inString {
-					escaped = true
-				}
 			}
+			// A backslash outside a string (unreachable as an escape marker) is
+			// simply ignored, matching the parser's tolerance for stray bytes —
+			// malformed JSON is rejected downstream by encoding/json anyway.
 		}
 		if depth != 0 {
 			return newOperationError("validate_nesting_depth",

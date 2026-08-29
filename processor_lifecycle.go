@@ -107,12 +107,15 @@ func (p *Processor) waitForActiveOps(timeout time.Duration) bool {
 
 // IsClosed returns true if the processor has been closed or close timed out.
 // In both states the processor should not accept new operations.
+//
+// The closing (drain) state also reports true: checkClosed rejects new
+// operations during that window, so reporting false here would let the
+// config-processor registry hand out a processor whose every call fails.
 func (p *Processor) IsClosed() bool {
 	if p == nil {
 		return true
 	}
-	state := atomic.LoadInt32(&p.state)
-	return state == processorStateClosed || state == processorStateCloseTimedOut
+	return atomic.LoadInt32(&p.state) != processorStateActive
 }
 
 // AddHook adds an operation hook to the processor.

@@ -207,13 +207,18 @@ func (p *Processor) handleAppendOperation(data any, segments []internal.PathSegm
 		return fmt.Errorf("append operation requires a parent path before [+]")
 	}
 
-	// Navigate to the parent container (everything before [+])
+	// Navigate to the target array, tracking its parent container along the
+	// way. The parent is the container reached after len(segments)-2 steps —
+	// the same value the previous implementation re-navigated from scratch in
+	// a second, duplicate pass.
 	current := data
+	parent := data
 	for i := 0; i < len(segments)-1; i++ {
 		next, err := p.navigateToSegment(current, segments[i], createPaths, segments, i)
 		if err != nil {
 			return err
 		}
+		parent = current
 		current = next
 	}
 
@@ -223,25 +228,8 @@ func (p *Processor) handleAppendOperation(data any, segments []internal.PathSegm
 		return fmt.Errorf("cannot append to non-array type %T", current)
 	}
 
-	// Get the parent container to update the array reference
-	// Navigate to parent of the array
-	parent := data
-	parentSegments := segments[:len(segments)-1]
-	if len(parentSegments) == 0 {
-		return fmt.Errorf("cannot determine parent container for append operation")
-	}
-
-	// Navigate to the parent of the array
-	for i := 0; i < len(parentSegments)-1; i++ {
-		next, err := p.navigateToSegment(parent, parentSegments[i], createPaths, parentSegments, i)
-		if err != nil {
-			return err
-		}
-		parent = next
-	}
-
-	// Get the last segment that identifies the array in its parent
-	arraySegment := parentSegments[len(parentSegments)-1]
+	// The last segment that identifies the array in its parent
+	arraySegment := segments[len(segments)-2]
 
 	// Perform the append and update the parent container
 	return p.appendAndSetParent(parent, arraySegment, arr, value)
@@ -313,14 +301,12 @@ func (p *Processor) setValueForProperty(current any, property string, value any,
 	if containerSetProperty(current, property, value) {
 		return nil
 	}
-	{
-		if createPaths {
-			// Cannot convert non-map types to map for property setting
-			// This is a fundamental limitation
-			return fmt.Errorf("cannot convert %T to map for property setting", current)
-		}
-		return fmt.Errorf("cannot set property '%s' on type %T", property, current)
+	if createPaths {
+		// Cannot convert non-map types to map for property setting
+		// This is a fundamental limitation
+		return fmt.Errorf("cannot convert %T to map for property setting", current)
 	}
+	return fmt.Errorf("cannot set property '%s' on type %T", property, current)
 }
 
 // Array extension and index/slice operations

@@ -957,23 +957,15 @@ func parseComplexSegment(part string) ([]PathSegment, error) {
 			}
 		}
 
-		if nextSpecial > 0 {
-			propertyName := remaining[:nextSpecial]
-			segments = append(segments, PathSegment{
-				Type: PropertySegment,
-				Key:  propertyName,
-			})
-			remaining = remaining[nextSpecial:]
-		} else {
-			// No more special characters, treat the rest as property name
-			if remaining != "" {
-				segments = append(segments, PathSegment{
-					Type: PropertySegment,
-					Key:  remaining,
-				})
-			}
-			break
-		}
+		// Reaching here means remaining does not start with '[' or '{' (both
+		// handled above), so nextSpecial is always > 0: consume the property
+		// name up to the next special character and loop.
+		propertyName := remaining[:nextSpecial]
+		segments = append(segments, PathSegment{
+			Type: PropertySegment,
+			Key:  propertyName,
+		})
+		remaining = remaining[nextSpecial:]
 	}
 
 	return segments, nil

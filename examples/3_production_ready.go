@@ -5,6 +5,8 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
+	"log/slog"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -19,7 +21,8 @@ import (
 // - Thread-safe concurrent operations
 // - Performance optimization with caching
 // - Resource management and monitoring
-// - Best practices for production environments
+// - The global processor (SetGlobalProcessor / ShutdownGlobalProcessor)
+// - Health status reporting
 //
 // Run: go run -tags=example examples/3_production_ready.go
 
@@ -55,6 +58,9 @@ func main() {
 
 	// 5. MONITORING & METRICS
 	demonstrateMonitoring(testData)
+
+	// 6. GLOBAL PROCESSOR & HEALTH
+	demonstrateGlobalProcessor(testData)
 
 	fmt.Println("\nProduction-ready patterns complete!")
 }
@@ -302,4 +308,46 @@ func demonstrateMonitoring(testData string) {
 	} else {
 		fmt.Printf("   Processor is healthy and active\n")
 	}
+}
+
+func demonstrateGlobalProcessor(testData string) {
+	fmt.Println("\n6. Global Processor & Health")
+	fmt.Println("------------------------------")
+
+	// Inspect and adjust a live processor: GetConfig returns the effective
+	// Config (after defaults), SetLogger wires a *slog.Logger for internal
+	// diagnostics. io.Discard keeps the example output clean — point it at a
+	// real handler in production. EnableMetrics feeds the health checks below.
+	monitorCfg := json.DefaultConfig()
+	monitorCfg.EnableMetrics = true
+	processor, _ := json.New(monitorCfg) // OK: DefaultConfig-derived, always valid
+	defer processor.Close()
+	fmt.Printf("   GetConfig(): cache=%t, maxCacheSize=%d\n",
+		processor.GetConfig().EnableCache, processor.GetConfig().MaxCacheSize)
+	processor.SetLogger(slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	// Package-level functions (Get, Set, ...) run on a shared global processor.
+	// SetGlobalProcessor replaces it with your own — e.g. one whose Config is
+	// tuned for your workload. The previous global is closed automatically.
+	json.SetGlobalProcessor(processor)
+	fmt.Println("   SetGlobalProcessor: package-level ops now use our processor")
+
+	_, _ = json.Get(testData, "users[0].name") // best-effort: exercising the global
+
+	// Package-level GetStats reports the global processor's counters.
+	globalStats := json.GetStats()
+	fmt.Printf("   Global GetStats(): operations=%d, errors=%d\n",
+		globalStats.OperationCount, globalStats.ErrorCount)
+
+	// Processor-level health check reports each subsystem individually.
+	health := processor.GetHealthStatus()
+	fmt.Printf("   HealthStatus: healthy=%t, checks=%d\n", health.Healthy, len(health.Checks))
+	for name, check := range health.Checks {
+		fmt.Printf("   - %-12s healthy=%t %s\n", name, check.Healthy, check.Message)
+	}
+
+	// At application shutdown, close the global processor cleanly. The next
+	// package-level call would lazily create a fresh default one.
+	json.ShutdownGlobalProcessor()
+	fmt.Println("   ShutdownGlobalProcessor: global closed")
 }

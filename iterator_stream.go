@@ -47,13 +47,11 @@ func streamMaxSize(cfg ...Config) int64 {
 // StreamIterator provides memory-efficient iteration over large JSON arrays.
 // It processes elements one at a time without loading the entire array into memory.
 type StreamIterator struct {
-	decoder    *json.Decoder
-	index      int
-	err        error
-	done       bool
-	current    any
-	buffer     *bufio.Reader // Buffered reader for improved I/O performance
-	bufferSize int           // Configured buffer size
+	decoder *json.Decoder
+	index   int
+	err     error
+	done    bool
+	current any
 }
 
 // NewStreamIterator creates a stream iterator from a reader with default settings.
@@ -91,10 +89,8 @@ func NewStreamIterator(reader io.Reader, cfg ...Config) *StreamIterator {
 	decoder := json.NewDecoder(buffered)
 
 	return &StreamIterator{
-		decoder:    decoder,
-		index:      -1,
-		buffer:     buffered,
-		bufferSize: bufSize,
+		decoder: decoder,
+		index:   -1,
 	}
 }
 

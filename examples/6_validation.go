@@ -78,6 +78,16 @@ func demonstrateFormatValidation() {
 		}
 		fmt.Printf("   [%s] %s\n", tc.name, status)
 	}
+
+	// ValidWithConfig is the error-returning variant: it reports WHY a
+	// document was rejected instead of just false. Here a syntactically valid
+	// document is declined because it exceeds a per-call size limit.
+	valid, err := json.ValidWithConfig(`{"user": "John"}`, json.SecurityConfig())
+	if err != nil {
+		fmt.Printf("   ValidWithConfig (SecurityConfig): rejected -> %v\n", err)
+	} else {
+		fmt.Printf("   ValidWithConfig (SecurityConfig): valid=%t\n", valid)
+	}
 }
 
 func demonstratePathValidation() {
@@ -201,6 +211,30 @@ func demonstrateSchemaValidation() {
 	reportSchema("Validating invalid user (missing required field)", invalidUser1)
 	fmt.Println()
 	reportSchema("Validating invalid user (wrong types)", invalidUser2)
+
+	// Alternative construction: instead of a &json.Schema{...} literal, build
+	// one through the Config pattern — start from DefaultSchemaConfig(), set
+	// fields, and let NewSchemaWithConfig assemble the Schema (nil maps become
+	// empty, pointer fields become "present" flags).
+	minLen, maxLen := 2, 50
+	schemaCfg := json.DefaultSchemaConfig()
+	schemaCfg.Type = "object"
+	schemaCfg.Required = []string{"name", "email"}
+	schemaCfg.Properties = map[string]*json.Schema{
+		"name":  {Type: "string", MinLength: minLen, MaxLength: maxLen},
+		"email": {Type: "string", Format: "email"},
+	}
+	cfgBuilt := json.NewSchemaWithConfig(schemaCfg)
+	verrs, verr := json.ValidateSchema(validUser, cfgBuilt)
+	if verr == nil && len(verrs) == 0 {
+		fmt.Println("\n   ✓ Config-pattern schema (NewSchemaWithConfig) validates the same data")
+	}
+
+	// DefaultSchema is the permissive starting point: no type constraint, no
+	// required fields, additional properties allowed — extend it for quick checks.
+	ds := json.DefaultSchema()
+	fmt.Printf("\n   DefaultSchema: permissive base — %d required, additionalProperties=%t\n",
+		len(ds.Required), ds.AdditionalProperties)
 }
 
 func demonstrateSecurityValidation() {

@@ -20,6 +20,7 @@ import (
 // - Type-safe retrieval (GetString, GetInt, GetBool, etc.)
 // - Array operations and indexing
 // - Batch operations (GetMultiple, SetMultiple)
+// - Parsing strings with Parse and ParseAny
 // - 100% encoding/json compatibility
 //
 // For advanced delete operations, see: 12_advanced_delete.go
@@ -70,6 +71,9 @@ func main() {
 
 	// 7. STREAMING ENCODER/DECODER
 	demonstrateStreaming()
+
+	// 8. STRING PARSING
+	demonstrateParsing()
 
 	fmt.Println("\nBasic usage complete!")
 }
@@ -295,4 +299,51 @@ func demonstrateStreaming() {
 		count++
 	}
 	fmt.Printf("   Decoded %d objects\n", count)
+}
+
+func demonstrateParsing() {
+	fmt.Println("\n8. Parsing Strings (Parse / ParseAny)")
+	fmt.Println("-------------------------------------")
+
+	type Address struct {
+		City string `json:"city"`
+		Zip  string `json:"zip"`
+	}
+	type Profile struct {
+		Name    string   `json:"name"`
+		Tags    []string `json:"tags"`
+		Address Address  `json:"address"`
+	}
+
+	jsonStr := `{
+		"name": "Carol",
+		"tags": ["admin", "ops"],
+		"address": {"city": "NYC", "zip": "10001"}
+	}`
+
+	// Parse decodes a JSON string into a typed target (string-in, unlike
+	// Unmarshal which takes []byte).
+	var profile Profile
+	if err := json.Parse(jsonStr, &profile); err != nil {
+		log.Printf("Parse error: %v", err)
+		return
+	}
+	fmt.Printf("   Parse into struct: %s / %v / %v\n",
+		profile.Name, profile.Tags, profile.Address)
+
+	// ParseAny decodes into any — map[string]any for objects, []any for arrays.
+	data, err := json.ParseAny(jsonStr)
+	if err != nil {
+		log.Printf("ParseAny error: %v", err)
+		return
+	}
+	fmt.Printf("   ParseAny: %T with %d top-level keys\n", data, len(data.(map[string]any)))
+
+	// Both accept an optional Config (e.g. SecurityConfig for untrusted input).
+	safe, err := json.ParseAny(jsonStr, json.SecurityConfig())
+	if err != nil {
+		log.Printf("ParseAny error: %v", err)
+		return
+	}
+	fmt.Printf("   ParseAny with SecurityConfig: %v\n", safe.(map[string]any)["name"])
 }

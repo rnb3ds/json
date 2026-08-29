@@ -16,11 +16,35 @@ var iterableValuePool = sync.Pool{
 	},
 }
 
+// getIterableValue takes an IterableValue from the pool with data set.
+// All pooling call sites go through this helper and putIterableValue so the
+// released guard is applied uniformly.
+func getIterableValue(data any) *IterableValue {
+	iv := iterableValuePool.Get().(*IterableValue)
+	iv.data = data
+	iv.released = false
+	return iv
+}
+
+// putIterableValue returns an IterableValue to the pool unless the callback
+// already released it through the public Release API (double Put would hand
+// one pointer to two goroutines). Marking released on the way in also makes a
+// stray Release() on a pooled (not yet re-Get) object a no-op.
+func putIterableValue(iv *IterableValue) {
+	if iv.released {
+		return
+	}
+	iv.data = nil
+	iv.released = true
+	iterableValuePool.Put(iv)
+}
+
 // releaseIterableValues returns a slice of IterableValue objects to the pool.
+// Nil-ing data before the Put avoids pinning the (possibly 1MB) parsed line
+// in the pool.
 func releaseIterableValues(items []*IterableValue) {
 	for _, iv := range items {
-		iv.data = nil
-		iterableValuePool.Put(iv)
+		putIterableValue(iv)
 	}
 }
 
@@ -38,12 +62,18 @@ func releaseIterableValues(items []*IterableValue) {
 //	})
 type IterableValue struct {
 	data any
+	// released guards against a double Put: iteration code pools every value
+	// as soon as the callback returns, so a callback additionally calling the
+	// exported Release() would insert the same pointer twice and hand it to
+	// two goroutines later.
+	released bool
 }
 
 // newIterableValue creates an IterableValue from data.
 // This is primarily used internally by iteration functions.
+// Takes values from the pool when possible to skip the allocation.
 func newIterableValue(data any) *IterableValue {
-	return &IterableValue{data: data}
+	return getIterableValue(data)
 }
 
 // GetData returns the underlying data
@@ -295,8 +325,14 @@ func (iv *IterableValue) ForeachNested(path string, fn func(key any, item *Itera
 	foreachNestedOnValue(data, fn)
 }
 
-// Release returns the IterableValue to the pool
+// Release returns the IterableValue to the pool. Iteration functions already
+// pool each value after its callback returns, so calling Release from inside
+// a callback is redundant but harmless (guarded against double-put).
 func (iv *IterableValue) Release() {
+	if iv.released {
+		return
+	}
+	iv.released = true
 	iv.data = nil
 	iterableValuePool.Put(iv)
 }

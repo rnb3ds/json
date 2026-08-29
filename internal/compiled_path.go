@@ -3,6 +3,8 @@ package internal
 import (
 	"encoding/json"
 	"errors"
+	"maps"
+	"slices"
 	"sync"
 )
 
@@ -159,7 +161,7 @@ func (cp *CompiledPath) IsEmpty() bool {
 
 // Get retrieves a value from parsed JSON data using the compiled path
 func (cp *CompiledPath) Get(data any) (any, error) {
-	return cp.navigate(data, false)
+	return cp.navigate(data)
 }
 
 // GetFromRaw retrieves a value from raw JSON bytes using the compiled path
@@ -168,17 +170,17 @@ func (cp *CompiledPath) GetFromRaw(raw []byte) (any, error) {
 	if err := json.Unmarshal(raw, &data); err != nil {
 		return nil, err
 	}
-	return cp.navigate(data, false)
+	return cp.navigate(data)
 }
 
 // Exists checks if a value exists at the compiled path
 func (cp *CompiledPath) Exists(data any) bool {
-	_, err := cp.navigate(data, false)
+	_, err := cp.navigate(data)
 	return err == nil
 }
 
 // navigate traverses the data structure using pre-parsed segments
-func (cp *CompiledPath) navigate(data any, createPath bool) (any, error) {
+func (cp *CompiledPath) navigate(data any) (any, error) {
 	current := data
 
 	for _, segment := range cp.segments {
@@ -195,13 +197,8 @@ func (cp *CompiledPath) navigate(data any, createPath bool) (any, error) {
 
 			var exists bool
 			current, exists = obj[segment.Key]
-			if !exists && !createPath {
+			if !exists {
 				return nil, NewPathError(segment.Key, "key not found", ErrPathNotFound)
-			}
-			if !exists && createPath {
-				// Create the path
-				obj[segment.Key] = make(map[string]any)
-				current = obj[segment.Key]
 			}
 
 		case ArrayIndexSegment:
@@ -238,9 +235,13 @@ func (cp *CompiledPath) navigate(data any, createPath bool) (any, error) {
 			case []any:
 				current = v
 			case map[string]any:
+				// Sorted key order: map iteration is randomized per call, so
+				// an unsorted copy made the wildcard result nondeterministic.
+				// Matches the Processor wildcard Get (recursive.go), which
+				// also returns values in ascending key order.
 				values := make([]any, 0, len(v))
-				for _, val := range v {
-					values = append(values, val)
+				for _, key := range slices.Sorted(maps.Keys(v)) {
+					values = append(values, v[key])
 				}
 				current = values
 			default:
@@ -434,8 +435,17 @@ func (c *CompiledPathCache) Get(path string) (*CompiledPath, error) {
 		return result, nil
 	}
 
-	// Evict if at capacity using FIFO
-	if len(c.paths) >= c.max {
+	// A zero/negative-capacity cache caches nothing: skip insertion so it
+	// cannot grow without bound (every Get would insert and never evict).
+	if c.max <= 0 {
+		c.mu.Unlock()
+		return cp, nil
+	}
+
+	// Evict if at capacity using FIFO. The len(order) guard keeps a
+	// zero-capacity cache (NewCompiledPathCache(0)) from panicking on an
+	// empty slice index.
+	if len(c.paths) >= c.max && len(c.order) > 0 {
 		evictKey := c.order[0]
 		copy(c.order, c.order[1:])
 		c.order = c.order[:len(c.order)-1]

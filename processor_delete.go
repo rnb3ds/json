@@ -1,6 +1,7 @@
 package json
 
 import (
+	"errors"
 	"time"
 
 	"github.com/cybergodev/json/internal"
@@ -12,11 +13,22 @@ func (p *Processor) Delete(jsonStr, path string, cfg ...Config) (result string, 
 	if err != nil {
 		// Return the original input on failure, matching every other error path
 		// in this method and the contract documented by Set/SetMultiple.
+		// Match Get's accounting: lifecycle rejections (closed processor,
+		// concurrency limit) are not operation errors, but option and
+		// input/path validation failures are.
+		if !errors.Is(err, ErrProcessorClosed) && !errors.Is(err, ErrConcurrencyLimit) {
+			p.incrementErrorCount()
+		}
 		return jsonStr, err
 	}
 	// Release in reverse-acquire order: options first, then governance slot.
 	defer p.endGovernedOp()
 	defer releaseConfig(options)
+
+	// Count the operation for stats — see Set for the rationale (mutations
+	// previously went unreported, undercounting GetStats). Error returns below
+	// increment the error counter, as Get does.
+	p.incrementOperationCount()
 
 	// Run registered hooks around the operation. A Before hook may abort; an
 	// After hook may observe or transform the result/error. Registered last so
@@ -32,6 +44,7 @@ func (p *Processor) Delete(jsonStr, path string, cfg ...Config) (result string, 
 			StartTime: time.Now(),
 		}
 		if hookErr := hc.executeBefore(hookCtx); hookErr != nil {
+			p.incrementErrorCount()
 			return jsonStr, hookErr
 		}
 		defer func() {
@@ -44,18 +57,23 @@ func (p *Processor) Delete(jsonStr, path string, cfg ...Config) (result string, 
 	compactArrays := options.CompactArrays || p.config.CompactArrays
 
 	// PERFORMANCE: Fast path for simple property delete without cache or cleanup.
-	if isSimplePropertyAccess(path) && !p.config.EnableCache && len(cfg) == 0 && !cleanupNulls {
+	// compactArrays implies cleanupNulls below (empty arrays are compacted during
+	// reconstruction), so it must also opt out of this fast path.
+	if isSimplePropertyAccess(path) && !p.config.EnableCache && len(cfg) == 0 && !cleanupNulls && !compactArrays {
 		m, isObj, err := unmarshalRootObject(jsonStr)
 		if err != nil {
+			p.incrementErrorCount()
 			return jsonStr, newOperationPathError("delete", path, err.Error(), ErrInvalidJSON)
 		}
 		if isObj {
 			if _, exists := m[path]; !exists {
+				p.incrementErrorCount()
 				return jsonStr, newOperationPathError("delete", path, "path not found", ErrPathNotFound)
 			}
 			delete(m, path)
 			result, err := internal.FastMarshalToString(m)
 			if err != nil {
+				p.incrementErrorCount()
 				return jsonStr, newOperationPathError("delete", path, "failed to marshal result", err)
 			}
 			return result, nil
@@ -66,6 +84,7 @@ func (p *Processor) Delete(jsonStr, path string, cfg ...Config) (result string, 
 	// Parse JSON using unified helper
 	data, err := p.parseJSON(jsonStr, "delete", path, options)
 	if err != nil {
+		p.incrementErrorCount()
 		return jsonStr, err
 	}
 
@@ -80,6 +99,7 @@ func (p *Processor) Delete(jsonStr, path string, cfg ...Config) (result string, 
 	// Delete the value at the specified path
 	err = p.deleteValueAtPath(data, path)
 	if err != nil {
+		p.incrementErrorCount()
 		return jsonStr, &JsonsError{
 			Op:      "delete",
 			Path:    path,
@@ -104,6 +124,7 @@ func (p *Processor) Delete(jsonStr, path string, cfg ...Config) (result string, 
 	// Convert back to JSON string
 	result, err = internal.FastMarshalToString(data)
 	if err != nil {
+		p.incrementErrorCount()
 		return jsonStr, &JsonsError{
 			Op:      "delete",
 			Path:    path,
@@ -130,7 +151,7 @@ func (p *Processor) isArrayDeletePath(path string) bool {
 // DeleteClean(s, p, cfg) is exactly Delete(s, p, cfg') where cfg' is cfg with
 // CleanupNulls and CompactArrays forced to true.
 func (p *Processor) DeleteClean(jsonStr, path string, cfg ...Config) (string, error) {
-	cleanupOpts := mergeOptionsWithOverride(cfg, func(o *Config) {
+	cleanupOpts := p.mergeOptionsWithOverride(cfg, func(o *Config) {
 		o.CleanupNulls = true
 		o.CompactArrays = true
 	})

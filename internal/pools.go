@@ -12,12 +12,9 @@ import (
 
 const (
 	// Pool size thresholds
-	smallSliceSize  = 8
-	mediumSliceSize = 32
-	largeSliceSize  = 128
-
-	// Maximum capacity to pool (prevent memory bloat)
-	maxSliceCap = 256
+	// largeSliceSize is the hint above which path-segment slices are allocated
+	// directly instead of from a pool.
+	largeSliceSize = 128
 )
 
 // ----------------------------------------------------------------------------
@@ -54,106 +51,6 @@ func PutStringBuilder(sb *strings.Builder) {
 }
 
 // ----------------------------------------------------------------------------
-// RESULTS SLICE POOL - For recursive processing results
-// PERFORMANCE: Reduces allocations in hot recursive paths
-// ----------------------------------------------------------------------------
-
-var (
-	// smallResultsPool pools small []any slices (cap 8)
-	smallResultsPool = sync.Pool{
-		New: func() any {
-			s := make([]any, 0, smallSliceSize)
-			return &s
-		},
-	}
-
-	// mediumResultsPool pools medium []any slices (cap 32)
-	mediumResultsPool = sync.Pool{
-		New: func() any {
-			s := make([]any, 0, mediumSliceSize)
-			return &s
-		},
-	}
-
-	// largeResultsPool pools large []any slices (cap 128)
-	largeResultsPool = sync.Pool{
-		New: func() any {
-			s := make([]any, 0, largeSliceSize)
-			return &s
-		},
-	}
-)
-
-// GetResultsSlice retrieves a pooled []any slice with appropriate capacity
-// SECURITY FIX: For hints larger than pool capacity, allocate directly
-// This prevents capacity mismatch and reduces resize operations
-func GetResultsSlice(hint int) *[]any {
-	var s *[]any
-	switch {
-	case hint <= smallSliceSize:
-		s = smallResultsPool.Get().(*[]any)
-	case hint <= mediumSliceSize:
-		s = mediumResultsPool.Get().(*[]any)
-	case hint <= largeSliceSize:
-		s = largeResultsPool.Get().(*[]any)
-	default:
-		// SECURITY FIX: For large hints, allocate directly without using pool
-		// This ensures the slice has sufficient capacity
-		newSlice := make([]any, 0, hint)
-		return &newSlice
-	}
-	*s = (*s)[:0]
-	return s
-}
-
-// PutResultsSlice returns a []any slice to the appropriate pool
-func PutResultsSlice(s *[]any) {
-	if s == nil {
-		return
-	}
-	c := cap(*s)
-	if c > maxSliceCap {
-		return // Don't pool very large slices
-	}
-	*s = (*s)[:0]
-	switch {
-	case c <= smallSliceSize:
-		smallResultsPool.Put(s)
-	case c <= mediumSliceSize:
-		mediumResultsPool.Put(s)
-	case c <= largeSliceSize:
-		largeResultsPool.Put(s)
-	}
-}
-
-// ----------------------------------------------------------------------------
-// ERROR SLICE POOL - For collecting errors in recursive processing
-// ----------------------------------------------------------------------------
-
-var errorSlicePool = sync.Pool{
-	New: func() any {
-		s := make([]error, 0, smallSliceSize)
-		return &s
-	},
-}
-
-// GetErrorSlice retrieves a pooled []error slice
-func GetErrorSlice() *[]error {
-	s := errorSlicePool.Get().(*[]error)
-	*s = (*s)[:0]
-	return s
-}
-
-// PutErrorSlice returns a []error slice to the pool
-func PutErrorSlice(s *[]error) {
-	if s == nil || cap(*s) > maxSliceCap {
-		return
-	}
-	*s = (*s)[:0]
-	errorSlicePool.Put(s)
-}
-
-// ----------------------------------------------------------------------------
 // PATH SEGMENT SLICE POOL - For path parsing results
 // ----------------------------------------------------------------------------
 
@@ -185,6 +82,16 @@ var (
 
 // GetPathSegmentSlice retrieves a pooled []PathSegment slice
 func GetPathSegmentSlice(hint int) *[]PathSegment {
+	// SECURITY: For hints larger than pool capacity, allocate directly — a
+	// pooled cap-16 slice would immediately regrow and be dropped at Put
+	// (cap > 32 is not pooled), churning allocations for deep paths. Hints in
+	// (16, largeSliceSize] still take the cap-16 large pool and may regrow by
+	// append; the threshold trades that churn against extra pooling, and the
+	// only production caller today passes 8.
+	if hint > largeSliceSize {
+		s := make([]PathSegment, 0, hint)
+		return &s
+	}
 	var s *[]PathSegment
 	switch {
 	case hint <= 4:
@@ -219,133 +126,3 @@ func PutPathSegmentSlice(s *[]PathSegment) {
 }
 
 // ----------------------------------------------------------------------------
-// MAP POOL - For JSON object decoding
-// PERFORMANCE: Reduces allocations when decoding JSON objects
-// ----------------------------------------------------------------------------
-
-var (
-	// smallMapPool pools small map[string]any (cap 8)
-	smallMapPool = sync.Pool{
-		New: func() any {
-			return make(map[string]any, smallSliceSize)
-		},
-	}
-
-	// mediumMapPool pools medium map[string]any (cap 32)
-	mediumMapPool = sync.Pool{
-		New: func() any {
-			return make(map[string]any, mediumSliceSize)
-		},
-	}
-
-	// largeMapPool pools large map[string]any (cap 128)
-	largeMapPool = sync.Pool{
-		New: func() any {
-			return make(map[string]any, largeSliceSize)
-		},
-	}
-)
-
-// GetStreamingMap retrieves a pooled map[string]any
-// PERFORMANCE: Uses Go 1.21+ clear() for O(1) map clearing instead of O(n) loop
-func GetStreamingMap(hint int) map[string]any {
-	switch {
-	case hint <= smallSliceSize:
-		m := smallMapPool.Get().(map[string]any)
-		clear(m) // O(1) instead of O(n) loop
-		return m
-	case hint <= mediumSliceSize:
-		m := mediumMapPool.Get().(map[string]any)
-		clear(m)
-		return m
-	case hint <= largeSliceSize:
-		m := largeMapPool.Get().(map[string]any)
-		clear(m)
-		return m
-	default:
-		return make(map[string]any, hint)
-	}
-}
-
-// PutStreamingMap returns a map[string]any to the pool
-// PERFORMANCE: Uses Go 1.21+ clear() for O(1) clearing
-// NOTE: Go maps do not expose capacity, so we use len() for pool bucketing.
-// This means maps may occasionally be placed in smaller buckets, but the
-// cost of occasional resizing is lower than the cost of over-pooling.
-func PutStreamingMap(m map[string]any) {
-	if m == nil {
-		return
-	}
-	originalSize := len(m)
-
-	// Clear using Go 1.21+ clear() for O(1) performance
-	clear(m)
-
-	// Use original size for pool selection
-	switch {
-	case originalSize <= smallSliceSize:
-		smallMapPool.Put(m)
-	case originalSize <= mediumSliceSize:
-		mediumMapPool.Put(m)
-	case originalSize <= largeSliceSize:
-		largeMapPool.Put(m)
-	}
-}
-
-// ----------------------------------------------------------------------------
-// BATCH OPERATION POOLS - For BatchSet, FastGetMultiple operations
-// PERFORMANCE: Reduces allocations in batch processing scenarios
-// ----------------------------------------------------------------------------
-
-var (
-	// smallBatchResultsPool pools map[string]any for small batch results (up to 8 entries)
-	smallBatchResultsPool = sync.Pool{
-		New: func() any {
-			return make(map[string]any, 8)
-		},
-	}
-	// mediumBatchResultsPool pools map[string]any for medium batch results (up to 16 entries)
-	mediumBatchResultsPool = sync.Pool{
-		New: func() any {
-			return make(map[string]any, 16)
-		},
-	}
-)
-
-// GetBatchResultsMap retrieves a map for batch operation results
-// PERFORMANCE: Uses tiered pools to match actual capacity needs
-func GetBatchResultsMap(hint int) map[string]any {
-	switch {
-	case hint <= 8:
-		m := smallBatchResultsPool.Get().(map[string]any)
-		clear(m)
-		return m
-	case hint <= 16:
-		m := mediumBatchResultsPool.Get().(map[string]any)
-		clear(m)
-		return m
-	default:
-		return make(map[string]any, hint)
-	}
-}
-
-// PutBatchResultsMap returns a map to the batch results pool
-func PutBatchResultsMap(m map[string]any) {
-	if m == nil {
-		return
-	}
-	// For maps, we use length as a proxy for capacity
-	l := len(m)
-	// Don't pool maps that grew too large (conservative estimate)
-	if l > 32 {
-		return
-	}
-	clear(m)
-	// Return to appropriate pool based on likely capacity
-	// Small pool for maps that likely have <= 8 capacity
-	if l <= 8 {
-		smallBatchResultsPool.Put(m)
-	} else {
-		mediumBatchResultsPool.Put(m)
-	}
-}

@@ -940,3 +940,161 @@ func BenchmarkForeachPathBuild_AB(b *testing.B) {
 		}
 	})
 }
+
+// ============================================================================
+// P-001 OPTIMIZATION BENCHMARKS
+// These exercise paths that the benchmarks above cannot see: distinct inputs
+// (the validation cache is bypassed, so the security scan actually runs) and
+// the encode paths changed by the P-001 round (single-pass bytes fast path,
+// single-key map encoding, SetMultiple without defensive deep copy).
+// ============================================================================
+
+// genDistinctInputs builds n distinct small JSON objects. More than
+// securityCacheHighWatermark (8000) entries are produced so a cycling
+// benchmark reader misses the validation cache on (nearly) every iteration —
+// the steady state of real-world workloads that never repeat an input.
+func genDistinctInputs(n int) []string {
+	inputs := make([]string, n)
+	for i := 0; i < n; i++ {
+		inputs[i] = fmt.Sprintf(`{"id":%d,"name":"user%d","note":"plain data %d","active":true}`, i, i, i)
+	}
+	return inputs
+}
+
+// BenchmarkGet_DistinctInputs measures Get over never-repeated inputs: the
+// validation scan, hashing, parse, and navigation all run on every iteration
+// (the validation cache cannot short-circuit).
+func BenchmarkGet_DistinctInputs(b *testing.B) {
+	inputs := genDistinctInputs(securityCacheHighWatermark + 200)
+	processor, _ := New()
+	defer processor.Close()
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _ = processor.Get(inputs[i%len(inputs)], "name")
+	}
+}
+
+// BenchmarkValidateInput_Distinct isolates the input validation pipeline
+// (UTF-8, security pattern scan, structure, depth, container counts) on
+// distinct inputs, without parse/cache/navigation costs.
+func BenchmarkValidateInput_Distinct(b *testing.B) {
+	inputs := genDistinctInputs(securityCacheHighWatermark + 200)
+	processor, _ := New()
+	defer processor.Close()
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = processor.validateInput(inputs[i%len(inputs)])
+	}
+}
+
+// BenchmarkSetMultiple_MultiKey covers SetMultiple with several updates:
+// path validation, single parse, in-place application, and re-encoding.
+func BenchmarkSetMultiple_MultiKey(b *testing.B) {
+	processor, _ := New()
+	defer processor.Close()
+
+	jsonStr := `{"a":1,"b":2,"c":3,"nested":{"x":10,"y":20}}`
+	updates := map[string]any{
+		"a":        100,
+		"c":        false,
+		"nested.x": 42,
+		"nested.z": "new",
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _ = processor.SetMultiple(jsonStr, updates)
+	}
+}
+
+// BenchmarkEncodeWithConfig_SimpleMap covers the encodeWithConfigToBytes fast
+// path (governance + config handling + FastEncoder single-pass bytes output).
+func BenchmarkEncodeWithConfig_SimpleMap(b *testing.B) {
+	processor, _ := New()
+	defer processor.Close()
+
+	data := map[string]any{
+		"name":   "test",
+		"age":    30,
+		"active": true,
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _ = processor.EncodeWithConfig(data)
+	}
+}
+
+// BenchmarkToJSONL_100 covers batch JSONL assembly: 100 items encoded
+// straight into the shared output buffer.
+func BenchmarkToJSONL_100(b *testing.B) {
+	data := make([]any, 100)
+	for i := range data {
+		data[i] = map[string]any{"id": i, "name": fmt.Sprintf("user%d", i)}
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _ = ToJSONL(data)
+	}
+}
+
+// BenchmarkFastEncoder_SingleKeyMap isolates the single-key map encode case
+// (the most common result shape after Set/Delete): forEachSortedEntry must
+// take the allocation-free direct range path.
+func BenchmarkFastEncoder_SingleKeyMap(b *testing.B) {
+	data := map[string]any{"name": "updated"}
+
+	encoder := internal.GetEncoder()
+	defer internal.PutEncoder(encoder)
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		encoder.Reset()
+		_ = encoder.EncodeValue(data)
+	}
+}
+
+// ----------------------------------------------------------------------------
+// Security scan A/B micro-benchmark (legacy per-pattern scan vs prefilter)
+// ----------------------------------------------------------------------------
+
+// scanWindowLegacy mirrors the pre-P-001 scan shape: one full
+// fastIndexIgnoreCase pass per pattern over the window, ~27 scans total on a
+// clean window. Kept here only to A/B against windowContainsDangerousMatch.
+func scanWindowLegacy(window string) bool {
+	for _, dp := range dangerousPatterns {
+		if fastIndexIgnoreCase(window, dp.pattern) != -1 {
+			return true
+		}
+	}
+	return false
+}
+
+// BenchmarkScanWindow_AB isolates the built-in-pattern scan stage of input
+// validation on a clean window (the common case): legacy scans the window
+// once per pattern; the prefilter makes one pass and skips the pattern loop
+// entirely when nothing matches.
+func BenchmarkScanWindow_AB(b *testing.B) {
+	window := `{"id":12345,"name":"user42","email":"user42@example.com","note":"plain descriptive text","active":true,"score":12.5,"tags":["a","b","c"]}`
+
+	b.Run("legacy", func(b *testing.B) {
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			if scanWindowLegacy(window) {
+				b.Fatal("clean window must not match")
+			}
+		}
+	})
+
+	b.Run("prefilter", func(b *testing.B) {
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			if windowContainsDangerousMatch(window) {
+				b.Fatal("clean window must not match")
+			}
+		}
+	})
+}

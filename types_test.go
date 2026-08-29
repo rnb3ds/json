@@ -17,24 +17,13 @@ import (
 
 // Merged from: types_test.go, json_test.go, error_test.go
 
-func BenchmarkBufferPool(b *testing.B) {
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		buf := *internal.GetByteSliceWithHint(1024)
-		buf = append(buf, "test"...)
-		internal.PutByteSlice(&buf)
-	}
-}
-
 func BenchmarkConcurrentPools(b *testing.B) {
 	b.ResetTimer()
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
 			sb := internal.GetStringBuilder()
-			buf := *internal.GetByteSliceWithHint(1024)
-			_ = append(buf, "test"...)
+			sb.WriteString("test")
 			internal.PutStringBuilder(sb)
-			internal.PutByteSlice(&buf)
 		}
 	})
 }
@@ -172,26 +161,24 @@ func TestConfigConstantsComprehensive(t *testing.T) {
 	})
 
 	t.Run("ConfigPresets", func(t *testing.T) {
-		config := DefaultConfig()
-		helper.AssertNotNil(config)
-
 		sec := SecurityConfig()
-		helper.AssertNotNil(sec)
+		// The security preset tightens limits and turns on strict scanning.
+		helper.AssertTrue(sec.FullSecurityScan)
+		helper.AssertTrue(sec.StrictMode)
+		helper.AssertTrue(sec.MaxJSONSize <= DefaultConfig().MaxJSONSize)
 	})
 
 	t.Run("EncodeConfigPresets", func(t *testing.T) {
 		config := DefaultConfig()
-		helper.AssertNotNil(config)
 
 		pretty := PrettyConfig()
-		helper.AssertNotNil(pretty)
 		helper.AssertTrue(pretty.Pretty)
 
 		// Default config is compact (Pretty = false)
 		helper.AssertFalse(config.Pretty)
 
 		cloned := (&config).Clone()
-		helper.AssertNotNil(cloned)
+		helper.AssertFalse(cloned.Pretty)
 	})
 
 	t.Run("ConfigValidation", func(t *testing.T) {
@@ -906,20 +893,6 @@ func TestEncodeConfig_Clone_Zero(t *testing.T) {
 func TestErrorHandling(t *testing.T) {
 	helper := newTestHelper(t)
 
-	t.Run("JsonsErrorStructure", func(t *testing.T) {
-		err := &JsonsError{
-			Op:      "test_operation",
-			Path:    "test.path",
-			Message: "test error message",
-			Err:     errOperationFailed,
-		}
-
-		helper.AssertEqual("test_operation", err.Op)
-		helper.AssertEqual("test.path", err.Path)
-		helper.AssertEqual("test error message", err.Message)
-		helper.AssertEqual(errOperationFailed, err.Err)
-	})
-
 	t.Run("ErrorTypes", func(t *testing.T) {
 		testData := `{"name": "John", "age": 30}`
 
@@ -1078,21 +1051,27 @@ func TestErrorScenarios(t *testing.T) {
 		})
 
 		t.Run("NumberAsString", func(t *testing.T) {
-			// GetString returns default value on type mismatch
+			// GetString converts a JSON number to its string form
 			result := GetString(testData, "num", "")
-			_ = result
+			if result != "42" {
+				t.Errorf("GetString on number = %q, want %q", result, "42")
+			}
 		})
 
 		t.Run("BoolAsInt", func(t *testing.T) {
-			// GetInt returns default value on type mismatch
+			// GetInt converts a JSON boolean to 0/1
 			result := GetInt(testData, "bool", 0)
-			_ = result // Don't assert value, library may convert
+			if result != 1 {
+				t.Errorf("GetInt on bool = %d, want 1", result)
+			}
 		})
 
 		t.Run("ObjectAsArray", func(t *testing.T) {
-			// GetArray returns default value on type mismatch
+			// GetArray on a non-array value yields an empty result, not the input
 			result := GetArray(testData, "str", nil)
-			_ = result
+			if len(result) != 0 {
+				t.Errorf("GetArray on string = %v, want empty", result)
+			}
 		})
 
 	})
@@ -1107,9 +1086,11 @@ func TestErrorScenarios(t *testing.T) {
 		})
 
 		t.Run("GetAsNull", func(t *testing.T) {
-			// GetTyped returns default value for null
+			// GetTyped returns the default for a JSON null
 			result := GetTyped[string](testData, "null_value", "")
-			_ = result
+			if result != "" {
+				t.Errorf("GetTyped on null = %q, want the default", result)
+			}
 		})
 
 		t.Run("GetMissingField", func(t *testing.T) {
@@ -1167,8 +1148,11 @@ func TestErrorScenarios(t *testing.T) {
 
 		for i := 0; i < 5; i++ {
 			err := <-done
-			// May succeed if it completed before close, or error if after
-			_ = err
+			// May succeed if it completed before close; if it errors, the
+			// only legitimate reason is the processor being closed.
+			if err != nil && !strings.Contains(err.Error(), "closed") {
+				t.Errorf("in-flight Get after close: unexpected error %v", err)
+			}
 		}
 	})
 }
@@ -1193,17 +1177,6 @@ func TestGetStatsWithResourceManager(t *testing.T) {
 	if stats2.OperationCount == 0 {
 		t.Error("Expected operation count to increase")
 	}
-}
-
-// TestGlobalResourceManager tests that internal pool functions work correctly
-func TestGlobalResourceManager(t *testing.T) {
-	t.Run("StringBuilder", func(t *testing.T) {
-		sb := internal.GetStringBuilder()
-		sb.WriteString("global test")
-		internal.PutStringBuilder(sb)
-
-		// Should not panic
-	})
 }
 
 // TestHealthCheckSystem tests health check functionality
@@ -1270,20 +1243,6 @@ func TestInvalidUnmarshalError(t *testing.T) {
 // TestIteratorAdvancedFeatures tests advanced iterator functionality
 func TestIteratorAdvancedFeatures(t *testing.T) {
 	helper := newTestHelper(t)
-
-	t.Run("IteratorControlBreak", func(t *testing.T) {
-		testData := `{"items": [1, 2, 3, 4, 5]}`
-
-		count := 0
-		Foreach(testData, func(key any, item *IterableValue) {
-			count++
-			if count >= 2 {
-				// Break early
-			}
-		})
-
-		helper.AssertTrue(count <= 5)
-	})
 
 	t.Run("IterableValueGetPath", func(t *testing.T) {
 		testData := `{"user": {"name": "Alice", "profile": {"age": 25}}}`
@@ -2507,13 +2466,9 @@ func TestUnifiedResourceManager(t *testing.T) {
 	})
 
 	t.Run("BufferPool", func(t *testing.T) {
-		buf1 := *internal.GetByteSliceWithHint(1024)
-		buf1 = append(buf1, "test data"...)
-
-		internal.PutByteSlice(&buf1)
-
-		buf2 := internal.GetByteSliceWithHint(1024)
-		internal.PutByteSlice(buf2)
+		buf1 := internal.GetEncoderBuffer()
+		buf1.WriteString("test data")
+		internal.PutEncoderBuffer(buf1)
 	})
 
 	t.Run("ConcurrentAccess", func(t *testing.T) {
@@ -2548,8 +2503,9 @@ func TestUnifiedResourceManager(t *testing.T) {
 			go func() {
 				defer wg.Done()
 				for j := 0; j < opsPerGoroutine; j++ {
-					buf := internal.GetByteSliceWithHint(1024)
-					internal.PutByteSlice(buf)
+					buf := internal.GetEncoderBuffer()
+					buf.WriteString("concurrent test")
+					internal.PutEncoderBuffer(buf)
 				}
 			}()
 		}

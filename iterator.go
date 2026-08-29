@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"reflect"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -30,7 +31,8 @@ type IteratorControl int
 const (
 	// IteratorNormal continues iteration normally (the default control value).
 	IteratorNormal IteratorControl = iota
-	// IteratorContinue skips the current item and continues iteration
+	// IteratorContinue is a no-op alias of IteratorNormal, kept for API
+	// symmetry. Skipping an item is implicit: iteration continues regardless.
 	IteratorContinue
 	// IteratorBreak stops iteration entirely
 	IteratorBreak
@@ -238,18 +240,20 @@ func NewIterator(data any, cfg ...Config) *Iterator {
 
 // initKeysOnce lazily initializes cached keys for map iteration.
 // Thread-safe via sync.Once; avoids allocating a new slice on every Next() call.
+// Keys are sorted so iteration order is deterministic: Go randomizes map
+// iteration order per iteration, so an unsorted copy made Next() yield
+// key/value pairs in a different order on every Iterator construction.
 func (it *Iterator) initKeysOnce() {
 	it.keysOnce.Do(func() {
 		if obj, ok := it.data.(map[string]any); ok {
-			// Reuse existing slice if capacity is sufficient
-			if cap(it.keys) < len(obj) {
-				it.keys = make([]string, 0, len(obj))
-			} else {
-				it.keys = it.keys[:0]
-			}
+			it.keys = make([]string, 0, len(obj))
+			// Do not intern: these keys are transient (one-shot iteration), and
+			// interning would retain them in a process-global cache and take its
+			// write lock per key for keys that will never repeat.
 			for k := range obj {
-				it.keys = append(it.keys, internal.InternKey(k))
+				it.keys = append(it.keys, k)
 			}
+			slices.Sort(it.keys)
 		}
 	})
 }
@@ -390,19 +394,19 @@ func foreachWithIterableValue(data any, fn func(key any, item *IterableValue)) {
 	switch v := data.(type) {
 	case []any:
 		for i, item := range v {
-			iv := iterableValuePool.Get().(*IterableValue)
-			iv.data = item
+			iv := getIterableValue(item)
 			fn(i, iv)
 			iv.data = nil
-			iterableValuePool.Put(iv)
+			putIterableValue(iv)
 		}
 	case map[string]any:
-		for key, val := range v {
-			iv := iterableValuePool.Get().(*IterableValue)
-			iv.data = val
+		// Deterministic callback order: iterate keys in sorted order rather
+		// than randomized map order (see sortedMapKeys).
+		for _, key := range sortedMapKeys(v) {
+			iv := getIterableValue(v[key])
 			fn(key, iv)
 			iv.data = nil
-			iterableValuePool.Put(iv)
+			putIterableValue(iv)
 		}
 	}
 }
@@ -444,27 +448,28 @@ func foreachWithPathIterableValue(data any, currentPath string, fn func(key any,
 			buf = strconv.AppendInt(buf, int64(i), 10)
 			buf = append(buf, ']')
 			path := string(buf)
-			iv := iterableValuePool.Get().(*IterableValue)
-			iv.data = item
+			iv := getIterableValue(item)
 			ctrl := fn(i, iv, path)
 			iv.data = nil
-			iterableValuePool.Put(iv)
+			putIterableValue(iv)
 			if ctrl == IteratorBreak {
 				return nil
 			}
 		}
 	case map[string]any:
-		for key, val := range v {
+		// Deterministic callback order: iterate keys in sorted order rather
+		// than randomized map order (see sortedMapKeys).
+		for _, key := range sortedMapKeys(v) {
+			val := v[key]
 			buf = buf[:0]
 			buf = append(buf, currentPath...)
 			buf = append(buf, '.')
 			buf = append(buf, key...)
 			path := string(buf)
-			iv := iterableValuePool.Get().(*IterableValue)
-			iv.data = val
+			iv := getIterableValue(val)
 			ctrl := fn(key, iv, path)
 			iv.data = nil
-			iterableValuePool.Put(iv)
+			putIterableValue(iv)
 			if ctrl == IteratorBreak {
 				return nil
 			}
@@ -512,8 +517,9 @@ func foreachOnValue(data any, fn func(key any, value any) IteratorControl) (err 
 			}
 		}
 	case map[string]any:
-		for key, val := range v {
-			if ctrl := fn(key, val); ctrl == IteratorBreak {
+		// Deterministic callback order: sorted keys, not randomized map order.
+		for _, key := range sortedMapKeys(v) {
+			if ctrl := fn(key, v[key]); ctrl == IteratorBreak {
 				return nil
 			}
 		}
@@ -563,21 +569,21 @@ func foreachNestedOnValueDepth(data any, fn func(key any, item *IterableValue), 
 	switch v := data.(type) {
 	case []any:
 		for i, item := range v {
-			iv := iterableValuePool.Get().(*IterableValue)
-			iv.data = item
+			iv := getIterableValue(item)
 			fn(i, iv)
 			foreachNestedOnValueDepth(item, fn, depth+1)
 			iv.data = nil
-			iterableValuePool.Put(iv)
+			putIterableValue(iv)
 		}
 	case map[string]any:
-		for key, val := range v {
-			iv := iterableValuePool.Get().(*IterableValue)
-			iv.data = val
+		// Deterministic callback order: sorted keys, not randomized map order.
+		for _, key := range sortedMapKeys(v) {
+			val := v[key]
+			iv := getIterableValue(val)
 			fn(key, iv)
 			foreachNestedOnValueDepth(val, fn, depth+1)
 			iv.data = nil
-			iterableValuePool.Put(iv)
+			putIterableValue(iv)
 		}
 	}
 }
@@ -594,11 +600,10 @@ func foreachWithIterableValueError(data any, fn func(key any, item *IterableValu
 	switch v := data.(type) {
 	case []any:
 		for i, item := range v {
-			iv := iterableValuePool.Get().(*IterableValue)
-			iv.data = item
+			iv := getIterableValue(item)
 			err := fn(i, iv)
 			iv.data = nil
-			iterableValuePool.Put(iv)
+			putIterableValue(iv)
 			if err != nil {
 				if errors.Is(err, errBreak) {
 					return nil // Break is not an error
@@ -607,12 +612,12 @@ func foreachWithIterableValueError(data any, fn func(key any, item *IterableValu
 			}
 		}
 	case map[string]any:
-		for key, val := range v {
-			iv := iterableValuePool.Get().(*IterableValue)
-			iv.data = val
+		// Deterministic callback order: sorted keys, not randomized map order.
+		for _, key := range sortedMapKeys(v) {
+			iv := getIterableValue(v[key])
 			err := fn(key, iv)
 			iv.data = nil
-			iterableValuePool.Put(iv)
+			putIterableValue(iv)
 			if err != nil {
 				if errors.Is(err, errBreak) {
 					return nil // Break is not an error
@@ -646,12 +651,11 @@ func foreachNestedOnValueErrorDepth(data any, fn func(key any, item *IterableVal
 	switch v := data.(type) {
 	case []any:
 		for i, item := range v {
-			iv := iterableValuePool.Get().(*IterableValue)
-			iv.data = item
+			iv := getIterableValue(item)
 			err := fn(i, iv)
 			if err != nil {
 				iv.data = nil
-				iterableValuePool.Put(iv)
+				putIterableValue(iv)
 				if errors.Is(err, errBreak) {
 					return nil
 				}
@@ -659,19 +663,20 @@ func foreachNestedOnValueErrorDepth(data any, fn func(key any, item *IterableVal
 			}
 			err = foreachNestedOnValueErrorDepth(item, fn, depth+1)
 			iv.data = nil
-			iterableValuePool.Put(iv)
+			putIterableValue(iv)
 			if err != nil {
 				return err
 			}
 		}
 	case map[string]any:
-		for key, val := range v {
-			iv := iterableValuePool.Get().(*IterableValue)
-			iv.data = val
+		// Deterministic callback order: sorted keys, not randomized map order.
+		for _, key := range sortedMapKeys(v) {
+			val := v[key]
+			iv := getIterableValue(val)
 			err := fn(key, iv)
 			if err != nil {
 				iv.data = nil
-				iterableValuePool.Put(iv)
+				putIterableValue(iv)
 				if errors.Is(err, errBreak) {
 					return nil
 				}
@@ -679,7 +684,7 @@ func foreachNestedOnValueErrorDepth(data any, fn func(key any, item *IterableVal
 			}
 			err = foreachNestedOnValueErrorDepth(val, fn, depth+1)
 			iv.data = nil
-			iterableValuePool.Put(iv)
+			putIterableValue(iv)
 			if err != nil {
 				return err
 			}
@@ -748,7 +753,10 @@ func (it *pooledSliceIterator) Release() {
 // POOLED MAP ITERATOR - For efficient object iteration
 // ============================================================================
 
-// pooledMapIterator uses pooled slices for efficient map iteration
+// pooledMapIterator uses pooled slices for efficient map iteration.
+// NOTE: no production callers — exercised by benchmark_test.go and
+// iterator_test.go (TestPooledMapIteratorLifecycle). Candidate for removal
+// with its tests (D-002 round 6 finding); kept until the maintainer decides.
 type pooledMapIterator struct {
 	data    map[string]any
 	keys    []string
@@ -766,7 +774,9 @@ var mapIteratorPool = sync.Pool{
 	},
 }
 
-// newPooledMapIterator creates a pooled map iterator
+// newPooledMapIterator creates a pooled map iterator.
+// The collected keys are sorted so Next() yields key/value pairs in a
+// deterministic order (Go map iteration order is randomized per iteration).
 func newPooledMapIterator(m map[string]any) *pooledMapIterator {
 	it := mapIteratorPool.Get().(*pooledMapIterator)
 	it.data = m
@@ -787,6 +797,7 @@ func newPooledMapIterator(m map[string]any) *pooledMapIterator {
 	for k := range m {
 		it.keys = append(it.keys, k)
 	}
+	slices.Sort(it.keys)
 
 	return it
 }

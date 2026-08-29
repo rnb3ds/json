@@ -400,24 +400,9 @@ func newPropertySegment(key string) PathSegment {
 	return internal.NewPropertySegment(key)
 }
 
-// newArrayIndexSegment creates an array index access segment.
-func newArrayIndexSegment(index int) PathSegment {
-	return internal.NewArrayIndexSegment(index)
-}
-
 // newArraySliceSegment creates an array slice segment.
 func newArraySliceSegment(start, end, step int, hasStart, hasEnd, hasStep bool) PathSegment {
 	return internal.NewArraySliceSegment(start, end, step, hasStart, hasEnd, hasStep)
-}
-
-// newWildcardSegment creates a wildcard segment.
-func newWildcardSegment() PathSegment {
-	return internal.NewWildcardSegment()
-}
-
-// newExtractSegment creates an extraction segment.
-func newExtractSegment(key string, flat bool) PathSegment {
-	return internal.NewExtractSegmentWithFlat(key, flat)
 }
 
 // newAppendSegment creates an append segment.
